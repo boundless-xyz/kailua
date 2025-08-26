@@ -237,6 +237,12 @@ pub async fn compute_fpvm_proof(
         Err(ProvingError::NotSeekingProof(_, executed_blocks)) => executed_blocks,
         other_result => return Ok(Some(other_result?)),
     };
+    // Check if we can do execution-only proofs
+    if args.proving.max_block_executions == 0 {
+        return Err(ProvingError::OtherError(anyhow!(
+            "Execution only proofs are disabled because max_block_executions=0."
+        )));
+    }
     // flatten executed l2 blocks
     let (_, execution_cache) = split_executions(executed_blocks.clone());
 
@@ -287,25 +293,40 @@ pub async fn compute_fpvm_proof(
     // create proofs channel
     let result_channel = async_channel::unbounded();
     let mut result_pq = BinaryHeap::new();
-    // start with full execution proof
-    task_sender
-        .send(Oneshot {
-            cached_task: create_cached_execution_task(
-                {
-                    let mut args = args.clone();
-                    args.kona.l1_head = B256::ZERO;
-                    args
-                },
-                rollup_config.clone(),
-                disk_kv_store.clone(),
-                &execution_cache,
-            ),
-            result_sender: result_channel.0.clone(),
-        })
-        .await
-        .expect("task_channel should not be closed");
     // divide and conquer executions
-    let mut num_proofs = 1;
+    let mut num_proofs = 0;
+    let mut next_claim_index = args.proving.max_block_executions.min(execution_cache.len()) - 1;
+    let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
+    let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
+    while next_claim_index < execution_cache.len() {
+        // Create sub-proof job
+        let mut job_args = args.clone();
+        job_args.kona.l1_head = B256::ZERO;
+        job_args.kona.agreed_l2_output_root = agreed_l2_output_root;
+        job_args.kona.agreed_l2_head_hash = agreed_l2_head_hash;
+        job_args.kona.claimed_l2_output_root = execution_cache[next_claim_index].claimed_output;
+        job_args.kona.claimed_l2_block_number =
+            execution_cache[next_claim_index].artifacts.header.number;
+        // advance pointers
+        agreed_l2_output_root = job_args.kona.claimed_l2_output_root;
+        agreed_l2_head_hash = execution_cache[next_claim_index].artifacts.header.hash();
+        next_claim_index = next_claim_index.saturating_add(args.proving.max_block_executions);
+        num_proofs += 1;
+        // queue up job
+        task_sender
+            .send(Oneshot {
+                cached_task: create_cached_execution_task(
+                    job_args,
+                    rollup_config.clone(),
+                    disk_kv_store.clone(),
+                    &execution_cache,
+                ),
+                result_sender: result_channel.0.clone(),
+            })
+            .await
+            .expect("task_channel should not be closed");
+    }
+
     while result_pq.len() < num_proofs {
         // Wait for more proving results
         let oneshot_result = result_channel
@@ -320,13 +341,13 @@ pub async fn compute_fpvm_proof(
         // Require additional proof
         num_proofs += 1;
         let executed_blocks = oneshot_result.cached.stitched_executions[0].clone();
-        let starting_block = executed_blocks[0].artifacts.header.number - 1;
-        let num_blocks = oneshot_result.cached.args.kona.claimed_l2_block_number - starting_block;
-        let force_attempt = num_blocks == 1;
+        let agreed_block = executed_blocks[0].artifacts.header.number - 1;
+        let num_blocks = oneshot_result.cached.args.kona.claimed_l2_block_number - agreed_block;
+        let forced_attempt = num_blocks == 1;
         // divide or bail out on error
         match err {
             ProvingError::WitnessSizeError(f, t, e) => {
-                if force_attempt {
+                if forced_attempt {
                     error!(
                         "Proof witness size {} above safety threshold {}.",
                         human_bytes(f as f64),
@@ -341,7 +362,7 @@ pub async fn compute_fpvm_proof(
                 )
             }
             ProvingError::ExecutionError(e) => {
-                if force_attempt {
+                if forced_attempt {
                     return Err(ProvingError::ExecutionError(e));
                 }
                 warn!("Splitting proof after ZKVM execution error: {e:?}")
@@ -362,7 +383,7 @@ pub async fn compute_fpvm_proof(
             }
         }
         // Split workload at midpoint (num_blocks > 1)
-        let mid_point = starting_block + num_blocks / 2;
+        let mid_point = agreed_block + num_blocks / 2;
         let mid_exec = executed_blocks
             .iter()
             .find(|e| e.artifacts.header.number == mid_point)

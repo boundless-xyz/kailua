@@ -29,6 +29,9 @@ pub struct ProvingArgs {
     /// ZKVM Proving Segment Limit
     #[clap(long, env, required = false, default_value_t = 21)]
     pub segment_limit: u32,
+    /// Maximum number of blocks per execution-only proof
+    #[clap(long, env, required = false, default_value_t = usize::MAX)]
+    pub max_block_executions: usize,
     /// Maximum input data size per proof
     #[clap(long, env, required = false, default_value_t = 2_684_354_560)]
     pub max_witness_size: usize,

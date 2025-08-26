@@ -266,6 +266,7 @@ async fn proposer_validator() {
             proving: ProvingArgs {
                 payout_recipient_address: None,
                 segment_limit: 21,
+                max_block_executions: usize::MAX,
                 max_witness_size: 2_684_354_560,
                 num_concurrent_preflights: 1,
                 num_concurrent_proofs: 1,
@@ -321,6 +322,7 @@ async fn proposer_validator() {
             proving: ProvingArgs {
                 payout_recipient_address: None,
                 segment_limit: 21,
+                max_block_executions: usize::MAX,
                 max_witness_size: 2_684_354_560,
                 num_concurrent_preflights: 1,
                 num_concurrent_proofs: 1,
@@ -449,6 +451,7 @@ async fn prover() {
         proving: ProvingArgs {
             payout_recipient_address: None,
             segment_limit: 21,
+            max_block_executions: usize::MAX,
             max_witness_size: 5 * 1024 * 1024, // 5 MB witness maximum
             num_concurrent_preflights: 4,
             num_concurrent_proofs: 2,
