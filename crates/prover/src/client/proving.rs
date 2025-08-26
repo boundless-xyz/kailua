@@ -221,6 +221,7 @@ pub fn process_witness(
         human_bytes(preloaded_wit_size as f64),
         human_bytes(streamed_wit_size as f64)
     );
+    // Abort on witness size violation
     if total_wit_size > proving.max_witness_size {
         warn!(
             "Witness size {} exceeds limit {}.",
@@ -232,6 +233,23 @@ pub fn process_witness(
             return Err(ProvingError::WitnessSizeError(
                 total_wit_size,
                 proving.max_witness_size,
+                execution_trace,
+            ));
+        }
+        warn!("Continuing..");
+    }
+    // Abort on block count violation
+    let num_executions = execution_trace.iter().flatten().count();
+    if num_executions > proving.max_block_executions {
+        warn!(
+            "Executed blocks {num_executions} exceeds limit {}",
+            proving.max_block_executions
+        );
+        if !force_attempt {
+            warn!("Aborting.");
+            return Err(ProvingError::BlockCountError(
+                num_executions,
+                proving.max_block_executions,
                 execution_trace,
             ));
         }

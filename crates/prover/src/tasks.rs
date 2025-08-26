@@ -233,6 +233,7 @@ pub async fn compute_fpvm_proof(
     .await;
     // on WitnessSizeError or NotSeekingProof, extract execution trace
     let executed_blocks = match complete_proof_result {
+        Err(ProvingError::BlockCountError(_, _, executed_blocks)) => executed_blocks,
         Err(ProvingError::WitnessSizeError(_, _, executed_blocks)) => executed_blocks,
         Err(ProvingError::NotSeekingProof(_, executed_blocks)) => executed_blocks,
         other_result => return Ok(Some(other_result?)),
@@ -375,11 +376,14 @@ pub async fn compute_fpvm_proof(
                 num_proofs -= 2;
                 continue;
             }
+            ProvingError::BlockCountError(..) => {
+                unreachable!("Unexpected BlockCountError {err:?}")
+            }
             ProvingError::NotSeekingProof(_, _) => {
-                unreachable!("Sought proof, found NotSeekingProof {err:?}")
+                unreachable!("Unexpected NotSeekingProof {err:?}")
             }
             ProvingError::DerivationProofError(_) => {
-                unreachable!("Sought proof, found DerivationProofError {err:?}")
+                unreachable!("Unexpected DerivationProofError {err:?}")
             }
         }
         // Split workload at midpoint (num_blocks > 1)

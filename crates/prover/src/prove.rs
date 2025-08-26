@@ -238,7 +238,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                         if force_attempt {
                             bail!(
                                 "Received WitnessSizeError({f},{t}) for a forced proving attempt: {err:?}"
-                                );
+                            );
                         }
                         warn!(
                             "Proof witness size {} above safety threshold {}. Splitting workload.",
@@ -260,6 +260,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                             std::process::exit(111);
                         }
                         bail!("Irrecoverable proving error: {e:?}")
+                    }
+                    ProvingError::BlockCountError(..) => {
+                        unreachable!("BlockCountError bubbled up")
                     }
                     ProvingError::NotSeekingProof(..) => {
                         unreachable!("NotSeekingProof bubbled up")

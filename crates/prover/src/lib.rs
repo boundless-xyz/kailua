@@ -38,6 +38,9 @@ pub enum ProvingError {
     #[error("NotAwaitingProof error")]
     NotAwaitingProof,
 
+    #[error("BlockCountError error: size {0} limit {0}")]
+    BlockCountError(usize, usize, Vec<Vec<Execution>>),
+
     #[error("WitnessSizeError error: size {0} limit {0}")]
     WitnessSizeError(usize, usize, Vec<Vec<Execution>>),
 
