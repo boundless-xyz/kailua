@@ -197,7 +197,7 @@ impl MarketProviderConfig {
         };
         // Lookback
         if self.boundless_look_back {
-            proving_args.push(String::from("--boundless-lookback"));
+            proving_args.push(String::from("--boundless-look-back"));
         }
         // Preflight skip
         if let Some(cycle_count) = self.boundless_assume_cycle_count {
