@@ -19,7 +19,7 @@ import {RollupUserLogic, AssertionInputs, RollupLib} from "./vendor/FlatARBImpor
 import "./vendor/FlatOPImportV1.4.0.sol";
 import "./KailuaGame.sol";
 
-contract KailuaAnyTrust {
+contract KailuaNoTrust {
     /// @notice The (expected) KailuaGame contract address
     KailuaGame public immutable KAILUA_GAME;
 
