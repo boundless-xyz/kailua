@@ -299,7 +299,8 @@ pub async fn compute_fpvm_proof(
     let mut next_claim_index = args.proving.max_block_executions.min(execution_cache.len()) - 1;
     let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
     let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
-    while next_claim_index < execution_cache.len() {
+    let last_claim_index = execution_cache.len() - 1;
+    while next_claim_index <= last_claim_index {
         // Create sub-proof job
         let mut job_args = args.clone();
         job_args.kona.l1_head = B256::ZERO;
@@ -311,9 +312,8 @@ pub async fn compute_fpvm_proof(
         // advance pointers
         agreed_l2_output_root = job_args.kona.claimed_l2_output_root;
         agreed_l2_head_hash = execution_cache[next_claim_index].artifacts.header.hash();
-        next_claim_index = next_claim_index.saturating_add(args.proving.max_block_executions);
-        num_proofs += 1;
         // queue up job
+        num_proofs += 1;
         task_sender
             .send(Oneshot {
                 cached_task: create_cached_execution_task(
@@ -326,6 +326,13 @@ pub async fn compute_fpvm_proof(
             })
             .await
             .expect("task_channel should not be closed");
+        // next claim
+        if next_claim_index == last_claim_index {
+            break;
+        }
+        next_claim_index = next_claim_index
+            .saturating_add(args.proving.max_block_executions)
+            .min(last_claim_index);
     }
 
     while result_pq.len() < num_proofs {
