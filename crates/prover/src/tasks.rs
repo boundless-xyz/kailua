@@ -300,7 +300,7 @@ pub async fn compute_fpvm_proof(
     let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
     let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
     let last_claim_index = execution_cache.len() - 1;
-    while next_claim_index <= last_claim_index {
+    while agreed_l2_output_root != args.kona.claimed_l2_output_root {
         // Create sub-proof job
         let mut job_args = args.clone();
         job_args.kona.l1_head = B256::ZERO;

@@ -116,17 +116,84 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
         proving_handlers.push(tokio::spawn(handle_oneshot_tasks(task_channel.1.clone())));
     }
     let mut result_pq = BinaryHeap::new();
-    let mut num_proofs = 1;
 
     // create channel for receiving proving results from handlers
     let result_channel = async_channel::unbounded();
     // create channel for receiving proof requests to process and dispatch to handlers
     let prover_channel = async_channel::unbounded();
-    prover_channel
-        .0
-        .send((false, args.clone()))
-        .await
-        .expect("Failed to send prover task");
+    // dispatch requested proof
+    let mut num_proofs = 0;
+    if let (Some(l2_provider), Some(op_node_provider)) =
+        (l2_provider.as_ref(), op_node_provider.as_ref())
+    {
+        // divide into subtasks
+        let mut agreed_l2_block_number = await_tel!(
+            context,
+            tracer,
+            "l2_provider get_block_by_hash agreed_l2_head_hash",
+            retry_res_ctx_timeout!(l2_provider
+                .get_block_by_hash(args.kona.agreed_l2_head_hash)
+                .await
+                .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
+                .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block number")))
+        )
+        .header
+        .number;
+        let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
+        let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
+        while agreed_l2_output_root != args.kona.claimed_l2_output_root {
+            let claimed_l2_block_number = agreed_l2_block_number
+                .saturating_add(args.proving.max_block_derivations as u64)
+                .min(args.kona.claimed_l2_block_number);
+            // Create sub-proof job
+            let mut job_args = args.clone();
+            job_args.kona.agreed_l2_output_root = agreed_l2_output_root;
+            job_args.kona.agreed_l2_head_hash = agreed_l2_head_hash;
+            job_args.kona.claimed_l2_output_root = await_tel!(
+                context,
+                tracer,
+                "claimed_l2_output_root",
+                retry_res_ctx_timeout!(
+                    op_node_provider
+                        .output_at_block(claimed_l2_block_number)
+                        .await
+                )
+            );
+            job_args.kona.claimed_l2_block_number = claimed_l2_block_number;
+            // advance agreed pointers
+            agreed_l2_block_number = claimed_l2_block_number;
+            agreed_l2_output_root = job_args.kona.claimed_l2_output_root;
+            agreed_l2_head_hash = await_tel!(
+                context,
+                tracer,
+                "l2_provider get_block_by_number claimed_l2_block_number",
+                retry_res_ctx_timeout!(l2_provider
+                    .get_block_by_number(BlockNumberOrTag::Number(claimed_l2_block_number))
+                    .await
+                    .context("l2_provider get_block_by_number claimed_l2_block_number")?
+                    .ok_or_else(|| anyhow!("Failed to fetch claimed l2 block")))
+            )
+            .header
+            .hash;
+            // queue up job
+            num_proofs += 1;
+            prover_channel
+                .0
+                .send((false, job_args.clone()))
+                .await
+                .expect("Failed to send prover task");
+        }
+    } else {
+        // one big task
+        num_proofs = 1;
+        prover_channel
+            .0
+            .send((false, args.clone()))
+            .await
+            .expect("Failed to send prover task");
+    }
+
+    // wait for required proofs to arrive
     while result_pq.len() < num_proofs {
         // dispatch all pending proofs
         while !prover_channel.1.is_empty() {
@@ -329,6 +396,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
         }
     }
 
+    // recursively combine expected proofs
     if !args.proving.skip_stitching() {
         // gather sorted proofs into vec
         let proofs = result_pq
