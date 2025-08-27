@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use kailua_kona::blobs::BlobWitnessData;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::core::DASourceProvider;
+use kailua_kona::client::stitching::stitch_boot_info;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::kona::OracleL1ChainProvider;
@@ -102,7 +103,7 @@ where
         payout_recipient_address: payout_recipient,
         precondition_validation_data_hash,
         stitched_executions,
-        stitched_boot_info,
+        stitched_boot_info: stitched_boot_info.clone(),
         fpvm_image_id,
     };
     witness
@@ -111,8 +112,14 @@ where
     witness
         .stream_witness
         .finalize_preimages(preimage_oracle_shard_size, false);
-    let journal_output =
-        ProofJournal::new(fpvm_image_id, payout_recipient, precondition_hash, &boot);
+
+    let (boot, journal_output) = stitch_boot_info(
+        boot,
+        fpvm_image_id,
+        payout_recipient,
+        precondition_hash,
+        stitched_boot_info,
+    );
 
     Ok((boot, journal_output, witness))
 }
