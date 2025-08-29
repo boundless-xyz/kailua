@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_primitives::{address, Address};
+use alloy_primitives::Address;
 use anyhow::Context;
 use kona_genesis::{AltDAConfig, RollupConfig, SystemConfig};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 use std::fmt::Debug;
 
-pub const SAFE_DEFAULT_ADDRESS: Address = address!("4bfa59be6b388d77d213ce997acb0370b55157df");
+// pub const SAFE_DEFAULT_ADDRESS: Address = address!("4bfa59be6b388d77d213ce997acb0370b55157df");
+pub const SAFE_DEFAULT_ADDRESS: Address = Address::ZERO;
 
 /// Returns a value based on the provided `Option` and a default value, with safety checks.
 ///
