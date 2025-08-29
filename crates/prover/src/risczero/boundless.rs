@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::args::ProvingArgs;
+use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
 use crate::proof::save_to_bincoded_file;
 use crate::proof::{proof_id, read_bincoded_file};
 use crate::ProvingError;
@@ -708,6 +709,9 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             let preflight_stitched_proofs = stitched_proofs.clone();
             let segment_limit = proving_args.segment_limit;
             let elf = image.1.to_vec();
+            let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
+                .await
+                .map_err(ProvingError::OtherError);
             let session_info = tokio::task::spawn_blocking(move || {
                 let mut builder = ExecutorEnv::builder();
                 // Set segment po2
@@ -732,6 +736,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             .context("spawn_blocking")
             .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
             .map_err(|e| ProvingError::ExecutionError(anyhow!(e)))?;
+            drop(r0vm_permit);
             let cycle_count = session_info
                 .segments
                 .iter()

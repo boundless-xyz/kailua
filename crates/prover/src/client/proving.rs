@@ -30,10 +30,19 @@ use kona_derive::prelude::ChainProvider;
 use kona_preimage::{HintWriterClient, PreimageOracleClient};
 use kona_proof::l1::OracleBlobProvider;
 use kona_proof::CachingOracle;
+use lazy_static::lazy_static;
 use risc0_zkvm::{Journal, Receipt};
 use std::fmt::Debug;
 use std::sync::Arc;
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tracing::{info, warn};
+
+lazy_static! {
+    pub static ref SEMAPHORE_WITGEN: Arc<Mutex<Arc<Semaphore>>> =
+        Arc::new(Mutex::new(Arc::new(Semaphore::new(Semaphore::MAX_PERMITS))));
+    pub static ref SEMAPHORE_R0VM: Arc<Mutex<Arc<Semaphore>>> =
+        Arc::new(Mutex::new(Arc::new(Semaphore::new(Semaphore::MAX_PERMITS))));
+}
 
 /// The size of the LRU cache in the oracle.
 pub const ORACLE_LRU_SIZE: usize = 1024;
@@ -72,6 +81,9 @@ where
     // Instantiate oracles
     let blob_provider = OracleBlobProvider::new(preimage_oracle.clone());
     // Run witness generation with oracles
+    let witgen_permit = acquire_owned_permit(SEMAPHORE_WITGEN.clone())
+        .await
+        .map_err(ProvingError::OtherError);
     let (proof_journal, witness, extra_frames, extra_proofs) =
         match (proving.use_hokulea(), proving.use_hana()) {
             (false, false) => {
@@ -173,6 +185,7 @@ where
                 (proof_journal, witness, vec![celestia_da_frame], vec![])
             }
         };
+    drop(witgen_permit);
 
     // Encode witness as frames
     let witness_frames = process_witness(
@@ -195,6 +208,30 @@ where
         prove_snark,
     )
     .await
+}
+
+pub async fn acquire_owned_permit(
+    semaphore: Arc<Mutex<Arc<Semaphore>>>,
+) -> anyhow::Result<OwnedSemaphorePermit> {
+    semaphore
+        .lock()
+        .await
+        .clone()
+        .acquire_owned()
+        .await
+        .context("Could not acquire witgen permit.")
+}
+
+/// Update the number of available permits
+pub async fn restrict_witgen_permits(count: usize) {
+    let mut witgen_sem_lock = SEMAPHORE_WITGEN.lock().await;
+    *witgen_sem_lock = Arc::new(Semaphore::new(count));
+}
+
+/// Update the number of available permits
+pub async fn restrict_r0vm_permits(count: usize) {
+    let mut execute_sem_lock = SEMAPHORE_R0VM.lock().await;
+    *execute_sem_lock = Arc::new(Semaphore::new(count));
 }
 
 pub fn process_witness(

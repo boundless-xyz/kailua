@@ -44,6 +44,12 @@ pub struct ProvingArgs {
     /// How many threads to use for computing proofs
     #[clap(long, env, default_value_t = 1)]
     pub num_concurrent_proofs: u64,
+    /// How many threads to use for witness generation
+    #[clap(long, env)]
+    pub num_concurrent_witgens: Option<usize>,
+    /// How many threads to use for zkvm executors
+    #[clap(long, env)]
+    pub num_concurrent_r0vm: Option<usize>,
     /// Whether to bypass loading rollup chain configurations from the kona registry
     #[clap(long, env, default_value_t = false)]
     pub bypass_chain_registry: bool,
