@@ -18,16 +18,12 @@ use alloy::eips::BlockNumberOrTag;
 use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::hex::FromHex;
 use alloy_primitives::keccak256;
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use human_bytes::human_bytes;
 use kailua_sync::provider::optimism::OpNodeProvider;
-use kailua_sync::{await_tel, retry_res_ctx_timeout};
 use kona_host::KeyValueStore;
 use kona_preimage::{PreimageKey, PreimageKeyType};
 use kona_proof::BootInfo;
-use opentelemetry::global::tracer;
-use opentelemetry::trace::FutureExt;
-use opentelemetry::trace::{TraceContextExt, Tracer};
 use std::error::Error;
 use std::ops::DerefMut;
 use tracing::{error, info};
@@ -39,32 +35,15 @@ pub async fn run_payload_client(
     op_node_provider: OpNodeProvider,
     disk_kv_store: Option<RWLKeyValueStore>,
 ) -> anyhow::Result<bool> {
-    let tracer = tracer("kailua");
-    let context = opentelemetry::Context::current_with_span(tracer.start("run_payload_client"));
-
     let kv = create_split_kv_store(&Default::default(), disk_kv_store)
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
     /* todo:
        1. Test endpoint success/failure automatically
        2. abort any attempt to use executionWitness endpoint if failure confirmed
-
     */
 
     while boot_info.claimed_l2_output_root != boot_info.agreed_l2_output_root {
-        // Read block hash
-        let block_hash = await_tel!(
-            context,
-            tracer,
-            "l2_provider get_block_by_number claimed_l2_block_number",
-            retry_res_ctx_timeout!(l2_provider
-                .get_block_by_number(BlockNumberOrTag::Number(boot_info.claimed_l2_block_number))
-                .await
-                .context("l2_provider get_block_by_number claimed_l2_block_number")?
-                .ok_or_else(|| anyhow!("Failed to claimed l2 block")))
-        )
-        .header
-        .hash;
         // Go back one block
         boot_info.claimed_l2_block_number -= 1;
         boot_info.claimed_l2_output_root = op_node_provider
@@ -73,7 +52,11 @@ pub async fn run_payload_client(
 
         // Check if block payload had already been processed
         let kv_lock = kv.read().await;
-        let exec_wit_key = PreimageKey::new(block_hash.0, PreimageKeyType::GlobalGeneric);
+        // we insert a special marker using the inverted output root as a global generic
+        let exec_wit_key = PreimageKey::new(
+            (!boot_info.claimed_l2_output_root).0,
+            PreimageKeyType::GlobalGeneric,
+        );
         if kv_lock.get(exec_wit_key.into()).is_some() {
             info!(
                 "Payload for {} already processed.",
