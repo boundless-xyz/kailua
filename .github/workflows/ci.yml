@@ -206,7 +206,7 @@ jobs:
         run: svm install $SOLC_VERSION
       - run: svm use $SOLC_VERSION
       - name: Install Foundry toolchain
-        uses: foundry-rs/foundry-toolchain@v1.0.0
+        uses: foundry-rs/foundry-toolchain@v1
         with:
           version: v1.0.0
       - name: Run forge fmt
