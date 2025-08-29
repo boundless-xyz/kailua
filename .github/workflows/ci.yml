@@ -206,14 +206,9 @@ jobs:
         run: svm install $SOLC_VERSION
       - run: svm use $SOLC_VERSION
       - name: Install Foundry toolchain
-        shell: bash
-        run: |
-          curl -L https://foundry.paradigm.xyz | bash
-          echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
-      - name: Install Foundry 1.0.0
-        shell: bash
-        continue-on-error: true
-        run: foundryup -b v1.0.0
+        uses: foundry-rs/foundry-toolchain@v1.0.0
+        with:
+          version: v1.0.0
       - name: Run forge fmt
         run:  forge fmt --check --root crates/contracts/foundry
 
