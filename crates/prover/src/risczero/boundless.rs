@@ -154,6 +154,9 @@ pub struct MarketProviderConfig {
     /// Time in seconds between attempts to check order status
     #[clap(long, env, required = false, default_value_t = 12)]
     pub boundless_order_check_interval: u64,
+    /// Whether to enable upload caching
+    #[clap(long, env, required = false, default_value_t = true)]
+    pub boundless_enable_upload_caching: bool,
 
     /// Time in seconds between attempts to submit new orders
     #[clap(long, env, required = false, default_value_t = 12)]
@@ -643,11 +646,13 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     // Upload program
     let bin_file_name = binary_file_name(image.0);
     let program_url = loop {
-        match read_bincoded_file::<String>(&bin_file_name)
-            .await
-            .map(|s| Url::parse(&s))
-        {
-            Ok(Ok(url)) => {
+        match (
+            market.boundless_enable_upload_caching,
+            read_bincoded_file::<String>(&bin_file_name)
+                .await
+                .map(|s| Url::parse(&s)),
+        ) {
+            (true, Ok(Ok(url))) => {
                 info!("Using Kailua binary previously uploaded to {url}.");
                 break url;
             }
@@ -753,11 +758,13 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     // Pass in input frames
     let inp_file_name = input_file_name(image.0, journal.clone());
     let input_url = loop {
-        match read_bincoded_file::<String>(&inp_file_name)
-            .await
-            .map(|s| Url::parse(&s))
-        {
-            Ok(Ok(url)) => {
+        match (
+            market.boundless_enable_upload_caching,
+            read_bincoded_file::<String>(&inp_file_name)
+                .await
+                .map(|s| Url::parse(&s)),
+        ) {
+            (true, Ok(Ok(url))) => {
                 info!("Using input data previously uploaded to {url}.");
                 break url;
             }
