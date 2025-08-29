@@ -153,6 +153,10 @@ pub struct MarketProviderConfig {
     /// Time in seconds between attempts to check order status
     #[clap(long, env, required = false, default_value_t = 12)]
     pub boundless_order_check_interval: u64,
+
+    /// Time in seconds between attempts to submit new orders
+    #[clap(long, env, required = false, default_value_t = 12)]
+    pub boundless_order_submission_cooldown: u64,
 }
 
 impl MarketProviderConfig {
@@ -294,7 +298,7 @@ impl MarketProviderConfig {
 
 lazy_static! {
     static ref BOUNDLESS_REQ: Arc<Mutex<()>> = Default::default();
-    static ref BOUNDLESS_BIN: Arc<Mutex<()>> = Default::default();
+    static ref BOUNDLESS_NET: Arc<Mutex<()>> = Default::default();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -647,8 +651,8 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 break url;
             }
             _ => {
-                // Only one prover may upload the binary at a time
-                let Ok(boundless_bin_lock) = BOUNDLESS_BIN.try_lock() else {
+                // Only one prover may upload data at a time
+                let Ok(boundless_net_lock) = BOUNDLESS_NET.try_lock() else {
                     sleep(Duration::from_secs(1)).await;
                     continue;
                 };
@@ -675,7 +679,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 {
                     warn!("Failed to cache Kailua program url: {err:?}");
                 }
-                drop(boundless_bin_lock);
+                drop(boundless_net_lock);
                 break program_url;
             }
         };
@@ -743,58 +747,69 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
 
     // Pass in input frames
     let inp_file_name = input_file_name(image.0, journal.clone());
-    let input_url = match read_bincoded_file::<String>(&inp_file_name)
-        .await
-        .map(|s| Url::parse(&s))
-    {
-        Ok(Ok(url)) => {
-            info!("Using input data previously uploaded to {url}.");
-            url
-        }
-        _ => {
-            let mut guest_env_builder = GuestEnv::builder();
-            // Pass in input slices
-            for slice in witness_slices {
-                guest_env_builder = guest_env_builder.write_slice(slice);
+    let input_url = loop {
+        match read_bincoded_file::<String>(&inp_file_name)
+            .await
+            .map(|s| Url::parse(&s))
+        {
+            Ok(Ok(url)) => {
+                info!("Using input data previously uploaded to {url}.");
+                break url;
             }
-            // Pass in input frames
-            for frame in witness_frames {
-                guest_env_builder = guest_env_builder.write_frame(frame);
-            }
-            // Pass in proofs
-            for proof in stitched_proofs {
-                guest_env_builder = guest_env_builder
-                    .write(proof)
-                    .context("GuestEnvBuilder::write")
-                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
-            }
-            // Build input vector
-            let input = guest_env_builder
-                .build_vec()
-                .context("GuestEnvBuilder::build_vec")
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+            _ => {
+                // Only one prover may upload data at a time
+                let Ok(boundless_net_lock) = BOUNDLESS_NET.try_lock() else {
+                    sleep(Duration::from_secs(1)).await;
+                    continue;
+                };
 
-            // Upload input
-            info!("Uploading {} input data.", human_bytes(input.len() as f64));
-            let input_url = if let Some(r2) = r2_storage {
-                retry_res!(r2
-                    .upload_input(&input)
+                let mut guest_env_builder = GuestEnv::builder();
+                // Pass in input slices
+                for slice in witness_slices {
+                    guest_env_builder = guest_env_builder.write_slice(slice);
+                }
+                // Pass in input frames
+                for frame in witness_frames {
+                    guest_env_builder = guest_env_builder.write_frame(frame);
+                }
+                // Pass in proofs
+                for proof in stitched_proofs {
+                    guest_env_builder = guest_env_builder
+                        .write(proof)
+                        .context("GuestEnvBuilder::write")
+                        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+                }
+                // Build input vector
+                let input = guest_env_builder
+                    .build_vec()
+                    .context("GuestEnvBuilder::build_vec")
+                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+
+                // Upload input
+                info!("Uploading {} input data.", human_bytes(input.len() as f64));
+                let input_url = if let Some(r2) = r2_storage {
+                    retry_res!(r2
+                        .upload_input(&input)
+                        .await
+                        .context("R2Storage::upload_input"))
                     .await
-                    .context("R2Storage::upload_input"))
-                .await
-            } else {
-                retry_res!(boundless_client
-                    .upload_input(&input)
+                } else {
+                    retry_res!(boundless_client
+                        .upload_input(&input)
+                        .await
+                        .context("Client::upload_input"))
                     .await
-                    .context("Client::upload_input"))
-                .await
-            };
-            // avoid api rate limits
-            sleep(Duration::from_secs(2)).await;
-            if let Err(err) = save_to_bincoded_file(&input_url.to_string(), &inp_file_name).await {
-                warn!("Failed to cache Kailua input url: {err:?}");
+                };
+                drop(boundless_net_lock);
+                // avoid api rate limits
+                sleep(Duration::from_secs(2)).await;
+                if let Err(err) =
+                    save_to_bincoded_file(&input_url.to_string(), &inp_file_name).await
+                {
+                    warn!("Failed to cache Kailua input url: {err:?}");
+                }
+                break input_url;
             }
-            input_url
         }
     };
 
@@ -864,7 +879,14 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             .context("Client::submit_onchain()")
             .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
     };
-    info!("Boundless request 0x{request_id:x} submitted");
+    info!(
+        "Boundless request 0x{request_id:x} submitted. ({} sec cooldown).",
+        market.boundless_order_submission_cooldown
+    );
+    sleep(Duration::from_secs(
+        market.boundless_order_submission_cooldown,
+    ))
+    .await;
     drop(boundless_req_lock);
 
     if proving_args.skip_await_proof {
