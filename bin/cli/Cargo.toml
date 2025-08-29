@@ -75,3 +75,11 @@ rebuild-fpvm = [
     "kailua-prover/rebuild-fpvm",
     "kailua-sync/rebuild-fpvm",
 ]
+fpvm-v1 = [
+    "kailua-build/fpvm-v1",
+    "kailua-kona/fpvm-v1",
+    "kailua-prover/fpvm-v1",
+    "kailua-sync/fpvm-v1",
+    "kailua-proposer/fpvm-v1",
+    "kailua-validator/fpvm-v1"
+]

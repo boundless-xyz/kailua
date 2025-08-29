@@ -33,3 +33,4 @@ rebuild-fpvm = [
 rebuild-da = [
     "dep:canoe-steel-methods",
 ]
+fpvm-v1 = []

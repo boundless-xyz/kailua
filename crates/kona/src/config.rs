@@ -18,7 +18,10 @@ use kona_genesis::{AltDAConfig, RollupConfig, SystemConfig};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 use std::fmt::Debug;
 
-// pub const SAFE_DEFAULT_ADDRESS: Address = address!("4bfa59be6b388d77d213ce997acb0370b55157df");
+#[cfg(not(feature = "fpvm-v1"))]
+pub const SAFE_DEFAULT_ADDRESS: Address =
+    alloy_primitives::address!("4bfa59be6b388d77d213ce997acb0370b55157df");
+#[cfg(feature = "fpvm-v1")]
 pub const SAFE_DEFAULT_ADDRESS: Address = Address::ZERO;
 
 /// Returns a value based on the provided `Option` and a default value, with safety checks.
