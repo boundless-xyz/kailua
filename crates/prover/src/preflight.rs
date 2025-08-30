@@ -156,7 +156,7 @@ pub async fn concurrent_execution_preflight(
     let context =
         opentelemetry::Context::current_with_span(tracer.start("concurrent_execution_preflight"));
 
-    let l2_provider = retry_res_ctx_timeout!(20, args.kona.create_providers().await)
+    let l2_provider = retry_res_ctx_timeout!(20, args.create_providers().await)
         .await
         .l2;
     let starting_block = await_tel!(
