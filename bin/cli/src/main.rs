@@ -78,6 +78,9 @@ async fn main() -> anyhow::Result<()> {
         KailuaCli::Bonsai { args, .. } => {
             await_tel!(context, kailua_cli::bonsai::bonsai(args))
         }
+        KailuaCli::Boundless { args, .. } => {
+            await_tel!(context, kailua_cli::boundless::boundless(args))
+        }
         KailuaCli::Export { .. } => {
             await_tel!(context, kailua_cli::export::export(data_dir))
         }

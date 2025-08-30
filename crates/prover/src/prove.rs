@@ -46,7 +46,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
         None
     } else {
         Some(
-            retry_res_ctx_timeout!(20, args.kona.create_providers().await)
+            retry_res_ctx_timeout!(20, args.create_providers().await)
                 .await
                 .l2,
         )

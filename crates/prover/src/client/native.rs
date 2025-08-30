@@ -19,6 +19,7 @@ use alloy_primitives::B256;
 use anyhow::anyhow;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::executor::Execution;
+use kailua_sync::retry_res_ctx_timeout;
 use kona_host::{
     HintHandler, OfflineHostBackend, OnlineHostBackend, OnlineHostBackendCfg, PreimageServer,
     PreimageServerError, SharedKeyValueStore,
@@ -27,6 +28,7 @@ use kona_preimage::{
     BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer,
 };
 use kona_proof::HintType;
+use opentelemetry::trace::{TraceContextExt, Tracer};
 use risc0_zkvm::Receipt;
 use std::sync::Arc;
 use tokio::task;
@@ -74,10 +76,7 @@ pub async fn run_native_client(
             hint.host,
             preimage.host,
             kona_host::single::SingleChainHintHandler,
-            args.kona
-                .create_providers()
-                .await
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
+            retry_res_ctx_timeout!(20, args.create_providers().await).await,
             args.kona.is_offline(),
             HintType::L2PayloadWitness,
         )

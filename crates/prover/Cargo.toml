@@ -20,6 +20,7 @@ bincode.workspace = true
 bytemuck.workspace = true
 c-kzg.workspace = true
 clap.workspace = true
+futures.workspace = true
 hex.workspace = true
 human_bytes.workspace = true
 lazy_static.workspace = true
@@ -95,9 +96,4 @@ disable-dev-mode = [
 rebuild-fpvm = [
     "kailua-build/rebuild-fpvm",
     "kailua-sync/rebuild-fpvm"
-]
-fpvm-v1 = [
-    "kailua-build/fpvm-v1",
-    "kailua-kona/fpvm-v1",
-    "kailua-sync/fpvm-v1"
 ]
