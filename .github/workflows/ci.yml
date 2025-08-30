@@ -42,12 +42,12 @@ jobs:
           cargo fmt --all --check --manifest-path build/risczero/hokulea/Cargo.toml
 
   cargo-clippy:
+    runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]
     strategy:
       matrix:
         include:
           - os: Linux
             feature: default
-    runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,12 +81,12 @@ jobs:
           RUSTFLAGS: -Dwarnings
 
   cargo-test:
+    runs-on: [ self-hosted, prod, "${{ matrix.os }}", docker ]
     strategy:
       matrix:
         include:
           - os: Linux
             feature: default
-    runs-on: [ self-hosted, prod, docker, "${{ matrix.os }}" ]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -141,12 +141,12 @@ jobs:
         run: cargo test --locked --workspace --all --all-targets -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
 
   cargo-llvm-cov:
+    runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]
     strategy:
       matrix:
         include:
           - os: Linux
             feature: default
-    runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]
     steps:
       - uses: actions/checkout@v4
         with:
