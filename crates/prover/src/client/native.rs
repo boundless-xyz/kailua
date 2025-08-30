@@ -57,7 +57,6 @@ pub async fn run_native_client(
     force_attempt: bool,
     seek_proof: bool,
 ) -> Result<(), ProvingError> {
-
     // Instantiate data channels
     let hint = BidirectionalChannel::new().map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
     let preimage = BidirectionalChannel::new().map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
