@@ -127,7 +127,8 @@ async fn stop_devnet() {
     }
 }
 
-async fn start_devnet_or_clean() {
+async fn start_clean_devnet() {
+    stop_devnet().await;
     if let Err(err) = start_devnet().await {
         eprintln!("Error: {err}");
         stop_devnet().await;
@@ -141,7 +142,7 @@ async fn proposer_validator() {
     sleep(Duration::from_secs(5)).await;
 
     // Start the optimism devnet
-    start_devnet_or_clean().await;
+    start_clean_devnet().await;
     // update dgf to use kailua
     deploy_kailua_contracts(60).await.unwrap();
 
@@ -265,12 +266,17 @@ async fn proposer_validator() {
             proving: ProvingArgs {
                 payout_recipient_address: None,
                 segment_limit: 21,
+                max_block_derivations: usize::MAX,
+                max_block_executions: usize::MAX,
                 max_witness_size: 2_684_354_560,
                 num_concurrent_preflights: 1,
                 num_concurrent_proofs: 1,
+                num_concurrent_witgens: None,
+                num_concurrent_r0vm: None,
                 bypass_chain_registry: true,
                 skip_derivation_proof: false,
                 skip_await_proof: false,
+                clear_cache_data: true,
                 hokulea: Default::default(),
                 hana: Default::default(),
             },
@@ -319,12 +325,17 @@ async fn proposer_validator() {
             proving: ProvingArgs {
                 payout_recipient_address: None,
                 segment_limit: 21,
+                max_block_derivations: usize::MAX,
+                max_block_executions: usize::MAX,
                 max_witness_size: 2_684_354_560,
                 num_concurrent_preflights: 1,
                 num_concurrent_proofs: 1,
+                num_concurrent_witgens: None,
+                num_concurrent_r0vm: None,
                 bypass_chain_registry: true,
                 skip_derivation_proof: false,
                 skip_await_proof: false,
+                clear_cache_data: true,
                 hokulea: Default::default(),
                 hana: Default::default(),
             },
@@ -362,7 +373,7 @@ async fn prover() {
     sleep(Duration::from_secs(5)).await;
 
     // Start the optimism devnet
-    start_devnet_or_clean().await;
+    start_clean_devnet().await;
     // update dgf to use kailua
     deploy_kailua_contracts(60).await.unwrap();
 
@@ -446,12 +457,17 @@ async fn prover() {
         proving: ProvingArgs {
             payout_recipient_address: None,
             segment_limit: 21,
+            max_block_derivations: usize::MAX,
+            max_block_executions: usize::MAX,
             max_witness_size: 5 * 1024 * 1024, // 5 MB witness maximum
             num_concurrent_preflights: 4,
             num_concurrent_proofs: 2,
+            num_concurrent_witgens: None,
+            num_concurrent_r0vm: None,
             bypass_chain_registry: false,
             skip_derivation_proof: false,
             skip_await_proof: false,
+            clear_cache_data: true,
             hokulea: Default::default(),
             hana: Default::default(),
         },

@@ -13,13 +13,19 @@
 // limitations under the License.
 
 use crate::args::ProvingArgs;
+use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
 use crate::proof::save_to_bincoded_file;
 use crate::proof::{proof_id, read_bincoded_file};
 use crate::ProvingError;
 use alloy::eips::BlockNumberOrTag;
+use alloy::signers::k256::sha2::{Digest as _, Sha256};
 use alloy::transports::http::reqwest::Url;
 use alloy_primitives::{Address, B256, U256};
 use anyhow::{anyhow, Context};
+use aws_config::{BehaviorVersion, Region};
+use aws_sdk_s3::config::Credentials;
+use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::Client as S3Client;
 use boundless_market::alloy::providers::Provider;
 use boundless_market::alloy::signers::local::PrivateKeySigner;
 use boundless_market::client::{Client, ClientError};
@@ -55,6 +61,11 @@ pub struct BoundlessArgs {
     /// Storage provider for elf and input
     #[clap(flatten)]
     pub storage: Option<StorageProviderConfig>,
+
+    /// Custom domain for file retrieval.
+    /// Currently used to upload with a custom prefix and replace the download URL with this domain.
+    #[clap(long, env)]
+    pub r2_domain: Option<String>,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -143,6 +154,13 @@ pub struct MarketProviderConfig {
     /// Time in seconds between attempts to check order status
     #[clap(long, env, required = false, default_value_t = 12)]
     pub boundless_order_check_interval: u64,
+    /// Whether to enable upload caching
+    #[clap(long, env, required = false, default_value_t = true)]
+    pub boundless_enable_upload_caching: bool,
+
+    /// Time in seconds between attempts to submit new orders
+    #[clap(long, env, required = false, default_value_t = 12)]
+    pub boundless_order_submission_cooldown: u64,
 }
 
 impl MarketProviderConfig {
@@ -284,13 +302,14 @@ impl MarketProviderConfig {
 
 lazy_static! {
     static ref BOUNDLESS_REQ: Arc<Mutex<()>> = Default::default();
-    static ref BOUNDLESS_BIN: Arc<Mutex<()>> = Default::default();
+    static ref BOUNDLESS_NET: Arc<Mutex<()>> = Default::default();
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     market: MarketProviderConfig,
     storage: StorageProviderConfig,
+    r2_domain: Option<String>,
     image: (A, &[u8]),
     journal: Journal,
     witness_slices: Vec<Vec<u32>>,
@@ -299,7 +318,20 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     proving_args: &ProvingArgs,
 ) -> Result<Receipt, ProvingError> {
     info!("Running boundless client.");
-    // Instantiate storage provider
+
+    // Create R2 storage if configured
+    let r2_storage = if let Some(ref domain) = r2_domain {
+        Some(
+            R2Storage::new(&storage, domain)
+                .await
+                .context("Failed to create R2 storage")
+                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
+        )
+    } else {
+        None
+    };
+
+    // Instantiate storage provider (used when R2 is not configured)
     let storage_provider = StandardStorageProvider::from_config(&storage)
         .context("StandardStorageProvider::from_config")
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
@@ -362,6 +394,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
         match request_proof(
             &market,
             &boundless_client,
+            r2_storage.as_ref(),
             image,
             journal.clone(),
             &witness_slices,
@@ -581,6 +614,7 @@ pub async fn retrieve_proof(
 pub async fn request_proof<A: NoUninit + Into<Digest>>(
     market: &MarketProviderConfig,
     boundless_client: &Client,
+    r2_storage: Option<&R2Storage>,
     image: (A, &[u8]),
     journal: Journal,
     witness_slices: &Vec<Vec<u32>>,
@@ -612,17 +646,19 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     // Upload program
     let bin_file_name = binary_file_name(image.0);
     let program_url = loop {
-        match read_bincoded_file::<String>(&bin_file_name)
-            .await
-            .map(|s| Url::parse(&s))
-        {
-            Ok(Ok(url)) => {
+        match (
+            market.boundless_enable_upload_caching,
+            read_bincoded_file::<String>(&bin_file_name)
+                .await
+                .map(|s| Url::parse(&s)),
+        ) {
+            (true, Ok(Ok(url))) => {
                 info!("Using Kailua binary previously uploaded to {url}.");
                 break url;
             }
             _ => {
-                // Only one prover may upload the binary at a time
-                let Ok(boundless_bin_lock) = BOUNDLESS_BIN.try_lock() else {
+                // Only one prover may upload data at a time
+                let Ok(boundless_net_lock) = BOUNDLESS_NET.try_lock() else {
                     sleep(Duration::from_secs(1)).await;
                     continue;
                 };
@@ -631,17 +667,25 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                     "Uploading {} Kailua ELF.",
                     human_bytes(image.1.len() as f64)
                 );
-                let program_url = retry_res!(boundless_client
-                    .upload_program(image.1)
+                let program_url = if let Some(r2) = r2_storage {
+                    retry_res!(r2
+                        .upload_program(image.1)
+                        .await
+                        .context("R2Storage::upload_program"))
                     .await
-                    .context("Client::upload_program"))
-                .await;
+                } else {
+                    retry_res!(boundless_client
+                        .upload_program(image.1)
+                        .await
+                        .context("Client::upload_program"))
+                    .await
+                };
                 if let Err(err) =
                     save_to_bincoded_file(&program_url.to_string(), &bin_file_name).await
                 {
                     warn!("Failed to cache Kailua program url: {err:?}");
                 }
-                drop(boundless_bin_lock);
+                drop(boundless_net_lock);
                 break program_url;
             }
         };
@@ -670,6 +714,9 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             let preflight_stitched_proofs = stitched_proofs.clone();
             let segment_limit = proving_args.segment_limit;
             let elf = image.1.to_vec();
+            let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
+                .await
+                .map_err(ProvingError::OtherError);
             let session_info = tokio::task::spawn_blocking(move || {
                 let mut builder = ExecutorEnv::builder();
                 // Set segment po2
@@ -694,6 +741,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             .context("spawn_blocking")
             .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
             .map_err(|e| ProvingError::ExecutionError(anyhow!(e)))?;
+            drop(r0vm_permit);
             let cycle_count = session_info
                 .segments
                 .iter()
@@ -709,50 +757,71 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
 
     // Pass in input frames
     let inp_file_name = input_file_name(image.0, journal.clone());
-    let input_url = match read_bincoded_file::<String>(&inp_file_name)
-        .await
-        .map(|s| Url::parse(&s))
-    {
-        Ok(Ok(url)) => {
-            info!("Using input data previously uploaded to {url}.");
-            url
-        }
-        _ => {
-            let mut guest_env_builder = GuestEnv::builder();
-            // Pass in input slices
-            for slice in witness_slices {
-                guest_env_builder = guest_env_builder.write_slice(slice);
-            }
-            // Pass in input frames
-            for frame in witness_frames {
-                guest_env_builder = guest_env_builder.write_frame(frame);
-            }
-            // Pass in proofs
-            for proof in stitched_proofs {
-                guest_env_builder = guest_env_builder
-                    .write(proof)
-                    .context("GuestEnvBuilder::write")
-                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
-            }
-            // Build input vector
-            let input = guest_env_builder
-                .build_vec()
-                .context("GuestEnvBuilder::build_vec")
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
-
-            // Upload input
-            info!("Uploading {} input data.", human_bytes(input.len() as f64));
-            let input_url = retry_res!(boundless_client
-                .upload_input(&input)
+    let input_url = loop {
+        match (
+            market.boundless_enable_upload_caching,
+            read_bincoded_file::<String>(&inp_file_name)
                 .await
-                .context("Client::upload_input"))
-            .await;
-            // avoid api rate limits
-            sleep(Duration::from_secs(2)).await;
-            if let Err(err) = save_to_bincoded_file(&input_url.to_string(), &inp_file_name).await {
-                warn!("Failed to cache Kailua input url: {err:?}");
+                .map(|s| Url::parse(&s)),
+        ) {
+            (true, Ok(Ok(url))) => {
+                info!("Using input data previously uploaded to {url}.");
+                break url;
             }
-            input_url
+            _ => {
+                // Only one prover may upload data at a time
+                let Ok(boundless_net_lock) = BOUNDLESS_NET.try_lock() else {
+                    sleep(Duration::from_secs(1)).await;
+                    continue;
+                };
+
+                let mut guest_env_builder = GuestEnv::builder();
+                // Pass in input slices
+                for slice in witness_slices {
+                    guest_env_builder = guest_env_builder.write_slice(slice);
+                }
+                // Pass in input frames
+                for frame in witness_frames {
+                    guest_env_builder = guest_env_builder.write_frame(frame);
+                }
+                // Pass in proofs
+                for proof in stitched_proofs {
+                    guest_env_builder = guest_env_builder
+                        .write(proof)
+                        .context("GuestEnvBuilder::write")
+                        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+                }
+                // Build input vector
+                let input = guest_env_builder
+                    .build_vec()
+                    .context("GuestEnvBuilder::build_vec")
+                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+
+                // Upload input
+                info!("Uploading {} input data.", human_bytes(input.len() as f64));
+                let input_url = if let Some(r2) = r2_storage {
+                    retry_res!(r2
+                        .upload_input(&input)
+                        .await
+                        .context("R2Storage::upload_input"))
+                    .await
+                } else {
+                    retry_res!(boundless_client
+                        .upload_input(&input)
+                        .await
+                        .context("Client::upload_input"))
+                    .await
+                };
+                drop(boundless_net_lock);
+                // avoid api rate limits
+                sleep(Duration::from_secs(2)).await;
+                if let Err(err) =
+                    save_to_bincoded_file(&input_url.to_string(), &inp_file_name).await
+                {
+                    warn!("Failed to cache Kailua input url: {err:?}");
+                }
+                break input_url;
+            }
         }
     };
 
@@ -822,7 +891,14 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             .context("Client::submit_onchain()")
             .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
     };
-    info!("Boundless request 0x{request_id:x} submitted");
+    info!(
+        "Boundless request 0x{request_id:x} submitted. ({} sec cooldown).",
+        market.boundless_order_submission_cooldown
+    );
+    sleep(Duration::from_secs(
+        market.boundless_order_submission_cooldown,
+    ))
+    .await;
     drop(boundless_req_lock);
 
     if proving_args.skip_await_proof {
@@ -861,4 +937,91 @@ pub fn input_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) ->
 pub struct BoundlessRequest {
     /// Number of cycles that require proving
     pub cycle_count: u64,
+}
+
+/// R2 Storage implementation for manual uploads with custom prefix
+// TODO this is a workaround to handle our specific R2 usage. This logic encapsulates the ability to
+// upload the file with a custom prefix (defaulting to v2/kailua) and also using a custom domain for
+// retrieving the files. If neither of these are needed, the base S3 client will be sufficient.
+pub struct R2Storage {
+    client: S3Client,
+    bucket: String,
+    domain: String,
+}
+
+impl R2Storage {
+    pub async fn new(
+        storage_config: &StorageProviderConfig,
+        r2_domain: &str,
+    ) -> anyhow::Result<Self> {
+        // Extract S3 configuration
+        let access_key = storage_config
+            .s3_access_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("S3 access key required for R2"))?;
+        let secret_key = storage_config
+            .s3_secret_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("S3 secret key required for R2"))?;
+        let bucket = storage_config
+            .s3_bucket
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("S3 bucket required for R2"))?;
+        let endpoint = storage_config
+            .s3_url
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("S3 URL (endpoint) required for R2"))?;
+        let region = storage_config
+            .aws_region
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("AWS region required for R2"))?;
+
+        let credentials = Credentials::new(access_key, secret_key, None, None, "R2");
+
+        let aws_config = aws_config::defaults(BehaviorVersion::latest())
+            .credentials_provider(credentials)
+            .endpoint_url(endpoint)
+            .region(Region::new(region.clone()))
+            .load()
+            .await;
+
+        let client = S3Client::new(&aws_config);
+
+        let domain = if r2_domain.starts_with("http://") || r2_domain.starts_with("https://") {
+            r2_domain.to_string()
+        } else {
+            format!("https://{r2_domain}")
+        };
+
+        Ok(Self {
+            client,
+            bucket: bucket.clone(),
+            domain,
+        })
+    }
+
+    async fn upload(&self, key: &str, data: Vec<u8>) -> anyhow::Result<Url> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .body(ByteStream::from(data))
+            .send()
+            .await
+            .context("Failed to upload to R2")?;
+
+        Ok(Url::parse(&format!("{}/{}", self.domain, key))?)
+    }
+
+    async fn upload_program(&self, program: &[u8]) -> anyhow::Result<Url> {
+        let image_id = risc0_zkvm::compute_image_id(program)?;
+        let key = format!("v2/kailua/program/{image_id}");
+        self.upload(&key, program.to_vec()).await
+    }
+
+    async fn upload_input(&self, input: &[u8]) -> anyhow::Result<Url> {
+        let digest = Sha256::digest(input);
+        let key = format!("v2/kailua/input/{}.bin", hex::encode(digest.as_slice()));
+        self.upload(&key, input.to_vec()).await
+    }
 }

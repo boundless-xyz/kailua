@@ -14,6 +14,7 @@
 
 use clap::Parser;
 use kailua_cli::KailuaCli;
+use kailua_prover::args::ProvingArgs;
 use kailua_sync::await_tel;
 use kailua_sync::telemetry::init_tracer_provider;
 use opentelemetry::global::{shutdown_tracer_provider, tracer};
@@ -44,12 +45,14 @@ async fn main() -> anyhow::Result<()> {
             await_tel!(context, kailua_proposer::propose::propose(args, data_dir))
         }
         KailuaCli::Validate { args, cli } => {
+            maybe_restrict_permits(&args.proving).await;
             await_tel!(
                 context,
                 kailua_validator::validate::validate(args, cli.v, data_dir)
             )
         }
         KailuaCli::Prove { args, .. } => {
+            maybe_restrict_permits(&args.proving).await;
             await_tel!(context, kailua_prover::prove::prove(args))
         }
         KailuaCli::TestFault {
@@ -66,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
             await_tel!(context, kailua_cli::bench::benchmark(args, cli.v))
         }
         KailuaCli::Demo { args, cli } => {
+            maybe_restrict_permits(&args.proving).await;
             await_tel!(context, kailua_cli::demo::demo(args, cli.v, data_dir))
         }
         KailuaCli::Rpc { args, .. } => {
@@ -91,4 +95,13 @@ async fn main() -> anyhow::Result<()> {
     shutdown_tracer_provider();
 
     Ok(())
+}
+
+pub async fn maybe_restrict_permits(args: &ProvingArgs) {
+    if let Some(witgen_permits) = args.num_concurrent_witgens {
+        kailua_prover::client::proving::restrict_witgen_permits(witgen_permits).await;
+    }
+    if let Some(executor_permits) = args.num_concurrent_r0vm {
+        kailua_prover::client::proving::restrict_r0vm_permits(executor_permits).await;
+    }
 }

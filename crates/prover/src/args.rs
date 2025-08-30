@@ -29,6 +29,12 @@ pub struct ProvingArgs {
     /// ZKVM Proving Segment Limit
     #[clap(long, env, required = false, default_value_t = 21)]
     pub segment_limit: u32,
+    /// Maximum number of blocks to derive per proof
+    #[clap(long, env, required = false, default_value_t = usize::MAX)]
+    pub max_block_derivations: usize,
+    /// Maximum number of blocks to execute per proof
+    #[clap(long, env, required = false, default_value_t = usize::MAX)]
+    pub max_block_executions: usize,
     /// Maximum input data size per proof
     #[clap(long, env, required = false, default_value_t = 2_684_354_560)]
     pub max_witness_size: usize,
@@ -38,6 +44,12 @@ pub struct ProvingArgs {
     /// How many threads to use for computing proofs
     #[clap(long, env, default_value_t = 1)]
     pub num_concurrent_proofs: u64,
+    /// How many threads to use for witness generation
+    #[clap(long, env)]
+    pub num_concurrent_witgens: Option<usize>,
+    /// How many threads to use for zkvm executors
+    #[clap(long, env)]
+    pub num_concurrent_r0vm: Option<usize>,
     /// Whether to bypass loading rollup chain configurations from the kona registry
     #[clap(long, env, default_value_t = false)]
     pub bypass_chain_registry: bool,
@@ -47,6 +59,9 @@ pub struct ProvingArgs {
     /// Whether to skip waiting for the proof generation process to complete
     #[clap(long, env, default_value_t = false)]
     pub skip_await_proof: bool,
+    /// Whether to keep cache data after successful completion
+    #[clap(long, env, default_value_t = false)]
+    pub clear_cache_data: bool,
 
     #[clap(flatten)]
     pub hokulea: HokuleaArgs,

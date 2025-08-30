@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::args::ProvingArgs;
+use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
 use crate::ProvingError;
 use anyhow::{anyhow, Context};
 use bonsai_sdk::non_blocking::{Client, SessionId, SnarkId};
@@ -79,6 +80,9 @@ pub async fn run_bonsai_client<A: NoUninit + Into<Digest>>(
     }
 
     // Create a session on Bonsai
+    let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
+        .await
+        .map_err(ProvingError::OtherError);
     let mut stark_session = create_stark_session(
         image,
         &client,
@@ -165,6 +169,7 @@ pub async fn run_bonsai_client<A: NoUninit + Into<Digest>>(
         }
     };
 
+    drop(r0vm_permit);
     if !prove_snark {
         return Ok(stark_receipt);
     }
