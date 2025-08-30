@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: cargo fmt kailua
         run: |
           cargo fmt --all --check
@@ -53,7 +53,7 @@ jobs:
         with:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install svm-rs
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
@@ -108,7 +108,7 @@ jobs:
         with:
           python-version: '3.13.1'
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install rzup
         env:
           ENV_PATH: test
@@ -152,7 +152,7 @@ jobs:
         with:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install nightly toolchain
         uses: risc0/risc0/.github/actions/rustup@main
         with:
@@ -181,7 +181,7 @@ jobs:
         with:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install svm-rs
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
@@ -202,7 +202,7 @@ jobs:
         with:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install svm-rs
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
@@ -225,7 +225,7 @@ jobs:
         with:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install svm-rs
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
