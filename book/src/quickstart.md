@@ -33,7 +33,7 @@ You can deploy a local optimism devnet equipped with Kailua through the followin
     * Builds the local cargo and foundry projects.
 3. `just devnet-up`
     * Starts a local OP Stack devnet using docker.
-    * Dumps the output into `devnetlog.txt` for inspection.
+    * Dumps the output into `devnet.log` for inspection.
 4. `just devnet-upgrade`
     * Upgrades the devnet to use the `KailuaGame` contract.
     * Assumes the default values of the local optimism devnet, but can take parameters.
