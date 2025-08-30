@@ -21,7 +21,7 @@ permissions:
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   SOLC_VERSION: 0.8.24
-  RISC0_VERSION: 2.1.0
+  RISC0_VERSION: 2.3.1
   RISC0_TOOLCHAIN_VERSION: 1.88.0
 
 jobs:
@@ -63,7 +63,10 @@ jobs:
         continue-on-error: true
         run: svm install $SOLC_VERSION
       - run: svm use $SOLC_VERSION
-      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install Foundry toolchain
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.0.0
       - name: cargo clippy kailua
         run: cargo clippy --locked --workspace --all --all-targets
         env:
@@ -87,6 +90,7 @@ jobs:
           - os: Linux
             feature: default
     runs-on: [ self-hosted, prod, docker, "${{ matrix.os }}" ]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -128,15 +132,10 @@ jobs:
         continue-on-error: true
         run: svm install $SOLC_VERSION
       - run: svm use $SOLC_VERSION
-#      - uses: foundry-rs/foundry-toolchain@v1
       - name: Install Foundry toolchain
-        shell: bash
-        run: |
-          curl -L https://foundry.paradigm.xyz | bash
-          echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
-      - name: Install Foundry 1.0.0
-        continue-on-error: true
-        run: foundryup -b v1.0.0
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.0.0
       - name: cargo test kailua
         run: cargo test --locked --workspace --all --all-targets -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
 
@@ -166,7 +165,10 @@ jobs:
         continue-on-error: true
         run: svm install $SOLC_VERSION
       - run: svm use $SOLC_VERSION
-      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install Foundry toolchain
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.0.0
       - name: Install cargo-llvm-cov
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
@@ -191,8 +193,11 @@ jobs:
         continue-on-error: true
         run: svm install $SOLC_VERSION
       - run: svm use $SOLC_VERSION
-      - uses: foundry-rs/foundry-toolchain@v1
-      - name: Run forge test
+      - name: Install Foundry toolchain
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.0.0
+      - name: Run forge fmt
         run:  forge fmt --check --root crates/contracts/foundry
 
   forge-test:
@@ -212,7 +217,10 @@ jobs:
         continue-on-error: true
         run: svm install $SOLC_VERSION
       - run: svm use $SOLC_VERSION
-      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install Foundry toolchain
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.0.0
       - name: Run forge test
         run:  forge test --root crates/contracts/foundry
 
@@ -235,7 +243,10 @@ jobs:
         continue-on-error: true
         run: svm install $SOLC_VERSION
       - run: svm use $SOLC_VERSION
-      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install Foundry toolchain
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.0.0
       - name: Run forge coverage
         id: coverage
         run: |

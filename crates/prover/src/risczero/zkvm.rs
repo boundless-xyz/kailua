@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::args::ProvingArgs;
+use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
 use crate::risczero::{KailuaProveInfo, KailuaSessionStats};
 use crate::ProvingError;
 use anyhow::{anyhow, Context};
@@ -37,6 +38,9 @@ pub async fn run_zkvm_client<A: NoUninit + Into<Digest>>(
 
     let segment_limit = proving_args.segment_limit;
     let elf = image.1.to_vec();
+    let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
+        .await
+        .map_err(ProvingError::OtherError);
     let prove_info = tokio::task::spawn_blocking(move || {
         let env = build_zkvm_env(
             witness_slices,
@@ -71,6 +75,7 @@ pub async fn run_zkvm_client<A: NoUninit + Into<Digest>>(
     .await
     .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
     .map_err(|e| ProvingError::ExecutionError(anyhow!(e)))?;
+    drop(r0vm_permit);
 
     info!(
         "Proof of {} total cycles ({} user cycles) computed.",

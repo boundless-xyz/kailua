@@ -50,3 +50,7 @@ devnet = []
 rebuild-fpvm = [
     "kailua-build/rebuild-fpvm",
 ]
+fpvm-v1 = [
+    "kailua-build/fpvm-v1",
+    "kailua-kona/fpvm-v1"
+]
