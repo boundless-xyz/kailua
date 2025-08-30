@@ -74,8 +74,7 @@ pub async fn run_native_client(
             hint.host,
             preimage.host,
             kona_host::single::SingleChainHintHandler,
-            args.kona
-                .create_providers()
+            args.create_providers()
                 .await
                 .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
             args.kona.is_offline(),

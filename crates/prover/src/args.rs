@@ -17,9 +17,13 @@ use crate::hokulea::args::HokuleaArgs;
 use crate::risczero::boundless::BoundlessArgs;
 use alloy_primitives::{Address, B256};
 use clap::Parser;
+use futures::FutureExt;
 use kailua_sync::args::{parse_address, parse_b256};
 use kailua_sync::telemetry::TelemetryArgs;
+use kona_host::single::{SingleChainHostError, SingleChainProviders};
 use std::cmp::Ordering;
+use std::panic::AssertUnwindSafe;
+use tracing::error;
 
 #[derive(Parser, Clone, Debug)]
 pub struct ProvingArgs {
@@ -174,6 +178,16 @@ pub struct ProveArgs {
 }
 
 impl ProveArgs {
+    pub async fn create_providers(&self) -> Result<SingleChainProviders, SingleChainHostError> {
+        AssertUnwindSafe(self.kona.clone().create_providers())
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|err| {
+                error!("kona::create_providers panicked: {err:?}");
+                Err(SingleChainHostError::Other("create_providers panicked"))
+            })
+    }
+
     pub fn to_arg_vec(&self) -> Vec<String> {
         // Prepare prover parameters
         let mut prove_args = vec![
