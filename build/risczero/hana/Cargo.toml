@@ -30,7 +30,7 @@ substrate-bn = "=0.6.0"
 kailua-hana = { path = "../../../crates/hana" }
 kailua-kona = { path = "../../../crates/kona" }
 
-risc0-zkvm = { version = "2.3.1", features = ["std", "heap-embedded-alloc", "unstable"] }
+risc0-zkvm = { version = "2.3.2", features = ["std", "heap-embedded-alloc", "unstable"] }
 
 [features]
 disable-dev-mode = [

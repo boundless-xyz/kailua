@@ -32,7 +32,7 @@ substrate-bn = "=0.6.0"
 kailua-kona = { path = "../../../crates/kona" }
 kailua-hokulea = { path = "../../../crates/hokulea" }
 
-risc0-zkvm = { version = "2.3.1", features = ["std", "heap-embedded-alloc", "unstable"] }
+risc0-zkvm = { version = "2.3.2", features = ["std", "heap-embedded-alloc", "unstable"] }
 hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "ed038f498a942f53f2d5218e26125aed7980f9cc", default-features = false }
 
 [features]
