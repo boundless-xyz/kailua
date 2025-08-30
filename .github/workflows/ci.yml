@@ -220,6 +220,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
