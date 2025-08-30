@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: cargo fmt kailua
         run: |
           cargo fmt --all --check
@@ -42,18 +42,18 @@ jobs:
           cargo fmt --all --check --manifest-path build/risczero/hokulea/Cargo.toml
 
   cargo-clippy:
+    runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]
     strategy:
       matrix:
         include:
           - os: Linux
             feature: default
-    runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install svm-rs
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
@@ -84,12 +84,12 @@ jobs:
           RUSTFLAGS: -Dwarnings
 
   cargo-test:
+    runs-on: [ self-hosted, prod, "${{ matrix.os }}", docker ]
     strategy:
       matrix:
         include:
           - os: Linux
             feature: default
-    runs-on: [ self-hosted, prod, docker, "${{ matrix.os }}" ]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -112,7 +112,7 @@ jobs:
         with:
           python-version: '3.13.1'
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install rzup
         env:
           ENV_PATH: test
@@ -140,18 +140,18 @@ jobs:
         run: cargo test --locked --workspace --all --all-targets -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
 
   cargo-llvm-cov:
+    runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]
     strategy:
       matrix:
         include:
           - os: Linux
             feature: default
-    runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install nightly toolchain
         uses: risc0/risc0/.github/actions/rustup@main
         with:
@@ -183,7 +183,7 @@ jobs:
         with:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install svm-rs
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
@@ -207,7 +207,7 @@ jobs:
         with:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install svm-rs
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
@@ -228,12 +228,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
-      - uses: risc0/risc0/.github/actions/sccache@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install svm-rs
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
