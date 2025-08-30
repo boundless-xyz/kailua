@@ -17,7 +17,6 @@ use alloy::signers::local::PrivateKeySigner;
 use alloy::transports::http::reqwest::Url;
 use anyhow::Context;
 use boundless_market::{Client, StandardStorageProvider, StorageProviderConfig};
-use kailua_build::KAILUA_FPVM_KONA_ID;
 use kailua_kona::journal::ProofJournal;
 use kailua_prover::proof::{proof_file_name, read_bincoded_file, save_to_bincoded_file};
 use kailua_prover::risczero::boundless::retrieve_proof;
@@ -55,21 +54,27 @@ pub async fn boundless(args: BoundlessArgs) -> anyhow::Result<()> {
     )
     .await;
 
+    let (request, _) = boundless_client
+        .fetch_proof_request(U256::from_str(args.request_id.as_str())?, None, None)
+        .await?;
+
+    let image_id = request.requirements.imageId.0;
+
     let receipt = retrieve_proof(
         &boundless_client,
         U256::from_str(args.request_id.as_str())?,
-        KAILUA_FPVM_KONA_ID,
+        image_id,
         12,
         current_time(),
     )
     .await?;
 
     let proof_journal = ProofJournal::decode_packed(receipt.journal.as_ref());
-    let file_name = proof_file_name(KAILUA_FPVM_KONA_ID, &proof_journal);
+    let file_name = proof_file_name(image_id, &proof_journal);
 
     info!("Writing proof to {file_name}.");
     if let Ok(prior_receipt) = read_bincoded_file::<Receipt>(&file_name).await {
-        if prior_receipt.verify(KAILUA_FPVM_KONA_ID).is_ok() {
+        if prior_receipt.verify(image_id).is_ok() {
             info!("Skipping overwriting valid receipt file.");
             return Ok(());
         }
