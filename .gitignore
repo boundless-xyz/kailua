@@ -14,6 +14,7 @@ optimism/
 *.out
 *.pb
 profiling/*
+kailua-cli
 kailua-elf
 kailua-input
 *.req

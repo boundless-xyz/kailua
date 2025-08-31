@@ -18,6 +18,7 @@ use std::path::PathBuf;
 
 pub mod bench;
 pub mod bonsai;
+pub mod boundless;
 pub mod config;
 pub mod demo;
 pub mod export;
@@ -91,6 +92,12 @@ pub enum KailuaCli {
         #[clap(flatten)]
         cli: CliArgs,
     },
+    Boundless {
+        #[clap(flatten)]
+        args: boundless::BoundlessArgs,
+        #[clap(flatten)]
+        cli: CliArgs,
+    },
     Export {
         #[clap(long, env)]
         data_dir: Option<PathBuf>,
@@ -120,6 +127,7 @@ impl KailuaCli {
             KailuaCli::Demo { cli, .. } => cli.v,
             KailuaCli::Rpc { cli, .. } => cli.v,
             KailuaCli::Bonsai { cli, .. } => cli.v,
+            KailuaCli::Boundless { cli, .. } => cli.v,
             KailuaCli::Export { cli, .. } => cli.v,
         }
     }
@@ -148,6 +156,7 @@ impl KailuaCli {
             KailuaCli::Demo { args, .. } => &args.telemetry,
             KailuaCli::Rpc { args, .. } => &args.sync.telemetry,
             KailuaCli::Bonsai { args, .. } => &args.telemetry,
+            KailuaCli::Boundless { args, .. } => &args.telemetry,
             KailuaCli::Export { telemetry, .. } => telemetry,
         }
     }

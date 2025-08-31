@@ -1,6 +1,6 @@
 [package]
 name = "kailua-fpvm-kona"
-version = "1.1.0"
+version = "1.0.3"
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.86"
@@ -29,7 +29,7 @@ substrate-bn = "=0.6.0"
 
 kailua-kona = { path = "../../../crates/kona" }
 
-risc0-zkvm = { version = "2.3.1", features = ["std", "heap-embedded-alloc", "unstable"] }
+risc0-zkvm = { version = "2.3.2", features = ["std", "heap-embedded-alloc", "unstable"] }
 
 [features]
 disable-dev-mode = [

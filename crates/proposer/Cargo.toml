@@ -32,7 +32,3 @@ devnet = [
 rebuild-fpvm = [
     "kailua-sync/rebuild-fpvm"
 ]
-fpvm-v1 = [
-    "kailua-kona/fpvm-v1",
-    "kailua-sync/fpvm-v1"
-]
