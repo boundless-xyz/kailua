@@ -619,7 +619,7 @@ pub async fn compute_cached_proof(
             .await
             .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
             {
-                // If we have used debug_executionWitness sucessfully then don't use Kona's
+                // If we have used debug_executionWitness successfully then don't use Kona's
                 // debug_executePayload logic as it doesn't have caching
                 args.kona.enable_experimental_witness_endpoint = false;
             }
