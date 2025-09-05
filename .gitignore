@@ -19,3 +19,4 @@ kailua-elf
 kailua-input
 *.req
 .env
+.logs
