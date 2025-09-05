@@ -7,7 +7,7 @@ default:
 build +ARGS="--release -F prove -F disable-dev-mode --locked":
   cargo build {{ARGS}}
 
-build-fpvm +ARGS="--release -F prove -F disable-dev-mode -F rebuild-fpvm --locked":
+build-fpvm +ARGS="--release -F prove -F disable-dev-mode -F rebuild-fpvm --locked -vvv":
   RISC0_USE_DOCKER=1 cargo build {{ARGS}}
 
 fmt:
@@ -36,7 +36,7 @@ devnet-fetch:
 
 devnet-build +ARGS="-F devnet -F prove": (build ARGS)
 
-devnet-build-fpvm +ARGS="-F devnet -F prove -F rebuild-fpvm": (build ARGS)
+devnet-build-fpvm +ARGS="-F devnet -F prove -F rebuild-fpvm -vvv": (build ARGS)
 
 devnet-up:
   make -C optimism devnet-up > devnet.log
@@ -144,7 +144,7 @@ bench l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data start length range count 
           --bench-count {{count}} \
           {{verbosity}}
 
-export-fpvm target="release" data="./" verbosity="":
+export-fpvm target="release" data="./build/risczero/src" verbosity="":
   ./target/{{target}}/kailua-cli export {{verbosity}} --data-dir {{data}}
 
 # Run the client program natively with the host program attached.
