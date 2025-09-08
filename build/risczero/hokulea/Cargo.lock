@@ -2578,7 +2578,7 @@ dependencies = [
 [[package]]
 name = "kona-derive"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2599,7 +2599,7 @@ dependencies = [
 [[package]]
 name = "kona-driver"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -2620,7 +2620,7 @@ dependencies = [
 [[package]]
 name = "kona-executor"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2644,7 +2644,7 @@ dependencies = [
 [[package]]
 name = "kona-genesis"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2663,7 +2663,7 @@ dependencies = [
 [[package]]
 name = "kona-hardforks"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -2674,7 +2674,7 @@ dependencies = [
 [[package]]
 name = "kona-mpt"
 version = "0.2.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -2687,7 +2687,7 @@ dependencies = [
 [[package]]
 name = "kona-preimage"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloy-primitives",
  "async-channel",
@@ -2701,7 +2701,7 @@ dependencies = [
 [[package]]
 name = "kona-proof"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2736,7 +2736,7 @@ dependencies = [
 [[package]]
 name = "kona-protocol"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloc-no-stdlib",
  "alloy-consensus",
@@ -2765,7 +2765,7 @@ dependencies = [
 [[package]]
 name = "kona-registry"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloy-chains",
  "alloy-op-hardforks",
@@ -2780,7 +2780,7 @@ dependencies = [
 [[package]]
 name = "kona-serde"
 version = "0.2.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv1.0.2#62a4ff9c0e6ac97b0993aba5b8e181be295b38b4"
+source = "git+https://github.com/boundless-xyz/kona?branch=derive#0b7aedbe387e7e41f705cfb36723b06d9de09ca3"
 dependencies = [
  "alloy-primitives",
  "serde",

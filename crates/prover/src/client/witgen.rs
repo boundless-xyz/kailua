@@ -81,6 +81,8 @@ where
         da_source_provider,
         execution_cache,
         Some(collection_target.clone()),
+        None,
+        None,
     )?;
     // Fix claimed output of captured executions
     // todo: use common::core::recover_collected_executions

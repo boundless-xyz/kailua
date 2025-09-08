@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::driver::CachedDriver;
 use crate::executor::{exec_precondition_hash, new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
@@ -110,6 +111,7 @@ impl<
 /// - Verifies the computed outputs:
 ///     - Ensures the final output hash matches the claimed L2 output root.
 ///     - Handles insufficient data to derive output roots by returning a matching zero hash.
+#[allow(clippy::too_many_arguments)]
 pub fn run_core_client<
     O: CommsClient + FlushableCache + Send + Sync + Debug,
     B: BlobProvider + Send + Sync + Debug + Clone,
@@ -121,7 +123,9 @@ pub fn run_core_client<
     mut beacon: B,
     da_source_provider: D,
     execution_cache: Vec<Arc<Execution>>,
-    collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
+    execution_trace: Option<Arc<Mutex<Vec<Execution>>>>,
+    derivation_cache: Option<CachedDriver>,
+    derivation_trace: Option<Arc<Mutex<CachedDriver>>>,
 ) -> anyhow::Result<(BootInfo, B256)>
 where
     <B as BlobProvider>::Error: Debug,
@@ -258,16 +262,6 @@ where
         let da_provider =
             da_source_provider.new_from_parts(l1_provider.clone(), beacon, &rollup_config);
 
-        let pipeline = OraclePipeline::new(
-            rollup_config.clone(),
-            cursor.clone(),
-            oracle.clone(),
-            da_provider,
-            l1_provider.clone(),
-            l2_provider.clone(),
-        )
-        .await
-        .context("OraclePipeline::new")?;
         let cached_executor = CachedExecutor {
             cache: {
                 // The cache elements will be popped from first to last
@@ -282,9 +276,34 @@ where
                 OpEvmFactory::default(),
                 None,
             ),
-            collection_target,
+            collection_target: execution_trace,
         };
-        let mut driver = Driver::new(cursor, cached_executor, pipeline);
+
+        let mut driver = match derivation_cache {
+            None => Driver::new(
+                cursor.clone(),
+                cached_executor,
+                OraclePipeline::new(
+                    rollup_config.clone(),
+                    cursor,
+                    oracle.clone(),
+                    da_provider,
+                    l1_provider.clone(),
+                    l2_provider.clone(),
+                )
+                .await
+                .context("OraclePipeline::new")?,
+            ),
+            Some(cached_driver) => cached_driver.uncache(
+                cached_executor,
+                rollup_config.clone(),
+                cursor,
+                oracle.clone(),
+                da_provider,
+                l1_provider.clone(),
+                l2_provider.clone(),
+            ),
+        };
 
         // Run the derivation pipeline until we are able to produce the output root of the claimed
         // L2 block.
@@ -315,6 +334,13 @@ where
         //                          EPILOGUE                          //
         ////////////////////////////////////////////////////////////////
         client::log("EPILOGUE");
+
+        // Record derivation driver state
+        if let Some(cache) = derivation_trace {
+            let mut cache = cache.lock().unwrap();
+            *cache = CachedDriver::from(driver);
+            // todo: combine with precondition hash
+        }
 
         let precondition_hash = precondition_data
             .map(|(precondition_validation_data, blobs)| {
@@ -429,6 +455,8 @@ pub mod tests {
             EthereumDataSourceProvider,
             vec![],
             Some(collection_target.clone()),
+            None,
+            None,
         )
         .context("run_core_client")?;
 
@@ -471,6 +499,8 @@ pub mod tests {
             OracleBlobProvider::new(oracle.clone()),
             EthereumDataSourceProvider,
             execution_cache,
+            None,
+            None,
             None,
         )
         .expect("run_core_client");

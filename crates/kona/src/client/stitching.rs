@@ -138,6 +138,8 @@ impl<
             self.0,
             execution_cache,
             None,
+            None,
+            None,
         )
         .expect("Failed to compute output hash.");
 

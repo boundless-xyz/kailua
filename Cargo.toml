@@ -152,3 +152,21 @@ opt-level = 3
 
 [patch.crates-io]
 boundless-market = { git = "https://github.com/boundless-xyz/boundless", branch = "revert-alloy-1.0" }
+
+[patch."https://github.com/op-rs/kona"]
+kona-cli = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-client = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-derive = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-driver = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-executor = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-genesis = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-host = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-interop = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-mpt = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-preimage = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-proof = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-protocol = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-providers-alloy = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-registry = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-std-fpvm = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
+kona-std-fpvm-proc = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }

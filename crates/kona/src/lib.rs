@@ -24,6 +24,8 @@ pub mod boot;
 pub mod client;
 /// Procedures for generating secure cryptographic commitments to rollup configuration settings.
 pub mod config;
+/// Implementation for caching support in derivation.
+pub mod driver;
 /// Implementation for an execution engine with caching support.
 pub mod executor;
 /// A tightly packed representation for extended execution trace results.
