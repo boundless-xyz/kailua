@@ -12,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::rkyv::driver::{
+    BatchReaderRkyv, BatchWithInclusionBlockRkyv, BlockInfoRkyv, ChannelRkyv, FrameRkyv,
+    SingleBatchRkyv, SpanBatchRkyv, SystemConfigRkyv,
+};
 use alloy_primitives::map::HashMap;
 use alloy_primitives::Bytes;
 use kona_derive::attributes::StatefulAttributesBuilder;
@@ -112,7 +116,7 @@ where
 pub struct CachedDerivationPipeline {
     /// A list of prepared [OpAttributesWithParent] to be used by the derivation pipeline
     /// consumer.
-    pub prepared: VecDeque<OpAttributesWithParent>,
+    pub prepared: Vec<OpAttributesWithParent>,
     /// A handle to the next attributes.
     pub attributes: CachedAttributesQueueStage,
 }
@@ -137,7 +141,7 @@ impl CachedDerivationPipeline {
                 l1_chain_provider,
                 l2_chain_provider.clone(),
             ),
-            prepared: self.prepared,
+            prepared: self.prepared.into(),
             rollup_config: cfg,
             l2_chain_provider,
         }
@@ -152,17 +156,18 @@ where
 {
     fn from(value: ProviderDerivationPipeline<L1, L2, DA>) -> Self {
         Self {
-            prepared: value.prepared,
+            prepared: value.prepared.into(),
             attributes: CachedAttributesQueueStage::from(value.attributes),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedAttributesQueueStage {
     /// Whether the current batch is the last in its span.
     pub is_last_in_span: bool,
     /// The current batch being processed.
+    #[rkyv(with = rkyv::with::Map<SingleBatchRkyv>)]
     pub batch: Option<SingleBatch>,
     /// The previous stage of the derivation pipeline.
     pub prev: CachedBatchProvider,
@@ -212,7 +217,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum CachedBatchProvider {
     None,
     BatchStream(CachedBatchStream),
@@ -304,9 +309,10 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedBatchQueue {
     /// The l1 block ref
+    #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
     pub origin: Option<BlockInfo>,
     /// A consecutive, time-centric window of L1 Blocks.
     /// Every L1 origin of unsafe L2 Blocks must be included in this list.
@@ -314,10 +320,13 @@ pub struct CachedBatchQueue {
     /// the block is popped from this list.
     /// If new L2 Block's L1 origin is not included in this list, fetch and
     /// push it to the list.
+    #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
     pub l1_blocks: Vec<BlockInfo>,
     /// A set of batches in order from when we've seen them.
+    #[rkyv(with = rkyv::with::Map<BatchWithInclusionBlockRkyv>)]
     pub batches: Vec<BatchWithInclusionBlock>,
     /// A set of cached [SingleBatch]es derived from [SpanBatch]es.
+    #[rkyv(with = rkyv::with::Map<SingleBatchRkyv>)]
     pub next_spans: Vec<SingleBatch>,
     /// The previous stage of the derivation pipeline.
     pub prev: CachedBatchStream,
@@ -370,9 +379,10 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedBatchValidator {
     /// The L1 origin of the batch sequencer.
+    #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
     pub origin: Option<BlockInfo>,
     /// A consecutive, time-centric window of L1 Blocks.
     /// Every L1 origin of unsafe L2 Blocks must be included in this list.
@@ -380,6 +390,7 @@ pub struct CachedBatchValidator {
     /// the block is popped from this list.
     /// If new L2 Block's L1 origin is not included in this list, fetch and
     /// push it to the list.
+    #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
     pub l1_blocks: Vec<BlockInfo>,
     /// The previous stage of the derivation pipeline.
     pub prev: CachedBatchStream,
@@ -424,12 +435,14 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedBatchStream {
     /// There can only be a single staged span batch.
+    #[rkyv(with = rkyv::with::Map<SpanBatchRkyv>)]
     pub span: Option<SpanBatch>,
     /// A buffer of single batches derived from the [SpanBatch].
-    pub buffer: VecDeque<SingleBatch>,
+    #[rkyv(with = rkyv::with::Map<SingleBatchRkyv>)]
+    pub buffer: Vec<SingleBatch>,
     /// The previous stage in the derivation pipeline.
     pub prev: CachedChannelReader,
 }
@@ -452,7 +465,7 @@ impl CachedBatchStream {
                 .prev
                 .uncache(cfg.clone(), da_provider, l1_chain_provider),
             span: self.span,
-            buffer: self.buffer,
+            buffer: self.buffer.into(),
             config: cfg,
             fetcher: l2_chain_provider,
         }
@@ -468,15 +481,16 @@ where
     fn from(value: BatchStreamStage<DA, L1, L2>) -> Self {
         Self {
             span: value.span,
-            buffer: value.buffer,
+            buffer: value.buffer.into(),
             prev: CachedChannelReader::from(value.prev),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelReader {
     /// The batch reader.
+    #[rkyv(with = rkyv::with::Map<BatchReaderRkyv>)]
     pub next_batch: Option<BatchReader>,
     /// The previous stage of the derivation pipeline.
     pub prev: CachedChannelProvider,
@@ -516,7 +530,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum CachedChannelProvider {
     None,
     FrameQueue(CachedFrameQueue),
@@ -590,12 +604,13 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelBank {
     /// Map of channels by ID.
+    #[rkyv(with = rkyv::with::MapKV<rkyv::with::Identity, ChannelRkyv>)]
     pub channels: HashMap<ChannelId, Channel>,
     /// Channels in FIFO order.
-    pub channel_queue: VecDeque<ChannelId>,
+    pub channel_queue: Vec<ChannelId>,
     /// The previous stage of the derivation pipeline.
     pub prev: CachedFrameQueue,
 }
@@ -614,7 +629,7 @@ impl CachedChannelBank {
         ChannelBank {
             cfg: cfg.clone(),
             channels: self.channels,
-            channel_queue: self.channel_queue,
+            channel_queue: self.channel_queue.into(),
             prev: self.prev.uncache(cfg, da_provider, l1_chain_provider),
         }
     }
@@ -628,15 +643,16 @@ where
     fn from(value: ChannelBank<FrameQueueStage<DA, L1>>) -> Self {
         Self {
             channels: value.channels,
-            channel_queue: value.channel_queue,
+            channel_queue: value.channel_queue.into(),
             prev: CachedFrameQueue::from(value.prev),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelAssembler {
     /// The current [Channel] being assembled.
+    #[rkyv(with = rkyv::with::Map<ChannelRkyv>)]
     pub channel: Option<Channel>,
     /// The previous stage of the derivation pipeline.
     pub prev: CachedFrameQueue,
@@ -674,10 +690,11 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedFrameQueue {
     /// The current frame queue.
-    pub queue: VecDeque<Frame>,
+    #[rkyv(with = rkyv::with::Map<FrameRkyv>)]
+    pub queue: Vec<Frame>,
     /// The previous stage in the pipeline.
     pub prev: CachedL1Retrieval,
 }
@@ -697,7 +714,7 @@ impl CachedFrameQueue {
             prev: self
                 .prev
                 .uncache(cfg.clone(), da_provider, l1_chain_provider),
-            queue: self.queue,
+            queue: self.queue.into(),
             rollup_config: cfg,
         }
     }
@@ -710,15 +727,16 @@ where
 {
     fn from(value: FrameQueueStage<DA, L1>) -> Self {
         Self {
-            queue: value.queue,
+            queue: value.queue.into(),
             prev: CachedL1Retrieval::from(value.prev),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedL1Retrieval {
     /// The current block ref.
+    #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
     pub next: Option<BlockInfo>,
     /// The previous stage in the pipeline.
     pub prev: CachedL1Traversal,
@@ -756,13 +774,15 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedL1Traversal {
     /// The current block in the traversal stage.
+    #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
     pub block: Option<BlockInfo>,
     /// Signals whether or not the traversal stage is complete.
     pub done: bool,
     /// The system config.
+    #[rkyv(with = SystemConfigRkyv)]
     pub system_config: SystemConfig,
 }
 
