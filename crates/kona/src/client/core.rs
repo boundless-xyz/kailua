@@ -337,8 +337,10 @@ where
 
         // Record derivation driver state
         if let Some(cache) = derivation_trace {
-            let mut cache = cache.lock().unwrap();
-            *cache = CachedDriver::from(driver);
+            #[cfg(not(target_os = "zkvm"))]
+            {
+                *cache.lock().unwrap() = CachedDriver::from(driver);
+            }
             // todo: combine with precondition hash
         }
 
