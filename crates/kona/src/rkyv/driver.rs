@@ -17,7 +17,6 @@ use alloy_eips::eip4895::Withdrawal;
 use alloy_eips::eip7685::Requests;
 use alloy_eips::{BlockNumHash, Typed2718};
 use alloy_evm::block::BlockExecutionResult;
-use alloy_primitives::map::HashMap;
 use alloy_primitives::{Bytes, Sealable, Signature, U256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use kona_driver::{PipelineCursor, TipCursor};
@@ -34,6 +33,16 @@ use rkyv::rancor::{Fallible, Source};
 use rkyv::ser::{Allocator, Writer};
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Archived, Place, Resolver};
+
+pub fn sorted<T: Ord>(mut values: Vec<T>) -> Vec<T> {
+    values.sort();
+    values
+}
+
+pub fn sorted_by_key<T1: Ord + Copy, T2>(mut values: Vec<(T1, T2)>) -> Vec<(T1, T2)> {
+    values.sort_by_key(|(k, _)| *k);
+    values
+}
 
 pub type RkyvedBlockInfo = ([u8; 32], u64, [u8; 32], u64);
 
@@ -240,7 +249,7 @@ pub type RkyvedChannel = (
     bool,
     u16,
     u16,
-    HashMap<u16, RkyvedFrame>,
+    Vec<(u16, RkyvedFrame)>,
     RkyvedBlockInfo,
 );
 
@@ -255,11 +264,13 @@ impl ChannelRkyv {
             value.closed,
             value.highest_frame_number,
             value.last_frame_number,
-            value
-                .inputs
-                .iter()
-                .map(|(k, v)| (*k, FrameRkyv::rkyv(v)))
-                .collect(),
+            sorted(
+                value
+                    .inputs
+                    .iter()
+                    .map(|(k, v)| (*k, FrameRkyv::rkyv(v)))
+                    .collect(),
+            ),
             BlockInfoRkyv::rkyv(&value.highest_l1_inclusion_block),
         )
     }
@@ -1399,16 +1410,20 @@ impl PipelineCursorRkyv {
             value.channel_timeout,
             BlockInfoRkyv::rkyv(&value.origin),
             value.origins.clone().into(),
-            value
-                .origin_infos
-                .iter()
-                .map(|(k, v)| (*k, BlockInfoRkyv::rkyv(v)))
-                .collect(),
-            value
-                .tips
-                .iter()
-                .map(|(k, v)| (*k, TipCursorRkyv::rkyv(v)))
-                .collect(),
+            sorted(
+                value
+                    .origin_infos
+                    .iter()
+                    .map(|(k, v)| (*k, BlockInfoRkyv::rkyv(v)))
+                    .collect(),
+            ),
+            sorted_by_key(
+                value
+                    .tips
+                    .iter()
+                    .map(|(k, v)| (*k, TipCursorRkyv::rkyv(v)))
+                    .collect(),
+            ),
         )
     }
 
@@ -1467,5 +1482,55 @@ where
     ) -> Result<PipelineCursor, D::Error> {
         let rkyved: RkyvedPipelineCursor = rkyv::Deserialize::deserialize(field, deserializer)?;
         Ok(PipelineCursorRkyv::raw(rkyved))
+    }
+}
+
+pub type IdChannel = (ChannelId, Channel);
+pub type RkyvedIdChannel = (ChannelId, RkyvedChannel);
+
+pub struct IdChannelRkyv;
+
+impl IdChannelRkyv {
+    pub fn rkyv(value: &IdChannel) -> RkyvedIdChannel {
+        (value.0, ChannelRkyv::rkyv(&value.1))
+    }
+
+    pub fn raw(rkyved: RkyvedIdChannel) -> IdChannel {
+        (rkyved.0, ChannelRkyv::raw(rkyved.1))
+    }
+}
+
+impl ArchiveWith<IdChannel> for IdChannelRkyv {
+    type Archived = Archived<RkyvedIdChannel>;
+    type Resolver = Resolver<RkyvedIdChannel>;
+
+    fn resolve_with(field: &IdChannel, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = IdChannelRkyv::rkyv(field);
+        <RkyvedIdChannel as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<IdChannel, S> for IdChannelRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(field: &IdChannel, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        let rkyved = IdChannelRkyv::rkyv(field);
+        <RkyvedIdChannel as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedIdChannel>, IdChannel, D> for IdChannelRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedIdChannel>,
+        deserializer: &mut D,
+    ) -> Result<IdChannel, D::Error> {
+        let rkyved: RkyvedIdChannel = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(IdChannelRkyv::raw(rkyved))
     }
 }

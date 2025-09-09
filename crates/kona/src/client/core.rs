@@ -342,6 +342,7 @@ where
             // todo: combine with precondition hash
         }
 
+        // Record intermediate output commitment precondition
         let precondition_hash = precondition_data
             .map(|(precondition_validation_data, blobs)| {
                 precondition::validate_precondition(

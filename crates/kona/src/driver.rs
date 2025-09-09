@@ -13,11 +13,10 @@
 // limitations under the License.
 
 use crate::rkyv::driver::{
-    BatchReaderRkyv, BatchWithInclusionBlockRkyv, BlockInfoRkyv, ChannelRkyv, FrameRkyv,
-    HeadArtifactsRkyv, OpAttributesWithParentRkyv, PipelineCursorRkyv, SingleBatchRkyv,
+    sorted_by_key, BatchReaderRkyv, BatchWithInclusionBlockRkyv, BlockInfoRkyv, ChannelRkyv,
+    FrameRkyv, HeadArtifactsRkyv, OpAttributesWithParentRkyv, PipelineCursorRkyv, SingleBatchRkyv,
     SpanBatchRkyv, SystemConfigRkyv,
 };
-use alloy_primitives::map::HashMap;
 use alloy_primitives::Bytes;
 use kona_derive::attributes::StatefulAttributesBuilder;
 use kona_derive::pipeline::{
@@ -610,8 +609,8 @@ where
 #[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelBank {
     /// Map of channels by ID.
-    #[rkyv(with = rkyv::with::MapKV<rkyv::with::Identity, ChannelRkyv>)]
-    pub channels: HashMap<ChannelId, Channel>,
+    #[rkyv(with = rkyv::with::Map<IdChannelRkyv>)]
+    pub channels: Vec<(ChannelId, Channel)>,
     /// Channels in FIFO order.
     pub channel_queue: Vec<ChannelId>,
     /// The previous stage of the derivation pipeline.
@@ -631,7 +630,7 @@ impl CachedChannelBank {
     {
         ChannelBank {
             cfg: cfg.clone(),
-            channels: self.channels,
+            channels: self.channels.into_iter().collect(),
             channel_queue: self.channel_queue.into(),
             prev: self.prev.uncache(cfg, da_provider, l1_chain_provider),
         }
@@ -645,7 +644,7 @@ where
 {
     fn from(value: ChannelBank<FrameQueueStage<DA, L1>>) -> Self {
         Self {
-            channels: value.channels,
+            channels: sorted_by_key(value.channels.into_iter().collect()),
             channel_queue: value.channel_queue.into(),
             prev: CachedFrameQueue::from(value.prev),
         }
