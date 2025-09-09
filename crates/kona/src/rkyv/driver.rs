@@ -12,14 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_eips::Typed2718;
+use alloy_consensus::Header;
+use alloy_eips::eip4895::Withdrawal;
+use alloy_eips::eip7685::Requests;
+use alloy_eips::{BlockNumHash, Typed2718};
+use alloy_evm::block::BlockExecutionResult;
 use alloy_primitives::map::HashMap;
-use alloy_primitives::{Signature, U256};
+use alloy_primitives::{Bytes, Sealable, Signature, U256};
+use alloy_rpc_types_engine::PayloadAttributes;
+use kona_driver::{PipelineCursor, TipCursor};
+use kona_executor::BlockBuildingOutcome;
 use kona_genesis::SystemConfig;
 use kona_protocol::{
-    Batch, BatchReader, BatchWithInclusionBlock, BlockInfo, Channel, ChannelId, Frame, SingleBatch,
-    SpanBatch, SpanBatchBits, SpanBatchElement, SpanBatchTransactions,
+    Batch, BatchReader, BatchWithInclusionBlock, BlockInfo, Channel, ChannelId, Frame, L2BlockInfo,
+    OpAttributesWithParent, SingleBatch, SpanBatch, SpanBatchBits, SpanBatchElement,
+    SpanBatchTransactions,
 };
+use op_alloy_consensus::OpReceiptEnvelope;
+use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use rkyv::rancor::{Fallible, Source};
 use rkyv::ser::{Allocator, Writer};
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
@@ -638,5 +648,824 @@ where
         let rkyved: RkyvedBatchWithInclusionBlock =
             rkyv::Deserialize::deserialize(field, deserializer)?;
         Ok(BatchWithInclusionBlockRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedL2BlockInfo = (RkyvedBlockInfo, u64, [u8; 32], u64);
+
+pub struct L2BlockInfoRkyv;
+
+impl L2BlockInfoRkyv {
+    pub fn rkyv(value: &L2BlockInfo) -> RkyvedL2BlockInfo {
+        (
+            BlockInfoRkyv::rkyv(&value.block_info),
+            value.l1_origin.number,
+            value.l1_origin.hash.0,
+            value.seq_num,
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedL2BlockInfo) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfoRkyv::raw(rkyved.0),
+            l1_origin: BlockNumHash {
+                number: rkyved.1,
+                hash: rkyved.2.into(),
+            },
+            seq_num: rkyved.3,
+        }
+    }
+}
+
+impl ArchiveWith<L2BlockInfo> for L2BlockInfoRkyv {
+    type Archived = Archived<RkyvedL2BlockInfo>;
+    type Resolver = Resolver<RkyvedL2BlockInfo>;
+
+    fn resolve_with(field: &L2BlockInfo, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = L2BlockInfoRkyv::rkyv(field);
+        <RkyvedL2BlockInfo as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<L2BlockInfo, S> for L2BlockInfoRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(field: &L2BlockInfo, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        let rkyved = L2BlockInfoRkyv::rkyv(field);
+        <RkyvedL2BlockInfo as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedL2BlockInfo>, L2BlockInfo, D> for L2BlockInfoRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedL2BlockInfo>,
+        deserializer: &mut D,
+    ) -> Result<L2BlockInfo, D::Error> {
+        let rkyved: RkyvedL2BlockInfo = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(L2BlockInfoRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedWithdrawal = (u64, u64, [u8; 20], u64);
+
+pub struct WithdrawalRkyv;
+
+impl WithdrawalRkyv {
+    pub fn rkyv(value: &Withdrawal) -> RkyvedWithdrawal {
+        (
+            value.index,
+            value.validator_index,
+            *value.address.0,
+            value.amount,
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedWithdrawal) -> Withdrawal {
+        Withdrawal {
+            index: rkyved.0,
+            validator_index: rkyved.1,
+            address: rkyved.2.into(),
+            amount: rkyved.3,
+        }
+    }
+}
+
+impl ArchiveWith<Withdrawal> for WithdrawalRkyv {
+    type Archived = Archived<RkyvedWithdrawal>;
+    type Resolver = Resolver<RkyvedWithdrawal>;
+
+    fn resolve_with(field: &Withdrawal, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = WithdrawalRkyv::rkyv(field);
+        <RkyvedWithdrawal as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<Withdrawal, S> for WithdrawalRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(field: &Withdrawal, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        let rkyved = WithdrawalRkyv::rkyv(field);
+        <RkyvedWithdrawal as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedWithdrawal>, Withdrawal, D> for WithdrawalRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedWithdrawal>,
+        deserializer: &mut D,
+    ) -> Result<Withdrawal, D::Error> {
+        let rkyved: RkyvedWithdrawal = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(WithdrawalRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedPayloadAttributes = (
+    u64,
+    [u8; 32],
+    [u8; 20],
+    Option<Vec<RkyvedWithdrawal>>,
+    Option<[u8; 32]>,
+);
+
+pub struct PayloadAttributesRkyv;
+
+impl PayloadAttributesRkyv {
+    pub fn rkyv(value: &PayloadAttributes) -> RkyvedPayloadAttributes {
+        (
+            value.timestamp,
+            value.prev_randao.0,
+            *value.suggested_fee_recipient.0,
+            value
+                .withdrawals
+                .as_ref()
+                .map(|v| v.iter().map(WithdrawalRkyv::rkyv).collect()),
+            value.parent_beacon_block_root.as_ref().map(|r| r.0),
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedPayloadAttributes) -> PayloadAttributes {
+        PayloadAttributes {
+            timestamp: rkyved.0,
+            prev_randao: rkyved.1.into(),
+            suggested_fee_recipient: rkyved.2.into(),
+            withdrawals: rkyved
+                .3
+                .map(|v| v.into_iter().map(WithdrawalRkyv::raw).collect()),
+            parent_beacon_block_root: rkyved.4.map(|v| v.into()),
+        }
+    }
+}
+
+impl ArchiveWith<PayloadAttributes> for PayloadAttributesRkyv {
+    type Archived = Archived<RkyvedPayloadAttributes>;
+    type Resolver = Resolver<RkyvedPayloadAttributes>;
+
+    fn resolve_with(
+        field: &PayloadAttributes,
+        resolver: Self::Resolver,
+        out: Place<Self::Archived>,
+    ) {
+        let rkyved = PayloadAttributesRkyv::rkyv(field);
+        <RkyvedPayloadAttributes as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<PayloadAttributes, S> for PayloadAttributesRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(
+        field: &PayloadAttributes,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = PayloadAttributesRkyv::rkyv(field);
+        <RkyvedPayloadAttributes as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedPayloadAttributes>, PayloadAttributes, D>
+    for PayloadAttributesRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedPayloadAttributes>,
+        deserializer: &mut D,
+    ) -> Result<PayloadAttributes, D::Error> {
+        let rkyved: RkyvedPayloadAttributes = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(PayloadAttributesRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedOpPayloadAttributes = (
+    RkyvedPayloadAttributes,
+    Option<Vec<Vec<u8>>>,
+    Option<bool>,
+    Option<u64>,
+    Option<[u8; 8]>,
+);
+
+pub struct OpPayloadAttributesRkyv;
+
+impl OpPayloadAttributesRkyv {
+    pub fn rkyv(value: &OpPayloadAttributes) -> RkyvedOpPayloadAttributes {
+        (
+            PayloadAttributesRkyv::rkyv(&value.payload_attributes),
+            value
+                .transactions
+                .as_ref()
+                .map(|v| v.iter().map(|v| v.to_vec()).collect()),
+            value.no_tx_pool,
+            value.gas_limit,
+            value.eip_1559_params.map(|v| v.0),
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedOpPayloadAttributes) -> OpPayloadAttributes {
+        OpPayloadAttributes {
+            payload_attributes: PayloadAttributesRkyv::raw(rkyved.0),
+            transactions: rkyved.1.map(|v| v.into_iter().map(|v| v.into()).collect()),
+            no_tx_pool: rkyved.2,
+            gas_limit: rkyved.3,
+            eip_1559_params: rkyved.4.map(|v| v.into()),
+        }
+    }
+}
+
+impl ArchiveWith<OpPayloadAttributes> for OpPayloadAttributesRkyv {
+    type Archived = Archived<RkyvedOpPayloadAttributes>;
+    type Resolver = Resolver<RkyvedOpPayloadAttributes>;
+
+    fn resolve_with(
+        field: &OpPayloadAttributes,
+        resolver: Self::Resolver,
+        out: Place<Self::Archived>,
+    ) {
+        let rkyved = OpPayloadAttributesRkyv::rkyv(field);
+        <RkyvedOpPayloadAttributes as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<OpPayloadAttributes, S> for OpPayloadAttributesRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(
+        field: &OpPayloadAttributes,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = OpPayloadAttributesRkyv::rkyv(field);
+        <RkyvedOpPayloadAttributes as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedOpPayloadAttributes>, OpPayloadAttributes, D>
+    for OpPayloadAttributesRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedOpPayloadAttributes>,
+        deserializer: &mut D,
+    ) -> Result<OpPayloadAttributes, D::Error> {
+        let rkyved: RkyvedOpPayloadAttributes =
+            rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(OpPayloadAttributesRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedOpAttributesWithParent = (
+    RkyvedOpPayloadAttributes,
+    RkyvedL2BlockInfo,
+    RkyvedBlockInfo,
+    bool,
+);
+
+pub struct OpAttributesWithParentRkyv;
+
+impl OpAttributesWithParentRkyv {
+    pub fn rkyv(value: &OpAttributesWithParent) -> RkyvedOpAttributesWithParent {
+        (
+            OpPayloadAttributesRkyv::rkyv(&value.inner),
+            L2BlockInfoRkyv::rkyv(&value.parent),
+            BlockInfoRkyv::rkyv(&value.l1_origin),
+            value.is_last_in_span,
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedOpAttributesWithParent) -> OpAttributesWithParent {
+        OpAttributesWithParent {
+            inner: OpPayloadAttributesRkyv::raw(rkyved.0),
+            parent: L2BlockInfoRkyv::raw(rkyved.1),
+            l1_origin: BlockInfoRkyv::raw(rkyved.2),
+            is_last_in_span: rkyved.3,
+        }
+    }
+}
+
+impl ArchiveWith<OpAttributesWithParent> for OpAttributesWithParentRkyv {
+    type Archived = Archived<RkyvedOpAttributesWithParent>;
+    type Resolver = Resolver<RkyvedOpAttributesWithParent>;
+
+    fn resolve_with(
+        field: &OpAttributesWithParent,
+        resolver: Self::Resolver,
+        out: Place<Self::Archived>,
+    ) {
+        let rkyved = OpAttributesWithParentRkyv::rkyv(field);
+        <RkyvedOpAttributesWithParent as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<OpAttributesWithParent, S> for OpAttributesWithParentRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(
+        field: &OpAttributesWithParent,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = OpAttributesWithParentRkyv::rkyv(field);
+        <RkyvedOpAttributesWithParent as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedOpAttributesWithParent>, OpAttributesWithParent, D>
+    for OpAttributesWithParentRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedOpAttributesWithParent>,
+        deserializer: &mut D,
+    ) -> Result<OpAttributesWithParent, D::Error> {
+        let rkyved: RkyvedOpAttributesWithParent =
+            rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(OpAttributesWithParentRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedHeaderHashes = (
+    [u8; 32],
+    [u8; 32],
+    [u8; 20],
+    [u8; 32],
+    [u8; 32],
+    [u8; 32],
+    [u8; 256],
+    [u8; 32],
+    Option<[u8; 32]>,
+);
+
+pub type RkyvedHeader = (
+    RkyvedHeaderHashes,
+    [u8; 32],
+    u64,
+    u64,
+    u64,
+    u64,
+    Vec<u8>,
+    [u8; 8],
+    Option<u64>,
+    Option<u64>,
+    Option<u64>,
+    Option<[u8; 32]>,
+    Option<[u8; 32]>,
+);
+
+pub struct HeaderRkyv;
+
+impl HeaderRkyv {
+    pub fn rkyv(value: &Header) -> RkyvedHeader {
+        (
+            (
+                value.parent_hash.0,
+                value.ommers_hash.0,
+                *value.beneficiary.0,
+                value.state_root.0,
+                value.transactions_root.0,
+                value.receipts_root.0,
+                *value.logs_bloom.0,
+                value.mix_hash.0,
+                value.withdrawals_root.map(|v| v.0),
+            ),
+            value.difficulty.to_be_bytes(),
+            value.number,
+            value.gas_limit,
+            value.gas_used,
+            value.timestamp,
+            value.extra_data.to_vec(),
+            value.nonce.0,
+            value.base_fee_per_gas,
+            value.blob_gas_used,
+            value.excess_blob_gas,
+            value.parent_beacon_block_root.map(|v| v.0),
+            value.requests_hash.map(|v| v.0),
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedHeader) -> Header {
+        Header {
+            parent_hash: rkyved.0 .0.into(),
+            ommers_hash: rkyved.0 .1.into(),
+            beneficiary: rkyved.0 .2.into(),
+            state_root: rkyved.0 .3.into(),
+            transactions_root: rkyved.0 .4.into(),
+            receipts_root: rkyved.0 .5.into(),
+            logs_bloom: rkyved.0 .6.into(),
+            mix_hash: rkyved.0 .7.into(),
+            withdrawals_root: rkyved.0 .8.map(|v| v.into()),
+            difficulty: U256::from_be_bytes(rkyved.1),
+            number: rkyved.2,
+            gas_limit: rkyved.3,
+            gas_used: rkyved.4,
+            timestamp: rkyved.5,
+            extra_data: rkyved.6.into(),
+            nonce: rkyved.7.into(),
+            base_fee_per_gas: rkyved.8,
+            blob_gas_used: rkyved.9,
+            excess_blob_gas: rkyved.10,
+            parent_beacon_block_root: rkyved.11.map(|v| v.into()),
+            requests_hash: rkyved.12.map(|v| v.into()),
+        }
+    }
+}
+
+impl ArchiveWith<Header> for HeaderRkyv {
+    type Archived = Archived<RkyvedHeader>;
+    type Resolver = Resolver<RkyvedHeader>;
+
+    fn resolve_with(field: &Header, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = HeaderRkyv::rkyv(field);
+        <RkyvedHeader as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<Header, S> for HeaderRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(field: &Header, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        let rkyved = HeaderRkyv::rkyv(field);
+        <RkyvedHeader as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedHeader>, Header, D> for HeaderRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedHeader>,
+        deserializer: &mut D,
+    ) -> Result<Header, D::Error> {
+        let rkyved: RkyvedHeader = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(HeaderRkyv::raw(rkyved))
+    }
+}
+
+pub type OPBlockExecutionResult = BlockExecutionResult<OpReceiptEnvelope>;
+pub type RkyvedOPBlockExecutionResult = (Vec<Vec<u8>>, Vec<Vec<u8>>, u64);
+
+pub struct OPBlockExecutionResultRkyv;
+
+impl OPBlockExecutionResultRkyv {
+    pub fn rkyv(value: &OPBlockExecutionResult) -> RkyvedOPBlockExecutionResult {
+        (
+            value.receipts.iter().map(alloy_rlp::encode).collect(),
+            value
+                .requests
+                .clone()
+                .take()
+                .into_iter()
+                .map(|v| v.to_vec())
+                .collect(),
+            value.gas_used,
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedOPBlockExecutionResult) -> OPBlockExecutionResult {
+        OPBlockExecutionResult {
+            receipts: rkyved
+                .0
+                .into_iter()
+                .map(|v| alloy_rlp::decode_exact(&v).unwrap())
+                .collect(),
+            requests: Requests::new(rkyved.1.into_iter().map(|v| v.into()).collect()),
+            gas_used: rkyved.2,
+        }
+    }
+}
+
+impl ArchiveWith<OPBlockExecutionResult> for OPBlockExecutionResultRkyv {
+    type Archived = Archived<RkyvedOPBlockExecutionResult>;
+    type Resolver = Resolver<RkyvedOPBlockExecutionResult>;
+
+    fn resolve_with(
+        field: &OPBlockExecutionResult,
+        resolver: Self::Resolver,
+        out: Place<Self::Archived>,
+    ) {
+        let rkyved = OPBlockExecutionResultRkyv::rkyv(field);
+        <RkyvedOPBlockExecutionResult as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<OPBlockExecutionResult, S> for OPBlockExecutionResultRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(
+        field: &OPBlockExecutionResult,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = OPBlockExecutionResultRkyv::rkyv(field);
+        <RkyvedOPBlockExecutionResult as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedOPBlockExecutionResult>, OPBlockExecutionResult, D>
+    for OPBlockExecutionResultRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedOPBlockExecutionResult>,
+        deserializer: &mut D,
+    ) -> Result<OPBlockExecutionResult, D::Error> {
+        let rkyved: RkyvedOPBlockExecutionResult =
+            rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(OPBlockExecutionResultRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedBlockBuildingOutcome = (RkyvedHeader, RkyvedOPBlockExecutionResult);
+
+pub struct BlockBuildingOutcomeRkyv;
+
+impl BlockBuildingOutcomeRkyv {
+    pub fn rkyv(value: &BlockBuildingOutcome) -> RkyvedBlockBuildingOutcome {
+        (
+            HeaderRkyv::rkyv(value.header.as_ref()),
+            OPBlockExecutionResultRkyv::rkyv(&value.execution_result),
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedBlockBuildingOutcome) -> BlockBuildingOutcome {
+        BlockBuildingOutcome {
+            header: HeaderRkyv::raw(rkyved.0).seal_slow(),
+            execution_result: OPBlockExecutionResultRkyv::raw(rkyved.1),
+        }
+    }
+}
+
+impl ArchiveWith<BlockBuildingOutcome> for BlockBuildingOutcomeRkyv {
+    type Archived = Archived<RkyvedBlockBuildingOutcome>;
+    type Resolver = Resolver<RkyvedBlockBuildingOutcome>;
+
+    fn resolve_with(
+        field: &BlockBuildingOutcome,
+        resolver: Self::Resolver,
+        out: Place<Self::Archived>,
+    ) {
+        let rkyved = BlockBuildingOutcomeRkyv::rkyv(field);
+        <RkyvedBlockBuildingOutcome as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<BlockBuildingOutcome, S> for BlockBuildingOutcomeRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(
+        field: &BlockBuildingOutcome,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = BlockBuildingOutcomeRkyv::rkyv(field);
+        <RkyvedBlockBuildingOutcome as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedBlockBuildingOutcome>, BlockBuildingOutcome, D>
+    for BlockBuildingOutcomeRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedBlockBuildingOutcome>,
+        deserializer: &mut D,
+    ) -> Result<BlockBuildingOutcome, D::Error> {
+        let rkyved: RkyvedBlockBuildingOutcome =
+            rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(BlockBuildingOutcomeRkyv::raw(rkyved))
+    }
+}
+
+pub type HeadArtifacts = (BlockBuildingOutcome, Vec<Bytes>);
+pub type RkyvedHeadArtifacts = (RkyvedBlockBuildingOutcome, Vec<Vec<u8>>);
+
+pub struct HeadArtifactsRkyv;
+
+impl HeadArtifactsRkyv {
+    pub fn rkyv(value: &HeadArtifacts) -> RkyvedHeadArtifacts {
+        (
+            BlockBuildingOutcomeRkyv::rkyv(&value.0),
+            value.1.iter().map(|v| v.to_vec()).collect(),
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedHeadArtifacts) -> HeadArtifacts {
+        (
+            BlockBuildingOutcomeRkyv::raw(rkyved.0),
+            rkyved.1.into_iter().map(|v| v.into()).collect(),
+        )
+    }
+}
+
+impl ArchiveWith<HeadArtifacts> for HeadArtifactsRkyv {
+    type Archived = Archived<RkyvedHeadArtifacts>;
+    type Resolver = Resolver<RkyvedHeadArtifacts>;
+
+    fn resolve_with(field: &HeadArtifacts, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = HeadArtifactsRkyv::rkyv(field);
+        <RkyvedHeadArtifacts as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<HeadArtifacts, S> for HeadArtifactsRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(
+        field: &HeadArtifacts,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = HeadArtifactsRkyv::rkyv(field);
+        <RkyvedHeadArtifacts as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedHeadArtifacts>, HeadArtifacts, D> for HeadArtifactsRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedHeadArtifacts>,
+        deserializer: &mut D,
+    ) -> Result<HeadArtifacts, D::Error> {
+        let rkyved: RkyvedHeadArtifacts = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(HeadArtifactsRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedTipCursor = (RkyvedL2BlockInfo, RkyvedHeader, [u8; 32]);
+
+pub struct TipCursorRkyv;
+
+impl TipCursorRkyv {
+    pub fn rkyv(value: &TipCursor) -> RkyvedTipCursor {
+        (
+            L2BlockInfoRkyv::rkyv(&value.l2_safe_head),
+            HeaderRkyv::rkyv(value.l2_safe_head_header.as_ref()),
+            value.l2_safe_head_output_root.0,
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedTipCursor) -> TipCursor {
+        TipCursor {
+            l2_safe_head: L2BlockInfoRkyv::raw(rkyved.0),
+            l2_safe_head_header: HeaderRkyv::raw(rkyved.1).seal_slow(),
+            l2_safe_head_output_root: rkyved.2.into(),
+        }
+    }
+}
+
+impl ArchiveWith<TipCursor> for TipCursorRkyv {
+    type Archived = Archived<RkyvedTipCursor>;
+    type Resolver = Resolver<RkyvedTipCursor>;
+
+    fn resolve_with(field: &TipCursor, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = TipCursorRkyv::rkyv(field);
+        <RkyvedTipCursor as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<TipCursor, S> for TipCursorRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(field: &TipCursor, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        let rkyved = TipCursorRkyv::rkyv(field);
+        <RkyvedTipCursor as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedTipCursor>, TipCursor, D> for TipCursorRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedTipCursor>,
+        deserializer: &mut D,
+    ) -> Result<TipCursor, D::Error> {
+        let rkyved: RkyvedTipCursor = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(TipCursorRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedPipelineCursor = (
+    usize,
+    u64,
+    RkyvedBlockInfo,
+    Vec<u64>,
+    Vec<(u64, RkyvedBlockInfo)>,
+    Vec<(u64, RkyvedTipCursor)>,
+);
+
+pub struct PipelineCursorRkyv;
+
+impl PipelineCursorRkyv {
+    pub fn rkyv(value: &PipelineCursor) -> RkyvedPipelineCursor {
+        (
+            value.capacity,
+            value.channel_timeout,
+            BlockInfoRkyv::rkyv(&value.origin),
+            value.origins.clone().into(),
+            value
+                .origin_infos
+                .iter()
+                .map(|(k, v)| (*k, BlockInfoRkyv::rkyv(v)))
+                .collect(),
+            value
+                .tips
+                .iter()
+                .map(|(k, v)| (*k, TipCursorRkyv::rkyv(v)))
+                .collect(),
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedPipelineCursor) -> PipelineCursor {
+        PipelineCursor {
+            capacity: rkyved.0,
+            channel_timeout: rkyved.1,
+            origin: BlockInfoRkyv::raw(rkyved.2),
+            origins: rkyved.3.into(),
+            origin_infos: rkyved
+                .4
+                .into_iter()
+                .map(|(k, v)| (k, BlockInfoRkyv::raw(v)))
+                .collect(),
+            tips: rkyved
+                .5
+                .into_iter()
+                .map(|(k, v)| (k, TipCursorRkyv::raw(v)))
+                .collect(),
+        }
+    }
+}
+
+impl ArchiveWith<PipelineCursor> for PipelineCursorRkyv {
+    type Archived = Archived<RkyvedPipelineCursor>;
+    type Resolver = Resolver<RkyvedPipelineCursor>;
+
+    fn resolve_with(field: &PipelineCursor, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = PipelineCursorRkyv::rkyv(field);
+        <RkyvedPipelineCursor as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<PipelineCursor, S> for PipelineCursorRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(
+        field: &PipelineCursor,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = PipelineCursorRkyv::rkyv(field);
+        <RkyvedPipelineCursor as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedPipelineCursor>, PipelineCursor, D> for PipelineCursorRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedPipelineCursor>,
+        deserializer: &mut D,
+    ) -> Result<PipelineCursor, D::Error> {
+        let rkyved: RkyvedPipelineCursor = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(PipelineCursorRkyv::raw(rkyved))
     }
 }

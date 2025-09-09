@@ -14,7 +14,8 @@
 
 use crate::rkyv::driver::{
     BatchReaderRkyv, BatchWithInclusionBlockRkyv, BlockInfoRkyv, ChannelRkyv, FrameRkyv,
-    SingleBatchRkyv, SpanBatchRkyv, SystemConfigRkyv,
+    HeadArtifactsRkyv, OpAttributesWithParentRkyv, PipelineCursorRkyv, SingleBatchRkyv,
+    SpanBatchRkyv, SystemConfigRkyv,
 };
 use alloy_primitives::map::HashMap;
 use alloy_primitives::Bytes;
@@ -38,18 +39,19 @@ use kona_protocol::{
     OpAttributesWithParent, SingleBatch, SpanBatch,
 };
 use spin::RwLock;
-use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::sync::Arc;
 
 pub type KonaDriver<E, O, L1, L2, DA> =
     Driver<E, OraclePipeline<O, L1, L2, DA>, ProviderDerivationPipeline<L1, L2, DA>>;
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedDriver {
     /// Cursor to keep track of the L2 tip
+    #[rkyv(with = PipelineCursorRkyv)]
     pub cursor: PipelineCursor,
     /// The safe head's execution artifacts + Transactions
+    #[rkyv(with = rkyv::with::Map<HeadArtifactsRkyv>)]
     pub safe_head_artifacts: Option<(BlockBuildingOutcome, Vec<Bytes>)>,
     /// A pipeline abstraction.
     pub pipeline: CachedDerivationPipeline,
@@ -112,10 +114,11 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedDerivationPipeline {
     /// A list of prepared [OpAttributesWithParent] to be used by the derivation pipeline
     /// consumer.
+    #[rkyv(with = rkyv::with::Map<OpAttributesWithParentRkyv>)]
     pub prepared: Vec<OpAttributesWithParent>,
     /// A handle to the next attributes.
     pub attributes: CachedAttributesQueueStage,
