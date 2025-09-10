@@ -37,7 +37,7 @@ pub fn log(msg: &str) {
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use crate::oracle::WitnessOracle;
-    use crate::precondition::PreconditionValidationData;
+    use crate::precondition::proposal::ProposalPrecondition;
     use alloy_primitives::B256;
     use async_trait::async_trait;
     use copy_dir::copy_dir;
@@ -141,7 +141,7 @@ pub mod tests {
             }
         }
 
-        pub fn add_precondition_data(&self, data: PreconditionValidationData) -> B256 {
+        pub fn add_precondition_data(&self, data: ProposalPrecondition) -> B256 {
             block_in_place(move || {
                 let mut kv = self.kv.blocking_write();
                 let precondition_data_hash = data.hash();

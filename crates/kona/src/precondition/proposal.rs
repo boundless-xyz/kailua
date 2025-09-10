@@ -1,3 +1,4 @@
+// Copyright 2024, 2025 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,14 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::blobs::{hash_to_fe, BlobFetchRequest};
+use crate::blobs::hash_to_fe;
+use crate::blobs::BlobFetchRequest;
 use alloy_eips::eip4844::{Blob, FIELD_ELEMENTS_PER_BLOB};
 use alloy_primitives::B256;
-use anyhow::{bail, Context};
+use anyhow::bail;
+use anyhow::Context;
 use kona_derive::prelude::BlobProvider;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use kona_proof::errors::OracleProviderError;
-use risc0_zkvm::sha::{Impl as SHA2, Sha256};
+use risc0_zkvm::sha::Impl as SHA2;
+use risc0_zkvm::sha::Sha256;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt::Debug;
@@ -27,20 +31,18 @@ use std::sync::Arc;
 
 /// Represents the data required to validate the output roots published in a proposal.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum PreconditionValidationData {
-    Validity {
-        /// Represents the block height of the starting l2 root of the proposal.
-        proposal_l2_head_number: u64,
-        /// Represents the number of output roots expected in the proposal.
-        proposal_output_count: u64,
-        /// Represents the number of blocks covered by each output root.
-        output_block_span: u64,
-        /// A list of `BlobFetchRequest` instances, one for each blob published in the proposal.
-        blob_hashes: Vec<BlobFetchRequest>,
-    },
+pub struct ProposalPrecondition {
+    /// Represents the block height of the starting l2 root of the proposal.
+    pub proposal_l2_head_number: u64,
+    /// Represents the number of output roots expected in the proposal.
+    pub proposal_output_count: u64,
+    /// Represents the number of blocks covered by each output root.
+    pub output_block_span: u64,
+    /// A list of `BlobFetchRequest` instances, one for each blob published in the proposal.
+    pub blob_hashes: Vec<BlobFetchRequest>,
 }
 
-impl PreconditionValidationData {
+impl ProposalPrecondition {
     /// Converts the current instance of the object into a `Vec<u8>` (a vector of bytes).
     ///
     /// This function serializes the `self` object using the `pot::to_vec` method and
@@ -75,14 +77,7 @@ impl PreconditionValidationData {
     /// This method provides access to the `BlobFetchRequest` objects
     /// contained within the `PreconditionValidationData::Validity` variant.
     pub fn blob_fetch_requests(&self) -> &[BlobFetchRequest] {
-        match self {
-            PreconditionValidationData::Validity {
-                proposal_l2_head_number: _,
-                proposal_output_count: _,
-                output_block_span: _,
-                blob_hashes: requests,
-            } => requests.as_slice(),
-        }
+        self.blob_hashes.as_slice()
     }
 
     /// This function retrieves the `blob_hash` associated with each blob fetch request
@@ -106,19 +101,12 @@ impl PreconditionValidationData {
     /// - The final precondition hash is derived by invoking the `equivalence_precondition_hash`
     ///   function with the above components.
     pub fn precondition_hash(&self) -> B256 {
-        match self {
-            PreconditionValidationData::Validity {
-                proposal_l2_head_number,
-                proposal_output_count,
-                output_block_span,
-                blob_hashes: blobs,
-            } => validity_precondition_hash(
-                proposal_l2_head_number,
-                proposal_output_count,
-                output_block_span,
-                blobs_hash(blobs.iter().map(|b| &b.blob_hash.hash)),
-            ),
-        }
+        proposal_precondition_hash(
+            &self.proposal_l2_head_number,
+            &self.proposal_output_count,
+            &self.output_block_span,
+            blobs_hash(self.blob_hashes.iter().map(|b| &b.blob_hash.hash)),
+        )
     }
 }
 
@@ -148,7 +136,7 @@ impl PreconditionValidationData {
 /// 2. Concatenate these byte arrays with the bytes of the `blobs_hash`.
 /// 3. Hash the resulting concatenated byte array using the SHA-256 hashing algorithm.
 /// 4. Return the resulting 256-bit hash as a `B256` type.
-pub fn validity_precondition_hash(
+pub fn proposal_precondition_hash(
     proposal_l2_head_number: &u64,
     proposal_output_count: &u64,
     output_block_span: &u64,
@@ -211,25 +199,25 @@ pub fn blobs_hash<'a>(blob_hashes: impl Iterator<Item = &'a B256>) -> B256 {
 /// - Returns an error if there is an issue while retrieving the precondition validation data from the oracle.
 /// - Returns an error if deserialization of the data fails.
 /// - Returns an error if there is a problem fetching blobs from the blob provider.
-pub async fn load_precondition_data<
+pub async fn load_proposal_data<
     O: CommsClient + Send + Sync + Debug,
     B: BlobProvider + Send + Sync + Debug + Clone,
 >(
-    precondition_data_hash: B256,
+    proposal_data_hash: B256,
     oracle: Arc<O>,
     beacon: &mut B,
-) -> anyhow::Result<Option<(PreconditionValidationData, Vec<Blob>)>>
+) -> anyhow::Result<Option<(ProposalPrecondition, Vec<Blob>)>>
 where
     <B as BlobProvider>::Error: Debug,
 {
-    if precondition_data_hash.is_zero() {
+    if proposal_data_hash.is_zero() {
         return Ok(None);
     }
     // Read the blob references to fetch
-    let precondition_validation_data: PreconditionValidationData = pot::from_slice(
+    let precondition_validation_data: ProposalPrecondition = pot::from_slice(
         &oracle
             .get(PreimageKey::new(
-                *precondition_data_hash,
+                *proposal_data_hash,
                 PreimageKeyType::Sha256,
             ))
             .await
@@ -321,94 +309,93 @@ where
 ///
 /// This method assumes that the provided blobs have been already verified to correspond to the
 /// blob hashes supplied in the precondition validation data.
-pub fn validate_precondition(
-    precondition_validation_data: PreconditionValidationData,
+pub fn validate_proposal_precondition(
+    precondition_validation_data: ProposalPrecondition,
     blobs: Vec<Blob>,
     proof_l2_head_number: u64,
     output_roots: &[B256],
 ) -> anyhow::Result<B256> {
     let precondition_hash = precondition_validation_data.precondition_hash();
-    match precondition_validation_data {
-        PreconditionValidationData::Validity {
+    let ProposalPrecondition {
+        proposal_l2_head_number,
+        proposal_output_count,
+        output_block_span,
+        .. // `blob`/`blob_hashse` correspondence assumed to have been already validated
+    } = precondition_validation_data;
+    let proposal_root_claim_block_number =
+        proposal_l2_head_number + proposal_output_count * output_block_span;
+    // Ensure local and global block ranges match
+    if proof_l2_head_number < proposal_l2_head_number {
+        bail!(
+            "Validity precondition proposal starting block #{} > proof agreed l2 head #{}",
             proposal_l2_head_number,
-            proposal_output_count,
-            output_block_span,
-            blob_hashes: _, // correspondence with `blobs` assumed to have been already validated
-        } => {
-            let proposal_root_claim_block_number =
-                proposal_l2_head_number + proposal_output_count * output_block_span;
-            // Ensure local and global block ranges match
-            if proof_l2_head_number < proposal_l2_head_number {
-                bail!(
-                    "Validity precondition proposal starting block #{} > proof agreed l2 head #{}",
-                    proposal_l2_head_number,
-                    proof_l2_head_number
-                )
-            } else if proposal_root_claim_block_number < proof_l2_head_number {
-                bail!(
-                    "Validity precondition proposal ending block #{} < proof agreed l2 head #{}",
-                    proposal_l2_head_number,
-                    proof_l2_head_number
-                )
-            } else if output_roots.is_empty() {
-                // abort early if no validation is to take place
-                return Ok(precondition_hash);
+            proof_l2_head_number
+        )
+    } else if proposal_root_claim_block_number < proof_l2_head_number {
+        bail!(
+            "Validity precondition proposal ending block #{} < proof agreed l2 head #{}",
+            proposal_l2_head_number,
+            proof_l2_head_number
+        )
+    } else if output_roots.is_empty() {
+        // abort early if no validation is to take place
+        return Ok(precondition_hash);
+    }
+    // Calculate blob index pointer
+    for (i, output_hash) in output_roots.iter().enumerate() {
+        let output_block_number = proof_l2_head_number + i as u64 + 1;
+        if output_block_number > proposal_root_claim_block_number {
+            // We should not derive outputs beyond the proposal root claim
+            bail!("Output block #{output_block_number} > max block #{proposal_root_claim_block_number}.");
+        }
+        let offset = output_block_number - proposal_l2_head_number;
+        if offset % output_block_span != 0 {
+            // We only check equivalence every output_block_span blocks
+            continue;
+        }
+        let intermediate_output_offset = (offset / output_block_span) - 1;
+        let blob_index = (intermediate_output_offset / FIELD_ELEMENTS_PER_BLOB) as usize;
+        let fe_position = (intermediate_output_offset % FIELD_ELEMENTS_PER_BLOB) as usize;
+        let blob_fe_index = 32 * fe_position;
+        // Verify fe equivalence to computed outputs for all but last output
+        match intermediate_output_offset.cmp(&(proposal_output_count - 1)) {
+            Ordering::Less => {
+                // verify equivalence to blob
+                let blob_fe_slice = &blobs[blob_index][blob_fe_index..blob_fe_index + 32];
+                let output_fe = hash_to_fe(*output_hash);
+                let output_fe_bytes = output_fe.to_be_bytes::<32>();
+                if blob_fe_slice != output_fe_bytes.as_slice() {
+                    bail!(
+                        "Bad fe #{} in blob {} for block #{}: Expected {} found {} ",
+                        fe_position,
+                        blob_index,
+                        output_block_number,
+                        B256::try_from(output_fe_bytes.as_slice())?,
+                        B256::try_from(blob_fe_slice)?
+                    );
+                }
             }
-            // Calculate blob index pointer
-            for (i, output_hash) in output_roots.iter().enumerate() {
-                let output_block_number = proof_l2_head_number + i as u64 + 1;
-                if output_block_number > proposal_root_claim_block_number {
-                    // We should not derive outputs beyond the proposal root claim
-                    bail!("Output block #{output_block_number} > max block #{proposal_root_claim_block_number}.");
-                }
-                let offset = output_block_number - proposal_l2_head_number;
-                if offset % output_block_span != 0 {
-                    // We only check equivalence every output_block_span blocks
-                    continue;
-                }
-                let intermediate_output_offset = (offset / output_block_span) - 1;
-                let blob_index = (intermediate_output_offset / FIELD_ELEMENTS_PER_BLOB) as usize;
-                let fe_position = (intermediate_output_offset % FIELD_ELEMENTS_PER_BLOB) as usize;
-                let blob_fe_index = 32 * fe_position;
-                // Verify fe equivalence to computed outputs for all but last output
-                match intermediate_output_offset.cmp(&(proposal_output_count - 1)) {
-                    Ordering::Less => {
-                        // verify equivalence to blob
-                        let blob_fe_slice = &blobs[blob_index][blob_fe_index..blob_fe_index + 32];
-                        let output_fe = hash_to_fe(*output_hash);
-                        let output_fe_bytes = output_fe.to_be_bytes::<32>();
-                        if blob_fe_slice != output_fe_bytes.as_slice() {
-                            bail!(
-                                "Bad fe #{} in blob {} for block #{}: Expected {} found {} ",
-                                fe_position,
-                                blob_index,
-                                output_block_number,
-                                B256::try_from(output_fe_bytes.as_slice())?,
-                                B256::try_from(blob_fe_slice)?
-                            );
-                        }
-                    }
-                    Ordering::Equal => {
-                        if proposal_output_count > 1 {
-                            // verify zeroed trail data
-                            if blob_index != blobs.len() - 1 {
-                                bail!(
-                                    "Expected trail data to begin at blob {blob_index}/{}",
-                                    blobs.len()
-                                );
-                            } else if blobs[blob_index][blob_fe_index..].iter().any(|b| b != &0u8) {
-                                bail!("Found non-zero trail data in blob {blob_index} after {blob_fe_index}");
-                            }
-                        }
-                    }
-                    Ordering::Greater => {
-                        // (output_block_number <= max_block_number) implies:
-                        // (output_offset <= proposal_output_count)
-                        unreachable!(
-                            "Output offset {intermediate_output_offset} > output count {proposal_output_count}."
+            Ordering::Equal => {
+                if proposal_output_count > 1 {
+                    // verify zeroed trail data
+                    if blob_index != blobs.len() - 1 {
+                        bail!(
+                            "Expected trail data to begin at blob {blob_index}/{}",
+                            blobs.len()
+                        );
+                    } else if blobs[blob_index][blob_fe_index..].iter().any(|b| b != &0u8) {
+                        bail!(
+                            "Found non-zero trail data in blob {blob_index} after {blob_fe_index}"
                         );
                     }
                 }
+            }
+            Ordering::Greater => {
+                // (output_block_number <= max_block_number) implies:
+                // (output_offset <= proposal_output_count)
+                unreachable!(
+                    "Output offset {intermediate_output_offset} > output count {proposal_output_count}."
+                );
             }
         }
     }
@@ -424,6 +411,10 @@ mod tests {
     use crate::blobs::{intermediate_outputs, BlobWitnessData, PreloadedBlobProvider};
     use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::oracle::WitnessOracle;
+    use crate::precondition::proposal::{
+        load_proposal_data, proposal_precondition_hash, validate_proposal_precondition,
+        ProposalPrecondition,
+    };
     use alloy_eips::eip4844::{kzg_to_versioned_hash, IndexedBlobHash, BYTES_PER_BLOB};
     use kona_proof::block_on;
     use rayon::prelude::{IntoParallelIterator, ParallelIterator};
@@ -475,7 +466,7 @@ mod tests {
                 // println!("Testing with {proposal_l2_head_number} L2 head");
                 for output_block_span in [1, 2, 7, 11, 13] {
                     // println!("Testing with {output_block_span} output block span");
-                    let precondition_validation_data = PreconditionValidationData::Validity {
+                    let precondition_validation_data = ProposalPrecondition {
                         proposal_l2_head_number,
                         proposal_output_count,
                         output_block_span,
@@ -490,7 +481,7 @@ mod tests {
                     );
                     let oracle = Arc::new(oracle);
                     // load nothing when hash is zero
-                    assert!(block_on(load_precondition_data(
+                    assert!(block_on(load_proposal_data(
                         B256::ZERO,
                         oracle.clone(),
                         &mut beacon.clone(),
@@ -498,7 +489,7 @@ mod tests {
                     .unwrap()
                     .is_none());
                     // successfully load with proper hash
-                    let reloaded = block_on(load_precondition_data(
+                    let reloaded = block_on(load_proposal_data(
                         precondition_data_hash,
                         oracle.clone(),
                         &mut beacon.clone(),
@@ -514,8 +505,8 @@ mod tests {
 
     #[test]
     fn test_validate_precondition_bad_start() {
-        assert!(validate_precondition(
-            PreconditionValidationData::Validity {
+        assert!(validate_proposal_precondition(
+            ProposalPrecondition {
                 proposal_l2_head_number: 100,
                 proposal_output_count: 100,
                 output_block_span: 1,
@@ -540,8 +531,8 @@ mod tests {
             .into_iter()
             .map(|fe| B256::from(fe.to_be_bytes::<32>()))
             .collect::<Vec<_>>();
-        let result = validate_precondition(
-            PreconditionValidationData::Validity {
+        let result = validate_proposal_precondition(
+            ProposalPrecondition {
                 proposal_l2_head_number: 1,
                 proposal_output_count: 1024,
                 output_block_span: 1,
@@ -555,8 +546,8 @@ mod tests {
             .to_string()
             .contains("Expected trail data to begin at blob 0/2")));
         // fail to validate non-zero trail data after 1023 * 32 = 32768 bytes
-        let result = validate_precondition(
-            PreconditionValidationData::Validity {
+        let result = validate_proposal_precondition(
+            ProposalPrecondition {
                 proposal_l2_head_number: 1,
                 proposal_output_count: 1024,
                 output_block_span: 1,
@@ -575,8 +566,8 @@ mod tests {
         for i in 500 * 32..501 * 32 {
             blobs[0][i] = !blobs[0][i];
         }
-        let result = validate_precondition(
-            PreconditionValidationData::Validity {
+        let result = validate_proposal_precondition(
+            ProposalPrecondition {
                 proposal_l2_head_number: 1,
                 proposal_output_count: 1024,
                 output_block_span: 1,
@@ -613,7 +604,7 @@ mod tests {
                 // println!("Testing with {proposal_l2_head_number} L2 head");
                 for output_block_span in [1, 2, 7, 11, 13] {
                     // println!("Testing with {output_block_span} output block span");
-                    let precondition_validation_data = PreconditionValidationData::Validity {
+                    let precondition_validation_data = ProposalPrecondition {
                         proposal_l2_head_number,
                         proposal_output_count,
                         output_block_span,
@@ -632,7 +623,7 @@ mod tests {
                         assert_eq!(precondition_validation_data, recoded);
                     }
                     // check hashing
-                    let precondition_hash = validity_precondition_hash(
+                    let precondition_hash = proposal_precondition_hash(
                         &proposal_l2_head_number,
                         &proposal_output_count,
                         &output_block_span,
@@ -678,7 +669,7 @@ mod tests {
 
                             let proof_l2_head_number =
                                 proposal_l2_head_number + starting_offset * output_block_span;
-                            let result = validate_precondition(
+                            let result = validate_proposal_precondition(
                                 precondition_validation_data.clone(),
                                 blobs.clone(),
                                 proof_l2_head_number,

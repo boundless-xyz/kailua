@@ -23,7 +23,8 @@ use async_channel::{Receiver, Sender};
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{split_executions, stitch_boot_info};
-use kailua_kona::executor::{exec_precondition_hash, Execution};
+use kailua_kona::executor::Execution;
+use kailua_kona::precondition::execution::exec_precondition_hash;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kona_genesis::RollupConfig;
 use kona_proof::BootInfo;
@@ -568,6 +569,7 @@ pub async fn compute_cached_proof(
         bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
         args.proving.payout_recipient_address.unwrap_or_default(),
         precondition_hash,
+        vec![], // todo
         stitched_boot_info.clone(),
     );
     let skip_await_proof = args.proving.skip_await_proof;

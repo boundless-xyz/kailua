@@ -73,7 +73,7 @@ where
 
     // Run client
     let collection_target = Arc::new(Mutex::new(Vec::new()));
-    let (boot, precondition_hash) = kailua_kona::client::core::run_core_client(
+    let (boot, precondition_hash, _) = kailua_kona::client::core::run_core_client(
         precondition_validation_data_hash,
         oracle,
         stream,
@@ -120,6 +120,7 @@ where
         fpvm_image_id,
         payout_recipient,
         precondition_hash,
+        vec![], // todo
         stitched_boot_info,
     );
 

@@ -27,7 +27,7 @@ use alloy_rpc_types_beacon::sidecar::BlobData;
 use anyhow::{bail, Context};
 use kailua_contracts::{KailuaTournament::KailuaTournamentInstance, *};
 use kailua_kona::blobs::{hash_to_fe, intermediate_outputs, trail_data};
-use kailua_kona::precondition::blobs_hash;
+use kailua_kona::precondition::proposal::blobs_hash;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 use serde::{Deserialize, Serialize};

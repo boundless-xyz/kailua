@@ -22,7 +22,7 @@ use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::B256;
 use anyhow::{anyhow, bail, Context};
 use kailua_kona::blobs::BlobFetchRequest;
-use kailua_kona::precondition::PreconditionValidationData;
+use kailua_kona::precondition::proposal::ProposalPrecondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::{await_tel, retry_res_ctx_timeout};
 use kona_genesis::RollupConfig;
@@ -88,7 +88,7 @@ pub async fn get_blob_fetch_request(
 
 pub async fn fetch_precondition_data(
     cfg: &ProveArgs,
-) -> anyhow::Result<Option<PreconditionValidationData>> {
+) -> anyhow::Result<Option<ProposalPrecondition>> {
     // Determine precondition hash
     let hash_arguments = [
         cfg.precondition_params.is_empty(),
@@ -117,7 +117,7 @@ pub async fn fetch_precondition_data(
                 fetch_requests
                     .push(get_blob_fetch_request(&providers.l1, *block_hash, *blob_hash).await?);
             }
-            PreconditionValidationData::Validity {
+            ProposalPrecondition {
                 proposal_l2_head_number: cfg.precondition_params[0],
                 proposal_output_count: cfg.precondition_params[1],
                 output_block_span: cfg.precondition_params[2],

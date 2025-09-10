@@ -18,11 +18,14 @@ use crate::client::log;
 use crate::executor::Execution;
 use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
+use crate::precondition::Precondition;
 use alloy_primitives::{Address, B256};
 use kona_derive::prelude::BlobProvider;
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
+use risc0_zkvm::sha::Digestible;
 use std::fmt::Debug;
+use std::iter::zip;
 use std::sync::Arc;
 #[cfg(target_os = "zkvm")]
 use {
@@ -96,8 +99,9 @@ pub trait StitchingClient<
         fpvm_image_id: B256,
         payout_recipient_address: Address,
         stitched_executions: Vec<Vec<Execution>>,
+        stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-    ) -> (BootInfo, ProofJournal)
+    ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug;
 }
@@ -120,8 +124,9 @@ impl<
         fpvm_image_id: B256,
         payout_recipient_address: Address,
         stitched_executions: Vec<Vec<Execution>>,
+        stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-    ) -> (BootInfo, ProofJournal)
+    ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
     {
@@ -130,7 +135,7 @@ impl<
 
         // Attempt to recompute the output hash at the target block number using kona
         log("RUN");
-        let (boot, precondition_hash) = crate::client::core::run_core_client(
+        let (boot, precondition) = crate::client::core::run_core_client(
             precondition_validation_data_hash,
             oracle,
             stream,
@@ -162,7 +167,8 @@ impl<
             boot,
             fpvm_image_id,
             payout_recipient_address,
-            precondition_hash,
+            precondition,
+            stitched_preconditions,
             stitched_boot_info,
             #[cfg(target_os = "zkvm")]
             &proven_fpvm_journals,
@@ -348,7 +354,8 @@ pub fn stitch_executions(
         return;
     };
     for execution_trace in stitched_executions {
-        let precondition_hash = crate::executor::exec_precondition_hash(execution_trace.as_slice());
+        let precondition_hash =
+            crate::precondition::execution::exec_precondition_hash(execution_trace.as_slice());
         // Validate execution data
         for execution in execution_trace {
             // Validate receipts
@@ -457,34 +464,43 @@ pub fn stitch_boot_info(
     boot: BootInfo,
     fpvm_image_id: B256,
     payout_recipient_address: Address,
-    precondition_hash: B256,
-    stitched_boot_info: Vec<StitchedBootInfo>,
+    mut precondition: Precondition,
+    stitched_preconditions: Vec<Precondition>,
+    stitched_boot_infos: Vec<StitchedBootInfo>,
     #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
-) -> (BootInfo, ProofJournal) {
-    // Stitch boots together into a journal
-    let mut stitched_journal = ProofJournal::new(
+) -> (BootInfo, ProofJournal, Precondition) {
+    // Equal inputs
+    assert_eq!(stitched_preconditions.len(), stitched_boot_infos.len());
+
+    // Stitch boots together into one journal
+    let mut journal = ProofJournal::new(
         fpvm_image_id,
         payout_recipient_address,
-        precondition_hash,
+        B256::new(precondition.digest().into()),
         &boot,
     );
 
-    for stitched_boot in stitched_boot_info {
+    for (stitched_boot, stitched_precondition) in zip(stitched_boot_infos, stitched_preconditions) {
         // Require equivalence in reference head
-        assert_eq!(stitched_boot.l1_head, stitched_journal.l1_head);
+        assert_eq!(stitched_boot.l1_head, journal.l1_head);
         // Require progress in stitched boot
         assert_ne!(
             stitched_boot.agreed_l2_output_root,
             stitched_boot.claimed_l2_output_root
         );
-        // Require proof assumption
+        // Require equivalence in proposal precondition
+        assert_eq!(
+            precondition.proposal_blobs,
+            stitched_precondition.proposal_blobs
+        );
+        // Require proof for stitched boot
         verify_stitching_journal(
             fpvm_image_id,
             ProofJournal::new_stitched(
                 fpvm_image_id,
                 payout_recipient_address,
-                precondition_hash,
-                stitched_journal.config_hash,
+                B256::new(stitched_precondition.digest().into()),
+                journal.config_hash,
                 &stitched_boot,
             )
             .encode_packed(),
@@ -492,19 +508,37 @@ pub fn stitch_boot_info(
             proven_fpvm_journals,
         );
         // Require continuity
-        if stitched_boot.claimed_l2_output_root == stitched_journal.agreed_l2_output_root {
-            // Backward stitch
-            stitched_journal.agreed_l2_output_root = stitched_boot.agreed_l2_output_root;
-        } else if stitched_boot.agreed_l2_output_root == stitched_journal.claimed_l2_output_root {
-            // Forward stitch
-            stitched_journal.claimed_l2_output_root = stitched_boot.claimed_l2_output_root;
-            stitched_journal.claimed_l2_block_number = stitched_boot.claimed_l2_block_number;
+        if stitched_boot.claimed_l2_output_root == journal.agreed_l2_output_root {
+            // Backward stitch (stitched boot <= journal)
+            journal.agreed_l2_output_root = stitched_boot.agreed_l2_output_root;
+            // Stitched boot's trace must be our cache unless we have no cache
+            if !precondition.derivation_cache.is_zero() {
+                assert_eq!(
+                    precondition.derivation_cache,
+                    stitched_precondition.derivation_trace
+                );
+            }
+            // Update our cache to be that of the backwards stitched boot
+            precondition.derivation_cache = stitched_precondition.derivation_cache;
+        } else if stitched_boot.agreed_l2_output_root == journal.claimed_l2_output_root {
+            // Forward stitch (journal <= stitched boot)
+            journal.claimed_l2_output_root = stitched_boot.claimed_l2_output_root;
+            journal.claimed_l2_block_number = stitched_boot.claimed_l2_block_number;
+            // Stitched boot's cache must be our trace unless it has no cache
+            if !stitched_precondition.derivation_cache.is_zero() {
+                assert_eq!(
+                    precondition.derivation_trace,
+                    stitched_precondition.derivation_cache
+                );
+            }
+            // Update our trace to be that of the forwards stitched boot
+            precondition.derivation_trace = stitched_precondition.derivation_trace;
         } else {
             unimplemented!("No support for non-contiguous stitching.");
         }
     }
 
-    (boot, stitched_journal)
+    (boot, journal, precondition)
 }
 
 #[cfg(test)]
@@ -514,11 +548,12 @@ pub mod tests {
     use crate::client::core::tests::test_derivation;
     use crate::client::core::EthereumDataSourceProvider;
     use crate::client::tests::TestOracle;
-    use crate::precondition::PreconditionValidationData;
+    use crate::precondition::proposal::ProposalPrecondition;
     use alloy_primitives::b256;
     use anyhow::Context;
     use kona_proof::l1::OracleBlobProvider;
     use rayon::prelude::{IntoParallelIterator, ParallelIterator};
+    use std::iter::repeat;
     use tracing_subscriber::EnvFilter;
 
     fn setup() {
@@ -556,8 +591,9 @@ pub mod tests {
 
     pub fn test_stitching(
         boot_info: BootInfo,
-        precondition_validation_data: Option<PreconditionValidationData>,
+        precondition_validation_data: Option<ProposalPrecondition>,
         stitched_executions: Vec<Vec<Execution>>,
+        stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) {
         let precondition_hash = precondition_validation_data
@@ -567,6 +603,7 @@ pub mod tests {
             boot_info.clone(),
             precondition_validation_data,
             stitched_executions,
+            stitched_preconditions,
             stitched_boot_info,
         );
         validate_proof_journal(proof_journal, boot_info, precondition_hash);
@@ -574,8 +611,9 @@ pub mod tests {
 
     pub fn test_stitching_client(
         boot_info: BootInfo,
-        precondition_validation_data: Option<PreconditionValidationData>,
+        precondition_validation_data: Option<ProposalPrecondition>,
         stitched_executions: Vec<Vec<Execution>>,
+        stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) -> ProofJournal {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
@@ -592,6 +630,7 @@ pub mod tests {
                 B256::ZERO,
                 Address::ZERO,
                 stitched_executions,
+                stitched_preconditions,
                 stitched_boot_info,
             )
             .1
@@ -599,7 +638,7 @@ pub mod tests {
 
     pub fn test_stitching_boots(
         boot_info: BootInfo,
-        precondition_validation_data: Option<PreconditionValidationData>,
+        precondition_validation_data: Option<ProposalPrecondition>,
     ) -> anyhow::Result<()> {
         let stitched_executions =
             test_derivation(boot_info.clone(), precondition_validation_data.clone())
@@ -619,6 +658,10 @@ pub mod tests {
         let precondition_hash = precondition_validation_data
             .as_ref()
             .map(|d| d.precondition_hash());
+        let stitched_preconditions =
+            repeat(Precondition::default().proposal(precondition_hash.unwrap_or_default()))
+                .take(stitched_boot_info.len())
+                .collect::<Vec<_>>();
         // forward stitching pass
         let starting_block_number = stitched_executions
             .first()
@@ -635,6 +678,7 @@ pub mod tests {
             },
             precondition_validation_data.clone(),
             vec![],
+            stitched_preconditions.clone(),
             stitched_boot_info.clone(),
         );
         validate_proof_journal(proof_journal, boot_info.clone(), precondition_hash);
@@ -654,6 +698,7 @@ pub mod tests {
             },
             precondition_validation_data.clone(),
             vec![],
+            stitched_preconditions.clone().into_iter().rev().collect(),
             stitched_boot_info.clone().into_iter().rev().collect(),
         );
         validate_proof_journal(proof_journal, boot_info.clone(), precondition_hash);
@@ -661,8 +706,10 @@ pub mod tests {
         let n = stitched_executions.len();
         (0..n).into_par_iter().for_each(|i| {
             (i + 1..n).into_par_iter().for_each(|j| {
+                let mut stitched_preconditions = stitched_preconditions.clone();
                 let mut stitched_boot_info = stitched_boot_info.clone();
                 stitched_boot_info.swap(i, j);
+                stitched_preconditions.swap(i, j);
                 let result = std::panic::catch_unwind(|| {
                     test_stitching_client(
                         BootInfo {
@@ -675,6 +722,7 @@ pub mod tests {
                         },
                         precondition_validation_data.clone(),
                         vec![],
+                        stitched_preconditions.clone().into_iter().rev().collect(),
                         stitched_boot_info.clone().into_iter().rev().collect(),
                     )
                 });
@@ -687,7 +735,7 @@ pub mod tests {
 
     pub fn test_stitching_executions(
         boot_info: BootInfo,
-        precondition_validation_data: Option<PreconditionValidationData>,
+        precondition_validation_data: Option<ProposalPrecondition>,
     ) -> anyhow::Result<()> {
         let stitched_executions =
             test_derivation(boot_info.clone(), precondition_validation_data.clone())
@@ -700,6 +748,7 @@ pub mod tests {
             boot_info.clone(),
             precondition_validation_data.clone(),
             vec![stitched_executions.clone()],
+            vec![],
             vec![],
         );
         let n = stitched_executions.len();
@@ -714,6 +763,7 @@ pub mod tests {
             precondition_validation_data.clone(),
             vec![left.to_vec(), right.to_vec()],
             vec![],
+            vec![],
         );
         // fully fragmented pass
         test_stitching(
@@ -721,13 +771,15 @@ pub mod tests {
             precondition_validation_data.clone(),
             stitched_executions.into_iter().map(|e| vec![e]).collect(),
             vec![],
+            vec![],
         );
         Ok(())
     }
 
     pub fn test_stitching_execution_only(
         mut boot_info: BootInfo,
-        precondition_validation_data: Option<PreconditionValidationData>,
+        precondition_validation_data: Option<ProposalPrecondition>,
+        stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) -> anyhow::Result<()> {
         let stitched_executions =
@@ -742,7 +794,8 @@ pub mod tests {
             boot_info.clone(),
             precondition_validation_data.clone(),
             vec![stitched_executions.clone()],
-            stitched_boot_info.clone(),
+            stitched_preconditions,
+            stitched_boot_info,
         );
         Ok(())
     }
@@ -767,6 +820,7 @@ pub mod tests {
                 rollup_config: Default::default(),
             },
             None,
+            vec![],
             vec![],
             vec![],
         );
@@ -819,12 +873,13 @@ pub mod tests {
                 chain_id: 11155420,
                 rollup_config: Default::default(),
             },
-            Some(PreconditionValidationData::Validity {
+            Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
                 output_block_span: 100,
                 blob_hashes: vec![],
             }),
+            vec![],
             vec![],
             vec![],
         );
@@ -851,7 +906,7 @@ pub mod tests {
                 chain_id: 11155420,
                 rollup_config: Default::default(),
             },
-            Some(PreconditionValidationData::Validity {
+            Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
                 output_block_span: 100,
@@ -884,6 +939,7 @@ pub mod tests {
             },
             None,
             vec![],
+            vec![],
         )
         .unwrap();
 
@@ -909,7 +965,7 @@ pub mod tests {
                 chain_id: 11155420,
                 rollup_config: Default::default(),
             },
-            Some(PreconditionValidationData::Validity {
+            Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
                 output_block_span: 100,

@@ -69,7 +69,7 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
     ));
     let beacon = PreloadedBlobProvider::from(witness.blobs_witness);
 
-    let (_, proof_journal) = stitching_client.run_stitching_client(
+    let (_, proof_journal, _precondition) = stitching_client.run_stitching_client(
         witness.precondition_validation_data_hash,
         oracle.clone(),
         stream,
@@ -77,6 +77,7 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
         witness.fpvm_image_id,
         witness.payout_recipient_address,
         witness.stitched_executions,
+        witness.stitched_preconditions,
         witness.stitched_boot_info,
     );
 
@@ -128,6 +129,7 @@ pub mod tests {
             payout_recipient_address: Default::default(),
             precondition_validation_data_hash: Default::default(),
             stitched_executions: vec![stitched_executions],
+            stitched_preconditions: vec![],
             stitched_boot_info: vec![],
             fpvm_image_id: Default::default(),
         };

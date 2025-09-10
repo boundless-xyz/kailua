@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use alloy::primitives::FixedBytes;
-use kailua_kona::precondition::PreconditionValidationData;
+use kailua_kona::precondition::proposal::ProposalPrecondition;
 use risc0_zkvm::Receipt;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -49,7 +49,7 @@ pub enum Message {
     // The proposal and its parent
     Proposal {
         index: u64,
-        precondition_validation_data: Option<PreconditionValidationData>,
+        precondition_validation_data: Option<ProposalPrecondition>,
         l1_head: FixedBytes<32>,
         agreed_l2_head_hash: FixedBytes<32>,
         agreed_l2_output_root: FixedBytes<32>,

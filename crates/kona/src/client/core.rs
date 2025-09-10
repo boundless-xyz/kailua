@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::client;
 use crate::driver::CachedDriver;
-use crate::executor::{exec_precondition_hash, new_execution_cursor, CachedExecutor, Execution};
+use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
-use crate::{client, precondition};
+use crate::precondition::execution::exec_precondition_hash;
+use crate::precondition::{proposal, Precondition};
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Sealed, B256};
 use anyhow::{bail, Context};
@@ -118,7 +120,7 @@ pub fn run_core_client<
     B: BlobProvider + Send + Sync + Debug + Clone,
     D: DASourceProvider<OracleL1ChainProvider<O>, B>,
 >(
-    precondition_validation_data_hash: B256,
+    proposal_data_hash: B256,
     oracle: Arc<O>,
     stream: Arc<O>,
     mut beacon: B,
@@ -127,12 +129,12 @@ pub fn run_core_client<
     execution_trace: Option<Arc<Mutex<Vec<Execution>>>>,
     derivation_cache: Option<CachedDriver>,
     derivation_trace: Option<Arc<Mutex<CachedDriver>>>,
-) -> anyhow::Result<(BootInfo, B256)>
+) -> anyhow::Result<(BootInfo, Precondition)>
 where
     <B as BlobProvider>::Error: Debug,
 {
     let oracle = Arc::new(LocalOnceOracle::new(oracle));
-    let (boot, precondition_hash, output_hash) = kona_proof::block_on(async move {
+    let (boot, precondition, output_hash) = kona_proof::block_on(async move {
         ////////////////////////////////////////////////////////////////
         //                          PROLOGUE                          //
         ////////////////////////////////////////////////////////////////
@@ -197,7 +199,7 @@ where
             assert!(!execution_cache.is_empty());
 
             // Calculate precondition hash
-            let precondition_hash = exec_precondition_hash(execution_cache.as_slice());
+            let execution_trace_hash = exec_precondition_hash(execution_cache.as_slice());
 
             // Validate terminating block number
             assert_eq!(
@@ -233,20 +235,21 @@ where
             }
 
             // Return latest_output_root from closure to be validated against claimed_l2_output_root
-            return Ok((boot, precondition_hash, Some(latest_output_root)));
+            return Ok((
+                boot,
+                Precondition::default().execution(execution_trace_hash),
+                Some(latest_output_root),
+            ));
         }
 
         ////////////////////////////////////////////////////////////////
         //                   DERIVATION & EXECUTION                   //
         ////////////////////////////////////////////////////////////////
         client::log("PRECONDITION");
-        let precondition_data = precondition::load_precondition_data(
-            precondition_validation_data_hash,
-            oracle.clone(),
-            &mut beacon,
-        )
-        .await
-        .context("load_precondition_data")?;
+        let proposal_precondition_data =
+            proposal::load_proposal_data(proposal_data_hash, oracle.clone(), &mut beacon)
+                .await
+                .context("load_precondition_data")?;
 
         client::log("DERIVATION & EXECUTION");
         // Create a new derivation driver with the given boot information and oracle.
@@ -353,10 +356,10 @@ where
             .unwrap_or_default();
 
         // Record intermediate output commitment precondition
-        let output_precondition_hash = precondition_data
-            .map(|(precondition_validation_data, blobs)| {
-                precondition::validate_precondition(
-                    precondition_validation_data,
+        let proposal_precondition_hash = proposal_precondition_data
+            .map(|(proposal_precondition, blobs)| {
+                proposal::validate_proposal_precondition(
+                    proposal_precondition,
                     blobs,
                     safe_head_number,
                     &output_roots,
@@ -365,24 +368,23 @@ where
             .unwrap_or(Ok(B256::ZERO))
             .context("validate_precondition")?;
 
-        // Combine derivation/output precondition hashes
-        let precondition_hash = combine_precondition_hashes(
-            merge_precondition_hashes(derivation_cache_hash, derivation_trace_hash),
-            output_precondition_hash,
-        );
+        // Compile final precondition
+        let precondition = Precondition::default()
+            .proposal(proposal_precondition_hash)
+            .derivation(derivation_cache_hash, derivation_trace_hash);
 
         // Return results
         if output_roots.len() != expected_output_count {
             // Not enough data to derive output root at claimed height
-            Ok((boot, precondition_hash, None))
+            Ok((boot, precondition, None))
         } else if output_roots.is_empty() {
             // note: This implies expected_output_count == 0
             // Claimed output height is equal to agreed output height
             let claimed_l2_output_root = boot.agreed_l2_output_root;
-            Ok((boot, precondition_hash, Some(claimed_l2_output_root)))
+            Ok((boot, precondition, Some(claimed_l2_output_root)))
         } else {
             // Derived output root at future height
-            Ok((boot, precondition_hash, output_roots.pop()))
+            Ok((boot, precondition, output_roots.pop()))
         }
     })?;
 
@@ -395,7 +397,7 @@ where
         bail!(L1_HEAD_INSUFFICIENT);
     }
 
-    Ok((boot, precondition_hash))
+    Ok((boot, precondition))
 }
 
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
@@ -442,30 +444,12 @@ pub fn recover_collected_executions(
         .collect::<Vec<_>>()
 }
 
-/// Combines (derivation/blob) precondition hashes
-pub fn combine_precondition_hashes(left: B256, right: B256) -> B256 {
-    match (left, right) {
-        (B256::ZERO, B256::ZERO) => B256::ZERO,
-        (a, B256::ZERO) => a,
-        (B256::ZERO, b) => b,
-        (a, b) => B256::new([a.0, b.0].concat().digest().into()),
-    }
-}
-
-/// Merges (cache/trace) precondition hashes
-pub fn merge_precondition_hashes(left: B256, right: B256) -> B256 {
-    match (left, right) {
-        (B256::ZERO, B256::ZERO) => B256::ZERO,
-        (a, b) => B256::new([a.0, b.0].concat().digest().into()),
-    }
-}
-
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
     use crate::client::tests::TestOracle;
-    use crate::precondition::PreconditionValidationData;
+    use crate::precondition::proposal::ProposalPrecondition;
     use alloy_primitives::{b256, B256};
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::BootInfo;
@@ -473,7 +457,7 @@ pub mod tests {
 
     pub fn test_derivation(
         boot_info: BootInfo,
-        precondition_validation_data: Option<PreconditionValidationData>,
+        precondition_validation_data: Option<ProposalPrecondition>,
     ) -> anyhow::Result<Vec<Arc<Execution>>> {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let (expected_precondition_hash, precondition_validation_data_hash) =
@@ -483,7 +467,7 @@ pub mod tests {
                 Default::default()
             };
         let collection_target = Arc::new(Mutex::new(Vec::new()));
-        let (result_boot_info, precondition_hash) = run_core_client(
+        let (result_boot_info, precondition) = run_core_client(
             precondition_validation_data_hash,
             oracle.clone(),
             oracle.clone(),
@@ -511,7 +495,10 @@ pub mod tests {
         );
         assert_eq!(result_boot_info.chain_id, boot_info.chain_id);
 
-        assert_eq!(expected_precondition_hash, precondition_hash);
+        assert_eq!(
+            B256::new(precondition.digest().into()),
+            expected_precondition_hash
+        );
 
         let execution_cache =
             recover_collected_executions(collection_target, boot_info.claimed_l2_output_root);
@@ -528,7 +515,7 @@ pub mod tests {
         let expected_precondition_hash = exec_precondition_hash(execution_cache.as_slice());
 
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
-        let (result_boot_info, precondition_hash) = run_core_client(
+        let (result_boot_info, precondition) = run_core_client(
             B256::ZERO,
             oracle.clone(),
             oracle.clone(),
@@ -555,9 +542,12 @@ pub mod tests {
             boot_info.claimed_l2_block_number
         );
         assert_eq!(result_boot_info.chain_id, boot_info.chain_id);
-        assert_eq!(precondition_hash, expected_precondition_hash);
+        assert_eq!(
+            B256::new(precondition.digest().into()),
+            expected_precondition_hash
+        );
 
-        Ok(precondition_hash)
+        Ok(expected_precondition_hash)
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -637,7 +627,7 @@ pub mod tests {
                 chain_id: 11155420,
                 rollup_config: Default::default(),
             },
-            Some(PreconditionValidationData::Validity {
+            Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
                 output_block_span: 100,

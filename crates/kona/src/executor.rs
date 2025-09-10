@@ -13,14 +13,11 @@
 // limitations under the License.
 
 use crate::client::log;
-use crate::config::safe_default;
 use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
-use alloy_eips::eip4895::Withdrawal;
-use alloy_primitives::{Bytes, Sealed, B256, B64};
-use anyhow::Context;
+use alloy_primitives::{Sealed, B256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
 use kona_executor::BlockBuildingOutcome;
@@ -31,7 +28,6 @@ use kona_proof::l2::OracleL2ChainProvider;
 use kona_proof::FlushableCache;
 use kona_protocol::{BatchValidationProvider, BlockInfo};
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 use spin::RwLock;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
@@ -261,253 +257,16 @@ where
     Ok(Arc::new(RwLock::new(cursor)))
 }
 
-/// Computes the hash of the given payload attributes in the `OpPayloadAttributes` structure.
-///
-/// This function generates a unique hash by processing various fields in the `attributes`
-/// structure. It uses cryptographic hashing to ensure consistency and reliability of the hash.
-///
-/// # Arguments
-///
-/// * `attributes` - A reference to an `OpPayloadAttributes` structure containing the payload
-///   attributes and optional fields for computing the hash.
-///
-/// # Returns
-///
-/// * `Ok(B256)` - A 256-bit hash value (`B256`) representing the computed hash for the provided
-///   attributes.
-/// * `Err(anyhow::Error)` - If any of the hashing steps fail or if an invalid value is encountered,
-///   the function returns an error.
-///
-/// # Details
-///
-/// The hash is computed as follows:
-/// - The `timestamp` field is serialized into big-endian bytes.
-/// - The `prev_randao` field is used directly as a byte slice.
-/// - The `suggested_fee_recipient` field is used directly as a byte slice.
-/// - The optional `withdrawals` field is hashed to provide a consistent value, or defaults to
-///   `B256::ZERO` if missing.
-/// - The `parent_beacon_block_root` field is hashed or defaults to `B256::ZERO` if unavailable.
-/// - The `transactions` field is treated as an optional field and hashed similarly; it defaults
-///   to `B256::ZERO`.
-/// - The `no_tx_pool` field is hashed as a single byte that represents whether the pool is present.
-/// - The `gas_limit` field is converted to its big-endian byte representation or defaults to the
-///   maximum `u64` value.
-/// - The `eip_1559_params` field is hashed from its value or defaults to a predefined value.
-///
-/// These fields are concatenated into a single byte array, which is hashed using the SHA-256
-/// algorithm to produce the final `B256` hash.
-///
-/// # Errors
-///
-/// This function returns an error if:
-/// - Any of the optional fields fail due to `safe_default` processing.
-/// - The hashing process encounters an invalid value or an error during conversion.
-pub fn attributes_hash(attributes: &OpPayloadAttributes) -> anyhow::Result<B256> {
-    let hashed_bytes = [
-        attributes
-            .payload_attributes
-            .timestamp
-            .to_be_bytes()
-            .as_slice(),
-        attributes.payload_attributes.prev_randao.as_slice(),
-        attributes
-            .payload_attributes
-            .suggested_fee_recipient
-            .as_slice(),
-        safe_default(
-            attributes
-                .payload_attributes
-                .withdrawals
-                .as_ref()
-                .map(|wds| withdrawals_hash(wds.as_slice())),
-            B256::ZERO,
-        )
-        .expect("infallible")
-        .as_slice(),
-        safe_default(
-            attributes.payload_attributes.parent_beacon_block_root,
-            B256::ZERO,
-        )
-        .context("safe_default parent_beacon_block_root")?
-        .as_slice(),
-        safe_default(
-            attributes.transactions.as_ref().map(transactions_hash),
-            B256::ZERO,
-        )
-        .expect("infallible")
-        .as_slice(),
-        &[safe_default(attributes.no_tx_pool.map(|b| b as u8), 0xff).expect("infallible")],
-        safe_default(attributes.gas_limit, u64::MAX)
-            .context("safe_default gas_limit")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(attributes.eip_1559_params, B64::new([0xff; 8]))
-            .context("safe_default eip_1559_params")?
-            .as_slice(),
-    ]
-    .concat();
-    let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
-        .as_bytes()
-        .try_into()?;
-    Ok(digest.into())
-}
-
-/// Generates a hash value (B256) for a given slice of `Withdrawal` objects.
-///
-/// This function computes a hash for a list of withdrawals by concatenating
-/// specific fields from each `Withdrawal` into a byte array, hashing the
-/// resulting array, and returning the hash.
-///
-/// # Arguments
-///
-/// * `withdrawals` - A slice of `Withdrawal` objects to be hashed. Each
-///   `Withdrawal` must contain the following fields:
-///   - `index` (u64): Index of the withdrawal.
-///   - `validator_index` (u64): Index of the validator associated with the withdrawal.
-///   - `address` (`Vec<u8>`): The address where the withdrawal is sent.
-///   - `amount` (u64): The amount of the withdrawal.
-///
-/// # Returns
-///
-/// * A `B256`, which is a 256-bit hash value computed from the input data.
-///
-/// # Process
-///
-/// 1. Iterates over each `Withdrawal` in the input slice.
-/// 2. For each `Withdrawal`, concatenates its `index`, `validator_index`,
-///    `address`, and `amount` fields into a byte array, converting numeric
-///    fields to big-endian byte representations.
-/// 3. Concatenates the byte arrays of all withdrawals into a single array.
-/// 4. Computes a 256-bit SHA2 hash on the concatenated bytes.
-/// 5. Converts the resulting hash into a fixed-size array (`[u8; 32]`) and
-///    returns it as a `B256`.
-///
-/// # Panics
-///
-/// This function will panic if the output of the hash function cannot be
-/// converted into a `[u8; 32]`. This should not happen under normal
-/// circumstances.
-///
-/// # Dependencies
-///
-/// * The function depends on a cryptographic hashing library (`SHA2::hash_bytes`)
-///   for computing the hash.
-/// * The `B256` and `Withdrawal` types must be imported from their respective
-///   modules or libraries.
-pub fn withdrawals_hash(withdrawals: &[Withdrawal]) -> B256 {
-    let hashed_bytes = withdrawals
-        .iter()
-        .map(|w| {
-            [
-                w.index.to_be_bytes().as_slice(),
-                w.validator_index.to_be_bytes().as_slice(),
-                w.address.as_slice(),
-                w.amount.to_be_bytes().as_slice(),
-            ]
-            .concat()
-        })
-        .collect::<Vec<_>>()
-        .concat();
-    let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
-        .as_bytes()
-        .try_into()
-        .unwrap();
-    digest.into()
-}
-
-/// Computes a 256-bit hash of a vector of transactions using RLP encoding and SHA-256.
-///
-/// # Arguments
-///
-/// * `transactions` - A reference to a vector of `Bytes`, where each element represents
-///   a serialized transaction to be included in the hash computation.
-///
-/// # Returns
-///
-/// * `B256` - A 256-bit hash of the RLP-encoded transactions.
-///
-/// # Methodology
-///
-/// 1. The provided `transactions` vector is encoded into a single byte sequence using
-///    Recursive Length Prefix (RLP) encoding via the `alloy_rlp::encode` function.
-/// 2. The resulting byte sequence is hashed using the SHA-256 cryptographic hashing function,
-///    which produces a 32-byte digest.
-/// 3. The 32-byte digest is converted into a type `B256`, which represents the final hash.
-///
-/// # Panics
-///
-/// This function will panic if the conversion from the SHA-256 output to a `[u8; 32]` slice fails.
-/// This is highly unlikely under normal operation as the digest size of SHA-256 is guaranteed to be 32 bytes.
-pub fn transactions_hash(transactions: &Vec<Bytes>) -> B256 {
-    let hashed_bytes = alloy_rlp::encode(transactions);
-    let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
-        .as_bytes()
-        .try_into()
-        .unwrap();
-    digest.into()
-}
-
-/// Computes a precondition hash from a list of `Execution` objects.
-///
-/// This function generates a cryptographic hash (of type `B256`) by aggregating
-/// and hashing a combination of key attributes from the provided `Execution`
-/// objects. The hash can be used for verifying consistency, detecting changes,
-/// or as an identifier for execution-related data.
-///
-/// # Parameters
-/// - `executions`: A slice of `Arc<Execution>` objects. Each `Execution`
-///   contains the data necessary to compute the hash.
-///
-/// # Returns
-/// - A `B256` hash value representing the precondition hash of the executions.
-///
-/// # Panics
-/// - The function will panic if the attributes of any `Execution` cannot be hashed
-///   (i.e., `attributes_hash(&e.attributes)` returns an error).
-/// - The function will also panic if the computed digest cannot be converted into
-///   a 32-byte array (`[u8; 32]`).
-///
-/// # Logic
-/// 1. Iterates through each `Execution` object in the slice.
-/// 2. For each execution:
-///    - Extracts its `agreed_output`, `attributes` (after hashing them),
-///      `artifacts.header.hash()`, and `claimed_output`.
-///    - Concatenates these components into a byte array.
-/// 3. Combines the resulting byte arrays from all `Execution` objects into
-///    a single byte array.
-/// 4. Hashes the resulting byte array using the SHA256 cryptographic hash algorithm.
-/// 5. Converts the resulting hash bytes into a fixed-size 32-byte array and returns it.
-pub fn exec_precondition_hash(executions: &[Arc<Execution>]) -> B256 {
-    let hashed_bytes = executions
-        .iter()
-        .map(|e| {
-            [
-                e.agreed_output.0,
-                attributes_hash(&e.attributes)
-                    .expect("Unhashable attributes.")
-                    .0,
-                e.artifacts.header.hash().0,
-                e.claimed_output.0,
-            ]
-            .concat()
-        })
-        .collect::<Vec<_>>()
-        .concat();
-    let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
-        .as_bytes()
-        .try_into()
-        .unwrap();
-    digest.into()
-}
-
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
     use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::oracle::WitnessOracle;
+    use crate::precondition::execution::{attributes_hash, exec_precondition_hash};
     use crate::rkyv::execution::tests::gen_execution_outcomes;
-    use alloy_primitives::{keccak256, Address, Sealable};
+    use alloy_eips::eip4895::Withdrawal;
+    use alloy_primitives::{keccak256, Address, Sealable, B64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use kona_mpt::TrieNode;
     use kona_preimage::PreimageKey;

@@ -23,7 +23,7 @@ use anyhow::Context;
 use kailua_contracts::*;
 use kailua_kona::blobs::hash_to_fe;
 use kailua_kona::journal::ProofJournal;
-use kailua_kona::precondition::validity_precondition_hash;
+use kailua_kona::precondition::proposal::proposal_precondition_hash;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::Transact;
@@ -200,7 +200,7 @@ pub async fn publish_receipt_proofs<P: Provider>(
                 } else {
                     info!("Blobs hash {} confirmed", contract_blobs_hash);
                 }
-                let precondition_hash = validity_precondition_hash(
+                let precondition_hash = proposal_precondition_hash(
                     &parent.output_block_number,
                     &agent.deployment.proposal_output_count,
                     &agent.deployment.output_block_span,
