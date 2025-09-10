@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config;
 use crate::driver::{
     CachedAttributesQueueStage, CachedBatchProvider, CachedBatchQueue, CachedBatchStream,
     CachedBatchValidator, CachedChannelAssembler, CachedChannelBank, CachedChannelProvider,
@@ -189,15 +190,15 @@ pub fn flatten_op_attrib_with_parent(op_attrib_with_parent: &OpAttributesWithPar
             .unwrap_or_default()
             .concat()
             .as_slice(),
-        opt_bytes(op_attrib_with_parent.inner.no_tx_pool.map(|v| [v as u8])).as_slice(),
-        opt_bytes(
+        config::opt_byte_arr(op_attrib_with_parent.inner.no_tx_pool.map(|v| [v as u8])).as_slice(),
+        config::opt_byte_arr(
             op_attrib_with_parent
                 .inner
                 .gas_limit
                 .map(|v| v.to_be_bytes()),
         )
         .as_slice(),
-        opt_bytes(op_attrib_with_parent.inner.eip_1559_params.map(|v| v.0)).as_slice(),
+        config::opt_byte_arr(op_attrib_with_parent.inner.eip_1559_params.map(|v| v.0)).as_slice(),
         flatten_l2_block_info(&op_attrib_with_parent.parent).as_slice(),
         flatten_block_info(&op_attrib_with_parent.l1_origin).as_slice(),
         &[op_attrib_with_parent.is_last_in_span as u8],
@@ -439,15 +440,6 @@ pub fn flatten_block_info(block_info: &BlockInfo) -> Vec<u8> {
         block_info.timestamp.to_be_bytes().as_slice(),
     ]
     .concat()
-}
-
-pub fn opt_bytes<const N: usize>(data: Option<[u8; N]>) -> Vec<u8> {
-    let Some(data) = data else {
-        return vec![0xFF; N + 1];
-    };
-    let mut res = vec![0x00; N + 1];
-    res[1..].copy_from_slice(&data);
-    res
 }
 
 impl Digestible for CachedDriver {
@@ -704,28 +696,28 @@ impl Digestible for CachedL1Traversal {
             self.system_config.overhead.to_be_bytes::<32>().as_slice(),
             self.system_config.scalar.to_be_bytes::<32>().as_slice(),
             self.system_config.gas_limit.to_be_bytes().as_slice(),
-            &opt_bytes(self.system_config.base_fee_scalar.map(|v| v.to_be_bytes())),
-            &opt_bytes(
+            &config::opt_byte_arr(self.system_config.base_fee_scalar.map(|v| v.to_be_bytes())),
+            &config::opt_byte_arr(
                 self.system_config
                     .blob_base_fee_scalar
                     .map(|v| v.to_be_bytes()),
             ),
-            &opt_bytes(
+            &config::opt_byte_arr(
                 self.system_config
                     .eip1559_denominator
                     .map(|v| v.to_be_bytes()),
             ),
-            &opt_bytes(
+            &config::opt_byte_arr(
                 self.system_config
                     .eip1559_elasticity
                     .map(|v| v.to_be_bytes()),
             ),
-            &opt_bytes(
+            &config::opt_byte_arr(
                 self.system_config
                     .operator_fee_scalar
                     .map(|v| v.to_be_bytes()),
             ),
-            &opt_bytes(
+            &config::opt_byte_arr(
                 self.system_config
                     .operator_fee_constant
                     .map(|v| v.to_be_bytes()),

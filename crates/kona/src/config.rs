@@ -18,9 +18,6 @@ use kona_genesis::{AltDAConfig, RollupConfig, SystemConfig};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 use std::fmt::Debug;
 
-pub const SAFE_DEFAULT_ADDRESS: Address =
-    alloy_primitives::address!("4bfa59be6b388d77d213ce997acb0370b55157df");
-
 /// Returns a value based on the provided `Option` and a default value, with safety checks.
 ///
 /// This function takes an optional value `opt` and a default value `default`.
@@ -63,6 +60,24 @@ pub fn safe_default<V: Debug + Eq>(opt: Option<V>, default: V) -> anyhow::Result
     } else {
         Ok(default)
     }
+}
+
+pub fn opt_byte_arr<const N: usize>(data: Option<[u8; N]>) -> Vec<u8> {
+    let Some(data) = data else {
+        return vec![0xFF; N + 1];
+    };
+    let mut res = vec![0x00; N + 1];
+    res[1..].copy_from_slice(&data);
+    res
+}
+
+pub fn opt_byte_vec(data: Option<Vec<u8>>) -> Vec<u8> {
+    let Some(data) = data else {
+        return vec![0xFF];
+    };
+    let mut res = data.len().to_be_bytes().to_vec();
+    res.extend(data);
+    res
 }
 
 /// Computes the hash of the genesis system configuration.
@@ -114,30 +129,12 @@ pub fn genesis_system_config_hash(system_config: &SystemConfig) -> anyhow::Resul
         system_config.overhead.to_be_bytes::<32>().as_slice(),
         system_config.scalar.to_be_bytes::<32>().as_slice(),
         system_config.gas_limit.to_be_bytes().as_slice(),
-        safe_default(system_config.base_fee_scalar, u64::MAX)
-            .context("base_fee_scalar")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(system_config.blob_base_fee_scalar, u64::MAX)
-            .context("blob_base_fee_scalar")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(system_config.eip1559_denominator, u32::MAX)
-            .context("eip1559_denominator")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(system_config.eip1559_elasticity, u32::MAX)
-            .context("eip1559_elasticity")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(system_config.operator_fee_scalar, u32::MAX)
-            .context("operator_fee_scalar")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(system_config.operator_fee_constant, u64::MAX)
-            .context("operator_fee_constant")?
-            .to_be_bytes()
-            .as_slice(),
+        opt_byte_arr(system_config.base_fee_scalar.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(system_config.blob_base_fee_scalar.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(system_config.eip1559_denominator.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(system_config.eip1559_elasticity.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(system_config.operator_fee_scalar.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(system_config.operator_fee_constant.map(|v| v.to_be_bytes())).as_slice(),
     ]
     .concat();
     let digest = SHA2::hash_bytes(fields.as_slice());
@@ -171,21 +168,16 @@ pub fn genesis_system_config_hash(system_config: &SystemConfig) -> anyhow::Resul
 /// - Returns an error if any of the fields of `AltDAConfig` fail to resolve to valid default or non-default values.
 pub fn alt_da_config_hash(alt_da_config: &AltDAConfig) -> anyhow::Result<[u8; 32]> {
     let fields = [
-        safe_default(alt_da_config.da_challenge_address, SAFE_DEFAULT_ADDRESS)
-            .context("da_challenge_address")?
-            .0
-            .as_slice(),
-        safe_default(alt_da_config.da_challenge_window, u64::MAX)
-            .context("da_challenge_window")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(alt_da_config.da_resolve_window, u64::MAX)
-            .context("da_resolve_window")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(alt_da_config.da_commitment_type.clone(), String::new())
-            .context("da_commitment_type")?
-            .as_bytes(),
+        opt_byte_arr(alt_da_config.da_challenge_address.map(|v| *v.0)).as_slice(),
+        opt_byte_arr(alt_da_config.da_challenge_window.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(alt_da_config.da_resolve_window.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_vec(
+            alt_da_config
+                .da_commitment_type
+                .as_ref()
+                .map(|v| v.as_bytes().to_vec()),
+        )
+        .as_slice(),
     ]
     .concat();
     let digest = SHA2::hash_bytes(fields.as_slice());
@@ -273,46 +265,58 @@ pub fn config_hash(rollup_config: &RollupConfig) -> anyhow::Result<[u8; 32]> {
         // l2_chain_id
         rollup_config.l2_chain_id.to_be_bytes().as_slice(),
         // hardforks
-        safe_default(rollup_config.hardforks.regolith_time, u64::MAX)
-            .context("regolith_time")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(rollup_config.hardforks.canyon_time, u64::MAX)
-            .context("canyon_time")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(rollup_config.hardforks.delta_time, u64::MAX)
-            .context("delta_time")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(rollup_config.hardforks.ecotone_time, u64::MAX)
-            .context("ecotone_time")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(rollup_config.hardforks.fjord_time, u64::MAX)
-            .context("fjord_time")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(rollup_config.hardforks.granite_time, u64::MAX)
-            .context("granite_time")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(rollup_config.hardforks.holocene_time, u64::MAX)
-            .context("holocene_time")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(rollup_config.hardforks.isthmus_time, u64::MAX)
-            .context("isthmus_time")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(rollup_config.hardforks.interop_time, u64::MAX)
-            .context("interop_time")?
-            .to_be_bytes()
-            .as_slice(),
-        safe_default(rollup_config.hardforks.pectra_blob_schedule_time, u64::MAX)
-            .context("pectra_blob_schedule_time")?
-            .to_be_bytes()
-            .as_slice(),
+        opt_byte_arr(
+            rollup_config
+                .hardforks
+                .regolith_time
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
+        opt_byte_arr(rollup_config.hardforks.canyon_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(rollup_config.hardforks.delta_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(
+            rollup_config
+                .hardforks
+                .ecotone_time
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
+        opt_byte_arr(rollup_config.hardforks.fjord_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(
+            rollup_config
+                .hardforks
+                .granite_time
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
+        opt_byte_arr(
+            rollup_config
+                .hardforks
+                .holocene_time
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
+        opt_byte_arr(
+            rollup_config
+                .hardforks
+                .isthmus_time
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
+        opt_byte_arr(
+            rollup_config
+                .hardforks
+                .interop_time
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
+        opt_byte_arr(
+            rollup_config
+                .hardforks
+                .pectra_blob_schedule_time
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
         // batch_inbox_address
         rollup_config.batch_inbox_address.0.as_slice(),
         // deposit_contract_address
@@ -322,23 +326,16 @@ pub fn config_hash(rollup_config: &RollupConfig) -> anyhow::Result<[u8; 32]> {
         // protocol_versions_address
         rollup_config.protocol_versions_address.0.as_slice(),
         // superchain_config_address
-        safe_default(
-            rollup_config.superchain_config_address,
-            SAFE_DEFAULT_ADDRESS,
-        )
-        .context("superchain_config_address")?
-        .0
-        .as_slice(),
+        opt_byte_arr(rollup_config.superchain_config_address.map(|v| *v.0)).as_slice(),
         // blobs_enabled_l1_timestamp
-        safe_default(rollup_config.blobs_enabled_l1_timestamp, u64::MAX)
-            .context("blobs_enabled_l1_timestamp")?
-            .to_be_bytes()
-            .as_slice(),
+        opt_byte_arr(
+            rollup_config
+                .blobs_enabled_l1_timestamp
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
         // da_challenge_address
-        safe_default(rollup_config.da_challenge_address, SAFE_DEFAULT_ADDRESS)
-            .context("da_challenge_address")?
-            .0
-            .as_slice(),
+        opt_byte_arr(rollup_config.da_challenge_address.map(|v| *v.0)).as_slice(),
         // interop_message_expiry_window
         rollup_config
             .interop_message_expiry_window
@@ -621,10 +618,10 @@ mod tests {
         assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
     }
 
-    fn test_safe_default_err(value: &RollupConfig, modifier: fn(&mut RollupConfig)) {
+    fn test_safe_default_ok(value: &RollupConfig, modifier: fn(&mut RollupConfig)) {
         let mut value = value.clone();
         modifier(&mut value);
-        assert!(config_hash(&value).is_err());
+        assert!(config_hash(&value).is_ok());
     }
 
     #[test]
@@ -693,11 +690,11 @@ mod tests {
             }),
         };
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.genesis.system_config.as_mut().unwrap().base_fee_scalar = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.genesis
                 .system_config
                 .as_mut()
@@ -705,7 +702,7 @@ mod tests {
                 .blob_base_fee_scalar = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.genesis
                 .system_config
                 .as_mut()
@@ -713,11 +710,11 @@ mod tests {
                 .eip1559_denominator = Some(u32::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.genesis.system_config.as_mut().unwrap().eip1559_elasticity = Some(u32::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.genesis
                 .system_config
                 .as_mut()
@@ -725,7 +722,7 @@ mod tests {
                 .operator_fee_scalar = Some(u32::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.genesis
                 .system_config
                 .as_mut()
@@ -733,65 +730,65 @@ mod tests {
                 .operator_fee_constant = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.hardforks.regolith_time = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| r.hardforks.canyon_time = Some(u64::MAX));
+        test_safe_default_ok(&rollup_config, |r| r.hardforks.canyon_time = Some(u64::MAX));
 
-        test_safe_default_err(&rollup_config, |r| r.hardforks.delta_time = Some(u64::MAX));
+        test_safe_default_ok(&rollup_config, |r| r.hardforks.delta_time = Some(u64::MAX));
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.hardforks.ecotone_time = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| r.hardforks.fjord_time = Some(u64::MAX));
+        test_safe_default_ok(&rollup_config, |r| r.hardforks.fjord_time = Some(u64::MAX));
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.hardforks.granite_time = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.hardforks.holocene_time = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.hardforks.isthmus_time = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.hardforks.interop_time = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.hardforks.pectra_blob_schedule_time = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
-            r.superchain_config_address = Some(SAFE_DEFAULT_ADDRESS)
+        test_safe_default_ok(&rollup_config, |r| {
+            r.superchain_config_address = Some(Address::ZERO)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.blobs_enabled_l1_timestamp = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
-            r.da_challenge_address = Some(SAFE_DEFAULT_ADDRESS)
+        test_safe_default_ok(&rollup_config, |r| {
+            r.da_challenge_address = Some(Address::ZERO)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
-            r.alt_da_config.as_mut().unwrap().da_challenge_address = Some(SAFE_DEFAULT_ADDRESS)
+        test_safe_default_ok(&rollup_config, |r| {
+            r.alt_da_config.as_mut().unwrap().da_challenge_address = Some(Address::ZERO)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.alt_da_config.as_mut().unwrap().da_challenge_window = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.alt_da_config.as_mut().unwrap().da_resolve_window = Some(u64::MAX)
         });
 
-        test_safe_default_err(&rollup_config, |r| {
+        test_safe_default_ok(&rollup_config, |r| {
             r.alt_da_config.as_mut().unwrap().da_commitment_type = Some(String::new())
         });
     }
