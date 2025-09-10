@@ -20,6 +20,7 @@ use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
+use kailua_kona::precondition::Precondition;
 use kona_derive::prelude::BlobProvider;
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
@@ -44,8 +45,9 @@ impl<
         fpvm_image_id: B256,
         payout_recipient_address: Address,
         stitched_executions: Vec<Vec<Execution>>,
+        stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-    ) -> (BootInfo, ProofJournal)
+    ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
     {
@@ -56,19 +58,21 @@ impl<
         // Run the stitching client with the Celestia DASProvider
         let celestia_stitching_client =
             KonaStitchingClient(CelestiaDataSourceProvider(hana_provider));
-        let (kona_boot_info, proof_journal) = celestia_stitching_client.run_stitching_client(
-            precondition_validation_data_hash,
-            oracle,
-            stream,
-            beacon,
-            fpvm_image_id,
-            payout_recipient_address,
-            stitched_executions,
-            stitched_boot_info,
-        );
+        let (kona_boot_info, proof_journal, precondition) = celestia_stitching_client
+            .run_stitching_client(
+                precondition_validation_data_hash,
+                oracle,
+                stream,
+                beacon,
+                fpvm_image_id,
+                payout_recipient_address,
+                stitched_executions,
+                stitched_preconditions,
+                stitched_boot_info,
+            );
         // Ensure boot record is the same for both oracles
         assert_eq!(boot, kona_boot_info);
 
-        (kona_boot_info, proof_journal)
+        (kona_boot_info, proof_journal, precondition)
     }
 }

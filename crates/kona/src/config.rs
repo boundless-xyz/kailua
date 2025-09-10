@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_primitives::Address;
 use anyhow::Context;
 use kona_genesis::{AltDAConfig, RollupConfig, SystemConfig};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
@@ -378,10 +377,9 @@ pub fn config_hash(rollup_config: &RollupConfig) -> anyhow::Result<[u8; 32]> {
 mod tests {
     use super::*;
     use alloy_eips::BlockNumHash;
-    use std::collections::HashSet;
-
-    use alloy_primitives::{B256, U256};
+    use alloy_primitives::{Address, B256, U256};
     use kona_genesis::{AltDAConfig, BaseFeeConfig, ChainGenesis, HardForkConfig, SystemConfig};
+    use std::collections::HashSet;
 
     #[test]
     fn test_safe_default() {
