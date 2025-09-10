@@ -17,6 +17,7 @@ use crate::provider::HanaProvider;
 use alloy_primitives::{Address, B256};
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
+use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
@@ -45,6 +46,8 @@ impl<
         fpvm_image_id: B256,
         payout_recipient_address: Address,
         stitched_executions: Vec<Vec<Execution>>,
+        derivation_cache: Option<CachedDriver>,
+        derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) -> (BootInfo, ProofJournal, Precondition)
@@ -67,6 +70,8 @@ impl<
                 fpvm_image_id,
                 payout_recipient_address,
                 stitched_executions,
+                derivation_cache,
+                derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
             );

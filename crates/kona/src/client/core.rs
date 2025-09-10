@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::client;
+use crate::client::log;
 use crate::driver::CachedDriver;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
@@ -128,7 +129,7 @@ pub fn run_core_client<
     execution_cache: Vec<Arc<Execution>>,
     execution_trace: Option<Arc<Mutex<Vec<Execution>>>>,
     derivation_cache: Option<CachedDriver>,
-    derivation_trace: Option<Arc<Mutex<CachedDriver>>>,
+    derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
 ) -> anyhow::Result<(BootInfo, Precondition)>
 where
     <B as BlobProvider>::Error: Debug,
@@ -347,11 +348,12 @@ where
 
         // Record derivation driver state
         let derivation_trace_hash = derivation_trace
-            .map(|cache| {
-                let derivation_cache = CachedDriver::from(driver);
-                let digest = B256::new(derivation_cache.digest().into());
-                *cache.lock().unwrap() = derivation_cache;
-                digest
+            .map(|trace| {
+                log("DERIVATION TRACE");
+                let derivation_trace = CachedDriver::from(driver);
+                let trace_digest = B256::new(derivation_trace.digest().into());
+                let _ = trace.lock().unwrap().insert(derivation_trace);
+                trace_digest
             })
             .unwrap_or_default();
 
@@ -430,7 +432,7 @@ where
 pub fn recover_collected_executions(
     collection_target: Arc<Mutex<Vec<Execution>>>,
     claimed_l2_output_root: B256,
-) -> Vec<Arc<Execution>> {
+) -> Vec<Execution> {
     let mut executions = collection_target.lock().unwrap();
     for i in 1..executions.len() {
         executions[i - 1].claimed_output = executions[i].agreed_output;
@@ -439,9 +441,6 @@ pub fn recover_collected_executions(
         last_exec.claimed_output = claimed_l2_output_root;
     }
     take::<Vec<Execution>>(executions.as_mut())
-        .into_iter()
-        .map(Arc::new)
-        .collect::<Vec<_>>()
 }
 
 #[cfg(test)]
@@ -501,7 +500,10 @@ pub mod tests {
         );
 
         let execution_cache =
-            recover_collected_executions(collection_target, boot_info.claimed_l2_output_root);
+            recover_collected_executions(collection_target, boot_info.claimed_l2_output_root)
+                .into_iter()
+                .map(Arc::new)
+                .collect();
 
         Ok(execution_cache)
     }

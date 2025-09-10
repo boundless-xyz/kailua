@@ -18,10 +18,12 @@ use alloy_primitives::{Address, B256};
 use kailua_hana::da::CelestiaDataSourceProvider;
 use kailua_hana::provider::HanaProvider;
 use kailua_kona::boot::StitchedBootInfo;
+use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::oracle::WitnessOracle;
+use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
 use kona_derive::prelude::BlobProvider;
 use kona_preimage::CommsClient;
@@ -38,8 +40,17 @@ pub async fn run_hana_witgen_client<P, B, O>(
     payout_recipient: Address,
     precondition_validation_data_hash: B256,
     execution_cache: Vec<Arc<Execution>>,
+    derivation_cache: Option<CachedDriver>,
+    trace_derivation: bool,
+    stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-) -> anyhow::Result<(ProofJournal, Witness<O>, O)>
+) -> anyhow::Result<(
+    ProofJournal,
+    Precondition,
+    Option<CachedDriver>,
+    Witness<O>,
+    O,
+)>
 where
     P: CommsClient + FlushableCache + Send + Sync + Debug + Clone,
     B: BlobProvider + Send + Sync + Debug + Clone,
@@ -56,17 +67,21 @@ where
     // Create provider around witness
     let celestia = CelestiaDataSourceProvider(HanaProvider::new(celestia_oracle).0);
     // Run regular witgen client
-    let (_, mut proof_journal, mut witness) = witgen::run_witgen_client(
-        preimage_oracle,
-        preimage_oracle_shard_size,
-        blob_provider,
-        celestia,
-        payout_recipient,
-        precondition_validation_data_hash,
-        execution_cache,
-        stitched_boot_info,
-    )
-    .await?;
+    let (_, mut proof_journal, precondition, cached_driver, mut witness) =
+        witgen::run_witgen_client(
+            preimage_oracle,
+            preimage_oracle_shard_size,
+            blob_provider,
+            celestia,
+            payout_recipient,
+            precondition_validation_data_hash,
+            execution_cache,
+            derivation_cache,
+            trace_derivation,
+            stitched_preconditions,
+            stitched_boot_info,
+        )
+        .await?;
     // Set expected values
     proof_journal.fpvm_image_id = B256::from(bytemuck::cast::<_, [u8; 32]>(
         kailua_build::KAILUA_FPVM_HANA_ID,
@@ -77,5 +92,11 @@ where
     // todo: shard celestia witness
     celestia_witness.finalize_preimages(usize::MAX, true);
     // Return extended result
-    Ok((proof_journal, witness, celestia_witness))
+    Ok((
+        proof_journal,
+        precondition,
+        cached_driver,
+        witness,
+        celestia_witness,
+    ))
 }

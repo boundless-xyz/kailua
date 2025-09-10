@@ -15,6 +15,7 @@
 use crate::boot::StitchedBootInfo;
 use crate::client::core::DASourceProvider;
 use crate::client::log;
+use crate::driver::CachedDriver;
 use crate::executor::Execution;
 use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
@@ -92,13 +93,15 @@ pub trait StitchingClient<
     #[allow(clippy::too_many_arguments)]
     fn run_stitching_client(
         self,
-        precondition_validation_data_hash: B256,
+        proposal_data_hash: B256,
         oracle: Arc<O>,
         stream: Arc<O>,
         beacon: B,
         fpvm_image_id: B256,
         payout_recipient_address: Address,
         stitched_executions: Vec<Vec<Execution>>,
+        derivation_cache: Option<CachedDriver>,
+        derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) -> (BootInfo, ProofJournal, Precondition)
@@ -117,13 +120,15 @@ impl<
 {
     fn run_stitching_client(
         self,
-        precondition_validation_data_hash: B256,
+        proposal_data_hash: B256,
         oracle: Arc<O>,
         stream: Arc<O>,
         beacon: B,
         fpvm_image_id: B256,
         payout_recipient_address: Address,
         stitched_executions: Vec<Vec<Execution>>,
+        derivation_cache: Option<CachedDriver>,
+        derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) -> (BootInfo, ProofJournal, Precondition)
@@ -136,15 +141,15 @@ impl<
         // Attempt to recompute the output hash at the target block number using kona
         log("RUN");
         let (boot, precondition) = crate::client::core::run_core_client(
-            precondition_validation_data_hash,
+            proposal_data_hash,
             oracle,
             stream,
             beacon,
             self.0,
             execution_cache,
             None,
-            None,
-            None,
+            derivation_cache,
+            derivation_trace.then(Default::default),
         )
         .expect("Failed to compute output hash.");
 
@@ -593,6 +598,8 @@ pub mod tests {
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
         stitched_executions: Vec<Vec<Execution>>,
+        derivation_cache: Option<CachedDriver>,
+        derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) {
@@ -603,6 +610,8 @@ pub mod tests {
             boot_info.clone(),
             precondition_validation_data,
             stitched_executions,
+            derivation_cache,
+            derivation_trace,
             stitched_preconditions,
             stitched_boot_info,
         );
@@ -613,6 +622,8 @@ pub mod tests {
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
         stitched_executions: Vec<Vec<Execution>>,
+        derivation_cache: Option<CachedDriver>,
+        derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) -> ProofJournal {
@@ -630,6 +641,8 @@ pub mod tests {
                 B256::ZERO,
                 Address::ZERO,
                 stitched_executions,
+                derivation_cache,
+                derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
             )
@@ -678,6 +691,8 @@ pub mod tests {
             },
             precondition_validation_data.clone(),
             vec![],
+            None,
+            false,
             stitched_preconditions.clone(),
             stitched_boot_info.clone(),
         );
@@ -698,6 +713,8 @@ pub mod tests {
             },
             precondition_validation_data.clone(),
             vec![],
+            None,
+            false,
             stitched_preconditions.clone().into_iter().rev().collect(),
             stitched_boot_info.clone().into_iter().rev().collect(),
         );
@@ -722,6 +739,8 @@ pub mod tests {
                         },
                         precondition_validation_data.clone(),
                         vec![],
+                        None,
+                        false,
                         stitched_preconditions.clone().into_iter().rev().collect(),
                         stitched_boot_info.clone().into_iter().rev().collect(),
                     )
@@ -748,6 +767,8 @@ pub mod tests {
             boot_info.clone(),
             precondition_validation_data.clone(),
             vec![stitched_executions.clone()],
+            None,
+            false,
             vec![],
             vec![],
         );
@@ -762,6 +783,8 @@ pub mod tests {
             boot_info.clone(),
             precondition_validation_data.clone(),
             vec![left.to_vec(), right.to_vec()],
+            None,
+            false,
             vec![],
             vec![],
         );
@@ -770,6 +793,8 @@ pub mod tests {
             boot_info.clone(),
             precondition_validation_data.clone(),
             stitched_executions.into_iter().map(|e| vec![e]).collect(),
+            None,
+            false,
             vec![],
             vec![],
         );
@@ -794,6 +819,8 @@ pub mod tests {
             boot_info.clone(),
             precondition_validation_data.clone(),
             vec![stitched_executions.clone()],
+            None,
+            false,
             stitched_preconditions,
             stitched_boot_info,
         );
@@ -821,6 +848,8 @@ pub mod tests {
             },
             None,
             vec![],
+            None,
+            false,
             vec![],
             vec![],
         );
@@ -880,6 +909,8 @@ pub mod tests {
                 blob_hashes: vec![],
             }),
             vec![],
+            None,
+            false,
             vec![],
             vec![],
         );

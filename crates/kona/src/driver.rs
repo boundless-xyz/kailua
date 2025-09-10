@@ -44,7 +44,7 @@ use std::sync::Arc;
 pub type KonaDriver<E, O, L1, L2, DA> =
     Driver<E, OraclePipeline<O, L1, L2, DA>, ProviderDerivationPipeline<L1, L2, DA>>;
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedDriver {
     /// Cursor to keep track of the L2 tip
     #[rkyv(with = PipelineCursorRkyv)]
@@ -113,7 +113,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedDerivationPipeline {
     /// A list of prepared [OpAttributesWithParent] to be used by the derivation pipeline
     /// consumer.
@@ -164,7 +164,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedAttributesQueueStage {
     /// Whether the current batch is the last in its span.
     pub is_last_in_span: bool,
@@ -219,7 +219,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum CachedBatchProvider {
     None,
     BatchStream(CachedBatchStream),
@@ -311,7 +311,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedBatchQueue {
     /// The l1 block ref
     #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
@@ -381,7 +381,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedBatchValidator {
     /// The L1 origin of the batch sequencer.
     #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
@@ -437,7 +437,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedBatchStream {
     /// There can only be a single staged span batch.
     #[rkyv(with = rkyv::with::Map<SpanBatchRkyv>)]
@@ -498,6 +498,20 @@ pub struct CachedChannelReader {
     pub prev: CachedChannelProvider,
 }
 
+impl Clone for CachedChannelReader {
+    fn clone(&self) -> Self {
+        Self {
+            next_batch: self.next_batch.as_ref().map(|v| BatchReader {
+                data: v.data.clone(),
+                decompressed: v.decompressed.clone(),
+                cursor: v.cursor,
+                max_rlp_bytes_per_channel: v.max_rlp_bytes_per_channel,
+            }),
+            prev: self.prev.clone(),
+        }
+    }
+}
+
 impl CachedChannelReader {
     pub fn uncache<L1, DA>(
         self,
@@ -532,7 +546,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum CachedChannelProvider {
     None,
     FrameQueue(CachedFrameQueue),
@@ -606,7 +620,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelBank {
     /// Map of channels by ID.
     #[rkyv(with = rkyv::with::Map<IdChannelRkyv>)]
@@ -651,7 +665,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelAssembler {
     /// The current [Channel] being assembled.
     #[rkyv(with = rkyv::with::Map<ChannelRkyv>)]
@@ -692,7 +706,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedFrameQueue {
     /// The current frame queue.
     #[rkyv(with = rkyv::with::Map<FrameRkyv>)]
@@ -735,7 +749,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedL1Retrieval {
     /// The current block ref.
     #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
@@ -776,7 +790,7 @@ where
     }
 }
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedL1Traversal {
     /// The current block in the traversal stage.
     #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
