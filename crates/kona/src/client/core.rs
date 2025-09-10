@@ -33,6 +33,7 @@ use kona_proof::l1::OraclePipeline;
 use kona_proof::l2::OracleL2ChainProvider;
 use kona_proof::sync::new_oracle_pipeline_cursor;
 use kona_proof::{BootInfo, FlushableCache, HintType};
+use risc0_zkvm::sha::Digestible;
 use std::fmt::Debug;
 use std::mem::take;
 use std::sync::{Arc, Mutex};
@@ -279,29 +280,35 @@ where
             collection_target: execution_trace,
         };
 
-        let mut driver = match derivation_cache {
-            None => Driver::new(
-                cursor.clone(),
-                cached_executor,
-                OraclePipeline::new(
+        let (derivation_cache_hash, mut driver) = match derivation_cache {
+            None => (
+                B256::ZERO,
+                Driver::new(
+                    cursor.clone(),
+                    cached_executor,
+                    OraclePipeline::new(
+                        rollup_config.clone(),
+                        cursor,
+                        oracle.clone(),
+                        da_provider,
+                        l1_provider.clone(),
+                        l2_provider.clone(),
+                    )
+                    .await
+                    .context("OraclePipeline::new")?,
+                ),
+            ),
+            Some(cached_driver) => (
+                B256::new(cached_driver.digest().into()),
+                cached_driver.uncache(
+                    cached_executor,
                     rollup_config.clone(),
                     cursor,
                     oracle.clone(),
                     da_provider,
                     l1_provider.clone(),
                     l2_provider.clone(),
-                )
-                .await
-                .context("OraclePipeline::new")?,
-            ),
-            Some(cached_driver) => cached_driver.uncache(
-                cached_executor,
-                rollup_config.clone(),
-                cursor,
-                oracle.clone(),
-                da_provider,
-                l1_provider.clone(),
-                l2_provider.clone(),
+                ),
             ),
         };
 
@@ -336,16 +343,17 @@ where
         client::log("EPILOGUE");
 
         // Record derivation driver state
-        if let Some(cache) = derivation_trace {
-            #[cfg(not(target_os = "zkvm"))]
-            {
-                *cache.lock().unwrap() = CachedDriver::from(driver);
-            }
-            // todo: combine with precondition hash
-        }
+        let derivation_trace_hash = derivation_trace
+            .map(|cache| {
+                let derivation_cache = CachedDriver::from(driver);
+                let digest = B256::new(derivation_cache.digest().into());
+                *cache.lock().unwrap() = derivation_cache;
+                digest
+            })
+            .unwrap_or_default();
 
         // Record intermediate output commitment precondition
-        let precondition_hash = precondition_data
+        let output_precondition_hash = precondition_data
             .map(|(precondition_validation_data, blobs)| {
                 precondition::validate_precondition(
                     precondition_validation_data,
@@ -357,14 +365,21 @@ where
             .unwrap_or(Ok(B256::ZERO))
             .context("validate_precondition")?;
 
+        // Combine derivation/output precondition hashes
+        let precondition_hash = combine_precondition_hashes(
+            merge_precondition_hashes(derivation_cache_hash, derivation_trace_hash),
+            output_precondition_hash,
+        );
+
+        // Return results
         if output_roots.len() != expected_output_count {
             // Not enough data to derive output root at claimed height
             Ok((boot, precondition_hash, None))
         } else if output_roots.is_empty() {
             // note: This implies expected_output_count == 0
             // Claimed output height is equal to agreed output height
-            let real_output_hash = boot.agreed_l2_output_root;
-            Ok((boot, precondition_hash, Some(real_output_hash)))
+            let claimed_l2_output_root = boot.agreed_l2_output_root;
+            Ok((boot, precondition_hash, Some(claimed_l2_output_root)))
         } else {
             // Derived output root at future height
             Ok((boot, precondition_hash, output_roots.pop()))
@@ -425,6 +440,24 @@ pub fn recover_collected_executions(
         .into_iter()
         .map(Arc::new)
         .collect::<Vec<_>>()
+}
+
+/// Combines (derivation/blob) precondition hashes
+pub fn combine_precondition_hashes(left: B256, right: B256) -> B256 {
+    match (left, right) {
+        (B256::ZERO, B256::ZERO) => B256::ZERO,
+        (a, B256::ZERO) => a,
+        (B256::ZERO, b) => b,
+        (a, b) => B256::new([a.0, b.0].concat().digest().into()),
+    }
+}
+
+/// Merges (cache/trace) precondition hashes
+pub fn merge_precondition_hashes(left: B256, right: B256) -> B256 {
+    match (left, right) {
+        (B256::ZERO, B256::ZERO) => B256::ZERO,
+        (a, b) => B256::new([a.0, b.0].concat().digest().into()),
+    }
 }
 
 #[cfg(test)]

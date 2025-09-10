@@ -54,7 +54,7 @@ pub fn opt_bytes<const N: usize>(data: Option<[u8; N]>) -> Vec<u8> {
         return vec![0xFF; N + 1];
     };
     let mut res = vec![0x00; N + 1];
-    (&mut res[1..]).copy_from_slice(&data);
+    res[1..].copy_from_slice(&data);
     res
 }
 
@@ -1267,7 +1267,7 @@ impl Digestible for CachedChannelAssembler {
             self.channel
                 .as_ref()
                 .map(flatten_channel)
-                .unwrap_or(vec![])
+                .unwrap_or_default()
                 .as_slice(),
             self.prev.digest().as_bytes(),
         ]
