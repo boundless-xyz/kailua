@@ -60,7 +60,7 @@ pub async fn handle_proof_requests(
         )
     )
     .context("fetch_rollup_config")?;
-    let config_hash = B256::from(config_hash(&rollup_config)?);
+    let config_hash = B256::from(config_hash(&rollup_config));
     let raw_image_id = args.proving.image_id();
     let fpvm_image_id = B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(raw_image_id));
     // Set payout recipient

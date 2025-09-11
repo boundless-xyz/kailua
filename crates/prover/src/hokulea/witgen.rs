@@ -9,11 +9,12 @@ use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
 use kona_derive::prelude::BlobProvider;
 use kona_preimage::CommsClient;
-use kona_proof::FlushableCache;
+use kona_proof::{BootInfo, FlushableCache};
 use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_hokulea_witgen_client<P, B, O>(
     preimage_oracle: Arc<P>,
     preimage_oracle_shard_size: usize,
@@ -26,6 +27,7 @@ pub async fn run_hokulea_witgen_client<P, B, O>(
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
 ) -> anyhow::Result<(
+    BootInfo,
     ProofJournal,
     Precondition,
     Option<CachedDriver>,
@@ -80,6 +82,7 @@ where
     witness.fpvm_image_id = proof_journal.fpvm_image_id;
     // Return extended result
     Ok((
+        boot,
         proof_journal,
         precondition,
         cached_driver,

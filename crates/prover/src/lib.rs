@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use async_channel::Sender;
+use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
 
 pub mod args;
 pub mod channel;
 pub mod client;
 pub mod config;
+pub mod driver;
 pub mod hana;
 pub mod hokulea;
 pub mod kv;
@@ -33,16 +36,33 @@ pub enum ProvingError {
     DerivationProofError(usize),
 
     #[error("NotSeekingProof error: witness {0}")]
-    NotSeekingProof(usize, Vec<Vec<Execution>>),
+    NotSeekingProof(
+        usize,
+        Vec<Vec<Execution>>,
+        Box<Option<CachedDriver>>,
+        Option<Sender<CachedDriver>>,
+    ),
 
     #[error("NotAwaitingProof error")]
     NotAwaitingProof,
 
     #[error("BlockCountError error: size {0} limit {0}")]
-    BlockCountError(usize, usize, Vec<Vec<Execution>>),
+    BlockCountError(
+        usize,
+        usize,
+        Vec<Vec<Execution>>,
+        Box<Option<CachedDriver>>,
+        Option<Sender<CachedDriver>>,
+    ),
 
     #[error("WitnessSizeError error: size {0} limit {0}")]
-    WitnessSizeError(usize, usize, Vec<Vec<Execution>>),
+    WitnessSizeError(
+        usize,
+        usize,
+        Vec<Vec<Execution>>,
+        Box<Option<CachedDriver>>,
+        Option<Sender<CachedDriver>>,
+    ),
 
     #[error("ExecutionError error: ZKVM failed {0:?}")]
     ExecutionError(anyhow::Error),

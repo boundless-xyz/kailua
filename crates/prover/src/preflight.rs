@@ -23,6 +23,7 @@ use alloy_primitives::B256;
 use anyhow::{anyhow, bail, Context};
 use kailua_kona::blobs::BlobFetchRequest;
 use kailua_kona::precondition::proposal::ProposalPrecondition;
+use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::{await_tel, retry_res_ctx_timeout};
 use kona_genesis::RollupConfig;
@@ -211,8 +212,11 @@ pub async fn concurrent_execution_preflight(
             args.clone(),
             rollup_config.clone(),
             disk_kv_store.clone(),
+            Precondition::default(),
             B256::ZERO,
-            B256::ZERO,
+            vec![],
+            None,
+            None,
             vec![],
             vec![],
             vec![],

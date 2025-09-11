@@ -27,7 +27,7 @@ use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
 use kona_derive::prelude::BlobProvider;
 use kona_preimage::CommsClient;
-use kona_proof::FlushableCache;
+use kona_proof::{BootInfo, FlushableCache};
 use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
@@ -45,6 +45,7 @@ pub async fn run_hana_witgen_client<P, B, O>(
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
 ) -> anyhow::Result<(
+    BootInfo,
     ProofJournal,
     Precondition,
     Option<CachedDriver>,
@@ -67,7 +68,7 @@ where
     // Create provider around witness
     let celestia = CelestiaDataSourceProvider(HanaProvider::new(celestia_oracle).0);
     // Run regular witgen client
-    let (_, mut proof_journal, precondition, cached_driver, mut witness) =
+    let (boot, mut proof_journal, precondition, cached_driver, mut witness) =
         witgen::run_witgen_client(
             preimage_oracle,
             preimage_oracle_shard_size,
@@ -93,6 +94,7 @@ where
     celestia_witness.finalize_preimages(usize::MAX, true);
     // Return extended result
     Ok((
+        boot,
         proof_journal,
         precondition,
         cached_driver,

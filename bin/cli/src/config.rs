@@ -69,12 +69,11 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     )
     .context("fetch_rollup_config")?;
     debug!("{config:?}");
-    let rollup_config_hash = config_hash(&config).expect("Configuration hash derivation error");
+    let rollup_config_hash = config_hash(&config);
 
     if let Some(registry_config) = load_registry_config(config.l2_chain_id) {
         debug!("{registry_config:?}");
-        let registry_config_hash =
-            config_hash(&registry_config).expect("Registry config hash derivation error");
+        let registry_config_hash = config_hash(&registry_config);
         if rollup_config_hash != registry_config_hash {
             eprintln!("LOADED ROLLUP CONFIG DOES NOT MATCH REGISTRY ROLLUP CONFIG.");
         }

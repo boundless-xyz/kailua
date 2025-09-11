@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::Context;
 use kona_genesis::{AltDAConfig, RollupConfig, SystemConfig};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 use std::fmt::Debug;
@@ -122,7 +121,7 @@ pub fn opt_byte_vec(data: Option<Vec<u8>>) -> Vec<u8> {
 ///   the configuration will result in a different hash.
 /// - It is important to ensure that the input fields adhere to the expected formats and ranges
 ///   for proper hash computation.
-pub fn genesis_system_config_hash(system_config: &SystemConfig) -> anyhow::Result<[u8; 32]> {
+pub fn genesis_system_config_hash(system_config: &SystemConfig) -> [u8; 32] {
     let fields = [
         system_config.batcher_address.0.as_slice(),
         system_config.overhead.to_be_bytes::<32>().as_slice(),
@@ -138,7 +137,7 @@ pub fn genesis_system_config_hash(system_config: &SystemConfig) -> anyhow::Resul
     .concat();
     let digest = SHA2::hash_bytes(fields.as_slice());
 
-    Ok(digest.as_bytes().try_into().expect("infallible"))
+    digest.as_bytes().try_into().expect("infallible")
 }
 
 /// Generates a 32-byte configuration hash for an `AltDAConfig` instance.
@@ -165,7 +164,7 @@ pub fn genesis_system_config_hash(system_config: &SystemConfig) -> anyhow::Resul
 /// # Errors
 ///
 /// - Returns an error if any of the fields of `AltDAConfig` fail to resolve to valid default or non-default values.
-pub fn alt_da_config_hash(alt_da_config: &AltDAConfig) -> anyhow::Result<[u8; 32]> {
+pub fn alt_da_config_hash(alt_da_config: &AltDAConfig) -> [u8; 32] {
     let fields = [
         opt_byte_arr(alt_da_config.da_challenge_address.map(|v| *v.0)).as_slice(),
         opt_byte_arr(alt_da_config.da_challenge_window.map(|v| v.to_be_bytes())).as_slice(),
@@ -181,7 +180,7 @@ pub fn alt_da_config_hash(alt_da_config: &AltDAConfig) -> anyhow::Result<[u8; 32
     .concat();
     let digest = SHA2::hash_bytes(fields.as_slice());
 
-    Ok(digest.as_bytes().try_into().expect("infallible"))
+    digest.as_bytes().try_into().expect("infallible")
 }
 
 /// Computes the hash of a RollupConfig, which summarizes various rollup configuration settings
@@ -224,7 +223,7 @@ pub fn alt_da_config_hash(alt_da_config: &AltDAConfig) -> anyhow::Result<[u8; 32
 /// * `safe_default` is used extensively to provide fallback values for optional configuration
 ///   fields, ensuring robust handling of missing or invalid data.
 /// * All numeric values are serialized in big-endian format for consistency.
-pub fn config_hash(rollup_config: &RollupConfig) -> anyhow::Result<[u8; 32]> {
+pub fn config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
     let rollup_config_bytes = [
         // genesis
         rollup_config.genesis.l1.hash.0.as_slice(),
@@ -232,20 +231,13 @@ pub fn config_hash(rollup_config: &RollupConfig) -> anyhow::Result<[u8; 32]> {
         rollup_config.genesis.l2.hash.0.as_slice(),
         rollup_config.genesis.l2.number.to_be_bytes().as_slice(),
         rollup_config.genesis.l2_time.to_be_bytes().as_slice(),
-        safe_default(
-            match rollup_config
-                .genesis
-                .system_config
-                .as_ref()
-                .map(genesis_system_config_hash)
-            {
-                Some(result) => Some(result.context("genesis_system_config_hash")?),
-                None => None,
-            },
-            [0u8; 32],
-        )
-        .expect("infallible")
-        .as_slice(),
+        rollup_config
+            .genesis
+            .system_config
+            .as_ref()
+            .map(genesis_system_config_hash)
+            .unwrap_or_default()
+            .as_slice(),
         // block_time
         rollup_config.block_time.to_be_bytes().as_slice(),
         // max_sequencer_drift
@@ -341,15 +333,12 @@ pub fn config_hash(rollup_config: &RollupConfig) -> anyhow::Result<[u8; 32]> {
             .to_be_bytes()
             .as_slice(),
         // alt_da_config
-        safe_default(
-            match rollup_config.alt_da_config.as_ref().map(alt_da_config_hash) {
-                Some(result) => Some(result.context("alt_da_config_hash")?),
-                None => None,
-            },
-            [0u8; 32],
-        )
-        .expect("infallible")
-        .as_slice(),
+        rollup_config
+            .alt_da_config
+            .as_ref()
+            .map(alt_da_config_hash)
+            .unwrap_or_default()
+            .as_slice(),
         // chain_op_config
         rollup_config
             .chain_op_config
@@ -369,7 +358,7 @@ pub fn config_hash(rollup_config: &RollupConfig) -> anyhow::Result<[u8; 32]> {
     ]
     .concat();
     let digest = SHA2::hash_bytes(rollup_config_bytes.as_slice());
-    Ok::<[u8; 32], anyhow::Error>(digest.as_bytes().try_into().expect("infallible"))
+    digest.as_bytes().try_into().expect("infallible")
 }
 
 #[cfg(test)]
@@ -454,172 +443,170 @@ mod tests {
             }),
         };
 
-        let mut hashes: HashSet<[u8; 32]> = vec![config_hash(&rollup_config).unwrap()]
-            .into_iter()
-            .collect();
+        let mut hashes: HashSet<[u8; 32]> = vec![config_hash(&rollup_config)].into_iter().collect();
 
         rollup_config.genesis.l1.hash = B256::from([0x01; 32]);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.genesis.l1.number = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.genesis.l2.hash = B256::from([0x01; 32]);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.genesis.l2.number = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.genesis.l2_time = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .genesis
             .system_config
             .as_mut()
             .unwrap()
             .batcher_address = Address::from([0x01; 20]);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .genesis
             .system_config
             .as_mut()
             .unwrap()
             .overhead = U256::from_be_bytes([0x01; 32]);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.genesis.system_config.as_mut().unwrap().scalar =
             U256::from_be_bytes([0x01; 32]);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .genesis
             .system_config
             .as_mut()
             .unwrap()
             .gas_limit = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .genesis
             .system_config
             .as_mut()
             .unwrap()
             .base_fee_scalar = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .genesis
             .system_config
             .as_mut()
             .unwrap()
             .blob_base_fee_scalar = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .genesis
             .system_config
             .as_mut()
             .unwrap()
             .eip1559_denominator = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .genesis
             .system_config
             .as_mut()
             .unwrap()
             .eip1559_elasticity = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .genesis
             .system_config
             .as_mut()
             .unwrap()
             .operator_fee_scalar = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .genesis
             .system_config
             .as_mut()
             .unwrap()
             .operator_fee_constant = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.block_time = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.max_sequencer_drift = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.seq_window_size = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.channel_timeout = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.granite_channel_timeout = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.l1_chain_id = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.l2_chain_id = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.chain_op_config.eip1559_denominator = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.chain_op_config.eip1559_elasticity = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.chain_op_config.eip1559_denominator_canyon = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.regolith_time = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.canyon_time = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.delta_time = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.ecotone_time = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.fjord_time = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.granite_time = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.holocene_time = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.isthmus_time = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.interop_time = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.pectra_blob_schedule_time = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.batch_inbox_address = Address::from([0x01; 20]);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.deposit_contract_address = Address::from([0x01; 20]);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.l1_system_config_address = Address::from([0x01; 20]);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.protocol_versions_address = Address::from([0x01; 20]);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.superchain_config_address = Some(Address::from([0x01; 20]));
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.blobs_enabled_l1_timestamp = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.da_challenge_address = Some(Address::from([0x02; 20]));
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.interop_message_expiry_window = 1;
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .alt_da_config
             .as_mut()
             .unwrap()
             .da_challenge_address = Some(Address::from([0x01; 20]));
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .alt_da_config
             .as_mut()
             .unwrap()
             .da_challenge_window = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .alt_da_config
             .as_mut()
             .unwrap()
             .da_resolve_window = Some(1);
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config
             .alt_da_config
             .as_mut()
             .unwrap()
             .da_commitment_type = Some("aa".to_string());
-        assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
+        assert!(hashes.insert(config_hash(&rollup_config)));
     }
 
-    fn test_safe_default_ok(value: &RollupConfig, modifier: fn(&mut RollupConfig)) {
+    fn test_config_hash_ok(value: &RollupConfig, modifier: fn(&mut RollupConfig)) {
         let mut value = value.clone();
         modifier(&mut value);
-        assert!(config_hash(&value).is_ok());
+        config_hash(&value);
     }
 
     #[test]
@@ -688,11 +675,11 @@ mod tests {
             }),
         };
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.genesis.system_config.as_mut().unwrap().base_fee_scalar = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.genesis
                 .system_config
                 .as_mut()
@@ -700,7 +687,7 @@ mod tests {
                 .blob_base_fee_scalar = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.genesis
                 .system_config
                 .as_mut()
@@ -708,11 +695,11 @@ mod tests {
                 .eip1559_denominator = Some(u32::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.genesis.system_config.as_mut().unwrap().eip1559_elasticity = Some(u32::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.genesis
                 .system_config
                 .as_mut()
@@ -720,7 +707,7 @@ mod tests {
                 .operator_fee_scalar = Some(u32::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.genesis
                 .system_config
                 .as_mut()
@@ -728,65 +715,65 @@ mod tests {
                 .operator_fee_constant = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.hardforks.regolith_time = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| r.hardforks.canyon_time = Some(u64::MAX));
+        test_config_hash_ok(&rollup_config, |r| r.hardforks.canyon_time = Some(u64::MAX));
 
-        test_safe_default_ok(&rollup_config, |r| r.hardforks.delta_time = Some(u64::MAX));
+        test_config_hash_ok(&rollup_config, |r| r.hardforks.delta_time = Some(u64::MAX));
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.hardforks.ecotone_time = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| r.hardforks.fjord_time = Some(u64::MAX));
+        test_config_hash_ok(&rollup_config, |r| r.hardforks.fjord_time = Some(u64::MAX));
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.hardforks.granite_time = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.hardforks.holocene_time = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.hardforks.isthmus_time = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.hardforks.interop_time = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.hardforks.pectra_blob_schedule_time = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.superchain_config_address = Some(Address::ZERO)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.blobs_enabled_l1_timestamp = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.da_challenge_address = Some(Address::ZERO)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.alt_da_config.as_mut().unwrap().da_challenge_address = Some(Address::ZERO)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.alt_da_config.as_mut().unwrap().da_challenge_window = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.alt_da_config.as_mut().unwrap().da_resolve_window = Some(u64::MAX)
         });
 
-        test_safe_default_ok(&rollup_config, |r| {
+        test_config_hash_ok(&rollup_config, |r| {
             r.alt_da_config.as_mut().unwrap().da_commitment_type = Some(String::new())
         });
     }

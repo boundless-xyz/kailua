@@ -15,7 +15,6 @@
 use alloy::consensus::Blob;
 use alloy::eips::eip4844::IndexedBlobHash;
 use alloy_primitives::{Address, B256};
-use anyhow::Context;
 use async_trait::async_trait;
 use kailua_kona::blobs::BlobWitnessData;
 use kailua_kona::boot::StitchedBootInfo;
@@ -34,7 +33,7 @@ use kona_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleCl
 use kona_proof::{BootInfo, FlushableCache};
 use kona_protocol::BlockInfo;
 use std::fmt::Debug;
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use tracing::info;
 use tracing::log::error;
@@ -95,7 +94,7 @@ where
         execution_cache,
         Some(execution_trace.clone()),
         derivation_cache.clone(),
-        trace_derivation.then(derivation_trace.clone()),
+        trace_derivation.then(|| derivation_trace.clone()),
     )?;
     // Fix claimed output of captured executions
     let stitched_executions =
@@ -124,10 +123,13 @@ where
         .stream_witness
         .finalize_preimages(preimage_oracle_shard_size, false);
     // Capture derivation snapshot
-    let cached_driver = derivation_trace
-        .lock()
-        .context("derivation_trace lock")?
-        .take();
+    let cached_driver = match derivation_trace.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(err) => {
+            error!("Failed to recover derivation driver snapshot: {err:?}");
+            None
+        }
+    };
     // Stitch boot infos
     let (boot, journal_output, precondition) = stitch_boot_info(
         boot,

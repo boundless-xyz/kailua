@@ -122,7 +122,7 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         )
     )
     .context("fetch_rollup_config")?;
-    let rollup_config_hash = config_hash(&config).context("config_hash")?;
+    let rollup_config_hash = config_hash(&config);
     info!("RollupConfigHash({})", hex::encode(rollup_config_hash));
 
     // load system config

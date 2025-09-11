@@ -17,7 +17,7 @@ use crate::channel::AsyncChannel;
 use crate::config::generate_rollup_config_file;
 use crate::kv::create_disk_kv_store;
 use crate::preflight::{concurrent_execution_preflight, fetch_precondition_data};
-use crate::tasks::{handle_oneshot_tasks, Cached, Oneshot, OneshotResult};
+use crate::tasks::{handle_oneshot_tasks, CachedTask, Oneshot, OneshotResult};
 use crate::ProvingError;
 use alloy::eips::BlockNumberOrTag;
 use alloy::providers::{Provider, RootProvider};
@@ -26,6 +26,8 @@ use anyhow::{anyhow, bail, Context};
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::core::L1_HEAD_INSUFFICIENT;
+use kailua_kona::driver::CachedDriver;
+use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::{await_tel, retry_res_ctx_timeout};
 use opentelemetry::global::tracer;
@@ -72,21 +74,20 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
     // preload precondition data into KV store
-    let (precondition_hash, precondition_validation_data_hash) =
-        match fetch_precondition_data(&args)
-            .await
-            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-        {
-            Some(data) => {
-                let precondition_validation_data_hash = data.hash();
-                set_var(
-                    "PRECONDITION_VALIDATION_DATA_HASH",
-                    precondition_validation_data_hash.to_string(),
-                );
-                (data.precondition_hash(), precondition_validation_data_hash)
-            }
-            None => (B256::ZERO, B256::ZERO),
-        };
+    let (proposal_precondition_hash, proposal_data_hash) = match fetch_precondition_data(&args)
+        .await
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+    {
+        Some(data) => {
+            let precondition_validation_data_hash = data.hash();
+            set_var(
+                "PRECONDITION_VALIDATION_DATA_HASH",
+                precondition_validation_data_hash.to_string(),
+            );
+            (data.precondition_hash(), precondition_validation_data_hash)
+        }
+        None => (B256::ZERO, B256::ZERO),
+    };
 
     // create concurrent db
     let disk_kv_store = create_disk_kv_store(&args.kona);
@@ -141,6 +142,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
         .number;
         let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
         let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
+        let mut cached_driver_receiver = None;
         while agreed_l2_output_root != args.kona.claimed_l2_output_root {
             let claimed_l2_block_number = agreed_l2_block_number
                 .saturating_add(args.proving.max_block_derivations as u64)
@@ -175,20 +177,27 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
             )
             .header
             .hash;
+            // instantiate cached driver relays
+            let (new_sender, new_receiver) = (agreed_l2_output_root
+                != args.kona.claimed_l2_output_root)
+                .then(|| async_channel::bounded::<CachedDriver>(1))
+                .unzip();
             // queue up job
             num_proofs += 1;
             prover_channel
                 .0
-                .send((false, job_args.clone()))
+                .send((false, job_args.clone(), cached_driver_receiver, new_sender))
                 .await
                 .expect("Failed to send prover task");
+            // prepare receiver for next iteration if any
+            cached_driver_receiver = new_receiver;
         }
     } else {
         // one big task
         num_proofs = 1;
         prover_channel
             .0
-            .send((false, args.clone()))
+            .send((false, args.clone(), None, None))
             .await
             .expect("Failed to send prover task");
     }
@@ -197,11 +206,12 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
     while result_pq.len() < num_proofs {
         // dispatch all pending proofs
         while !prover_channel.1.is_empty() {
-            let (have_split, job_args) = prover_channel
-                .1
-                .recv()
-                .await
-                .expect("Failed to recv prover task");
+            let (have_split, job_args, derivation_cache_receiver, derivation_trace_sender) =
+                prover_channel
+                    .1
+                    .recv()
+                    .await
+                    .expect("Failed to recv prover task");
 
             let starting_block = if let Some(l2_provider) = l2_provider.as_ref() {
                 await_tel!(
@@ -240,8 +250,11 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                     job_args.clone(),
                     rollup_config,
                     disk_kv_store,
-                    precondition_hash,
-                    precondition_validation_data_hash,
+                    Precondition::default().proposal(proposal_precondition_hash),
+                    proposal_data_hash,
+                    derivation_cache_receiver,
+                    derivation_trace_sender,
+                    vec![],
                     vec![],
                     vec![],
                     !have_split,
@@ -268,23 +281,28 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
         let last_block = job_args.kona.claimed_l2_block_number;
 
         match result {
-            Ok(proof) => {
-                let cached = Cached {
+            Ok(result) => {
+                let cached_task = CachedTask {
                     // used for sorting
                     args: job_args.clone(),
                     // all unused
                     rollup_config: rollup_config.clone(),
                     disk_kv_store: disk_kv_store.clone(),
-                    precondition_hash,
-                    precondition_validation_data_hash,
+                    precondition: result.as_ref().map(|(_, p)| *p).unwrap_or_else(|| {
+                        Precondition::default().proposal(proposal_precondition_hash)
+                    }),
+                    proposal_data_hash,
                     stitched_executions: vec![],
+                    derivation_cache: None,
+                    derivation_trace: None,
+                    stitched_preconditions: vec![],
                     stitched_boot_info: vec![],
                     stitched_proofs: vec![],
                     prove_snark: false,
                     force_attempt,
                     seek_proof: true,
                 };
-                if proof.is_some() {
+                if result.is_some() {
                     info!(
                         "Successfully proved {num_blocks} blocks ({starting_block}..{last_block})",
                     );
@@ -293,31 +311,36 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                         "Failed to create complete proof for {num_blocks} blocks ({starting_block}..{last_block})",
                     );
                 }
-                let result = proof
+                let result = result
                     .ok_or_else(|| ProvingError::OtherError(anyhow!("Missing complete proof.")));
                 // enqueue result to reach the termination condition
-                result_pq.push(OneshotResult { cached, result });
+                result_pq.push(OneshotResult {
+                    cached_task,
+                    result,
+                });
             }
             Err(err) => {
                 // Handle error case
-                match err {
-                    ProvingError::WitnessSizeError(f, t, ..) => {
+                let (derivation_cache, derivation_trace) = match err {
+                    ProvingError::WitnessSizeError(f, t, _, d, s) => {
                         if force_attempt {
                             bail!(
-                                "Received WitnessSizeError({f},{t}) for a forced proving attempt: {err:?}"
+                                "Received WitnessSizeError({f},{t}) for a forced proving attempt."
                             );
                         }
                         warn!(
                             "Proof witness size {} above safety threshold {}. Splitting workload.",
                             human_bytes(f as f64),
                             human_bytes(t as f64),
-                        )
+                        );
+                        (*d, s)
                     }
                     ProvingError::ExecutionError(e) => {
                         if force_attempt {
                             bail!("Irrecoverable ZKVM execution error: {e:?}")
                         }
-                        warn!("Splitting proof after ZKVM execution error: {e:?}")
+                        warn!("Splitting proof after ZKVM execution error: {e:?}");
+                        Default::default()
                     }
                     ProvingError::OtherError(e) => {
                         if e.root_cause().to_string().contains(L1_HEAD_INSUFFICIENT) {
@@ -348,7 +371,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                         num_proofs -= 1;
                         continue;
                     }
-                }
+                };
                 // Require additional proof
                 num_proofs += 1;
                 // Split workload at midpoint (num_blocks > 1)
@@ -374,13 +397,24 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                         .context("l2_provider get_block_by_number mid_block")?
                         .ok_or_else(|| anyhow!("Block {mid_point} not found")))
                 );
+                // Instantiate derivation trace channel
+                let (lhs_sender, rhs_receiver) = async_channel::bounded(1);
                 // Lower half workload ends at midpoint (inclusive)
                 let mut lower_job_args = job_args.clone();
                 lower_job_args.kona.claimed_l2_output_root = mid_output;
                 lower_job_args.kona.claimed_l2_block_number = mid_point;
+                // Instantiate derivation cache channel
+                let lhs_receiver = match derivation_cache {
+                    Some(cached_driver) => {
+                        let (sender, receiver) = async_channel::bounded(1);
+                        sender.send(cached_driver).await.expect("infallible");
+                        Some(receiver)
+                    }
+                    None => None,
+                };
                 prover_channel
                     .0
-                    .send((true, lower_job_args))
+                    .send((true, lower_job_args, lhs_receiver, Some(lhs_sender)))
                     .await
                     .expect("Failed to send prover task");
                 // upper half workload starts after midpoint
@@ -389,7 +423,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                 upper_job_args.kona.agreed_l2_head_hash = mid_block.header.hash;
                 prover_channel
                     .0
-                    .send((true, upper_job_args))
+                    .send((true, upper_job_args, Some(rhs_receiver), derivation_trace))
                     .await
                     .expect("Failed to send prover task");
             }
@@ -399,7 +433,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
     // recursively combine expected proofs
     if !args.proving.skip_stitching() {
         // gather sorted proofs into vec
-        let proofs = result_pq
+        let results = result_pq
             .into_sorted_vec()
             .into_iter()
             .rev()
@@ -407,8 +441,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
             .collect::<Vec<_>>();
 
         // stitch contiguous proofs together
-        if proofs.len() > 1 {
-            info!("Composing {} proofs together.", proofs.len());
+        if results.len() > 1 {
+            info!("Composing {} proofs together.", results.len());
             // construct a proving instruction with no blocks to derive
             let mut base_args = args.clone();
             {
@@ -431,6 +465,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                 .hash;
             }
             // construct a list of boot info to backward stitch
+            let proofs = results.into_iter().map(|v| v.0).collect::<Vec<_>>();
             let stitched_boot_info = proofs
                 .iter()
                 .map(StitchedBootInfo::from)
@@ -440,8 +475,11 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                 base_args,
                 rollup_config.clone(),
                 disk_kv_store.clone(),
-                precondition_hash,
-                precondition_validation_data_hash,
+                Precondition::default().proposal(proposal_precondition_hash),
+                proposal_data_hash,
+                None,
+                None,
+                vec![], // todo(derivation): preconditions from jobs
                 stitched_boot_info,
                 proofs,
                 true,

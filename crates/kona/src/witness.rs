@@ -105,6 +105,7 @@ pub mod tests {
                 .map(|e| e.deref().clone())
                 .collect()],
             derivation_cache: None,
+            trace_derivation: false,
             stitched_preconditions: vec![
                 Precondition::default().proposal(keccak256(b"proposal"));
                 32

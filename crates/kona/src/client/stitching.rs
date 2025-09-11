@@ -352,7 +352,7 @@ pub fn stitch_executions(
     stitched_executions: &Vec<Vec<Arc<Execution>>>,
     #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
 ) {
-    let config_hash = crate::config::config_hash(&boot.rollup_config).unwrap();
+    let config_hash = crate::config::config_hash(&boot.rollup_config);
     // When running an execution-only proof, we may only have one batch validated by the kailua client
     if boot.l1_head.is_zero() {
         assert_eq!(1, stitched_executions.len());
@@ -558,7 +558,7 @@ pub mod tests {
     use anyhow::Context;
     use kona_proof::l1::OracleBlobProvider;
     use rayon::prelude::{IntoParallelIterator, ParallelIterator};
-    use std::iter::repeat;
+    use std::iter::repeat_n;
     use tracing_subscriber::EnvFilter;
 
     fn setup() {
@@ -671,10 +671,11 @@ pub mod tests {
         let precondition_hash = precondition_validation_data
             .as_ref()
             .map(|d| d.precondition_hash());
-        let stitched_preconditions =
-            repeat(Precondition::default().proposal(precondition_hash.unwrap_or_default()))
-                .take(stitched_boot_info.len())
-                .collect::<Vec<_>>();
+        let stitched_preconditions = repeat_n(
+            Precondition::default().proposal(precondition_hash.unwrap_or_default()),
+            stitched_boot_info.len(),
+        )
+        .collect::<Vec<_>>();
         // forward stitching pass
         let starting_block_number = stitched_executions
             .first()

@@ -103,7 +103,7 @@ impl SyncAgent {
             ),
             "fetch_rollup_config"
         )?;
-        let rollup_config_hash = config_hash(&config).expect("Configuration hash derivation error");
+        let rollup_config_hash = config_hash(&config);
         info!("RollupConfigHash({})", hex::encode(rollup_config_hash));
 
         // Load target deployment data

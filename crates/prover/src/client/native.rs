@@ -17,8 +17,11 @@ use crate::kv::{create_disk_kv_store, create_split_kv_store, RWLKeyValueStore};
 use crate::ProvingError;
 use alloy_primitives::B256;
 use anyhow::anyhow;
+use async_channel::Sender;
 use kailua_kona::boot::StitchedBootInfo;
+use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
+use kailua_kona::precondition::Precondition;
 use kailua_sync::retry_res_ctx_timeout;
 use kona_host::{
     HintHandler, OfflineHostBackend, OnlineHostBackend, OnlineHostBackendCfg, PreimageServer,
@@ -49,8 +52,12 @@ use tracing::info;
 pub async fn run_native_client(
     args: ProveArgs,
     disk_kv_store: Option<RWLKeyValueStore>,
-    precondition_validation_data_hash: B256,
+    proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
+    derivation_cache: Option<CachedDriver>,
+    trace_derivation: bool,
+    derivation_trace: Option<Sender<CachedDriver>>,
+    stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
     stitched_proofs: Vec<Receipt>,
     prove_snark: bool,
@@ -140,8 +147,12 @@ pub async fn run_native_client(
         args.boundless,
         OracleReader::new(preimage.client),
         HintWriter::new(hint.client),
-        precondition_validation_data_hash,
+        proposal_data_hash,
         stitched_executions,
+        derivation_cache,
+        trace_derivation,
+        derivation_trace,
+        stitched_preconditions,
         stitched_boot_info,
         stitched_proofs,
         prove_snark,

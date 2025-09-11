@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::args::ProveArgs;
+use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::RWLKeyValueStore;
 use crate::proof::{proof_file_name, read_bincoded_file};
 use crate::ProvingError;
@@ -23,11 +24,14 @@ use async_channel::{Receiver, Sender};
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{split_executions, stitch_boot_info};
+use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
 use kailua_kona::precondition::execution::exec_precondition_hash;
+use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kona_genesis::RollupConfig;
 use kona_proof::BootInfo;
+use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Receipt;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -37,13 +41,16 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 #[derive(Clone, Debug)]
-pub struct Cached {
+pub struct CachedTask {
     pub args: ProveArgs,
     pub rollup_config: RollupConfig,
     pub disk_kv_store: Option<RWLKeyValueStore>,
-    pub precondition_hash: B256,
-    pub precondition_validation_data_hash: B256,
+    pub precondition: Precondition,
+    pub proposal_data_hash: B256,
     pub stitched_executions: Vec<Vec<Execution>>,
+    pub derivation_cache: Option<CachedDriver>,
+    pub derivation_trace: Option<Sender<CachedDriver>>,
+    pub stitched_preconditions: Vec<Precondition>,
     pub stitched_boot_info: Vec<StitchedBootInfo>,
     pub stitched_proofs: Vec<Receipt>,
     pub prove_snark: bool,
@@ -51,35 +58,36 @@ pub struct Cached {
     pub seek_proof: bool,
 }
 
-impl PartialEq for Cached {
+impl PartialEq for CachedTask {
     fn eq(&self, other: &Self) -> bool {
         self.args.eq(&other.args)
     }
 }
 
-impl Eq for Cached {}
+impl Eq for CachedTask {}
 
-impl PartialOrd for Cached {
+impl PartialOrd for CachedTask {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Cached {
+impl Ord for CachedTask {
     fn cmp(&self, other: &Self) -> Ordering {
         self.args.cmp(&other.args)
     }
 }
 
+pub type OneshotResultResponse = (Receipt, Precondition);
 #[derive(Debug)]
 pub struct OneshotResult {
-    pub cached: Cached,
-    pub result: Result<Receipt, ProvingError>,
+    pub cached_task: CachedTask,
+    pub result: Result<OneshotResultResponse, ProvingError>,
 }
 
 impl PartialEq for OneshotResult {
     fn eq(&self, other: &Self) -> bool {
-        self.cached.eq(&other.cached)
+        self.cached_task.eq(&other.cached_task)
     }
 }
 
@@ -93,13 +101,13 @@ impl PartialOrd for OneshotResult {
 
 impl Ord for OneshotResult {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.cached.cmp(&other.cached)
+        self.cached_task.cmp(&other.cached_task)
     }
 }
 
 #[derive(Debug)]
 pub struct Oneshot {
-    pub cached_task: Cached,
+    pub cached_task: CachedTask,
     pub result_sender: Sender<OneshotResult>,
 }
 
@@ -115,14 +123,17 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
 
         if let Err(res) = result_sender
             .send(OneshotResult {
-                cached: cached_task.clone(),
+                cached_task: cached_task.clone(),
                 result: compute_cached_proof(
                     cached_task.args,
                     cached_task.rollup_config,
                     cached_task.disk_kv_store,
-                    cached_task.precondition_hash,
-                    cached_task.precondition_validation_data_hash,
+                    cached_task.precondition,
+                    cached_task.proposal_data_hash,
                     cached_task.stitched_executions,
+                    cached_task.derivation_cache,
+                    cached_task.derivation_trace,
+                    cached_task.stitched_preconditions,
                     cached_task.stitched_boot_info,
                     cached_task.stitched_proofs,
                     cached_task.prove_snark,
@@ -138,36 +149,43 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
     }
 }
 
+/// Send a [Oneshot] task to the prover pool and return once the result arrives
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_oneshot_task(
     args: ProveArgs,
     rollup_config: RollupConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
-    precondition_hash: B256,
-    precondition_validation_data_hash: B256,
+    precondition: Precondition,
+    proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
+    derivation_cache: Option<CachedDriver>,
+    derivation_trace: Option<Sender<CachedDriver>>,
+    stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
     stitched_proofs: Vec<Receipt>,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
     task_sender: Sender<Oneshot>,
-) -> Result<Receipt, ProvingError> {
+) -> Result<OneshotResultResponse, ProvingError> {
     // create proving task
-    let cached_task = Cached {
+    let cached_task = CachedTask {
         args,
         rollup_config,
         disk_kv_store,
-        precondition_hash,
-        precondition_validation_data_hash,
+        precondition,
+        proposal_data_hash,
         stitched_executions,
+        derivation_cache,
+        derivation_trace,
+        stitched_preconditions,
         stitched_boot_info,
         stitched_proofs,
         prove_snark,
         force_attempt,
         seek_proof,
     };
-    // create onshot channel
+    // create oneshot channel
     let oneshot_channel = async_channel::bounded(1);
     // dispatch task to pool
     task_sender
@@ -192,13 +210,16 @@ pub async fn compute_fpvm_proof(
     args: ProveArgs,
     rollup_config: RollupConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
-    precondition_hash: B256,
-    precondition_validation_data_hash: B256,
+    mut precondition: Precondition,
+    proposal_data_hash: B256,
+    derivation_cache: Option<Receiver<CachedDriver>>,
+    derivation_trace: Option<Sender<CachedDriver>>,
+    stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
     stitched_proofs: Vec<Receipt>,
     prove_snark: bool,
     task_sender: Sender<Oneshot>,
-) -> Result<Option<Receipt>, ProvingError> {
+) -> Result<Option<OneshotResultResponse>, ProvingError> {
     // report transaction count
     if !stitched_boot_info.is_empty() {
         info!("Stitching {} sub-proofs", stitched_boot_info.len());
@@ -211,6 +232,31 @@ pub async fn compute_fpvm_proof(
     //  3. compute series of execution-only proofs
     //  4. compute derivation-proof with stitched executions
 
+    // Wait for the cached driver to be reported before proceeding with derivation unless skipping
+    let derivation_cache = if !args.proving.skip_derivation_proof {
+        match derivation_cache {
+            Some(receiver) => {
+                match receiver.recv().await {
+                    Ok(cached_driver) => {
+                        let derivation_cache_precondition =
+                            B256::new(cached_driver.digest().into());
+                        info!("Received CachedDriver {derivation_cache_precondition}");
+                        // add cached driver precondition
+                        precondition.derivation_cache = derivation_cache_precondition;
+                        Some(cached_driver)
+                    }
+                    Err(err) => {
+                        error!("Failed to receive CachedDriver: {err:?}. Proceeding with fresh derivation.");
+                        None
+                    }
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+
     let stitching_only = args.kona.agreed_l2_output_root == args.kona.claimed_l2_output_root;
     // generate master proof
     info!("Attempting complete proof.");
@@ -218,25 +264,29 @@ pub async fn compute_fpvm_proof(
         args.clone(),
         rollup_config.clone(),
         disk_kv_store.clone(),
-        precondition_hash,
-        precondition_validation_data_hash,
+        precondition,
+        proposal_data_hash,
         vec![],
+        derivation_cache.clone(),
+        derivation_trace.clone(), // note: the task sends its driver trace if it succeeds
+        stitched_preconditions.clone(),
         stitched_boot_info.clone(),
         stitched_proofs.clone(),
         // pass through snark requirement
         prove_snark,
         // force attempting to compute the proof if it only combines boot infos
         stitching_only,
-        // skip seeking a complete proof if skipping derivation
+        // skip seeking a complete proof if not proving derivation
         !args.proving.skip_derivation_proof,
         task_sender.clone(),
     )
     .await;
-    // on WitnessSizeError or NotSeekingProof, extract execution trace
+
+    // on WitnessSizeError or NotSeekingProof, extract execution and derivation traces
     let executed_blocks = match complete_proof_result {
-        Err(ProvingError::BlockCountError(_, _, executed_blocks)) => executed_blocks,
-        Err(ProvingError::WitnessSizeError(_, _, executed_blocks)) => executed_blocks,
-        Err(ProvingError::NotSeekingProof(_, executed_blocks)) => executed_blocks,
+        Err(ProvingError::BlockCountError(_, _, executed_blocks, ..)) => executed_blocks,
+        Err(ProvingError::WitnessSizeError(_, _, executed_blocks, ..)) => executed_blocks,
+        Err(ProvingError::NotSeekingProof(_, executed_blocks, ..)) => executed_blocks,
         other_result => return Ok(Some(other_result?)),
     };
     // Check if we can do execution-only proofs
@@ -248,7 +298,7 @@ pub async fn compute_fpvm_proof(
     // flatten executed l2 blocks
     let (_, execution_cache) = split_executions(executed_blocks.clone());
 
-    // perform a derivation-only run to check its provability
+    // perform a derivation-only run to check its provability unless not proving derivation
     if !args.proving.skip_derivation_proof {
         info!(
             "Performing derivation-only run for {} executions.",
@@ -258,9 +308,12 @@ pub async fn compute_fpvm_proof(
             args.clone(),
             rollup_config.clone(),
             disk_kv_store.clone(),
-            precondition_hash,
-            precondition_validation_data_hash,
+            precondition,
+            proposal_data_hash,
             executed_blocks.clone(),
+            derivation_cache.clone(),
+            derivation_trace, // note: the task sends its driver trace if it succeeds
+            stitched_preconditions.clone(),
             stitched_boot_info.clone(),
             stitched_proofs.clone(),
             false,
@@ -270,15 +323,16 @@ pub async fn compute_fpvm_proof(
         )
         .await;
         // propagate unexpected error up on failure to trigger higher-level division
-        let Err(ProvingError::NotSeekingProof(witness_size, _)) = derivation_only_result else {
+        let Err(ProvingError::NotSeekingProof(witness_size, ..)) = derivation_only_result else {
             warn!(
                 "Unexpected derivation-only result (is_ok={}).",
                 derivation_only_result.is_ok()
             );
             return Ok(Some(derivation_only_result?));
         };
-        // abort if pure derivation may OOM
+        // warn if pure derivation witness exceeds limit
         if witness_size > args.proving.max_witness_size {
+            // todo: investigate if this is reachable.
             warn!(
                 "Derivation-only witness size {} exceeds limit {}.",
                 human_bytes(witness_size as f64),
@@ -335,7 +389,7 @@ pub async fn compute_fpvm_proof(
             .saturating_add(args.proving.max_block_executions)
             .min(last_claim_index);
     }
-
+    // process execution-only proving results
     while result_pq.len() < num_proofs {
         // Wait for more proving results
         let oneshot_result = result_channel
@@ -349,23 +403,24 @@ pub async fn compute_fpvm_proof(
         };
         // Require additional proof
         num_proofs += 1;
-        let executed_blocks = oneshot_result.cached.stitched_executions[0].clone();
+        let executed_blocks = oneshot_result.cached_task.stitched_executions[0].clone();
         let agreed_block = executed_blocks[0].artifacts.header.number - 1;
-        let num_blocks = oneshot_result.cached.args.kona.claimed_l2_block_number - agreed_block;
+        let num_blocks =
+            oneshot_result.cached_task.args.kona.claimed_l2_block_number - agreed_block;
         let forced_attempt = num_blocks == 1;
         // divide or bail out on error
         match err {
-            ProvingError::WitnessSizeError(f, t, e) => {
+            ProvingError::WitnessSizeError(f, t, e, ..) => {
                 if forced_attempt {
                     error!(
-                        "Proof witness size {} above safety threshold {}.",
+                        "Execution-only proof witness size {} above safety threshold {}.",
                         human_bytes(f as f64),
                         human_bytes(t as f64)
                     );
-                    return Err(ProvingError::WitnessSizeError(f, t, e));
+                    return Err(ProvingError::WitnessSizeError(f, t, e, Box::new(None), None));
                 }
                 warn!(
-                    "Proof witness size {} above safety threshold {}. Splitting workload.",
+                    "Execution-only proof witness size {} above safety threshold {}. Splitting workload.",
                     human_bytes(f as f64),
                     human_bytes(t as f64)
                 )
@@ -374,7 +429,7 @@ pub async fn compute_fpvm_proof(
                 if forced_attempt {
                     return Err(ProvingError::ExecutionError(e));
                 }
-                warn!("Splitting proof after ZKVM execution error: {e:?}")
+                warn!("Splitting execution-only proof after ZKVM execution error: {e:?}")
             }
             ProvingError::OtherError(e) => {
                 return Err(ProvingError::OtherError(e));
@@ -387,7 +442,7 @@ pub async fn compute_fpvm_proof(
             ProvingError::BlockCountError(..) => {
                 unreachable!("Unexpected BlockCountError {err:?}")
             }
-            ProvingError::NotSeekingProof(_, _) => {
+            ProvingError::NotSeekingProof(..) => {
                 unreachable!("Unexpected NotSeekingProof {err:?}")
             }
             ProvingError::DerivationProofError(_) => {
@@ -403,7 +458,7 @@ pub async fn compute_fpvm_proof(
         let mid_output = mid_exec.claimed_output;
 
         // Lower half workload ends at midpoint (inclusive)
-        let mut lower_job_args = oneshot_result.cached.args.clone();
+        let mut lower_job_args = oneshot_result.cached_task.args.clone();
         lower_job_args.kona.claimed_l2_output_root = mid_output;
         lower_job_args.kona.claimed_l2_block_number = mid_point;
         task_sender
@@ -420,7 +475,7 @@ pub async fn compute_fpvm_proof(
             .expect("task_channel should not be closed");
 
         // upper half workload starts after midpoint
-        let mut upper_job_args = oneshot_result.cached.args;
+        let mut upper_job_args = oneshot_result.cached_task.args;
         upper_job_args.kona.agreed_l2_output_root = mid_output;
         upper_job_args.kona.agreed_l2_head_hash = mid_exec.artifacts.header.hash();
         task_sender
@@ -442,8 +497,8 @@ pub async fn compute_fpvm_proof(
         .into_iter()
         .map(|mut r| {
             (
-                r.result.expect("pushed failing result to queue"),
-                r.cached.stitched_executions.pop().unwrap(),
+                r.result.expect("pushed failing result to queue").0,
+                r.cached_task.stitched_executions.pop().unwrap(),
             )
         })
         .unzip();
@@ -465,14 +520,18 @@ pub async fn compute_fpvm_proof(
         proofs.len(),
         stitched_executions.len()
     );
+
     Ok(Some(
         compute_oneshot_task(
             args,
             rollup_config,
             disk_kv_store,
-            precondition_hash,
-            precondition_validation_data_hash,
+            precondition, // todo: update this precondition to include derivation trace hash
+            proposal_data_hash,
             stitched_executions,
+            derivation_cache,
+            None,
+            stitched_preconditions,
             stitched_boot_info,
             [stitched_proofs, proofs].concat(),
             prove_snark,
@@ -489,7 +548,7 @@ pub fn create_cached_execution_task(
     rollup_config: RollupConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     execution_cache: &[Arc<Execution>],
-) -> Cached {
+) -> CachedTask {
     let starting_block = execution_cache
         .iter()
         .find(|e| e.agreed_output == args.kona.agreed_l2_output_root)
@@ -514,7 +573,8 @@ pub fn create_cached_execution_task(
         })
         .cloned()
         .collect::<Vec<_>>();
-    let precondition_hash = exec_precondition_hash(executed_blocks.as_slice());
+    let precondition =
+        Precondition::default().execution(exec_precondition_hash(executed_blocks.as_slice()));
 
     // Force the proving attempt regardless of witness size if we prove just one block
     let force_attempt = num_blocks == 1;
@@ -523,13 +583,16 @@ pub fn create_cached_execution_task(
         .map(|a| a.as_ref().clone())
         .collect::<Vec<_>>();
 
-    Cached {
+    CachedTask {
         args,
         rollup_config,
         disk_kv_store,
-        precondition_hash,
-        precondition_validation_data_hash: B256::ZERO,
+        precondition,
+        proposal_data_hash: B256::ZERO,
         stitched_executions: vec![executed_blocks],
+        derivation_cache: None,
+        derivation_trace: None,
+        stitched_preconditions: vec![],
         stitched_boot_info: vec![],
         stitched_proofs: vec![],
         prove_snark: false,
@@ -538,20 +601,24 @@ pub fn create_cached_execution_task(
     }
 }
 
+/// Launches the native Kailua-Kona client-server pair to compute a [OneshotResultResponse]
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_cached_proof(
     mut args: ProveArgs,
     rollup_config: RollupConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
-    precondition_hash: B256,
-    precondition_validation_data_hash: B256,
+    mut precondition: Precondition,
+    proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
+    derivation_cache: Option<CachedDriver>,
+    mut derivation_trace: Option<Sender<CachedDriver>>,
+    stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
     stitched_proofs: Vec<Receipt>,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
-) -> Result<Receipt, ProvingError> {
+) -> Result<OneshotResultResponse, ProvingError> {
     // extract single chain kona config
     let boot = BootInfo {
         l1_head: args.kona.l1_head,
@@ -563,23 +630,45 @@ pub async fn compute_cached_proof(
     };
     // Choose image id
     let image_id = args.proving.image_id();
+
+    // Check derivation driver cache if needed
+    let driver_file = driver_file_name(image_id, &boot, &precondition);
+    let trace_derivation = derivation_trace.is_some();
+    if trace_derivation {
+        if let Some(cached_driver) = try_read_driver(&driver_file).await {
+            precondition.derivation_trace = B256::new(cached_driver.digest().into());
+            if let Some(trace_sender) = derivation_trace.take() {
+                if let Err(err) = trace_sender.send(cached_driver).await {
+                    error!("Failed to report derivation trace: {err:?}");
+                }
+            }
+        }
+    }
+
     // Construct expected journal
-    let (boot, proof_journal) = stitch_boot_info(
+    // bug: this may fail when mixing proving with stitching boot infos
+    let (boot, proof_journal, _) = stitch_boot_info(
         boot,
         bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
         args.proving.payout_recipient_address.unwrap_or_default(),
-        precondition_hash,
-        vec![], // todo
+        precondition,
+        stitched_preconditions.clone(),
         stitched_boot_info.clone(),
     );
     let skip_await_proof = args.proving.skip_await_proof;
     // Skip computation if previously saved to disk
-    let file_name = proof_file_name(image_id, &proof_journal);
-    if Path::new(&file_name).try_exists().is_ok_and(identity) && seek_proof {
-        info!("Proving skipped. Proof file {file_name} already exists.");
+    let mut proof_file = proof_file_name(image_id, &proof_journal);
+    if Path::new(&proof_file).try_exists().is_ok_and(identity) && seek_proof {
+        info!("Proving skipped. Proof file {proof_file} already exists.");
+
+        // abort remainder of flow
+        if skip_await_proof {
+            return Err(ProvingError::NotAwaitingProof);
+        }
+        // todo: we need to also cache the derivation trace to report to a dependent
     } else {
         if seek_proof {
-            info!("Computing uncached proof {file_name}.");
+            info!("Computing uncached proof {proof_file}.");
         } else {
             info!("Running native client.");
         }
@@ -613,7 +702,7 @@ pub async fn compute_cached_proof(
                 })
                 .unwrap();
             if crate::client::payload::run_payload_client(
-                boot,
+                boot.clone(),
                 l2_provider,
                 op_node_provider,
                 disk_kv_store.clone(),
@@ -629,11 +718,15 @@ pub async fn compute_cached_proof(
 
         // generate a proof using the kailua client and kona server
         crate::client::native::run_native_client(
-            args,
+            args.clone(),
             disk_kv_store,
-            precondition_validation_data_hash,
+            proposal_data_hash,
             stitched_executions,
-            stitched_boot_info,
+            derivation_cache,
+            trace_derivation,
+            derivation_trace,
+            stitched_preconditions.clone(),
+            stitched_boot_info.clone(),
             stitched_proofs,
             prove_snark,
             force_attempt,
@@ -642,13 +735,37 @@ pub async fn compute_cached_proof(
         .await?;
     }
 
-    if skip_await_proof {
-        // this can be reached if proof file is cached
-        return Err(ProvingError::NotAwaitingProof);
+    // Load cached driver if tracing derivation is required
+    let derivation_trace = if trace_derivation {
+        try_read_driver(&driver_file).await
+    } else {
+        None
+    };
+    // Correct precondition and target proof file if needed
+    if precondition.derivation_trace.is_zero() && trace_derivation {
+        if let Some(derivation_trace) = derivation_trace.as_ref() {
+            // Update derivation trace precondition
+            precondition.derivation_trace = B256::new(derivation_trace.digest().into());
+            // Recalculate receipt file name with new precondition
+            proof_file = proof_file_name(
+                image_id,
+                &stitch_boot_info(
+                    boot,
+                    bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
+                    args.proving.payout_recipient_address.unwrap_or_default(),
+                    precondition,
+                    stitched_preconditions,
+                    stitched_boot_info,
+                )
+                .1,
+            );
+        }
     }
-
-    read_bincoded_file(&file_name)
+    // Load receipt
+    let receipt = read_bincoded_file(&proof_file)
         .await
-        .context(format!("Failed to read proof file {file_name} contents."))
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))
+        .context(format!("Failed to read proof file {proof_file} contents."))
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+    // Return combined response
+    Ok((receipt, precondition))
 }

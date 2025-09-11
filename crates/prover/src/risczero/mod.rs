@@ -53,7 +53,7 @@ pub async fn seek_proof(
     witness_frames: Vec<Vec<u8>>,
     stitched_proofs: Vec<Receipt>,
     prove_snark: bool,
-) -> Result<(), ProvingError> {
+) -> Result<Receipt, ProvingError> {
     // Check proof cache
     let file_name = proof_file_name(proving.image_id(), journal.clone());
     if Path::new(&file_name).try_exists().is_ok_and(identity) {
@@ -118,5 +118,5 @@ pub async fn seek_proof(
         .map_err(ProvingError::OtherError)?;
     info!("Saved proof to file {file_name}");
 
-    Ok(())
+    Ok(proof)
 }

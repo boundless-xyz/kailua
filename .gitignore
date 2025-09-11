@@ -20,3 +20,4 @@ kailua-input
 *.req
 .env
 .logs
+*.driver
