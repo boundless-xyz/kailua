@@ -79,6 +79,7 @@ impl Ord for CachedTask {
 }
 
 pub type OneshotResultResponse = (Receipt, Precondition);
+
 #[derive(Debug)]
 pub struct OneshotResult {
     pub cached_task: CachedTask,
@@ -111,6 +112,7 @@ pub struct Oneshot {
     pub result_sender: Sender<OneshotResult>,
 }
 
+/// Indefinitely processes incoming [Oneshot] messages via the provided channel
 pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::Result<()> {
     loop {
         let Oneshot {
@@ -224,15 +226,24 @@ pub async fn compute_fpvm_proof(
     if !stitched_boot_info.is_empty() {
         info!("Stitching {} sub-proofs", stitched_boot_info.len());
     }
+    if stitched_boot_info.len() != stitched_preconditions.len() {
+        warn!(
+            "Attempting to stitch {} sub-proofs with {} preconditions",
+            stitched_boot_info.len(),
+            stitched_preconditions.len()
+        );
+    }
 
     //  1. try entire proof
     //      on failure, take execution trace
+    //      on success, signal driver trace
     //  2. try derivation-only proof
     //      on failure, report error
+    //      on success, signal driver trace
     //  3. compute series of execution-only proofs
     //  4. compute derivation-proof with stitched executions
 
-    // Wait for the cached driver to be reported before proceeding with derivation unless skipping
+    // Wait for the cached driver to be reported before derivation unless it is skipped
     let derivation_cache = if !args.proving.skip_derivation_proof {
         match derivation_cache {
             Some(receiver) => {
@@ -268,7 +279,7 @@ pub async fn compute_fpvm_proof(
         proposal_data_hash,
         vec![],
         derivation_cache.clone(),
-        derivation_trace.clone(), // note: the task sends its driver trace if it succeeds
+        derivation_trace, // note: the task sends its driver trace if it succeeds
         stitched_preconditions.clone(),
         stitched_boot_info.clone(),
         stitched_proofs.clone(),
@@ -283,10 +294,16 @@ pub async fn compute_fpvm_proof(
     .await;
 
     // on WitnessSizeError or NotSeekingProof, extract execution and derivation traces
-    let executed_blocks = match complete_proof_result {
-        Err(ProvingError::BlockCountError(_, _, executed_blocks, ..)) => executed_blocks,
-        Err(ProvingError::WitnessSizeError(_, _, executed_blocks, ..)) => executed_blocks,
-        Err(ProvingError::NotSeekingProof(_, executed_blocks, ..)) => executed_blocks,
+    let (executed_blocks, derivation_trace) = match complete_proof_result {
+        Err(ProvingError::BlockCountError(_, _, executed_blocks, _, derivation_trace)) => {
+            (executed_blocks, derivation_trace)
+        }
+        Err(ProvingError::WitnessSizeError(_, _, executed_blocks, _, derivation_trace)) => {
+            (executed_blocks, derivation_trace)
+        }
+        Err(ProvingError::NotSeekingProof(_, executed_blocks, _, derivation_trace, _)) => {
+            (executed_blocks, derivation_trace)
+        }
         other_result => return Ok(Some(other_result?)),
     };
     // Check if we can do execution-only proofs
@@ -323,13 +340,20 @@ pub async fn compute_fpvm_proof(
         )
         .await;
         // propagate unexpected error up on failure to trigger higher-level division
-        let Err(ProvingError::NotSeekingProof(witness_size, ..)) = derivation_only_result else {
+        let Err(ProvingError::NotSeekingProof(witness_size, .., derivation_trace_hash)) =
+            derivation_only_result
+        else {
             warn!(
                 "Unexpected derivation-only result (is_ok={}).",
                 derivation_only_result.is_ok()
             );
             return Ok(Some(derivation_only_result?));
         };
+        // update precondition
+        if precondition.derivation_trace.is_zero() {
+            precondition.derivation_trace = derivation_trace_hash;
+        }
+
         // warn if pure derivation witness exceeds limit
         if witness_size > args.proving.max_witness_size {
             // todo: investigate if this is reachable.
@@ -346,7 +370,7 @@ pub async fn compute_fpvm_proof(
         }
     }
 
-    // create proofs channel
+    // create results channel
     let result_channel = async_channel::unbounded();
     let mut result_pq = BinaryHeap::new();
     // divide and conquer executions
@@ -532,7 +556,7 @@ pub async fn compute_fpvm_proof(
             args,
             rollup_config,
             disk_kv_store,
-            precondition, // todo: update this precondition to include derivation trace hash
+            precondition,
             proposal_data_hash,
             stitched_executions,
             derivation_cache,

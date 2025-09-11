@@ -254,6 +254,10 @@ where
     }
 
     // Encode witness as frames
+    let traced_driver_hash = traced_driver
+        .as_ref()
+        .map(|d| B256::new(d.digest().into()))
+        .unwrap_or_default();
     let witness_frames = process_witness(
         &proving,
         witness,
@@ -263,13 +267,14 @@ where
         force_attempt,
         derivation_cache,
         derivation_trace.clone(),
+        traced_driver_hash,
     )?;
 
-    // report the cached driver to the tracer before seeking a proof
+    // signal the cached driver to the tracer before seeking a proof
     if let Some(trace_sender) = derivation_trace {
         if let Some(cached_driver) = traced_driver {
             if let Err(err) = trace_sender.send(cached_driver).await {
-                error!("Failed to report derivation trace: {err:?}");
+                error!("Failed to signal derivation trace {traced_driver_hash}: {err:?}");
             }
         }
     }
@@ -323,6 +328,7 @@ pub fn process_witness(
     force_attempt: bool,
     derivation_cache: Option<CachedDriver>,
     derivation_trace: Option<Sender<CachedDriver>>,
+    derivation_trace_hash: B256,
 ) -> Result<Vec<Vec<u8>>, ProvingError> {
     let execution_trace = core::mem::replace(&mut witness.stitched_executions, stitched_executions);
 
@@ -385,6 +391,7 @@ pub fn process_witness(
             execution_trace,
             Box::new(derivation_cache),
             derivation_trace,
+            derivation_trace_hash,
         ));
     }
 

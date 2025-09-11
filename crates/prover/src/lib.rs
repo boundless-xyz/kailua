@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use alloy_primitives::B256;
 use async_channel::Sender;
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
@@ -41,6 +42,7 @@ pub enum ProvingError {
         Vec<Vec<Execution>>,
         Box<Option<CachedDriver>>,
         Option<Sender<CachedDriver>>,
+        B256,
     ),
 
     #[error("NotAwaitingProof error")]
