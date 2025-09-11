@@ -417,7 +417,13 @@ pub async fn compute_fpvm_proof(
                         human_bytes(f as f64),
                         human_bytes(t as f64)
                     );
-                    return Err(ProvingError::WitnessSizeError(f, t, e, Box::new(None), None));
+                    return Err(ProvingError::WitnessSizeError(
+                        f,
+                        t,
+                        e,
+                        Box::new(None),
+                        None,
+                    ));
                 }
                 warn!(
                     "Execution-only proof witness size {} above safety threshold {}. Splitting workload.",

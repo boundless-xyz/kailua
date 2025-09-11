@@ -142,7 +142,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
         .number;
         let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
         let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
-        let mut cached_driver_receiver = None;
+        let mut derivation_cache_receiver = None;
         while agreed_l2_output_root != args.kona.claimed_l2_output_root {
             let claimed_l2_block_number = agreed_l2_block_number
                 .saturating_add(args.proving.max_block_derivations as u64)
@@ -178,19 +178,24 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
             .header
             .hash;
             // instantiate cached driver relays
-            let (new_sender, new_receiver) = (agreed_l2_output_root
-                != args.kona.claimed_l2_output_root)
+            let is_last_iteration = agreed_l2_output_root == args.kona.claimed_l2_output_root;
+            let (derivation_trace_sender, new_receiver) = (!is_last_iteration)
                 .then(|| async_channel::bounded::<CachedDriver>(1))
                 .unzip();
             // queue up job
             num_proofs += 1;
             prover_channel
                 .0
-                .send((false, job_args.clone(), cached_driver_receiver, new_sender))
+                .send((
+                    false,
+                    job_args.clone(),
+                    derivation_cache_receiver,
+                    derivation_trace_sender,
+                ))
                 .await
                 .expect("Failed to send prover task");
             // prepare receiver for next iteration if any
-            cached_driver_receiver = new_receiver;
+            derivation_cache_receiver = new_receiver;
         }
     } else {
         // one big task
@@ -233,14 +238,14 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
             let num_blocks = job_args.kona.claimed_l2_block_number - starting_block;
             if starting_block > 0 {
                 info!(
-                    "Processing (split={have_split}) job with {} blocks from block {}",
+                    "Preparing task for (split={have_split}) job with {} blocks from block {}",
                     num_blocks, starting_block
                 );
             }
             // Force the proving attempt regardless of witness size if we prove just one block
             let force_attempt = num_blocks == 1 || job_args.kona.is_offline();
 
-            // spawn a job that computes the proof and sends back the result to result_channel
+            // spawn an async task that computes the proof using one of the instantiated handlers and sends back the result to result_channel
             let rollup_config = rollup_config.clone();
             let disk_kv_store = disk_kv_store.clone();
             let task_channel = task_channel.clone();
@@ -340,6 +345,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                             bail!("Irrecoverable ZKVM execution error: {e:?}")
                         }
                         warn!("Splitting proof after ZKVM execution error: {e:?}");
+                        // todo: should we reuse sender/receiver here?
                         Default::default()
                     }
                     ProvingError::OtherError(e) => {
@@ -398,13 +404,13 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                         .ok_or_else(|| anyhow!("Block {mid_point} not found")))
                 );
                 // Instantiate derivation trace channel
-                let (lhs_sender, rhs_receiver) = async_channel::bounded(1);
+                let (lower_sender, upper_receiver) = async_channel::bounded(1);
                 // Lower half workload ends at midpoint (inclusive)
                 let mut lower_job_args = job_args.clone();
                 lower_job_args.kona.claimed_l2_output_root = mid_output;
                 lower_job_args.kona.claimed_l2_block_number = mid_point;
                 // Instantiate derivation cache channel
-                let lhs_receiver = match derivation_cache {
+                let lower_receiver = match derivation_cache {
                     Some(cached_driver) => {
                         let (sender, receiver) = async_channel::bounded(1);
                         sender.send(cached_driver).await.expect("infallible");
@@ -414,7 +420,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                 };
                 prover_channel
                     .0
-                    .send((true, lower_job_args, lhs_receiver, Some(lhs_sender)))
+                    .send((true, lower_job_args, lower_receiver, Some(lower_sender)))
                     .await
                     .expect("Failed to send prover task");
                 // upper half workload starts after midpoint
@@ -423,7 +429,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                 upper_job_args.kona.agreed_l2_head_hash = mid_block.header.hash;
                 prover_channel
                     .0
-                    .send((true, upper_job_args, Some(rhs_receiver), derivation_trace))
+                    .send((true, upper_job_args, Some(upper_receiver), derivation_trace))
                     .await
                     .expect("Failed to send prover task");
             }
@@ -465,7 +471,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                 .hash;
             }
             // construct a list of boot info to backward stitch
-            let proofs = results.into_iter().map(|v| v.0).collect::<Vec<_>>();
+            let (proofs, stitched_preconditions): (Vec<_>, Vec<_>) = results.into_iter().unzip();
             let stitched_boot_info = proofs
                 .iter()
                 .map(StitchedBootInfo::from)
@@ -479,7 +485,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                 proposal_data_hash,
                 None,
                 None,
-                vec![], // todo(derivation): preconditions from jobs
+                stitched_preconditions,
                 stitched_boot_info,
                 proofs,
                 true,
