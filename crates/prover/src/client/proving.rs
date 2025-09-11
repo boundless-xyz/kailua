@@ -234,6 +234,12 @@ where
     let driver_file = driver_file_name(proving.image_id(), &boot_info, &precondition);
     if let Some(traced_driver) = traced_driver.as_ref() {
         let driver_digest = B256::new(traced_driver.digest().into());
+        if driver_digest != precondition.derivation_trace {
+            error!(
+                "Witgen derivation trace hash mismatch: Output {driver_digest}, precondition: {}",
+                precondition.derivation_trace
+            );
+        }
         match rkyv::to_bytes::<Error>(traced_driver) {
             Ok(rkyved_driver) => {
                 if let Err(err) = save_to_bincoded_file(&rkyved_driver.to_vec(), &driver_file).await
@@ -250,7 +256,7 @@ where
             }
         }
     } else if trace_derivation {
-        error!("Witgen client did not provide required CachedDriver");
+        error!("Witgen client did not provide required CachedDriver.");
     }
 
     // Encode witness as frames
@@ -276,6 +282,8 @@ where
             if let Err(err) = trace_sender.send(cached_driver).await {
                 error!("Failed to signal derivation trace {traced_driver_hash}: {err:?}");
             }
+        } else {
+            error!("No CachedDriver instance to send.");
         }
     }
 

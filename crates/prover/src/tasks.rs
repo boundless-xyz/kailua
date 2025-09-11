@@ -663,10 +663,15 @@ pub async fn compute_cached_proof(
 
     // Check derivation driver cache if needed
     let driver_file = driver_file_name(image_id, &boot, &precondition);
-    let trace_derivation = derivation_trace.is_some();
+    let trace_derivation = derivation_trace.is_some() || !precondition.derivation_trace.is_zero();
     if trace_derivation {
         if let Some(cached_driver) = try_read_driver(&driver_file).await {
-            precondition.derivation_trace = B256::new(cached_driver.digest().into());
+            let derivation_trace_hash = B256::new(cached_driver.digest().into());
+            if precondition.derivation_trace.is_zero() {
+                precondition.derivation_trace = derivation_trace_hash;
+            } else if precondition.derivation_trace != derivation_trace_hash {
+                warn!("Precondition derivation trace hash mismatch. Input: {}, Cached: {derivation_trace_hash}", precondition.derivation_trace);
+            }
             if let Some(trace_sender) = derivation_trace.take() {
                 if let Err(err) = trace_sender.send(cached_driver).await {
                     error!("Failed to report derivation trace: {err:?}");
@@ -690,12 +695,10 @@ pub async fn compute_cached_proof(
     let mut proof_file = proof_file_name(image_id, &proof_journal);
     if Path::new(&proof_file).try_exists().is_ok_and(identity) && seek_proof {
         info!("Proving skipped. Proof file {proof_file} already exists.");
-
-        // abort remainder of flow
+        // abort remainder of flow if no proof is to be awaited
         if skip_await_proof {
             return Err(ProvingError::NotAwaitingProof);
         }
-        // todo: we need to also cache the derivation trace to report to a dependent
     } else {
         if seek_proof {
             info!("Computing uncached proof {proof_file}.");
