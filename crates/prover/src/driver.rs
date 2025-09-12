@@ -92,7 +92,7 @@ pub async fn signal_derivation_trace(
             }
             return Some(cached_driver_hash);
         } else {
-            error!("No CachedDriver instance to send.");
+            warn!("No CachedDriver instance to signal.");
         }
     }
     None

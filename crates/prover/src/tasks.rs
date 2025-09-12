@@ -665,10 +665,15 @@ pub async fn compute_cached_proof(
     let driver_file = driver_file_name(image_id, &boot, &precondition);
     let trace_derivation = derivation_trace.is_some() || !precondition.derivation_trace.is_zero();
     if trace_derivation {
-        if let Some(derivation_trace_hash) =
-            signal_derivation_trace(derivation_trace.take(), try_read_driver(&driver_file).await)
-                .await
+        if let Some(derivation_trace_hash) = signal_derivation_trace(
+            derivation_trace.clone(),
+            try_read_driver(&driver_file).await,
+        )
+        .await
         {
+            // no need to double-send
+            let _ = derivation_trace.take();
+            // update precondition hash
             if precondition.derivation_trace.is_zero() {
                 precondition.derivation_trace = derivation_trace_hash;
             } else if precondition.derivation_trace != derivation_trace_hash {

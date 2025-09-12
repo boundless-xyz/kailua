@@ -292,6 +292,9 @@ where
     )?;
 
     // signal the cached driver to the tracer before seeking a proof
+    if trace_derivation && derivation_trace.is_none() {
+        warn!("Traced derivation without signaling.");
+    }
     signal_derivation_trace(derivation_trace, traced_driver).await;
 
     // seek corresponding proof
