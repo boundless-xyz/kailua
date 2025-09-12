@@ -14,7 +14,7 @@
 
 use crate::args::ProvingArgs;
 use crate::client::witgen;
-use crate::driver::driver_file_name;
+use crate::driver::{driver_file_name, signal_derivation_trace};
 use crate::proof::save_to_bincoded_file;
 use crate::risczero::boundless::BoundlessArgs;
 use crate::ProvingError;
@@ -259,6 +259,21 @@ where
         error!("Witgen client did not provide required CachedDriver.");
     }
 
+    // Sanity check
+    let precondition_hash = B256::new(precondition.digest().into());
+    if proof_journal.precondition_hash != precondition_hash {
+        error!(
+            "ProofJournal precondition hash mismatch: found {} expected {}.",
+            proof_journal.precondition_hash, precondition_hash
+        );
+    }
+    if witness.trace_derivation != trace_derivation {
+        error!(
+            "Witness derivation tracing {} expected {trace_derivation}.",
+            witness.trace_derivation
+        );
+    }
+
     // Encode witness as frames
     let traced_driver_hash = traced_driver
         .as_ref()
@@ -277,15 +292,7 @@ where
     )?;
 
     // signal the cached driver to the tracer before seeking a proof
-    if let Some(trace_sender) = derivation_trace {
-        if let Some(cached_driver) = traced_driver {
-            if let Err(err) = trace_sender.send(cached_driver).await {
-                error!("Failed to signal derivation trace {traced_driver_hash}: {err:?}");
-            }
-        } else {
-            error!("No CachedDriver instance to send.");
-        }
-    }
+    signal_derivation_trace(derivation_trace, traced_driver).await;
 
     // seek corresponding proof
     crate::risczero::seek_proof(

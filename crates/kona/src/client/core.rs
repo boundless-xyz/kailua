@@ -349,9 +349,9 @@ where
         // Record derivation driver state
         let derivation_trace_hash = derivation_trace
             .map(|trace| {
-                log("DERIVATION TRACE");
                 let derivation_trace = CachedDriver::from(driver);
                 let trace_digest = B256::new(derivation_trace.digest().into());
+                log(&format!("DERIVATION TRACE {trace_digest}"));
                 let _ = trace.lock().unwrap().insert(derivation_trace);
                 trace_digest
             })

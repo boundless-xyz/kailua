@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::args::ProveArgs;
-use crate::driver::{driver_file_name, try_read_driver};
+use crate::driver::{driver_file_name, signal_derivation_trace, try_read_driver};
 use crate::kv::RWLKeyValueStore;
 use crate::proof::{proof_file_name, read_bincoded_file};
 use crate::ProvingError;
@@ -665,17 +665,14 @@ pub async fn compute_cached_proof(
     let driver_file = driver_file_name(image_id, &boot, &precondition);
     let trace_derivation = derivation_trace.is_some() || !precondition.derivation_trace.is_zero();
     if trace_derivation {
-        if let Some(cached_driver) = try_read_driver(&driver_file).await {
-            let derivation_trace_hash = B256::new(cached_driver.digest().into());
+        if let Some(derivation_trace_hash) =
+            signal_derivation_trace(derivation_trace.take(), try_read_driver(&driver_file).await)
+                .await
+        {
             if precondition.derivation_trace.is_zero() {
                 precondition.derivation_trace = derivation_trace_hash;
             } else if precondition.derivation_trace != derivation_trace_hash {
                 warn!("Precondition derivation trace hash mismatch. Input: {}, Cached: {derivation_trace_hash}", precondition.derivation_trace);
-            }
-            if let Some(trace_sender) = derivation_trace.take() {
-                if let Err(err) = trace_sender.send(cached_driver).await {
-                    error!("Failed to report derivation trace: {err:?}");
-                }
             }
         }
     }

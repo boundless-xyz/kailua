@@ -31,11 +31,7 @@ use std::sync::Arc;
 #[cfg(target_os = "zkvm")]
 use {
     alloy_primitives::map::HashSet,
-    risc0_zkvm::{
-        serde::Deserializer,
-        sha::{Digest, Digestible},
-        Receipt,
-    },
+    risc0_zkvm::{serde::Deserializer, sha::Digest, Receipt},
     serde::Deserialize,
 };
 

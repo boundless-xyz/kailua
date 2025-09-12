@@ -14,6 +14,7 @@
 
 use crate::proof::read_bincoded_file;
 use alloy_primitives::B256;
+use async_channel::Sender;
 use bytemuck::NoUninit;
 use kailua_kona::config::config_hash;
 use kailua_kona::driver::CachedDriver;
@@ -21,7 +22,9 @@ use kailua_kona::precondition::Precondition;
 use kona_proof::BootInfo;
 use risc0_zkvm::sha::Digestible;
 use rkyv::rancor::Error;
-use tracing::{error, warn};
+use std::convert::identity;
+use std::path::Path;
+use tracing::{error, info, warn};
 
 pub fn driver_file_name<A: NoUninit>(
     image_id: A,
@@ -49,10 +52,18 @@ pub fn driver_file_name<A: NoUninit>(
 }
 
 pub async fn try_read_driver(file_name: &str) -> Option<CachedDriver> {
+    if !Path::new(&file_name).try_exists().is_ok_and(identity) {
+        warn!("Derivation trace {file_name} not found.");
+        return None;
+    }
     match read_bincoded_file::<Vec<u8>>(file_name).await {
         Ok(derivation_trace_rkyv) => {
             match rkyv::from_bytes::<CachedDriver, Error>(&derivation_trace_rkyv) {
                 Ok(derivation_trace) => {
+                    info!(
+                        "Read CachedDriver {} from {file_name}.",
+                        B256::new(derivation_trace.digest().into())
+                    );
                     return Some(derivation_trace);
                 }
                 Err(err) => {
@@ -61,7 +72,27 @@ pub async fn try_read_driver(file_name: &str) -> Option<CachedDriver> {
             }
         }
         Err(err) => {
-            warn!("Failed to read derivation trace from file {file_name}: {err:?}");
+            error!("Failed to read derivation trace from file {file_name}: {err:?}");
+        }
+    }
+    None
+}
+
+pub async fn signal_derivation_trace(
+    sender: Option<Sender<CachedDriver>>,
+    traced_driver: Option<CachedDriver>,
+) -> Option<B256> {
+    if let Some(trace_sender) = sender {
+        if let Some(cached_driver) = traced_driver {
+            let cached_driver_hash = B256::new(cached_driver.digest().into());
+            if let Err(err) = trace_sender.send(cached_driver).await {
+                error!("Failed to signal derivation trace {cached_driver_hash}: {err:?}");
+            } else {
+                info!("Signaled CachedDriver {cached_driver_hash}.");
+            }
+            return Some(cached_driver_hash);
+        } else {
+            error!("No CachedDriver instance to send.");
         }
     }
     None

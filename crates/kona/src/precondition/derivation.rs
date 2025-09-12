@@ -34,10 +34,12 @@ use risc0_zkvm::Digest;
 
 pub fn flatten_pipeline_cursor(pipeline_cursor: &PipelineCursor) -> Vec<u8> {
     [
-        pipeline_cursor.capacity.to_be_bytes().as_slice(),
+        (pipeline_cursor.capacity as u64).to_be_bytes().as_slice(),
         pipeline_cursor.channel_timeout.to_be_bytes().as_slice(),
         flatten_block_info(&pipeline_cursor.origin).as_slice(),
-        pipeline_cursor.origins.len().to_be_bytes().as_slice(),
+        (pipeline_cursor.origins.len() as u64)
+            .to_be_bytes()
+            .as_slice(),
         pipeline_cursor
             .origins
             .iter()
@@ -45,12 +47,14 @@ pub fn flatten_pipeline_cursor(pipeline_cursor: &PipelineCursor) -> Vec<u8> {
             .collect::<Vec<_>>()
             .concat()
             .as_slice(),
-        pipeline_cursor.origin_infos.len().to_be_bytes().as_slice(),
+        (pipeline_cursor.origin_infos.len() as u64)
+            .to_be_bytes()
+            .as_slice(),
         sorted_by_key(
             pipeline_cursor
                 .origin_infos
                 .clone()
-                .iter()
+                .into_iter()
                 .collect::<Vec<_>>(),
         )
         .iter()
@@ -58,7 +62,7 @@ pub fn flatten_pipeline_cursor(pipeline_cursor: &PipelineCursor) -> Vec<u8> {
         .collect::<Vec<_>>()
         .concat()
         .as_slice(),
-        pipeline_cursor.tips.len().to_be_bytes().as_slice(),
+        (pipeline_cursor.tips.len() as u64).to_be_bytes().as_slice(),
         pipeline_cursor
             .tips
             .iter()
@@ -81,11 +85,7 @@ pub fn flatten_pipeline_cursor(pipeline_cursor: &PipelineCursor) -> Vec<u8> {
 pub fn flatten_safe_head_artifacts(artifacts: &(BlockBuildingOutcome, Vec<Bytes>)) -> Vec<u8> {
     [
         artifacts.0.header.hash().as_slice(),
-        artifacts
-            .0
-            .execution_result
-            .receipts
-            .len()
+        (artifacts.0.execution_result.receipts.len() as u64)
             .to_be_bytes()
             .as_slice(),
         artifacts
@@ -98,11 +98,7 @@ pub fn flatten_safe_head_artifacts(artifacts: &(BlockBuildingOutcome, Vec<Bytes>
             .collect::<Vec<_>>()
             .concat()
             .as_slice(),
-        artifacts
-            .0
-            .execution_result
-            .requests
-            .len()
+        (artifacts.0.execution_result.requests.len() as u64)
             .to_be_bytes()
             .as_slice(),
         artifacts
@@ -120,7 +116,7 @@ pub fn flatten_safe_head_artifacts(artifacts: &(BlockBuildingOutcome, Vec<Bytes>
             .gas_used
             .to_be_bytes()
             .as_slice(),
-        artifacts.1.len().to_be_bytes().as_slice(),
+        (artifacts.1.len() as u64).to_be_bytes().as_slice(),
         artifacts
             .1
             .iter()
@@ -155,7 +151,7 @@ pub fn flatten_op_attrib_with_parent(op_attrib_with_parent: &OpAttributesWithPar
             .payload_attributes
             .withdrawals
             .as_ref()
-            .map(|v| v.len())
+            .map(|v| v.len() as u64)
             .unwrap_or_default()
             .to_be_bytes()
             .as_slice(),
@@ -178,7 +174,7 @@ pub fn flatten_op_attrib_with_parent(op_attrib_with_parent: &OpAttributesWithPar
             .inner
             .transactions
             .as_ref()
-            .map(|v| v.len())
+            .map(|v| v.len() as u64)
             .unwrap_or_default()
             .to_be_bytes()
             .as_slice(),
@@ -208,10 +204,10 @@ pub fn flatten_op_attrib_with_parent(op_attrib_with_parent: &OpAttributesWithPar
 
 pub fn flatten_withdrawal(withdrawal: &Withdrawal) -> Vec<u8> {
     [
-        withdrawal.index.to_le_bytes().as_slice(),
-        withdrawal.validator_index.to_le_bytes().as_slice(),
+        withdrawal.index.to_be_bytes().as_slice(),
+        withdrawal.validator_index.to_be_bytes().as_slice(),
         withdrawal.address.as_slice(),
-        withdrawal.amount.to_le_bytes().as_slice(),
+        withdrawal.amount.to_be_bytes().as_slice(),
     ]
     .concat()
 }
@@ -251,7 +247,7 @@ pub fn flatten_span_batch(span_batch: &SpanBatch) -> Vec<u8> {
         span_batch.l1_origin_check.as_slice(),
         span_batch.genesis_timestamp.to_be_bytes().as_slice(),
         span_batch.chain_id.to_be_bytes().as_slice(),
-        span_batch.batches.len().to_be_bytes().as_slice(),
+        (span_batch.batches.len() as u64).to_be_bytes().as_slice(),
         span_batch
             .batches
             .iter()
@@ -260,7 +256,9 @@ pub fn flatten_span_batch(span_batch: &SpanBatch) -> Vec<u8> {
             .concat()
             .as_slice(),
         flatten_bytes(span_batch.origin_bits.as_ref()).as_slice(),
-        span_batch.block_tx_counts.len().to_be_bytes().as_slice(),
+        (span_batch.block_tx_counts.len() as u64)
+            .to_be_bytes()
+            .as_slice(),
         span_batch
             .block_tx_counts
             .iter()
@@ -280,9 +278,7 @@ pub fn flatten_span_batch_transactions(span_batch_transactions: &SpanBatchTransa
             .to_be_bytes()
             .as_slice(),
         flatten_bytes(span_batch_transactions.contract_creation_bits.as_ref()).as_slice(),
-        span_batch_transactions
-            .tx_sigs
-            .len()
+        (span_batch_transactions.tx_sigs.len() as u64)
             .to_be_bytes()
             .as_slice(),
         span_batch_transactions
@@ -292,9 +288,7 @@ pub fn flatten_span_batch_transactions(span_batch_transactions: &SpanBatchTransa
             .collect::<Vec<_>>()
             .concat()
             .as_slice(),
-        span_batch_transactions
-            .tx_nonces
-            .len()
+        (span_batch_transactions.tx_nonces.len() as u64)
             .to_be_bytes()
             .as_slice(),
         span_batch_transactions
@@ -304,9 +298,7 @@ pub fn flatten_span_batch_transactions(span_batch_transactions: &SpanBatchTransa
             .collect::<Vec<_>>()
             .concat()
             .as_slice(),
-        span_batch_transactions
-            .tx_gases
-            .len()
+        (span_batch_transactions.tx_gases.len() as u64)
             .to_be_bytes()
             .as_slice(),
         span_batch_transactions
@@ -316,9 +308,7 @@ pub fn flatten_span_batch_transactions(span_batch_transactions: &SpanBatchTransa
             .collect::<Vec<_>>()
             .concat()
             .as_slice(),
-        span_batch_transactions
-            .tx_tos
-            .len()
+        (span_batch_transactions.tx_tos.len() as u64)
             .to_be_bytes()
             .as_slice(),
         span_batch_transactions
@@ -328,9 +318,7 @@ pub fn flatten_span_batch_transactions(span_batch_transactions: &SpanBatchTransa
             .collect::<Vec<_>>()
             .concat()
             .as_slice(),
-        span_batch_transactions
-            .tx_datas
-            .len()
+        (span_batch_transactions.tx_datas.len() as u64)
             .to_be_bytes()
             .as_slice(),
         span_batch_transactions
@@ -341,9 +329,7 @@ pub fn flatten_span_batch_transactions(span_batch_transactions: &SpanBatchTransa
             .concat()
             .as_slice(),
         flatten_bytes(span_batch_transactions.protected_bits.as_ref()).as_slice(),
-        span_batch_transactions
-            .tx_types
-            .len()
+        (span_batch_transactions.tx_types.len() as u64)
             .to_be_bytes()
             .as_slice(),
         span_batch_transactions
@@ -394,7 +380,7 @@ pub fn flatten_single_batch(single_batch: &SingleBatch) -> Vec<u8> {
 
 pub fn flatten_bytes(bytes: impl AsRef<[u8]>) -> Vec<u8> {
     let bytes = bytes.as_ref();
-    [bytes.len().to_be_bytes().as_slice(), bytes].concat()
+    [(bytes.len() as u64).to_be_bytes().as_slice(), bytes].concat()
 }
 
 pub fn flatten_channel(channel: &Channel) -> Vec<u8> {
@@ -412,7 +398,7 @@ pub fn flatten_channel(channel: &Channel) -> Vec<u8> {
     [
         channel.id.as_slice(),
         flatten_block_info(&channel.open_block).as_slice(),
-        channel.estimated_size.to_be_bytes().as_slice(),
+        (channel.estimated_size as u64).to_be_bytes().as_slice(),
         &[channel.closed as u8],
         channel.highest_frame_number.to_be_bytes().as_slice(),
         channel.last_frame_number.to_be_bytes().as_slice(),
@@ -595,8 +581,10 @@ impl Digestible for CachedChannelReader {
                     [
                         v.data.digest().as_bytes(),
                         v.decompressed.as_slice(),
-                        v.cursor.to_be_bytes().as_slice(),
-                        v.max_rlp_bytes_per_channel.to_be_bytes().as_slice(),
+                        (v.cursor as u64).to_be_bytes().as_slice(),
+                        (v.max_rlp_bytes_per_channel as u64)
+                            .to_be_bytes()
+                            .as_slice(),
                     ]
                     .concat()
                 })
