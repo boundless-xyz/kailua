@@ -188,38 +188,41 @@ pub mod tests {
             .collect()
     }
 
+    pub fn gen_header(i: u64) -> Header {
+        Header {
+            parent_hash: keccak256(format!("parent_hash {i}")),
+            ommers_hash: keccak256(format!("ommers_hash {i}")),
+            beneficiary: Address::from([0x33; 20]),
+            state_root: keccak256(format!("sate_root {i}")),
+            transactions_root: keccak256(format!("transactions_root {i}")),
+            receipts_root: keccak256(format!("receipts_root {i}")),
+            logs_bloom: Bloom::from([0x77; 256]),
+            difficulty: U256::from_be_bytes(keccak256(format!("difficulty {i}")).0),
+            number: i as u64,
+            gas_limit: 0xaa,
+            gas_used: 0xbb,
+            timestamp: 0xcc,
+            extra_data: format!("extra_data {i}").into_bytes().into(),
+            mix_hash: keccak256(format!("mix_hash {i}")),
+            nonce: B64::from([0xff; 8]),
+            base_fee_per_gas: Some(u64::from_be_bytes([0x01; 8])),
+            withdrawals_root: Some(keccak256(format!("withdrawals_root {i}"))),
+            blob_gas_used: Some(u64::from_be_bytes([0x03; 8])),
+            excess_blob_gas: Some(u64::from_be_bytes([0x04; 8])),
+            parent_beacon_block_root: Some(keccak256(format!(
+                "parent_beacon_block_root {i}"
+            ))),
+            requests_hash: Some(keccak256(format!("requests_hash {i}"))),
+        }
+    }
+
     pub fn gen_execution_outcomes(count: usize) -> Vec<BlockBuildingOutcome> {
         gen_execution_results(count)
             .into_iter()
             .enumerate()
             .map(|(i, execution_result)| BlockBuildingOutcome {
                 execution_result,
-                header: Header {
-                    parent_hash: keccak256(format!("parent_hash {i}")),
-                    ommers_hash: keccak256(format!("ommers_hash {i}")),
-                    beneficiary: Address::from([0x33; 20]),
-                    state_root: keccak256(format!("sate_root {i}")),
-                    transactions_root: keccak256(format!("transactions_root {i}")),
-                    receipts_root: keccak256(format!("receipts_root {i}")),
-                    logs_bloom: Bloom::from([0x77; 256]),
-                    difficulty: U256::from_be_bytes(keccak256(format!("difficulty {i}")).0),
-                    number: i as u64,
-                    gas_limit: 0xaa,
-                    gas_used: 0xbb,
-                    timestamp: 0xcc,
-                    extra_data: format!("extra_data {i}").into_bytes().into(),
-                    mix_hash: keccak256(format!("mix_hash {i}")),
-                    nonce: B64::from([0xff; 8]),
-                    base_fee_per_gas: Some(u64::from_be_bytes([0x01; 8])),
-                    withdrawals_root: Some(keccak256(format!("withdrawals_root {i}"))),
-                    blob_gas_used: Some(u64::from_be_bytes([0x03; 8])),
-                    excess_blob_gas: Some(u64::from_be_bytes([0x04; 8])),
-                    parent_beacon_block_root: Some(keccak256(format!(
-                        "parent_beacon_block_root {i}"
-                    ))),
-                    requests_hash: Some(keccak256(format!("requests_hash {i}"))),
-                }
-                .seal_slow(),
+                header: gen_header(i as u64).seal_slow(),
             })
             .collect()
     }

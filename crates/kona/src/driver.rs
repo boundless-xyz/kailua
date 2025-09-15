@@ -833,12 +833,36 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
+    use std::collections::hash_map::Entry;
+    use std::collections::HashMap;
     use super::*;
     use crate::client::core::tests::test_derivation;
-    use alloy_primitives::{b256, B256};
+    use alloy_primitives::{b256, keccak256, Address, Sealable, B256, B64};
     use kona_proof::BootInfo;
     use risc0_zkvm::sha::Digestible;
     use std::sync::Mutex;
+    use std::thread::{current, ThreadId};
+    use alloy_eips::BlockNumHash;
+    use alloy_eips::eip4895::Withdrawal;
+    use alloy_rpc_types_engine::PayloadAttributes;
+    use kona_driver::TipCursor;
+    use kona_protocol::L2BlockInfo;
+    use lazy_static::lazy_static;
+    use op_alloy_rpc_types_engine::OpPayloadAttributes;
+    use crate::rkyv::execution::tests::{gen_execution_outcomes, gen_header};
+
+    pub fn check_traced_driver(traced_driver: &CachedDriver) {
+        let traced_driver_hash = B256::new(traced_driver.digest().into());
+        let encoded_driver = rkyv::to_bytes::<rkyv::rancor::Error>(traced_driver)
+            .unwrap()
+            .to_vec();
+        let decoded_driver =
+            rkyv::from_bytes::<CachedDriver, rkyv::rancor::Error>(&encoded_driver).unwrap();
+        assert_eq!(
+            traced_driver_hash,
+            B256::new(decoded_driver.digest().into())
+        );
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_bob_mainnet_11791800_11791899_driver_cache() {
@@ -890,17 +914,220 @@ pub mod tests {
             agreed_l2_output_root = claimed_l2_output_root;
             // Verify derivation trace
             let traced_driver = derivation_trace.lock().unwrap().take().unwrap();
-            let traced_driver_hash = B256::new(traced_driver.digest().into());
-            let encoded_driver = rkyv::to_bytes::<rkyv::rancor::Error>(&traced_driver)
-                .unwrap()
-                .to_vec();
-            let decoded_driver =
-                rkyv::from_bytes::<CachedDriver, rkyv::rancor::Error>(&encoded_driver).unwrap();
-            assert_eq!(
-                traced_driver_hash,
-                B256::new(decoded_driver.digest().into())
-            );
-            cached_driver = Some(decoded_driver);
+            check_traced_driver(&traced_driver);
+            cached_driver = Some(traced_driver);
         }
+    }
+
+    lazy_static! {
+        static ref RNG_VAL: Arc<Mutex<HashMap<ThreadId, u64>>> = Default::default();
+    }
+
+    fn gen_b256() -> B256 {
+        let data = {
+            let mut rng_val = RNG_VAL.lock().unwrap();
+            let val = match rng_val.entry(current().id()) {
+                Entry::Occupied(val) => {
+                    val += 1;
+                    val
+                }
+                Entry::Vacant(_) => {}
+            }
+            let rng_thread_val = rng_val.get_mut(&current().id()).unwrap_or_default();
+            *rng_thread_val += 1;
+            rng_thread_val.to_be_bytes()
+        };
+        keccak256(data.as_slice())
+    }
+
+    fn gen_u64() -> u64 {
+        u64::from_be_bytes(gen_b256().0[..8].try_into().unwrap())
+    }
+
+    fn gen_usize() -> usize {
+        u32::from_be_bytes(gen_b256().0[..4].try_into().unwrap()) as usize
+    }
+
+    fn gen_block_info() -> BlockInfo {
+        BlockInfo {
+            hash: gen_b256(),
+            number: gen_u64(),
+            parent_hash: gen_b256(),
+            timestamp: gen_u64(),
+        }
+    }
+
+    fn gen_block_num_hash() -> BlockNumHash {
+        BlockNumHash {
+            number: gen_u64(),
+            hash: gen_b256(),
+        }
+    }
+
+    fn gen_l2_block_info() -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: gen_block_info(),
+            l1_origin: gen_block_num_hash(),
+            seq_num: gen_u64(),
+        }
+    }
+
+    fn gen_tip_cursor() -> TipCursor {
+        TipCursor {
+            l2_safe_head: gen_l2_block_info(),
+            l2_safe_head_header: gen_header(gen_u64()).seal_slow(),
+            l2_safe_head_output_root: gen_b256(),
+        }
+    }
+
+    pub fn gen_addr() -> Address {
+        Address::from_slice(&gen_b256().0)
+    }
+
+    pub fn gen_withdrawal() -> Withdrawal {
+        Withdrawal {
+            index: gen_u64(),
+            validator_index: gen_u64(),
+            address: gen_addr(),
+            amount: gen_u64(),
+        }
+    }
+
+    pub fn check_driver_batch_provider_encoding(
+        batch_provider: CachedBatchProvider
+    ) {
+        let driver = CachedDriver {
+            cursor: PipelineCursor {
+                capacity: gen_usize(),
+                channel_timeout: gen_u64(),
+                origin: gen_block_info(),
+                origins: vec![gen_u64(), gen_u64(), gen_u64()].into(),
+                origin_infos: vec![
+                    (gen_u64(), gen_block_info()),
+                    (gen_u64(), gen_block_info()),
+                    (gen_u64(), gen_block_info()),
+                    (gen_u64(), gen_block_info()),
+                ].into(),
+                tips: vec![
+                    (gen_u64(), gen_tip_cursor()),
+                    (gen_u64(), gen_tip_cursor()),
+                    (gen_u64(), gen_tip_cursor()),
+                ].into(),
+            },
+            safe_head_artifacts: Some((gen_execution_outcomes(1)[0], gen_b256().to_vec().into())),
+            pipeline: CachedDerivationPipeline {
+                prepared: vec![
+                    OpAttributesWithParent {
+                        inner: OpPayloadAttributes {
+                            payload_attributes: PayloadAttributes {
+                                timestamp: gen_u64(),
+                                prev_randao: gen_b256(),
+                                suggested_fee_recipient: gen_addr(),
+                                withdrawals: Some(vec![
+                                    gen_withdrawal(),
+                                    gen_withdrawal(),
+                                ]),
+                                parent_beacon_block_root: Some(gen_b256()),
+                            },
+                            transactions: Some(vec![
+                                gen_b256().to_vec().into(),
+                                gen_b256().to_vec().into(),
+                                gen_b256().to_vec().into(),
+                            ]),
+                            no_tx_pool: Some(true),
+                            gas_limit: Some(gen_u64()),
+                            eip_1559_params: Some(B64::from_slice(
+                                &gen_b256().0[..8]
+                            )),
+                        },
+                        parent: gen_l2_block_info(),
+                        l1_origin: gen_block_info(),
+                        is_last_in_span: true,
+                    }
+                ],
+                attributes: CachedAttributesQueueStage {
+                    is_last_in_span: true,
+                    batch: Some(SingleBatch {
+                        parent_hash: keccak256(b"driver.pipeline.attributes.batch.parent_hash"),
+                        epoch_num: 2222,
+                        epoch_hash: keccak256(b"driver.pipeline.attributes.batch.epoch_hash"),
+                        timestamp: 3333,
+                        transactions: vec![
+                            [
+                                *keccak256(b"driver.pipeline.attributes.batch.transactions[0]"),
+                                *keccak256(b"driver.pipeline.attributes.batch.transactions[1]"),
+                                *keccak256(b"driver.pipeline.attributes.batch.transactions[2]"),
+                                *keccak256(b"driver.pipeline.attributes.batch.transactions[3]"),
+                            ].concat().into()
+                        ],
+                    }),
+                    prev: batch_provider,
+                },
+            },
+        };
+
+        check_traced_driver(&driver);
+    }
+
+    pub fn check_driver_batch_stream_encoding(
+        batch_stream: CachedBatchStream
+    ) {
+        check_driver_batch_provider_encoding(
+            CachedBatchProvider::BatchStream(batch_stream.clone())
+        );
+        check_driver_batch_provider_encoding(
+            CachedBatchProvider::BatchQueue(CachedBatchQueue {
+                origin: Some(BlockInfo {
+                    hash: keccak256(b"CachedBatchQueue.origin.hash"),
+                    number: 998,
+                    parent_hash: keccak256(b"CachedBatchQueue.origin.parent_hash"),
+                    timestamp: 7656,
+                }),
+                l1_blocks: vec![
+                    BlockInfo {
+                        hash: keccak256(b"CachedBatchQueue.l1_blocks[0].hash"),
+                        number: 2752,
+                        parent_hash: keccak256(b"CachedBatchQueue.l1_blocks[0].parent_hash"),
+                        timestamp: 21365,
+                    }
+                ],
+                batches: vec![
+
+                ],
+                next_spans: vec![],
+                prev: batch_stream.clone(),
+            })
+        );
+        check_driver_batch_provider_encoding(
+            CachedBatchProvider::BatchValidator(
+                CachedBatchValidator {
+                    origin: None,
+                    l1_blocks: vec![],
+                    prev: batch_stream.clone(),
+                }
+            )
+        )
+    }
+
+    #[test]
+    pub fn test_driver_encodings() {
+        check_driver_batch_provider_encoding(CachedBatchProvider::None);
+        check_driver_batch_stream_encoding(CachedBatchStream {
+            span: Some(SpanBatch {
+                parent_check: Default::default(),
+                l1_origin_check: Default::default(),
+                genesis_timestamp: 0,
+                chain_id: 0,
+                batches: vec![],
+                origin_bits: Default::default(),
+                block_tx_counts: vec![],
+                txs: Default::default(),
+            }),
+            buffer: vec![],
+            prev: CachedChannelReader {
+                next_batch: None,
+                prev: CachedChannelProvider::None,
+            },
+        });
     }
 }
