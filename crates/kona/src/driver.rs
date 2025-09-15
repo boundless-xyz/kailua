@@ -829,3 +829,78 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod tests {
+    use super::*;
+    use crate::client::core::tests::test_derivation;
+    use alloy_primitives::{b256, B256};
+    use kona_proof::BootInfo;
+    use risc0_zkvm::sha::Digestible;
+    use std::sync::Mutex;
+
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_bob_mainnet_11791800_11791899_driver_cache() {
+        let mut cached_driver: Option<CachedDriver> = None;
+        let mut agreed_l2_output_root = b256!(
+            "0xdf4bd3e4b13f7ed35f536129e6f853d643a2bd7f906e22090dc011928a2a02ac" // 11791799
+        );
+        let derivations = [
+            (
+                b256!("0x049070993a1aa9f42b0a66a197b71e6f466d589770292aacd40af4213f68d2de"),
+                11791806,
+            ),
+            (
+                b256!("0x3a2aeb1312c09308cf61903c682108fefa880ee411a75ee91275f27f569a2f83"),
+                11791807,
+            ),
+            (
+                b256!("0xfca53deb01a9e67b8da9308dfbbe89c0fbd4af4f695c89c71a4dc24779b95d14"),
+                11791808,
+            ),
+            (
+                b256!("0xc360c08c8d03f125cdd1644d1bf28ca5b305e9801040009f485c6a4abc378ddc"),
+                11791849,
+            ),
+            (
+                b256!("0xd65880a4aceae01adc4f4316db071188c8df9444d45c83424f13c380e2f717ce"),
+                11791899,
+            ),
+        ];
+
+        for (claimed_l2_output_root, claimed_l2_block_number) in derivations {
+            let derivation_trace: Arc<Mutex<Option<CachedDriver>>> = Default::default();
+            test_derivation(
+                BootInfo {
+                    l1_head: b256!(
+                        "0x15e4a9386d4fab6c99378b858545fd21646e29673e80593218f356078dfbd574"
+                    ),
+                    agreed_l2_output_root,
+                    claimed_l2_output_root,
+                    claimed_l2_block_number,
+                    chain_id: 60808,
+                    rollup_config: Default::default(),
+                },
+                None,
+                cached_driver,
+                Some(derivation_trace.clone()),
+            )
+            .unwrap();
+            agreed_l2_output_root = claimed_l2_output_root;
+            // Verify derivation trace
+            let traced_driver = derivation_trace.lock().unwrap().take().unwrap();
+            let traced_driver_hash = B256::new(traced_driver.digest().into());
+            let encoded_driver = rkyv::to_bytes::<rkyv::rancor::Error>(&traced_driver)
+                .unwrap()
+                .to_vec();
+            let decoded_driver =
+                rkyv::from_bytes::<CachedDriver, rkyv::rancor::Error>(&encoded_driver).unwrap();
+            assert_eq!(
+                traced_driver_hash,
+                B256::new(decoded_driver.digest().into())
+            );
+            cached_driver = Some(decoded_driver);
+        }
+    }
+}
