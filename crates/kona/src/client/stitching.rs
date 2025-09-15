@@ -649,12 +649,16 @@ pub mod tests {
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
     ) -> anyhow::Result<()> {
-        let stitched_executions =
-            test_derivation(boot_info.clone(), precondition_validation_data.clone())
-                .context("test_derivation")?
-                .into_iter()
-                .map(|e| e.as_ref().clone())
-                .collect::<Vec<_>>();
+        let stitched_executions = test_derivation(
+            boot_info.clone(),
+            precondition_validation_data.clone(),
+            None,
+            None,
+        )
+        .context("test_derivation")?
+        .into_iter()
+        .map(|e| e.as_ref().clone())
+        .collect::<Vec<_>>();
         let stitched_boot_info = stitched_executions
             .iter()
             .map(|e| StitchedBootInfo {
@@ -753,12 +757,16 @@ pub mod tests {
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
     ) -> anyhow::Result<()> {
-        let stitched_executions =
-            test_derivation(boot_info.clone(), precondition_validation_data.clone())
-                .context("test_derivation")?
-                .into_iter()
-                .map(|e| e.as_ref().clone())
-                .collect::<Vec<_>>();
+        let stitched_executions = test_derivation(
+            boot_info.clone(),
+            precondition_validation_data.clone(),
+            None,
+            None,
+        )
+        .context("test_derivation")?
+        .into_iter()
+        .map(|e| e.as_ref().clone())
+        .collect::<Vec<_>>();
         // flat pass
         test_stitching(
             boot_info.clone(),
@@ -804,12 +812,16 @@ pub mod tests {
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) -> anyhow::Result<()> {
-        let stitched_executions =
-            test_derivation(boot_info.clone(), precondition_validation_data.clone())
-                .context("test_derivation")?
-                .into_iter()
-                .map(|e| e.as_ref().clone())
-                .collect::<Vec<_>>();
+        let stitched_executions = test_derivation(
+            boot_info.clone(),
+            precondition_validation_data.clone(),
+            None,
+            None,
+        )
+        .context("test_derivation")?
+        .into_iter()
+        .map(|e| e.as_ref().clone())
+        .collect::<Vec<_>>();
         // flat pass
         boot_info.l1_head = B256::ZERO;
         test_stitching(

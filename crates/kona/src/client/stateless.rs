@@ -116,7 +116,7 @@ pub mod tests {
             chain_id: 11155420,
             rollup_config: Default::default(),
         };
-        let stitched_executions = test_derivation(boot_info.clone(), None)
+        let stitched_executions = test_derivation(boot_info.clone(), None, None, None)
             .context("test_derivation")?
             .into_iter()
             .map(|e| e.as_ref().clone())

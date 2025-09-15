@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::client;
 use crate::client::log;
 use crate::driver::CachedDriver;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
@@ -139,20 +138,20 @@ where
         ////////////////////////////////////////////////////////////////
         //                          PROLOGUE                          //
         ////////////////////////////////////////////////////////////////
-        client::log("BOOT");
+        log("BOOT");
         let boot = BootInfo::load(oracle.as_ref())
             .await
             .context("BootInfo::load")?;
         assert_eq!(boot.chain_id, boot.rollup_config.l2_chain_id);
-        client::log(&format!("{:?} L1_HEAD", boot.l1_head));
-        client::log(&format!("{:?} L2_AGREED", boot.agreed_l2_output_root));
-        client::log(&format!(
+        log(&format!("{:?} L1_HEAD", boot.l1_head));
+        log(&format!("{:?} L2_AGREED", boot.agreed_l2_output_root));
+        log(&format!(
             "{:?} L2_CLAIMED (#{})",
             boot.claimed_l2_output_root, boot.claimed_l2_block_number
         ));
         let rollup_config = Arc::new(boot.rollup_config.clone());
 
-        client::log("SAFE HEAD HASH");
+        log("SAFE HEAD HASH");
         let safe_head_hash =
             fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
 
@@ -162,7 +161,7 @@ where
 
         // The claimed L2 block number must be greater than or equal to the L2 safe head.
         // Fetch the safe head's block header.
-        client::log("SAFE HEAD");
+        log("SAFE HEAD");
         let safe_head = l2_provider
             .header_by_hash(safe_head_hash)
             .map(|header| Sealed::new_unchecked(header, safe_head_hash))?;
@@ -177,7 +176,7 @@ where
         //                     EXECUTION CACHING                      //
         ////////////////////////////////////////////////////////////////
         if boot.l1_head.is_zero() {
-            client::log("EXECUTION ONLY");
+            log("EXECUTION ONLY");
             let cursor =
                 new_execution_cursor(rollup_config.as_ref(), safe_head.clone(), &mut l2_provider)
                     .await
@@ -229,8 +228,8 @@ where
                     .context("compute_output_root: Verify post state")?;
                 // Verify post state
                 assert_eq!(execution.claimed_output, latest_output_root);
-                client::log(&format!(
-                    "OUTPUT: {}/{}",
+                log(&format!(
+                    "OUTPUT: {}/{}\t{latest_output_root}",
                     execution.artifacts.header.number, boot.claimed_l2_block_number
                 ));
             }
@@ -246,13 +245,13 @@ where
         ////////////////////////////////////////////////////////////////
         //                   DERIVATION & EXECUTION                   //
         ////////////////////////////////////////////////////////////////
-        client::log("PRECONDITION");
+        log("PRECONDITION");
         let proposal_precondition_data =
             proposal::load_proposal_data(proposal_data_hash, oracle.clone(), &mut beacon)
                 .await
                 .context("load_precondition_data")?;
 
-        client::log("DERIVATION & EXECUTION");
+        log("DERIVATION & EXECUTION");
         // Create a new derivation driver with the given boot information and oracle.
         let cursor = new_oracle_pipeline_cursor(
             rollup_config.as_ref(),
@@ -329,11 +328,11 @@ where
             if output_block.block_info.number == starting_block {
                 // A mismatch indicates that there is insufficient L1 data available to produce
                 // an L2 output root at the claimed block number
-                client::log("HALT");
+                log("HALT");
                 break;
             } else {
-                client::log(&format!(
-                    "OUTPUT: {}/{}",
+                log(&format!(
+                    "OUTPUT: {}/{}\t{output_root}",
                     output_block.block_info.number, boot.claimed_l2_block_number
                 ));
             }
@@ -344,7 +343,7 @@ where
         ////////////////////////////////////////////////////////////////
         //                          EPILOGUE                          //
         ////////////////////////////////////////////////////////////////
-        client::log("EPILOGUE");
+        log("EPILOGUE");
 
         // Record derivation driver state
         let derivation_trace_hash = derivation_trace
@@ -456,26 +455,31 @@ pub mod tests {
 
     pub fn test_derivation(
         boot_info: BootInfo,
-        precondition_validation_data: Option<ProposalPrecondition>,
+        proposal_data: Option<ProposalPrecondition>,
+        derivation_cache: Option<CachedDriver>,
+        derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
     ) -> anyhow::Result<Vec<Arc<Execution>>> {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
-        let (expected_precondition_hash, precondition_validation_data_hash) =
-            if let Some(data) = precondition_validation_data {
-                (data.precondition_hash(), oracle.add_precondition_data(data))
-            } else {
-                Default::default()
-            };
+        let (proposal_precondition_hash, proposal_data_hash) = if let Some(data) = proposal_data {
+            (data.precondition_hash(), oracle.add_precondition_data(data))
+        } else {
+            Default::default()
+        };
+        let derivation_cache_digest = derivation_cache
+            .as_ref()
+            .map(|c| c.digest())
+            .unwrap_or_default();
         let collection_target = Arc::new(Mutex::new(Vec::new()));
         let (result_boot_info, precondition) = run_core_client(
-            precondition_validation_data_hash,
+            proposal_data_hash,
             oracle.clone(),
             oracle.clone(),
             OracleBlobProvider::new(oracle.clone()),
             EthereumDataSourceProvider,
             vec![],
             Some(collection_target.clone()),
-            None,
-            None,
+            derivation_cache,
+            derivation_trace.clone(),
         )
         .context("run_core_client")?;
 
@@ -494,10 +498,22 @@ pub mod tests {
         );
         assert_eq!(result_boot_info.chain_id, boot_info.chain_id);
 
-        assert_eq!(
-            B256::new(precondition.digest().into()),
-            expected_precondition_hash
-        );
+        let expected_precondition = Precondition {
+            proposal_blobs: proposal_precondition_hash,
+            execution_trace: Default::default(),
+            derivation_cache: B256::new(derivation_cache_digest.into()),
+            derivation_trace: derivation_trace
+                .as_ref()
+                .map(|t| {
+                    t.lock()
+                        .unwrap()
+                        .as_ref()
+                        .map(|d| B256::new(d.digest().into()))
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default(),
+        };
+        assert_eq!(precondition.digest(), expected_precondition.digest(),);
 
         let execution_cache =
             recover_collected_executions(collection_target, boot_info.claimed_l2_output_root)
@@ -570,6 +586,8 @@ pub mod tests {
                 rollup_config: Default::default(),
             },
             None,
+            None,
+            Some(Default::default()),
         )
         .unwrap();
     }
@@ -592,6 +610,8 @@ pub mod tests {
                 rollup_config: Default::default(),
             },
             None,
+            None,
+            Some(Default::default()),
         )
         .unwrap();
         let _ = test_execution(
@@ -635,6 +655,8 @@ pub mod tests {
                 output_block_span: 100,
                 blob_hashes: vec![],
             }),
+            None,
+            Some(Default::default()),
         )
         .unwrap();
     }
@@ -656,6 +678,8 @@ pub mod tests {
                 rollup_config: Default::default(),
             },
             None,
+            None,
+            Some(Default::default()),
         )
         .unwrap();
     }
@@ -679,6 +703,8 @@ pub mod tests {
                 rollup_config: Default::default(),
             },
             None,
+            None,
+            Some(Default::default()),
         )
         .unwrap_err();
     }
@@ -701,6 +727,8 @@ pub mod tests {
                 rollup_config: Default::default(),
             },
             None,
+            None,
+            Some(Default::default()),
         )
         .unwrap_err();
     }
@@ -723,6 +751,8 @@ pub mod tests {
                 rollup_config: Default::default(),
             },
             None,
+            None,
+            Some(Default::default()),
         )
         .unwrap();
         assert!(executions.is_empty());
