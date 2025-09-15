@@ -33,7 +33,7 @@ use boundless_market::contracts::boundless_market::MarketError;
 use boundless_market::contracts::{
     Predicate, RequestError, RequestId, RequestStatus, Requirements,
 };
-use boundless_market::request_builder::OfferParams;
+use boundless_market::request_builder::{OfferParams, RequirementParams};
 use boundless_market::storage::{StorageProviderConfig, StorageProviderType};
 use boundless_market::{Deployment, GuestEnv, ProofRequest, StandardStorageProvider};
 use bytemuck::NoUninit;
@@ -109,9 +109,9 @@ pub struct MarketProviderConfig {
     /// [RiscZeroSetVerifier]: https://github.com/risc0/risc0-ethereum/blob/main/contracts/src/RiscZeroSetVerifier.sol
     #[clap(long, env, required = false)]
     pub boundless_set_verifier_address: Option<Address>,
-    /// Address of the stake token contract. The staking token is an ERC-20.
+    /// Address of the collateral token contract. The staking token is an ERC-20.
     #[clap(long, env, required = false)]
-    pub boundless_stake_token_address: Option<Address>,
+    pub boundless_collateral_token_address: Option<Address>,
     /// URL for the offchain [order stream service].
     ///
     /// [order stream service]: crate::order_stream_client
@@ -136,9 +136,9 @@ pub struct MarketProviderConfig {
     /// Maximum price (wei) per cycle of the proving order
     #[clap(long, env, required = false, default_value = "200000000")]
     pub boundless_cycle_max_wei: U256,
-    /// Stake (USDC) per gigacycle of the proving order
+    /// Collateral (ZKC) per gigacycle of the proving order
     #[clap(long, env, required = false, default_value = "1000")]
-    pub boundless_mega_cycle_stake: U256,
+    pub boundless_mega_cycle_collateral: U256,
     /// Multiplier for delay before order price starts ramping up.
     #[clap(long, env, required = false, default_value_t = 0.1)]
     pub boundless_order_bid_delay_factor: f64,
@@ -200,10 +200,10 @@ impl MarketProviderConfig {
                 boundless_set_verifier_address.to_string(),
             ]);
         };
-        if let Some(boundless_stake_token_address) = &self.boundless_stake_token_address {
+        if let Some(boundless_collateral_token_address) = &self.boundless_collateral_token_address {
             proving_args.extend(vec![
-                String::from("--boundless-stake-token-address"),
-                boundless_stake_token_address.to_string(),
+                String::from("--boundless-collateral-token-address"),
+                boundless_collateral_token_address.to_string(),
             ]);
         };
         if let Some(boundless_order_stream_url) = &self.boundless_order_stream_url {
@@ -229,8 +229,8 @@ impl MarketProviderConfig {
             self.boundless_cycle_min_wei.to_string(),
             String::from("--boundless-cycle-max-wei"),
             self.boundless_cycle_max_wei.to_string(),
-            String::from("--boundless-mega-cycle-stake"),
-            self.boundless_mega_cycle_stake.to_string(),
+            String::from("--boundless-mega-cycle-collateral"),
+            self.boundless_mega_cycle_collateral.to_string(),
             String::from("--boundless-order-bid-delay-factor"),
             self.boundless_order_bid_delay_factor.to_string(),
             String::from("--boundless-order-ramp-up-factor"),
@@ -353,8 +353,10 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             if let Some(boundless_set_verifier_address) = market.boundless_set_verifier_address {
                 builder.set_verifier_address(boundless_set_verifier_address);
             };
-            if let Some(boundless_stake_token_address) = market.boundless_stake_token_address {
-                builder.stake_token_address(boundless_stake_token_address);
+            if let Some(boundless_collateral_token_address) =
+                market.boundless_collateral_token_address
+            {
+                builder.collateral_token_address(boundless_collateral_token_address);
             };
             if let Some(boundless_order_stream_url) = market.boundless_order_stream_url.clone() {
                 builder.order_stream_url(boundless_order_stream_url);
@@ -384,7 +386,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     debug!("Deployment: {:?}", boundless_client.deployment);
 
     // Set the proof request requirements
-    let requirements = Requirements::new(image.0, Predicate::digest_match(journal.digest()))
+    let requirements = Requirements::new(Predicate::digest_match(image.0, journal.digest()))
         // manually choose latest Groth16 receipt selector
         .with_selector((Selector::groth16_latest() as u32).into());
 
@@ -418,9 +420,10 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
 pub fn next_nonce(requirements: &Requirements, previous_nonce: Option<u32>) -> u32 {
     let pred_type = (requirements.predicate.predicateType as u128).to_be_bytes();
     let prev_nonce = previous_nonce.unwrap_or(u32::MAX).to_be_bytes();
+    let req_params = RequirementParams::try_from(requirements.clone()).unwrap();
     let data = [
         requirements.selector.as_slice(),
-        requirements.imageId.as_slice(),
+        req_params.image_id.unwrap_or_default().as_slice(),
         pred_type.as_slice(),
         requirements.callback.addr.as_slice(),
         requirements.callback.gasLimit.as_le_slice(),
@@ -552,10 +555,11 @@ pub async fn look_back(
         }
 
         // Return result if okay
+        let req_params = RequirementParams::try_from(requirements.clone()).unwrap();
         match retrieve_proof(
             boundless_client,
             request_id,
-            requirements.imageId.0,
+            req_params.image_id.unwrap_or_default().0,
             market.boundless_order_check_interval,
             request.expires_at(),
         )
@@ -586,9 +590,20 @@ pub async fn retrieve_proof(
             .wait_for_request_fulfillment(request_id, Duration::from_secs(interval), expires_at)
             .await
         {
-            Ok((journal, seal)) => {
+            Ok(fulfillment) => {
+                let journal = fulfillment
+                    .data()
+                    .context("Failed to decode request Fulfillment data.")?
+                    .journal()
+                    .cloned()
+                    .unwrap_or_default()
+                    .to_vec();
                 let Ok(risc0_ethereum_contracts::receipt::Receipt::Base(receipt)) =
-                    risc0_ethereum_contracts::receipt::decode_seal(seal, image_id, journal)
+                    risc0_ethereum_contracts::receipt::decode_seal(
+                        fulfillment.seal,
+                        image_id,
+                        journal,
+                    )
                 else {
                     return Err(ClientError::RequestError(RequestError::MissingRequirements));
                 };
@@ -859,13 +874,17 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         .with_input_url(input_url)
         .context("RequestParams::with_input_url")
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-        .with_requirements(requirements.clone())
+        .with_requirements(
+            RequirementParams::try_from(requirements.clone())
+                .context("Failed to convert Requirements")
+                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
+        )
         .with_offer(
             OfferParams::builder()
                 .min_price(min_price)
                 .max_price(max_price)
                 .bidding_start(boundless_rpc_time + bid_delay_time)
-                .lock_stake(market.boundless_mega_cycle_stake * U256::from(segment_count))
+                .lock_collateral(market.boundless_mega_cycle_collateral * U256::from(segment_count))
                 .ramp_up_period((market.boundless_order_ramp_up_factor * segment_count) as u32)
                 .lock_timeout((corrected_lock_timeout_factor * segment_count) as u32)
                 .timeout((corrected_expiry_factor * segment_count) as u32)

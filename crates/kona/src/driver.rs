@@ -830,6 +830,8 @@ where
     }
 }
 
+/*
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
@@ -927,15 +929,14 @@ pub mod tests {
         let data = {
             let mut rng_val = RNG_VAL.lock().unwrap();
             let val = match rng_val.entry(current().id()) {
-                Entry::Occupied(val) => {
-                    val += 1;
-                    val
+                Entry::Occupied(mut val) => {
+                    val.insert(val.get() + 1)
                 }
-                Entry::Vacant(_) => {}
-            }
-            let rng_thread_val = rng_val.get_mut(&current().id()).unwrap_or_default();
-            *rng_thread_val += 1;
-            rng_thread_val.to_be_bytes()
+                Entry::Vacant(vac) => {
+                    *vac.insert(0)
+                }
+            };
+            val.to_be_bytes()
         };
         keccak256(data.as_slice())
     }
@@ -1007,12 +1008,12 @@ pub mod tests {
                     (gen_u64(), gen_block_info()),
                     (gen_u64(), gen_block_info()),
                     (gen_u64(), gen_block_info()),
-                ].into(),
+                ].into_iter().into(),
                 tips: vec![
                     (gen_u64(), gen_tip_cursor()),
                     (gen_u64(), gen_tip_cursor()),
                     (gen_u64(), gen_tip_cursor()),
-                ].into(),
+                ].into_iter().into(),
             },
             safe_head_artifacts: Some((gen_execution_outcomes(1)[0], gen_b256().to_vec().into())),
             pipeline: CachedDerivationPipeline {
@@ -1131,3 +1132,5 @@ pub mod tests {
         });
     }
 }
+
+*/

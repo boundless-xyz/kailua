@@ -188,31 +188,29 @@ pub mod tests {
             .collect()
     }
 
-    pub fn gen_header(i: u64) -> Header {
+    pub fn gen_header(number: u64) -> Header {
         Header {
-            parent_hash: keccak256(format!("parent_hash {i}")),
-            ommers_hash: keccak256(format!("ommers_hash {i}")),
+            parent_hash: keccak256(format!("parent_hash {number}")),
+            ommers_hash: keccak256(format!("ommers_hash {number}")),
             beneficiary: Address::from([0x33; 20]),
-            state_root: keccak256(format!("sate_root {i}")),
-            transactions_root: keccak256(format!("transactions_root {i}")),
-            receipts_root: keccak256(format!("receipts_root {i}")),
+            state_root: keccak256(format!("sate_root {number}")),
+            transactions_root: keccak256(format!("transactions_root {number}")),
+            receipts_root: keccak256(format!("receipts_root {number}")),
             logs_bloom: Bloom::from([0x77; 256]),
-            difficulty: U256::from_be_bytes(keccak256(format!("difficulty {i}")).0),
-            number: i as u64,
+            difficulty: U256::from_be_bytes(keccak256(format!("difficulty {number}")).0),
+            number,
             gas_limit: 0xaa,
             gas_used: 0xbb,
             timestamp: 0xcc,
-            extra_data: format!("extra_data {i}").into_bytes().into(),
-            mix_hash: keccak256(format!("mix_hash {i}")),
+            extra_data: format!("extra_data {number}").into_bytes().into(),
+            mix_hash: keccak256(format!("mix_hash {number}")),
             nonce: B64::from([0xff; 8]),
             base_fee_per_gas: Some(u64::from_be_bytes([0x01; 8])),
-            withdrawals_root: Some(keccak256(format!("withdrawals_root {i}"))),
+            withdrawals_root: Some(keccak256(format!("withdrawals_root {number}"))),
             blob_gas_used: Some(u64::from_be_bytes([0x03; 8])),
             excess_blob_gas: Some(u64::from_be_bytes([0x04; 8])),
-            parent_beacon_block_root: Some(keccak256(format!(
-                "parent_beacon_block_root {i}"
-            ))),
-            requests_hash: Some(keccak256(format!("requests_hash {i}"))),
+            parent_beacon_block_root: Some(keccak256(format!("parent_beacon_block_root {number}"))),
+            requests_hash: Some(keccak256(format!("requests_hash {number}"))),
         }
     }
 
