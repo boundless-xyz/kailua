@@ -830,30 +830,40 @@ where
     }
 }
 
-/*
-
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
-    use std::collections::hash_map::Entry;
-    use std::collections::HashMap;
     use super::*;
     use crate::client::core::tests::test_derivation;
-    use alloy_primitives::{b256, keccak256, Address, Sealable, B256, B64};
-    use kona_proof::BootInfo;
-    use risc0_zkvm::sha::Digestible;
-    use std::sync::Mutex;
-    use std::thread::{current, ThreadId};
-    use alloy_eips::BlockNumHash;
+    use crate::client::core::{DASourceProvider, EthereumDataSourceProvider};
+    use crate::client::tests::TestOracle;
+    use crate::kona::OracleL1ChainProvider;
+    use crate::precondition::derivation::{flatten_pipeline_cursor, flatten_safe_head_artifacts};
+    use crate::rkyv::execution::tests::{gen_execution_outcomes, gen_header};
+    use alloy_consensus::TxType;
     use alloy_eips::eip4895::Withdrawal;
+    use alloy_eips::BlockNumHash;
+    use alloy_op_evm::OpEvmFactory;
+    use alloy_primitives::{b256, keccak256, Address, Sealable, Signature, B256, B64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use kona_driver::TipCursor;
-    use kona_protocol::L2BlockInfo;
+    use kona_proof::executor::KonaExecutor;
+    use kona_proof::l1::OracleBlobProvider;
+    use kona_proof::l2::OracleL2ChainProvider;
+    use kona_proof::BootInfo;
+    use kona_protocol::{
+        Batch, L2BlockInfo, SpanBatchBits, SpanBatchElement, SpanBatchTransactions,
+    };
     use lazy_static::lazy_static;
     use op_alloy_rpc_types_engine::OpPayloadAttributes;
-    use crate::rkyv::execution::tests::{gen_execution_outcomes, gen_header};
+    use risc0_zkvm::sha::Digestible;
+    use std::collections::hash_map::Entry;
+    use std::collections::{BTreeMap, HashMap};
+    use std::sync::Mutex;
+    use std::thread::{current, ThreadId};
 
-    pub fn check_traced_driver(traced_driver: &CachedDriver) {
+    pub async fn check_traced_driver(traced_driver: &CachedDriver) {
+        // Test serde
         let traced_driver_hash = B256::new(traced_driver.digest().into());
         let encoded_driver = rkyv::to_bytes::<rkyv::rancor::Error>(traced_driver)
             .unwrap()
@@ -864,6 +874,58 @@ pub mod tests {
             traced_driver_hash,
             B256::new(decoded_driver.digest().into())
         );
+        dbg!(flatten_pipeline_cursor(&decoded_driver.cursor).digest());
+        dbg!(decoded_driver
+            .safe_head_artifacts
+            .as_ref()
+            .map(flatten_safe_head_artifacts)
+            .digest());
+        dbg!(decoded_driver.pipeline.digest());
+        // Test caching
+        let boot_info = BootInfo {
+            l1_head: Default::default(),
+            agreed_l2_output_root: Default::default(),
+            claimed_l2_output_root: Default::default(),
+            claimed_l2_block_number: 0,
+            chain_id: 0,
+            rollup_config: Default::default(),
+        };
+        let oracle = Arc::new(TestOracle::new(boot_info.clone()));
+        let l1_provider = OracleL1ChainProvider::new(B256::ZERO, oracle.clone())
+            .await
+            .unwrap();
+        let rollup_config = Arc::new(boot_info.rollup_config.clone());
+        let l2_provider =
+            OracleL2ChainProvider::new(B256::ZERO, rollup_config.clone(), oracle.clone());
+        let da_provider = EthereumDataSourceProvider.new_from_parts(
+            l1_provider.clone(),
+            OracleBlobProvider::new(oracle.clone()),
+            rollup_config.as_ref(),
+        );
+        let kona_driver = decoded_driver.uncache(
+            KonaExecutor::new(
+                &boot_info.rollup_config,
+                l2_provider.clone(),
+                l2_provider.clone(),
+                OpEvmFactory::default(),
+                None,
+            ),
+            rollup_config.clone(),
+            Arc::new(RwLock::new(gen_pipeline_cursor())),
+            oracle.clone(),
+            da_provider,
+            l1_provider,
+            l2_provider,
+        );
+        let cached_driver = CachedDriver::from(kona_driver);
+        dbg!(flatten_pipeline_cursor(&cached_driver.cursor).digest());
+        dbg!(cached_driver
+            .safe_head_artifacts
+            .as_ref()
+            .map(flatten_safe_head_artifacts)
+            .digest());
+        dbg!(cached_driver.pipeline.digest());
+        assert_eq!(traced_driver_hash, B256::new(cached_driver.digest().into()));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -916,7 +978,7 @@ pub mod tests {
             agreed_l2_output_root = claimed_l2_output_root;
             // Verify derivation trace
             let traced_driver = derivation_trace.lock().unwrap().take().unwrap();
-            check_traced_driver(&traced_driver);
+            check_traced_driver(&traced_driver).await;
             cached_driver = Some(traced_driver);
         }
     }
@@ -929,12 +991,8 @@ pub mod tests {
         let data = {
             let mut rng_val = RNG_VAL.lock().unwrap();
             let val = match rng_val.entry(current().id()) {
-                Entry::Occupied(mut val) => {
-                    val.insert(val.get() + 1)
-                }
-                Entry::Vacant(vac) => {
-                    *vac.insert(0)
-                }
+                Entry::Occupied(mut val) => val.insert(val.get() + 1),
+                Entry::Vacant(vac) => *vac.insert(0),
             };
             val.to_be_bytes()
         };
@@ -982,7 +1040,7 @@ pub mod tests {
     }
 
     pub fn gen_addr() -> Address {
-        Address::from_slice(&gen_b256().0)
+        Address::from_slice(&gen_b256().0[..20])
     }
 
     pub fn gen_withdrawal() -> Withdrawal {
@@ -994,143 +1052,256 @@ pub mod tests {
         }
     }
 
-    pub fn check_driver_batch_provider_encoding(
-        batch_provider: CachedBatchProvider
-    ) {
-        let driver = CachedDriver {
-            cursor: PipelineCursor {
-                capacity: gen_usize(),
-                channel_timeout: gen_u64(),
-                origin: gen_block_info(),
-                origins: vec![gen_u64(), gen_u64(), gen_u64()].into(),
-                origin_infos: vec![
-                    (gen_u64(), gen_block_info()),
-                    (gen_u64(), gen_block_info()),
-                    (gen_u64(), gen_block_info()),
-                    (gen_u64(), gen_block_info()),
-                ].into_iter().into(),
-                tips: vec![
-                    (gen_u64(), gen_tip_cursor()),
-                    (gen_u64(), gen_tip_cursor()),
-                    (gen_u64(), gen_tip_cursor()),
-                ].into_iter().into(),
+    pub fn gen_single_batch() -> SingleBatch {
+        SingleBatch {
+            parent_hash: gen_b256(),
+            epoch_num: gen_u64(),
+            epoch_hash: gen_b256(),
+            timestamp: gen_u64(),
+            transactions: vec![[*gen_b256(), *gen_b256(), *gen_b256(), *gen_b256()]
+                .concat()
+                .into()],
+        }
+    }
+
+    pub fn gen_span_batch_elem() -> SpanBatchElement {
+        SpanBatchElement {
+            epoch_num: gen_u64(),
+            timestamp: gen_u64(),
+            transactions: vec![[*gen_b256()].concat().into(), [*gen_b256()].concat().into()],
+        }
+    }
+
+    pub fn gen_span_batch() -> SpanBatch {
+        SpanBatch {
+            parent_check: *gen_addr(),
+            l1_origin_check: *gen_addr(),
+            genesis_timestamp: gen_u64(),
+            chain_id: gen_u64(),
+            batches: vec![gen_span_batch_elem(), gen_span_batch_elem()],
+            origin_bits: SpanBatchBits([*gen_b256()].concat()),
+            block_tx_counts: vec![gen_u64()],
+            txs: SpanBatchTransactions {
+                total_block_tx_count: gen_u64(),
+                contract_creation_bits: SpanBatchBits([*gen_addr()].concat()),
+                tx_sigs: vec![Signature::from_raw(
+                    [gen_b256().as_slice(), gen_b256().as_slice(), &[0x00]]
+                        .concat()
+                        .as_slice(),
+                )
+                .unwrap()],
+                tx_nonces: vec![gen_u64()],
+                tx_gases: vec![gen_u64()],
+                tx_tos: vec![gen_addr()],
+                tx_datas: vec![[*gen_b256()].concat()],
+                protected_bits: SpanBatchBits([*gen_addr()].concat()),
+                tx_types: vec![TxType::Eip1559],
+                legacy_tx_count: gen_u64(),
             },
-            safe_head_artifacts: Some((gen_execution_outcomes(1)[0], gen_b256().to_vec().into())),
+        }
+    }
+
+    pub fn gen_channel_id() -> ChannelId {
+        (&gen_b256().as_slice()[..16]).try_into().unwrap()
+    }
+
+    pub fn gen_frame() -> Frame {
+        Frame {
+            id: gen_channel_id(),
+            number: gen_u64() as u16,
+            data: [*gen_b256()].concat(),
+            is_last: true,
+        }
+    }
+
+    pub fn gen_frame_queue() -> CachedFrameQueue {
+        CachedFrameQueue {
+            queue: vec![gen_frame(), gen_frame(), gen_frame()],
+            prev: CachedL1Retrieval {
+                next: Some(gen_block_info()),
+                prev: CachedL1Traversal {
+                    block: Some(gen_block_info()),
+                    done: true,
+                    system_config: Default::default(),
+                },
+            },
+        }
+    }
+
+    pub fn gen_channel() -> Channel {
+        Channel {
+            id: gen_channel_id(),
+            open_block: gen_block_info(),
+            estimated_size: gen_usize(),
+            closed: true,
+            highest_frame_number: gen_u64() as u16,
+            last_frame_number: gen_u64() as u16,
+            inputs: alloy_primitives::map::HashMap::from_iter(
+                vec![
+                    (gen_u64() as u16, gen_frame()),
+                    (gen_u64() as u16, gen_frame()),
+                    (gen_u64() as u16, gen_frame()),
+                ]
+                .into_iter(),
+            ),
+            highest_l1_inclusion_block: gen_block_info(),
+        }
+    }
+
+    pub fn gen_pipeline_cursor() -> PipelineCursor {
+        PipelineCursor {
+            capacity: gen_usize(),
+            channel_timeout: gen_u64(),
+            origin: gen_block_info(),
+            origins: vec![gen_u64(), gen_u64(), gen_u64()].into(),
+            origin_infos: alloy_primitives::map::HashMap::from_iter(
+                vec![
+                    (gen_u64(), gen_block_info()),
+                    (gen_u64(), gen_block_info()),
+                    (gen_u64(), gen_block_info()),
+                    (gen_u64(), gen_block_info()),
+                ]
+                .into_iter(),
+            ),
+            tips: BTreeMap::from_iter(
+                vec![
+                    (gen_u64(), gen_tip_cursor()),
+                    (gen_u64(), gen_tip_cursor()),
+                    (gen_u64(), gen_tip_cursor()),
+                ]
+                .into_iter(),
+            ),
+        }
+    }
+
+    pub async fn check_driver_batch_provider_encoding(batch_provider: CachedBatchProvider) {
+        let driver = CachedDriver {
+            cursor: gen_pipeline_cursor(),
+            safe_head_artifacts: Some((
+                gen_execution_outcomes(1).pop().unwrap(),
+                vec![gen_b256().to_vec().into()],
+            )),
             pipeline: CachedDerivationPipeline {
-                prepared: vec![
-                    OpAttributesWithParent {
-                        inner: OpPayloadAttributes {
-                            payload_attributes: PayloadAttributes {
-                                timestamp: gen_u64(),
-                                prev_randao: gen_b256(),
-                                suggested_fee_recipient: gen_addr(),
-                                withdrawals: Some(vec![
-                                    gen_withdrawal(),
-                                    gen_withdrawal(),
-                                ]),
-                                parent_beacon_block_root: Some(gen_b256()),
-                            },
-                            transactions: Some(vec![
-                                gen_b256().to_vec().into(),
-                                gen_b256().to_vec().into(),
-                                gen_b256().to_vec().into(),
-                            ]),
-                            no_tx_pool: Some(true),
-                            gas_limit: Some(gen_u64()),
-                            eip_1559_params: Some(B64::from_slice(
-                                &gen_b256().0[..8]
-                            )),
+                prepared: vec![OpAttributesWithParent {
+                    inner: OpPayloadAttributes {
+                        payload_attributes: PayloadAttributes {
+                            timestamp: gen_u64(),
+                            prev_randao: gen_b256(),
+                            suggested_fee_recipient: gen_addr(),
+                            withdrawals: Some(vec![gen_withdrawal(), gen_withdrawal()]),
+                            parent_beacon_block_root: Some(gen_b256()),
                         },
-                        parent: gen_l2_block_info(),
-                        l1_origin: gen_block_info(),
-                        is_last_in_span: true,
-                    }
-                ],
+                        transactions: Some(vec![
+                            gen_b256().to_vec().into(),
+                            gen_b256().to_vec().into(),
+                            gen_b256().to_vec().into(),
+                        ]),
+                        no_tx_pool: Some(true),
+                        gas_limit: Some(gen_u64()),
+                        eip_1559_params: Some(B64::from_slice(&gen_b256().0[..8])),
+                    },
+                    parent: gen_l2_block_info(),
+                    l1_origin: gen_block_info(),
+                    is_last_in_span: true,
+                }],
                 attributes: CachedAttributesQueueStage {
                     is_last_in_span: true,
-                    batch: Some(SingleBatch {
-                        parent_hash: keccak256(b"driver.pipeline.attributes.batch.parent_hash"),
-                        epoch_num: 2222,
-                        epoch_hash: keccak256(b"driver.pipeline.attributes.batch.epoch_hash"),
-                        timestamp: 3333,
-                        transactions: vec![
-                            [
-                                *keccak256(b"driver.pipeline.attributes.batch.transactions[0]"),
-                                *keccak256(b"driver.pipeline.attributes.batch.transactions[1]"),
-                                *keccak256(b"driver.pipeline.attributes.batch.transactions[2]"),
-                                *keccak256(b"driver.pipeline.attributes.batch.transactions[3]"),
-                            ].concat().into()
-                        ],
-                    }),
+                    batch: Some(gen_single_batch()),
                     prev: batch_provider,
                 },
             },
         };
 
-        check_traced_driver(&driver);
+        check_traced_driver(&driver).await;
     }
 
-    pub fn check_driver_batch_stream_encoding(
-        batch_stream: CachedBatchStream
-    ) {
-        check_driver_batch_provider_encoding(
-            CachedBatchProvider::BatchStream(batch_stream.clone())
-        );
-        check_driver_batch_provider_encoding(
-            CachedBatchProvider::BatchQueue(CachedBatchQueue {
-                origin: Some(BlockInfo {
-                    hash: keccak256(b"CachedBatchQueue.origin.hash"),
-                    number: 998,
-                    parent_hash: keccak256(b"CachedBatchQueue.origin.parent_hash"),
-                    timestamp: 7656,
-                }),
-                l1_blocks: vec![
-                    BlockInfo {
-                        hash: keccak256(b"CachedBatchQueue.l1_blocks[0].hash"),
-                        number: 2752,
-                        parent_hash: keccak256(b"CachedBatchQueue.l1_blocks[0].parent_hash"),
-                        timestamp: 21365,
-                    }
-                ],
-                batches: vec![
-
-                ],
-                next_spans: vec![],
+    pub async fn check_driver_batch_stream_encoding(batch_stream: CachedBatchStream) {
+        println!("BatchStream");
+        check_driver_batch_provider_encoding(CachedBatchProvider::BatchStream(
+            batch_stream.clone(),
+        ))
+        .await;
+        println!("BatchQueue/Single");
+        check_driver_batch_provider_encoding(CachedBatchProvider::BatchQueue(CachedBatchQueue {
+            origin: Some(gen_block_info()),
+            l1_blocks: vec![gen_block_info()],
+            batches: vec![BatchWithInclusionBlock {
+                inclusion_block: gen_block_info(),
+                batch: Batch::Single(gen_single_batch()),
+            }],
+            next_spans: vec![gen_single_batch(), gen_single_batch(), gen_single_batch()],
+            prev: batch_stream.clone(),
+        }))
+        .await;
+        println!("BatchQueue/Span");
+        check_driver_batch_provider_encoding(CachedBatchProvider::BatchQueue(CachedBatchQueue {
+            origin: Some(gen_block_info()),
+            l1_blocks: vec![gen_block_info()],
+            batches: vec![BatchWithInclusionBlock {
+                inclusion_block: gen_block_info(),
+                batch: Batch::Span(gen_span_batch()),
+            }],
+            next_spans: vec![gen_single_batch(), gen_single_batch(), gen_single_batch()],
+            prev: batch_stream.clone(),
+        }))
+        .await;
+        println!("BatchValidator");
+        check_driver_batch_provider_encoding(CachedBatchProvider::BatchValidator(
+            CachedBatchValidator {
+                origin: Some(gen_block_info()),
+                l1_blocks: vec![gen_block_info(), gen_block_info()],
                 prev: batch_stream.clone(),
-            })
-        );
-        check_driver_batch_provider_encoding(
-            CachedBatchProvider::BatchValidator(
-                CachedBatchValidator {
-                    origin: None,
-                    l1_blocks: vec![],
-                    prev: batch_stream.clone(),
-                }
-            )
-        )
+            },
+        ))
+        .await;
     }
 
-    #[test]
-    pub fn test_driver_encodings() {
-        check_driver_batch_provider_encoding(CachedBatchProvider::None);
+    pub async fn check_driver_channel_provider(channel_provider: CachedChannelProvider) {
         check_driver_batch_stream_encoding(CachedBatchStream {
-            span: Some(SpanBatch {
-                parent_check: Default::default(),
-                l1_origin_check: Default::default(),
-                genesis_timestamp: 0,
-                chain_id: 0,
-                batches: vec![],
-                origin_bits: Default::default(),
-                block_tx_counts: vec![],
-                txs: Default::default(),
-            }),
-            buffer: vec![],
+            span: Some(gen_span_batch()),
+            buffer: vec![gen_single_batch(), gen_single_batch(), gen_single_batch()],
             prev: CachedChannelReader {
-                next_batch: None,
-                prev: CachedChannelProvider::None,
+                next_batch: Some(BatchReader {
+                    data: Some([*gen_b256(), *gen_b256(), *gen_b256()].concat()),
+                    decompressed: [*gen_b256(), *gen_b256(), *gen_b256()].concat(),
+                    cursor: gen_usize(),
+                    max_rlp_bytes_per_channel: gen_usize(),
+                }),
+                prev: channel_provider,
             },
-        });
+        })
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_driver_encodings() {
+        println!("CachedBatchProvider");
+        check_driver_batch_provider_encoding(CachedBatchProvider::None).await;
+        println!("CachedChannelProvider");
+        check_driver_channel_provider(CachedChannelProvider::None).await;
+        println!("FrameQueue");
+        check_driver_channel_provider(CachedChannelProvider::FrameQueue(gen_frame_queue())).await;
+        println!("CachedChannelBank");
+        check_driver_channel_provider(CachedChannelProvider::ChannelBank(CachedChannelBank {
+            channels: sorted_by_key(vec![
+                (gen_channel_id(), gen_channel()),
+                (gen_channel_id(), gen_channel()),
+                (gen_channel_id(), gen_channel()),
+                (gen_channel_id(), gen_channel()),
+                (gen_channel_id(), gen_channel()),
+                (gen_channel_id(), gen_channel()),
+            ]),
+            channel_queue: vec![gen_channel_id(), gen_channel_id(), gen_channel_id()],
+            prev: gen_frame_queue(),
+        }))
+        .await;
+        println!("ChannelAssembler");
+        check_driver_channel_provider(CachedChannelProvider::ChannelAssembler(
+            CachedChannelAssembler {
+                channel: Some(gen_channel()),
+                prev: gen_frame_queue(),
+            },
+        ))
+        .await;
     }
 }
-
-*/
