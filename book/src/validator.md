@@ -153,7 +153,7 @@ The following first set of parameters determine where/how requests are made:
 * `boundless-verifier-router-address`: Address of the RiscZeroVerifierRouter contract.
 * `boundless-set-verifier-address`: The address of the RISC Zero verifier supporting aggregated proofs for order validation.
 * `boundless-market-address`: The address of the Boundless market contract.
-* `boundless-stake-token-address`: Address of the stake token contract. The staking token is an ERC-20.
+* `boundless-collateral-token-address`: Address of the collateral token contract. The staking token is an ERC-20.
 * `boundless-lookback`: (Defaults to `5`) The number of previous proof requests to inspect for duplicates before making a new proof request.
 * `boundless-cycle-min-wei`: (Defaults to `100000000`) Starting price (wei) per cycle of proving.
 * `boundless-cycle-max-wei`: (Defaults to `200000000`) Maximum price (wei) per cycle of proving.

@@ -16,6 +16,7 @@ use alloy::primitives::U256;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::transports::http::reqwest::Url;
 use anyhow::Context;
+use boundless_market::request_builder::RequirementParams;
 use boundless_market::{Client, StandardStorageProvider, StorageProviderConfig};
 use kailua_kona::journal::ProofJournal;
 use kailua_prover::proof::{proof_file_name, read_bincoded_file, save_to_bincoded_file};
@@ -58,7 +59,9 @@ pub async fn boundless(args: BoundlessArgs) -> anyhow::Result<()> {
         .fetch_proof_request(U256::from_str(args.request_id.as_str())?, None, None)
         .await?;
 
-    let image_id = request.requirements.imageId.0;
+    let req_params = RequirementParams::try_from(request.requirements.clone())
+        .context("Failed to convert Requirements to RequirementParams")?;
+    let image_id = req_params.image_id.unwrap_or_default().0;
 
     let receipt = retrieve_proof(
         &boundless_client,
