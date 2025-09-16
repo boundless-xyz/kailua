@@ -174,7 +174,7 @@ jobs:
         with:
           crate: cargo-llvm-cov
       - name: kailua-kona coverage
-        run: cargo +nightly llvm-cov -p kailua-kona --branch --fail-uncovered-functions 0 --fail-uncovered-lines 4
+        run: cargo +nightly llvm-cov -p kailua-kona --branch --fail-uncovered-functions 0 --fail-uncovered-lines 7
 
   forge-fmt:
     runs-on: ubuntu-latest

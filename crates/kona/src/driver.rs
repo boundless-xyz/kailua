@@ -975,12 +975,10 @@ pub mod tests {
             check_traced_driver(&traced_driver).await;
 
             // Store precondition
-            stitched_preconditions.push(
-                Precondition::default().derivation(
-                    cached_driver_digest,
-                    B256::new(traced_driver.digest().into()),
-                ),
-            );
+            stitched_preconditions.push(Precondition::default().derivation(
+                cached_driver_digest,
+                B256::new(traced_driver.digest().into()),
+            ));
             stitched_boot_info.push(StitchedBootInfo {
                 l1_head,
                 agreed_l2_output_root,

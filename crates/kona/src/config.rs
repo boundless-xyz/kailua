@@ -439,7 +439,7 @@ mod tests {
                 da_challenge_address: Some(Address::from([0xff; 20])),
                 da_challenge_window: Some(0),
                 da_resolve_window: Some(0),
-                da_commitment_type: Some("_".to_string()),
+                da_commitment_type: Some("abcde".to_string()),
             }),
         };
 
@@ -599,7 +599,7 @@ mod tests {
             .alt_da_config
             .as_mut()
             .unwrap()
-            .da_commitment_type = Some("aa".to_string());
+            .da_commitment_type = None;
         assert!(hashes.insert(config_hash(&rollup_config)));
     }
 
