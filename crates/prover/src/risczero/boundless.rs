@@ -390,7 +390,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     let journal_digest: [u32; 8] = journal.digest().as_words().try_into().unwrap();
     let requirements = Requirements::new(Predicate::digest_match(image_id, journal_digest))
         // manually choose latest Groth16 receipt selector
-        .with_selector((Selector::Groth16V2_2 as u32).into());
+        .with_selector((Selector::groth16_latest() as u32).into());
 
     // Wait for a market request to be fulfilled
     loop {
@@ -611,13 +611,7 @@ pub async fn retrieve_proof(
                     return Err(ClientError::RequestError(RequestError::MissingRequirements));
                 };
 
-                // We use serde to convert v3 receipts to v2 which have identical structure
-                let encoded_receipt = bincode::serialize(receipt.as_ref())
-                    .context("Failed to bincode serialize receipt.")
-                    .map_err(ClientError::Error)?;
-                return bincode::deserialize(&encoded_receipt)
-                    .context("Failed to bincode deserialize receipt.")
-                    .map_err(ClientError::Error);
+                return Ok(*receipt);
             }
             Err(e) => {
                 if matches!(
@@ -873,9 +867,9 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         market.boundless_order_ramp_up_factor + market.boundless_order_lock_timeout_factor;
     let corrected_expiry_factor =
         corrected_lock_timeout_factor + market.boundless_order_expiry_factor;
-    let mut request = boundless_client
+    let request = boundless_client
         .new_request()
-        // .with_journal(journal)
+        .with_journal(journal)
         .with_cycles(cycle_count)
         .with_program_url(program_url)
         .context("RequestParams::with_program_url")
@@ -902,16 +896,6 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
         )
         .with_request_id(RequestId::new(boundless_wallet_address, fresh_nonce));
-    // workaround for risc0-zkvm version mismatch
-    let request = {
-        let encoded_journal =
-            bincode::serialize(&journal).map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
-        request.journal = Some(
-            bincode::deserialize(&encoded_journal)
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
-        );
-        request
-    };
 
     // Send the request and wait for it to be completed.
     let (request_id, expires_at) = if market.boundless_order_stream_url.is_some() {
