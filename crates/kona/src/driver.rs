@@ -834,16 +834,19 @@ where
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
+    use crate::boot::StitchedBootInfo;
     use crate::client::core::tests::test_derivation;
     use crate::client::core::{DASourceProvider, EthereumDataSourceProvider};
+    use crate::client::stitching::tests::test_stitching_client;
     use crate::client::tests::TestOracle;
     use crate::kona::OracleL1ChainProvider;
-    use crate::precondition::derivation::{flatten_pipeline_cursor, flatten_safe_head_artifacts};
+    use crate::precondition::Precondition;
     use crate::rkyv::execution::tests::{gen_execution_outcomes, gen_header};
     use alloy_consensus::TxType;
     use alloy_eips::eip4895::Withdrawal;
     use alloy_eips::BlockNumHash;
     use alloy_op_evm::OpEvmFactory;
+    use alloy_primitives::ruint::aliases::U256;
     use alloy_primitives::{b256, keccak256, Address, Sealable, Signature, B256, B64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use kona_driver::TipCursor;
@@ -874,13 +877,6 @@ pub mod tests {
             traced_driver_hash,
             B256::new(decoded_driver.digest().into())
         );
-        dbg!(flatten_pipeline_cursor(&decoded_driver.cursor).digest());
-        dbg!(decoded_driver
-            .safe_head_artifacts
-            .as_ref()
-            .map(flatten_safe_head_artifacts)
-            .digest());
-        dbg!(decoded_driver.pipeline.digest());
         // Test caching
         let boot_info = BootInfo {
             l1_head: Default::default(),
@@ -918,13 +914,6 @@ pub mod tests {
             l2_provider,
         );
         let cached_driver = CachedDriver::from(kona_driver);
-        dbg!(flatten_pipeline_cursor(&cached_driver.cursor).digest());
-        dbg!(cached_driver
-            .safe_head_artifacts
-            .as_ref()
-            .map(flatten_safe_head_artifacts)
-            .digest());
-        dbg!(cached_driver.pipeline.digest());
         assert_eq!(traced_driver_hash, B256::new(cached_driver.digest().into()));
     }
 
@@ -934,6 +923,7 @@ pub mod tests {
         let mut agreed_l2_output_root = b256!(
             "0xdf4bd3e4b13f7ed35f536129e6f853d643a2bd7f906e22090dc011928a2a02ac" // 11791799
         );
+        let l1_head = b256!("0x15e4a9386d4fab6c99378b858545fd21646e29673e80593218f356078dfbd574");
         let derivations = [
             (
                 b256!("0x049070993a1aa9f42b0a66a197b71e6f466d589770292aacd40af4213f68d2de"),
@@ -957,13 +947,17 @@ pub mod tests {
             ),
         ];
 
+        let mut stitched_preconditions = vec![];
+        let mut stitched_boot_info = vec![];
         for (claimed_l2_output_root, claimed_l2_block_number) in derivations {
             let derivation_trace: Arc<Mutex<Option<CachedDriver>>> = Default::default();
+            let cached_driver_digest = cached_driver
+                .as_ref()
+                .map(|d| B256::new(d.digest().into()))
+                .unwrap_or_default();
             test_derivation(
                 BootInfo {
-                    l1_head: b256!(
-                        "0x15e4a9386d4fab6c99378b858545fd21646e29673e80593218f356078dfbd574"
-                    ),
+                    l1_head,
                     agreed_l2_output_root,
                     claimed_l2_output_root,
                     claimed_l2_block_number,
@@ -975,12 +969,76 @@ pub mod tests {
                 Some(derivation_trace.clone()),
             )
             .unwrap();
-            agreed_l2_output_root = claimed_l2_output_root;
+
             // Verify derivation trace
             let traced_driver = derivation_trace.lock().unwrap().take().unwrap();
             check_traced_driver(&traced_driver).await;
+
+            // Store precondition
+            stitched_preconditions.push(
+                Precondition::default().derivation(
+                    cached_driver_digest,
+                    B256::new(traced_driver.digest().into()),
+                ),
+            );
+            stitched_boot_info.push(StitchedBootInfo {
+                l1_head,
+                agreed_l2_output_root,
+                claimed_l2_output_root,
+                claimed_l2_block_number,
+            });
+
+            // Update cached driver
             cached_driver = Some(traced_driver);
+            // Update agreed output
+            agreed_l2_output_root = claimed_l2_output_root;
         }
+
+        // forward stitch
+        test_stitching_client(
+            BootInfo {
+                l1_head,
+                chain_id: 60808,
+                rollup_config: Default::default(),
+                agreed_l2_output_root: b256!(
+                    "0xdf4bd3e4b13f7ed35f536129e6f853d643a2bd7f906e22090dc011928a2a02ac"
+                ),
+                claimed_l2_output_root: b256!(
+                    "0xdf4bd3e4b13f7ed35f536129e6f853d643a2bd7f906e22090dc011928a2a02ac"
+                ),
+                claimed_l2_block_number: 11791799,
+            },
+            None,
+            vec![],
+            None,
+            false,
+            stitched_preconditions.clone(),
+            stitched_boot_info.clone(),
+        );
+
+        // backward stitch
+        stitched_preconditions.reverse();
+        stitched_boot_info.reverse();
+        test_stitching_client(
+            BootInfo {
+                l1_head,
+                agreed_l2_output_root: b256!(
+                    "0xd65880a4aceae01adc4f4316db071188c8df9444d45c83424f13c380e2f717ce"
+                ),
+                claimed_l2_output_root: b256!(
+                    "0xd65880a4aceae01adc4f4316db071188c8df9444d45c83424f13c380e2f717ce"
+                ),
+                claimed_l2_block_number: 11791899,
+                chain_id: 60808,
+                rollup_config: Default::default(),
+            },
+            None,
+            vec![],
+            None,
+            false,
+            stitched_preconditions,
+            stitched_boot_info,
+        );
     }
 
     lazy_static! {
@@ -1122,7 +1180,18 @@ pub mod tests {
                 prev: CachedL1Traversal {
                     block: Some(gen_block_info()),
                     done: true,
-                    system_config: Default::default(),
+                    system_config: SystemConfig {
+                        batcher_address: gen_addr(),
+                        overhead: U256::from_be_bytes(*gen_b256()),
+                        scalar: U256::from_be_bytes(*gen_b256()),
+                        gas_limit: gen_u64(),
+                        base_fee_scalar: Some(gen_u64()),
+                        blob_base_fee_scalar: Some(gen_u64()),
+                        eip1559_denominator: Some(gen_u64() as u32),
+                        eip1559_elasticity: Some(gen_u64() as u32),
+                        operator_fee_scalar: Some(gen_u64() as u32),
+                        operator_fee_constant: Some(gen_u64()),
+                    },
                 },
             },
         }
@@ -1136,14 +1205,11 @@ pub mod tests {
             closed: true,
             highest_frame_number: gen_u64() as u16,
             last_frame_number: gen_u64() as u16,
-            inputs: alloy_primitives::map::HashMap::from_iter(
-                vec![
-                    (gen_u64() as u16, gen_frame()),
-                    (gen_u64() as u16, gen_frame()),
-                    (gen_u64() as u16, gen_frame()),
-                ]
-                .into_iter(),
-            ),
+            inputs: alloy_primitives::map::HashMap::from_iter(vec![
+                (gen_u64() as u16, gen_frame()),
+                (gen_u64() as u16, gen_frame()),
+                (gen_u64() as u16, gen_frame()),
+            ]),
             highest_l1_inclusion_block: gen_block_info(),
         }
     }
@@ -1154,23 +1220,17 @@ pub mod tests {
             channel_timeout: gen_u64(),
             origin: gen_block_info(),
             origins: vec![gen_u64(), gen_u64(), gen_u64()].into(),
-            origin_infos: alloy_primitives::map::HashMap::from_iter(
-                vec![
-                    (gen_u64(), gen_block_info()),
-                    (gen_u64(), gen_block_info()),
-                    (gen_u64(), gen_block_info()),
-                    (gen_u64(), gen_block_info()),
-                ]
-                .into_iter(),
-            ),
-            tips: BTreeMap::from_iter(
-                vec![
-                    (gen_u64(), gen_tip_cursor()),
-                    (gen_u64(), gen_tip_cursor()),
-                    (gen_u64(), gen_tip_cursor()),
-                ]
-                .into_iter(),
-            ),
+            origin_infos: alloy_primitives::map::HashMap::from_iter(vec![
+                (gen_u64(), gen_block_info()),
+                (gen_u64(), gen_block_info()),
+                (gen_u64(), gen_block_info()),
+                (gen_u64(), gen_block_info()),
+            ]),
+            tips: BTreeMap::from_iter(vec![
+                (gen_u64(), gen_tip_cursor()),
+                (gen_u64(), gen_tip_cursor()),
+                (gen_u64(), gen_tip_cursor()),
+            ]),
         }
     }
 

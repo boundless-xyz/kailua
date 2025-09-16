@@ -616,7 +616,7 @@ pub mod tests {
 
     pub fn test_stitching_client(
         boot_info: BootInfo,
-        precondition_validation_data: Option<ProposalPrecondition>,
+        proposal_precondition: Option<ProposalPrecondition>,
         stitched_executions: Vec<Vec<Execution>>,
         derivation_cache: Option<CachedDriver>,
         derivation_trace: bool,
@@ -624,7 +624,7 @@ pub mod tests {
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) -> ProofJournal {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
-        let precondition_validation_data_hash = match precondition_validation_data {
+        let precondition_validation_data_hash = match proposal_precondition {
             None => B256::ZERO,
             Some(data) => oracle.add_precondition_data(data),
         };
