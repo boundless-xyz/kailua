@@ -51,12 +51,6 @@ fn main() {
     let proof_journal =
         run_stateless_client(witness, KonaStitchingClient(EthereumDataSourceProvider));
 
-    // Prevent provability of insufficient data
-    assert!(
-        !proof_journal.claimed_l2_output_root.is_zero(),
-        "Cannot prove proposal prematurity."
-    );
-
     // Write the final stitched journal
     env::commit_slice(&proof_journal.encode_packed());
 }

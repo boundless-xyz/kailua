@@ -15,6 +15,7 @@
 use alloy::consensus::Blob;
 use alloy::eips::eip4844::IndexedBlobHash;
 use alloy_primitives::{Address, B256};
+use anyhow::Context;
 use async_trait::async_trait;
 use kailua_kona::blobs::BlobWitnessData;
 use kailua_kona::boot::StitchedBootInfo;
@@ -40,6 +41,7 @@ use tracing::log::error;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_witgen_client<P, B, O, D>(
+    fpvm_image_id: B256,
     preimage_oracle: Arc<P>,
     preimage_oracle_shard_size: usize,
     blob_provider: B,
@@ -88,7 +90,7 @@ where
     let (boot, precondition) = kailua_kona::client::core::run_core_client(
         proposal_data_hash,
         oracle,
-        stream,
+        stream.clone(),
         beacon,
         da_source_provider,
         execution_cache,
@@ -99,29 +101,6 @@ where
     // Fix claimed output of captured executions
     let stitched_executions =
         recover_collected_executions(execution_trace, boot.claimed_l2_output_root);
-    // Construct witness
-    let fpvm_image_id = B256::from(bytemuck::cast::<_, [u8; 32]>(
-        kailua_build::KAILUA_FPVM_KONA_ID,
-    ));
-    let mut witness = Witness {
-        oracle_witness: core::mem::take(oracle_witness.lock().unwrap().deref_mut()),
-        stream_witness: core::mem::take(stream_witness.lock().unwrap().deref_mut()),
-        blobs_witness: core::mem::take(blobs_witness.lock().unwrap().deref_mut()),
-        payout_recipient_address: payout_recipient,
-        precondition_validation_data_hash: proposal_data_hash,
-        stitched_executions: vec![stitched_executions],
-        derivation_cache,
-        trace_derivation,
-        stitched_preconditions: stitched_preconditions.clone(),
-        stitched_boot_info: stitched_boot_info.clone(),
-        fpvm_image_id,
-    };
-    witness
-        .oracle_witness
-        .finalize_preimages(preimage_oracle_shard_size, true);
-    witness
-        .stream_witness
-        .finalize_preimages(preimage_oracle_shard_size, false);
     // Capture derivation snapshot
     let cached_driver = match derivation_trace.lock() {
         Ok(mut guard) => guard.take(),
@@ -132,13 +111,36 @@ where
     };
     // Stitch boot infos
     let (boot, journal_output, precondition) = stitch_boot_info(
+        Some(stream),
         boot,
         fpvm_image_id,
         payout_recipient,
         precondition,
+        stitched_preconditions.clone(),
+        stitched_boot_info.clone(),
+    )
+    .await
+    .context("Failed to stitch boot info")?;
+    // Construct witness
+    let mut witness = Witness {
+        oracle_witness: core::mem::take(oracle_witness.lock().unwrap().deref_mut()),
+        stream_witness: core::mem::take(stream_witness.lock().unwrap().deref_mut()),
+        blobs_witness: core::mem::take(blobs_witness.lock().unwrap().deref_mut()),
+        payout_recipient_address: payout_recipient,
+        precondition_validation_data_hash: proposal_data_hash,
+        stitched_executions: vec![stitched_executions],
+        derivation_cache,
+        trace_derivation,
         stitched_preconditions,
         stitched_boot_info,
-    );
+        fpvm_image_id,
+    };
+    witness
+        .oracle_witness
+        .finalize_preimages(preimage_oracle_shard_size, true);
+    witness
+        .stream_witness
+        .finalize_preimages(preimage_oracle_shard_size, false);
     // Return results
     Ok((boot, journal_output, precondition, cached_driver, witness))
 }

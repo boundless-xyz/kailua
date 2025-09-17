@@ -52,21 +52,23 @@ where
         },
     );
     // Run regular witgen client
-    let (boot, mut proof_journal, precondition, cached_driver, mut witness) =
-        witgen::run_witgen_client(
-            preimage_oracle,
-            preimage_oracle_shard_size,
-            blob_provider,
-            eigen,
-            payout_recipient,
-            precondition_validation_data_hash,
-            execution_cache,
-            derivation_cache,
-            trace_derivation,
-            stitched_preconditions,
-            stitched_boot_info,
-        )
-        .await?;
+    let (boot, proof_journal, precondition, cached_driver, witness) = witgen::run_witgen_client(
+        B256::from(bytemuck::cast::<_, [u8; 32]>(
+            kailua_build::KAILUA_FPVM_HOKULEA_ID,
+        )),
+        preimage_oracle,
+        preimage_oracle_shard_size,
+        blob_provider,
+        eigen,
+        payout_recipient,
+        precondition_validation_data_hash,
+        execution_cache,
+        derivation_cache,
+        trace_derivation,
+        stitched_preconditions,
+        stitched_boot_info,
+    )
+    .await?;
     // Set expected values
     let mut eigen_witness = core::mem::take(eigen_witness.lock().unwrap().deref_mut());
     for (_, validity) in &mut eigen_witness.validity {
@@ -76,10 +78,6 @@ where
     for (_, recency) in &mut eigen_witness.recency {
         *recency = boot.rollup_config.seq_window_size;
     }
-    proof_journal.fpvm_image_id = B256::from(bytemuck::cast::<_, [u8; 32]>(
-        kailua_build::KAILUA_FPVM_HOKULEA_ID,
-    ));
-    witness.fpvm_image_id = proof_journal.fpvm_image_id;
     // Return extended result
     Ok((
         boot,

@@ -68,26 +68,23 @@ where
     // Create provider around witness
     let celestia = CelestiaDataSourceProvider(HanaProvider::new(celestia_oracle).0);
     // Run regular witgen client
-    let (boot, mut proof_journal, precondition, cached_driver, mut witness) =
-        witgen::run_witgen_client(
-            preimage_oracle,
-            preimage_oracle_shard_size,
-            blob_provider,
-            celestia,
-            payout_recipient,
-            precondition_validation_data_hash,
-            execution_cache,
-            derivation_cache,
-            trace_derivation,
-            stitched_preconditions,
-            stitched_boot_info,
-        )
-        .await?;
-    // Set expected values
-    proof_journal.fpvm_image_id = B256::from(bytemuck::cast::<_, [u8; 32]>(
-        kailua_build::KAILUA_FPVM_HANA_ID,
-    ));
-    witness.fpvm_image_id = proof_journal.fpvm_image_id;
+    let (boot, proof_journal, precondition, cached_driver, witness) = witgen::run_witgen_client(
+        B256::from(bytemuck::cast::<_, [u8; 32]>(
+            kailua_build::KAILUA_FPVM_HANA_ID,
+        )),
+        preimage_oracle,
+        preimage_oracle_shard_size,
+        blob_provider,
+        celestia,
+        payout_recipient,
+        precondition_validation_data_hash,
+        execution_cache,
+        derivation_cache,
+        trace_derivation,
+        stitched_preconditions,
+        stitched_boot_info,
+    )
+    .await?;
     // Finalize witness
     let mut celestia_witness = core::mem::take(celestia_witness.lock().unwrap().deref_mut());
     // todo: shard celestia witness

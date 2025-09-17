@@ -836,7 +836,7 @@ pub mod tests {
     use super::*;
     use crate::boot::StitchedBootInfo;
     use crate::client::core::tests::test_derivation;
-    use crate::client::core::{DASourceProvider, EthereumDataSourceProvider};
+    use crate::client::core::{fetch_safe_head_hash, DASourceProvider, EthereumDataSourceProvider};
     use crate::client::stitching::tests::test_stitching_client;
     use crate::client::tests::TestOracle;
     use crate::kona::OracleL1ChainProvider;
@@ -849,13 +849,16 @@ pub mod tests {
     use alloy_primitives::ruint::aliases::U256;
     use alloy_primitives::{b256, keccak256, Address, Sealable, Signature, B256, B64};
     use alloy_rpc_types_engine::PayloadAttributes;
+    use anyhow::Context;
     use kona_driver::TipCursor;
+    use kona_executor::TrieDBProvider;
     use kona_proof::executor::KonaExecutor;
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::l2::OracleL2ChainProvider;
     use kona_proof::BootInfo;
     use kona_protocol::{
-        Batch, L2BlockInfo, SpanBatchBits, SpanBatchElement, SpanBatchTransactions,
+        Batch, BatchValidationProvider, L2BlockInfo, SpanBatchBits, SpanBatchElement,
+        SpanBatchTransactions,
     };
     use lazy_static::lazy_static;
     use op_alloy_rpc_types_engine::OpPayloadAttributes;
@@ -919,11 +922,43 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_bob_mainnet_11791800_11791899_driver_cache() {
-        let mut cached_driver: Option<CachedDriver> = None;
-        let mut agreed_l2_output_root = b256!(
-            "0xdf4bd3e4b13f7ed35f536129e6f853d643a2bd7f906e22090dc011928a2a02ac" // 11791799
+        // kona_cli::init_tracing_subscriber(3, None::<tracing_subscriber::EnvFilter>).unwrap();
+
+        // Load all l1 heads into list
+        let mut l1_heads = vec![b256!(
+            "0xe53a97cac478b7ed6846a752d552dc13011a9c1158f834fe3a3bd7d5ba5b5b63" // 21589900
+        )];
+        let oracle = Arc::new(TestOracle::new(BootInfo {
+            l1_head: Default::default(),
+            agreed_l2_output_root: Default::default(),
+            claimed_l2_output_root: Default::default(),
+            claimed_l2_block_number: 0,
+            chain_id: 60808,
+            rollup_config: Default::default(),
+        }));
+        let rollup_config = Arc::new(
+            BootInfo::load(oracle.as_ref())
+                .await
+                .context("BootInfo::load")
+                .unwrap()
+                .rollup_config,
         );
-        let l1_head = b256!("0x15e4a9386d4fab6c99378b858545fd21646e29673e80593218f356078dfbd574");
+
+        loop {
+            let l1_head = *l1_heads.last().unwrap();
+            let Ok(mut l1_provider) = OracleL1ChainProvider::new(l1_head, oracle.clone()).await
+            else {
+                l1_heads.pop();
+                break;
+            };
+            let Ok(header) = l1_provider.header_by_hash(l1_head).await else {
+                l1_heads.pop();
+                break;
+            };
+            l1_heads.push(header.parent_hash);
+        }
+        dbg!(l1_heads.len());
+
         let derivations = [
             (
                 b256!("0x049070993a1aa9f42b0a66a197b71e6f466d589770292aacd40af4213f68d2de"),
@@ -945,88 +980,143 @@ pub mod tests {
                 b256!("0xd65880a4aceae01adc4f4316db071188c8df9444d45c83424f13c380e2f717ce"),
                 11791899,
             ),
+            (
+                b256!("0xf51ebc1bb7fedefa0c79040143e64e45cc4b90e8f15bc0fc66d1ea868bd6f656"),
+                11795900,
+            ),
         ];
+
+        let mut cached_safe_driver: Option<CachedDriver> = None;
+        let mut cached_bail_driver: Option<CachedDriver> = None;
+        let mut agreed_l2_output_root = b256!(
+            "0xdf4bd3e4b13f7ed35f536129e6f853d643a2bd7f906e22090dc011928a2a02ac" // 11791799
+        );
 
         let mut stitched_preconditions = vec![];
         let mut stitched_boot_info = vec![];
-        for (claimed_l2_output_root, claimed_l2_block_number) in derivations {
-            let derivation_trace: Arc<Mutex<Option<CachedDriver>>> = Default::default();
-            let cached_driver_digest = cached_driver
-                .as_ref()
-                .map(|d| B256::new(d.digest().into()))
-                .unwrap_or_default();
+        let mut i = 0;
+
+        while i < derivations.len() {
+            let (claimed_l2_output_root, claimed_l2_block_number) = &derivations[i];
+
+            let bail_derivation_trace: Arc<Mutex<Option<CachedDriver>>> = Default::default();
+            let l1_head = *l1_heads.last().unwrap();
+            let bail_derivation_result = test_derivation(
+                BootInfo {
+                    l1_head,
+                    agreed_l2_output_root,
+                    claimed_l2_output_root: *claimed_l2_output_root,
+                    claimed_l2_block_number: *claimed_l2_block_number,
+                    chain_id: 60808,
+                    rollup_config: Default::default(), // Config for BOB mainnet is in registry
+                },
+                None,
+                cached_bail_driver.clone(),
+                Some(bail_derivation_trace.clone()),
+            );
+
+            // Verify derivation trace
+            let Some(traced_bail_driver) = bail_derivation_trace.lock().unwrap().take() else {
+                // verify l1 head was before l1 origin
+                let safe_head_hash = fetch_safe_head_hash(oracle.as_ref(), agreed_l2_output_root)
+                    .await
+                    .unwrap();
+                let mut l2_provider = OracleL2ChainProvider::new(
+                    safe_head_hash,
+                    rollup_config.clone(),
+                    oracle.clone(),
+                );
+                let safe_header = l2_provider.header_by_hash(safe_head_hash).unwrap();
+                let safe_head_info = l2_provider
+                    .l2_block_info_by_number(safe_header.number)
+                    .await
+                    .unwrap();
+                let mut l1_provider = OracleL1ChainProvider::new(l1_head, oracle.clone())
+                    .await
+                    .unwrap();
+                let l1_header = l1_provider.header_by_hash(l1_head).await.unwrap();
+                assert!(safe_head_info.l1_origin.number > l1_header.number);
+                l1_heads.pop();
+                dbg!(l1_heads.len());
+                continue;
+            };
+            check_traced_driver(&traced_bail_driver).await;
+
+            // reuse bail driver
+            cached_bail_driver = Some(traced_bail_driver.clone());
+
+            // Check for insufficient data
+            if let Err(err) = bail_derivation_result {
+                // this derivation has failed due to insufficient l1 data
+                dbg!((l1_heads.len(), err));
+                // advance the l1 head
+                for _ in 0..25 {
+                    l1_heads.pop();
+                }
+                continue;
+            }
+
+            // Check for driver state equivalence
+            let safe_derivation_trace: Arc<Mutex<Option<CachedDriver>>> = Default::default();
             test_derivation(
                 BootInfo {
                     l1_head,
                     agreed_l2_output_root,
-                    claimed_l2_output_root,
-                    claimed_l2_block_number,
+                    claimed_l2_output_root: *claimed_l2_output_root,
+                    claimed_l2_block_number: *claimed_l2_block_number,
                     chain_id: 60808,
-                    rollup_config: Default::default(),
+                    rollup_config: Default::default(), // Config for BOB mainnet is in registry
                 },
                 None,
-                cached_driver,
-                Some(derivation_trace.clone()),
+                cached_safe_driver.clone(),
+                Some(safe_derivation_trace.clone()),
             )
             .unwrap();
+            let traced_safe_driver = safe_derivation_trace.lock().unwrap().take().unwrap();
+            assert_eq!(traced_safe_driver.digest(), traced_bail_driver.digest(),);
 
-            // Verify derivation trace
-            let traced_driver = derivation_trace.lock().unwrap().take().unwrap();
-            check_traced_driver(&traced_driver).await;
+            dbg!((i, l1_head));
 
             // Store precondition
+            let cached_driver_digest = cached_safe_driver
+                .as_ref()
+                .map(|d| B256::new(d.digest().into()))
+                .unwrap_or_default();
             stitched_preconditions.push(Precondition::default().derivation(
                 cached_driver_digest,
-                B256::new(traced_driver.digest().into()),
+                B256::new(traced_safe_driver.digest().into()),
             ));
             stitched_boot_info.push(StitchedBootInfo {
-                l1_head,
+                l1_head: l1_heads[0], // todo: support l1 head stitching
                 agreed_l2_output_root,
-                claimed_l2_output_root,
-                claimed_l2_block_number,
+                claimed_l2_output_root: *claimed_l2_output_root,
+                claimed_l2_block_number: *claimed_l2_block_number,
             });
 
-            // Update cached driver
-            cached_driver = Some(traced_driver);
+            // Update cached safe driver
+            cached_safe_driver = Some(traced_safe_driver);
             // Update agreed output
-            agreed_l2_output_root = claimed_l2_output_root;
+            agreed_l2_output_root = *claimed_l2_output_root;
+            // Update target derivation
+            i += 1;
         }
 
-        // forward stitch
-        test_stitching_client(
-            BootInfo {
-                l1_head,
-                chain_id: 60808,
-                rollup_config: Default::default(),
-                agreed_l2_output_root: b256!(
-                    "0xdf4bd3e4b13f7ed35f536129e6f853d643a2bd7f906e22090dc011928a2a02ac"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0xdf4bd3e4b13f7ed35f536129e6f853d643a2bd7f906e22090dc011928a2a02ac"
-                ),
-                claimed_l2_block_number: 11791799,
-            },
-            None,
-            vec![],
-            None,
-            false,
-            stitched_preconditions.clone(),
-            stitched_boot_info.clone(),
-        );
-
-        // backward stitch
+        // Backward stitch all derivations
+        assert_eq!(stitched_preconditions.len(), derivations.len());
+        assert_eq!(stitched_boot_info.len(), derivations.len());
+        println!("stitch");
         stitched_preconditions.reverse();
         stitched_boot_info.reverse();
-        test_stitching_client(
+        let proof_journal = test_stitching_client(
             BootInfo {
-                l1_head,
+                l1_head: l1_heads[0],
                 agreed_l2_output_root: b256!(
-                    "0xd65880a4aceae01adc4f4316db071188c8df9444d45c83424f13c380e2f717ce"
+                    "0xf51ebc1bb7fedefa0c79040143e64e45cc4b90e8f15bc0fc66d1ea868bd6f656"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0xd65880a4aceae01adc4f4316db071188c8df9444d45c83424f13c380e2f717ce"
+                    "0xf51ebc1bb7fedefa0c79040143e64e45cc4b90e8f15bc0fc66d1ea868bd6f656"
                 ),
-                claimed_l2_block_number: 11791899,
+                claimed_l2_block_number: 11795900,
                 chain_id: 60808,
                 rollup_config: Default::default(),
             },
@@ -1036,6 +1126,14 @@ pub mod tests {
             false,
             stitched_preconditions,
             stitched_boot_info,
+        );
+        assert_eq!(
+            proof_journal.claimed_l2_output_root,
+            derivations.last().unwrap().0
+        );
+        assert_eq!(
+            proof_journal.claimed_l2_block_number,
+            derivations.last().unwrap().1
         );
     }
 

@@ -21,7 +21,7 @@ use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
 use crate::precondition::Precondition;
 use alloy_primitives::{Address, B256};
-use kona_derive::prelude::BlobProvider;
+use kona_derive::prelude::{BlobProvider, ChainProvider};
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
 use risc0_zkvm::sha::Digestible;
@@ -139,7 +139,7 @@ impl<
         let (boot, precondition) = crate::client::core::run_core_client(
             proposal_data_hash,
             oracle,
-            stream,
+            stream.clone(),
             beacon,
             self.0,
             execution_cache,
@@ -164,7 +164,8 @@ impl<
         );
 
         // Stitch recursively composed proofs
-        stitch_boot_info(
+        kona_proof::block_on(stitch_boot_info(
+            Some(stream),
             boot,
             fpvm_image_id,
             payout_recipient_address,
@@ -173,7 +174,8 @@ impl<
             stitched_boot_info,
             #[cfg(target_os = "zkvm")]
             &proven_fpvm_journals,
-        )
+        ))
+        .expect("Failed to stitch boot info.")
     }
 }
 
@@ -461,7 +463,8 @@ pub fn stitch_executions(
 ///
 /// * On `zkvm` platforms, the function requires access to `proven_fpvm_journals` to verify stitching
 ///   proofs. On other platforms, the verification step is omitted.
-pub fn stitch_boot_info(
+pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + Debug>(
+    stream: Option<Arc<O>>,
     boot: BootInfo,
     fpvm_image_id: B256,
     payout_recipient_address: Address,
@@ -469,9 +472,15 @@ pub fn stitch_boot_info(
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_infos: Vec<StitchedBootInfo>,
     #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
-) -> (BootInfo, ProofJournal, Precondition) {
+) -> anyhow::Result<(BootInfo, ProofJournal, Precondition)> {
     // Equal inputs
     assert_eq!(stitched_preconditions.len(), stitched_boot_infos.len());
+
+    // Instantiate oracle-backed providers
+    let mut l1_provider = match stream {
+        Some(stream) => Some(OracleL1ChainProvider::new(boot.l1_head, stream).await?),
+        None => None,
+    };
 
     // Stitch boots together into one journal
     let mut journal = ProofJournal::new(
@@ -482,13 +491,17 @@ pub fn stitch_boot_info(
     );
 
     for (stitched_boot, stitched_precondition) in zip(stitched_boot_infos, stitched_preconditions) {
-        // Require equivalence in reference head
-        assert_eq!(stitched_boot.l1_head, journal.l1_head);
-        // Require progress in stitched boot
-        assert_ne!(
-            stitched_boot.agreed_l2_output_root,
-            stitched_boot.claimed_l2_output_root
-        );
+        // Require stitched l1 head to be in the same chain
+        if let Some(l1_provider) = l1_provider.as_mut() {
+            let l1_header = l1_provider.header_by_hash(stitched_boot.l1_head).await?;
+            assert_eq!(
+                l1_provider
+                    .block_info_by_number(l1_header.number)
+                    .await?
+                    .hash,
+                stitched_boot.l1_head
+            );
+        }
         // Require equivalence in proposal precondition
         assert_eq!(
             precondition.proposal_blobs,
@@ -508,38 +521,25 @@ pub fn stitch_boot_info(
             #[cfg(target_os = "zkvm")]
             proven_fpvm_journals,
         );
-        // Require continuity
-        if stitched_boot.claimed_l2_output_root == journal.agreed_l2_output_root {
-            // Backward stitch (stitched boot <= journal)
-            journal.agreed_l2_output_root = stitched_boot.agreed_l2_output_root;
-            // Stitched boot's trace must be our cache unless we have no cache
-            if !precondition.derivation_cache.is_zero() {
-                assert_eq!(
-                    precondition.derivation_cache,
-                    stitched_precondition.derivation_trace
-                );
-            }
-            // Update our cache to be that of the backwards stitched boot
-            precondition.derivation_cache = stitched_precondition.derivation_cache;
-        } else if stitched_boot.agreed_l2_output_root == journal.claimed_l2_output_root {
-            // Forward stitch (journal <= stitched boot)
-            journal.claimed_l2_output_root = stitched_boot.claimed_l2_output_root;
-            journal.claimed_l2_block_number = stitched_boot.claimed_l2_block_number;
-            // Stitched boot's cache must be our trace unless it has no cache
-            if !stitched_precondition.derivation_cache.is_zero() {
-                assert_eq!(
-                    precondition.derivation_trace,
-                    stitched_precondition.derivation_cache
-                );
-            }
-            // Update our trace to be that of the forwards stitched boot
-            precondition.derivation_trace = stitched_precondition.derivation_trace;
-        } else {
-            unimplemented!("No support for non-contiguous stitching.");
+        // Require backward stitching (stitched proof leads to current journal state)
+        assert_eq!(
+            stitched_boot.claimed_l2_output_root,
+            journal.agreed_l2_output_root
+        );
+        // Update our initial l2 output root to that of the stitched boot
+        journal.agreed_l2_output_root = stitched_boot.agreed_l2_output_root;
+        // Stitched boot's trace must be our cache unless we have no cache
+        if !precondition.derivation_cache.is_zero() {
+            assert_eq!(
+                precondition.derivation_cache,
+                stitched_precondition.derivation_trace
+            );
         }
+        // Update our cache to be that of the backwards stitched boot
+        precondition.derivation_cache = stitched_precondition.derivation_cache;
     }
 
-    (boot, journal, precondition)
+    Ok((boot, journal, precondition))
 }
 
 #[cfg(test)]
@@ -676,28 +676,6 @@ pub mod tests {
             stitched_boot_info.len(),
         )
         .collect::<Vec<_>>();
-        // forward stitching pass
-        let starting_block_number = stitched_executions
-            .first()
-            .map(|e| e.artifacts.header.number - 1)
-            .unwrap_or(boot_info.claimed_l2_block_number);
-        let proof_journal = test_stitching_client(
-            BootInfo {
-                l1_head: boot_info.l1_head,
-                agreed_l2_output_root: boot_info.agreed_l2_output_root,
-                claimed_l2_output_root: boot_info.agreed_l2_output_root,
-                claimed_l2_block_number: starting_block_number,
-                chain_id: boot_info.chain_id,
-                rollup_config: boot_info.rollup_config.clone(),
-            },
-            precondition_validation_data.clone(),
-            vec![],
-            None,
-            false,
-            stitched_preconditions.clone(),
-            stitched_boot_info.clone(),
-        );
-        validate_proof_journal(proof_journal, boot_info.clone(), precondition_hash);
         // backward stitching pass
         let ending_block_number = stitched_executions
             .last()

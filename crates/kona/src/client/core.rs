@@ -134,7 +134,7 @@ where
     <B as BlobProvider>::Error: Debug,
 {
     let oracle = Arc::new(LocalOnceOracle::new(oracle));
-    let (boot, precondition, output_hash) = kona_proof::block_on(async move {
+    kona_proof::block_on(async move {
         ////////////////////////////////////////////////////////////////
         //                          PROLOGUE                          //
         ////////////////////////////////////////////////////////////////
@@ -155,6 +155,7 @@ where
         let safe_head_hash =
             fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
 
+        // Instantiate oracle-backed providers
         let mut l1_provider = OracleL1ChainProvider::new(boot.l1_head, stream).await?;
         let mut l2_provider =
             OracleL2ChainProvider::new(safe_head_hash, rollup_config.clone(), oracle.clone());
@@ -167,7 +168,7 @@ where
             .map(|header| Sealed::new_unchecked(header, safe_head_hash))?;
 
         if boot.claimed_l2_block_number < safe_head.number {
-            bail!("Invalid claim");
+            bail!("Invalid claim: Safe l2 head block number below claimed l2 block number.");
         }
         let safe_head_number = safe_head.number;
         let expected_output_count = (boot.claimed_l2_block_number - safe_head_number) as usize;
@@ -215,7 +216,8 @@ where
                 // Verify transition
                 let executor_result = kona_executor
                     .execute_payload(execution.attributes.clone())
-                    .await?;
+                    .await
+                    .context("execute_payload")?;
                 assert_eq!(execution.artifacts.header, executor_result.header);
                 assert_eq!(
                     execution.artifacts.execution_result,
@@ -234,11 +236,12 @@ where
                 ));
             }
 
-            // Return latest_output_root from closure to be validated against claimed_l2_output_root
+            // Validate claimed_l2_output_root against latest_output_root
+            assert_eq!(boot.claimed_l2_output_root, latest_output_root);
+            // Return result
             return Ok((
                 boot,
                 Precondition::default().execution(execution_trace_hash),
-                Some(latest_output_root),
             ));
         }
 
@@ -263,9 +266,11 @@ where
         .context("new_oracle_pipeline_cursor")?;
         l2_provider.set_cursor(cursor.clone());
 
+        // Construct the DA provider
         let da_provider =
             da_source_provider.new_from_parts(l1_provider.clone(), beacon, &rollup_config);
 
+        // Load the Kailua executor with caching support
         let cached_executor = CachedExecutor {
             cache: {
                 // The cache elements will be popped from first to last
@@ -283,6 +288,7 @@ where
             collection_target: execution_trace,
         };
 
+        // Resume from cached derivation pipeline or start a new one
         let (derivation_cache_hash, mut driver) = match derivation_cache {
             None => (
                 B256::ZERO,
@@ -326,17 +332,16 @@ where
                 .context("advance_to_target")?;
             // Stop if nothing new was derived
             if output_block.block_info.number == starting_block {
-                // A mismatch indicates that there is insufficient L1 data available to produce
-                // an L2 output root at the claimed block number
+                // No progress implies that there is insufficient L1 data available to produce
+                // an L2 output root at this L2 height
                 log("HALT");
                 break;
-            } else {
-                log(&format!(
-                    "OUTPUT: {}/{}\t{output_root}",
-                    output_block.block_info.number, boot.claimed_l2_block_number
-                ));
             }
             // Append newly computed output root
+            log(&format!(
+                "OUTPUT: {}/{}\t{output_root}",
+                output_block.block_info.number, boot.claimed_l2_block_number
+            ));
             output_roots.push(output_root);
         }
 
@@ -369,36 +374,23 @@ where
             .unwrap_or(Ok(B256::ZERO))
             .context("validate_precondition")?;
 
-        // Compile final precondition
+        // Compile final [Precondition]
         let precondition = Precondition::default()
             .proposal(proposal_precondition_hash)
             .derivation(derivation_cache_hash, derivation_trace_hash);
 
+        // Compile the final [BootInfo]
+        let claimed_l2_block_number = safe_head_number + output_roots.len() as u64;
+        let claimed_l2_output_root = output_roots.pop().unwrap_or(boot.agreed_l2_output_root);
+        let boot = BootInfo {
+            claimed_l2_output_root,
+            claimed_l2_block_number,
+            ..boot
+        };
+
         // Return results
-        if output_roots.len() != expected_output_count {
-            // Not enough data to derive output root at claimed height
-            Ok((boot, precondition, None))
-        } else if output_roots.is_empty() {
-            // note: This implies expected_output_count == 0
-            // Claimed output height is equal to agreed output height
-            let claimed_l2_output_root = boot.agreed_l2_output_root;
-            Ok((boot, precondition, Some(claimed_l2_output_root)))
-        } else {
-            // Derived output root at future height
-            Ok((boot, precondition, output_roots.pop()))
-        }
-    })?;
-
-    // Check claimed_l2_output_root correctness
-    if let Some(computed_output) = output_hash {
-        // With sufficient data, the input l2_claim must be true
-        assert_eq!(boot.claimed_l2_output_root, computed_output);
-    } else if !boot.claimed_l2_output_root.is_zero() {
-        // We use the zero claim hash to denote that the data as of l1 head is insufficient
-        bail!(L1_HEAD_INSUFFICIENT);
-    }
-
-    Ok((boot, precondition))
+        Ok((boot, precondition))
+    })
 }
 
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
@@ -488,14 +480,16 @@ pub mod tests {
             result_boot_info.agreed_l2_output_root,
             boot_info.agreed_l2_output_root
         );
-        assert_eq!(
-            result_boot_info.claimed_l2_output_root,
-            boot_info.claimed_l2_output_root
-        );
-        assert_eq!(
-            result_boot_info.claimed_l2_block_number,
-            boot_info.claimed_l2_block_number
-        );
+        if precondition.derivation_trace.is_zero() {
+            assert_eq!(
+                result_boot_info.claimed_l2_output_root,
+                boot_info.claimed_l2_output_root
+            );
+            assert_eq!(
+                result_boot_info.claimed_l2_block_number,
+                boot_info.claimed_l2_block_number
+            );
+        }
         assert_eq!(result_boot_info.chain_id, boot_info.chain_id);
 
         let expected_precondition = Precondition {
@@ -686,8 +680,11 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491349_insufficient_fail() {
-        // data wasn't published at l1 origin
-        test_derivation(
+        let claimed_l2_output_root =
+            b256!("0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1");
+        let claimed_l2_block_number = 16491349;
+        // data wasn't published as of l1 head
+        let exec = test_derivation(
             BootInfo {
                 l1_head: b256!(
                     "0x78228b4f2d59ae1820b8b8986a875630cb32d88b298d78d0f25bcac8f3bdfbf3"
@@ -695,10 +692,8 @@ pub mod tests {
                 agreed_l2_output_root: b256!(
                     "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
                 ),
-                claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-                ),
-                claimed_l2_block_number: 16491349,
+                claimed_l2_output_root,
+                claimed_l2_block_number,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
             },
@@ -706,7 +701,12 @@ pub mod tests {
             None,
             Some(Default::default()),
         )
-        .unwrap_err();
+        .unwrap();
+        let Some(last_execution) = exec.last() else {
+            return;
+        };
+        assert_ne!(last_execution.claimed_output, claimed_l2_output_root);
+        assert!(last_execution.artifacts.header.number < claimed_l2_block_number);
     }
 
     #[tokio::test(flavor = "multi_thread")]

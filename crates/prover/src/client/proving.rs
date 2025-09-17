@@ -106,6 +106,9 @@ where
     ) = match (proving.use_hokulea(), proving.use_hana()) {
         (false, false) => {
             witgen::run_witgen_client(
+                B256::from(bytemuck::cast::<_, [u8; 32]>(
+                    kailua_build::KAILUA_FPVM_KONA_ID,
+                )),
                 preimage_oracle.clone(),
                 10 * 1024 * 1024, // default to 10MB chunks
                 blob_provider,

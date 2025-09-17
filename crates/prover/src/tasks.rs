@@ -26,6 +26,7 @@ use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{split_executions, stitch_boot_info};
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
+use kailua_kona::oracle::vec::VecOracle;
 use kailua_kona::precondition::execution::exec_precondition_hash;
 use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
@@ -684,14 +685,18 @@ pub async fn compute_cached_proof(
 
     // Construct expected journal
     // bug: this may fail when mixing proving with stitching boot infos
-    let (boot, proof_journal, _) = stitch_boot_info(
+    let (boot, proof_journal, _) = stitch_boot_info::<VecOracle>(
+        None, // assume l1 head chain continuity on host side
         boot,
         bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
         args.proving.payout_recipient_address.unwrap_or_default(),
         precondition,
         stitched_preconditions.clone(),
         stitched_boot_info.clone(),
-    );
+    )
+    .await
+    .context("Failed to stitch boot info")
+    .map_err(ProvingError::OtherError)?;
     let skip_await_proof = args.proving.skip_await_proof;
     // Skip computation if previously saved to disk
     let mut proof_file = proof_file_name(image_id, &proof_journal);
@@ -784,7 +789,8 @@ pub async fn compute_cached_proof(
             // Recalculate receipt file name with new precondition
             proof_file = proof_file_name(
                 image_id,
-                &stitch_boot_info(
+                &stitch_boot_info::<VecOracle>(
+                    None, // assume l1 head chain continuity on host side
                     boot,
                     bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
                     args.proving.payout_recipient_address.unwrap_or_default(),
@@ -792,6 +798,9 @@ pub async fn compute_cached_proof(
                     stitched_preconditions,
                     stitched_boot_info,
                 )
+                .await
+                .context("Failed to stitch boot info.")
+                .map_err(ProvingError::OtherError)?
                 .1,
             );
         }
