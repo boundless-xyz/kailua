@@ -359,25 +359,6 @@ pub fn stitch_executions(
     for execution_trace in stitched_executions {
         let precondition_hash =
             crate::precondition::execution::exec_precondition_hash(execution_trace.as_slice());
-        // Validate execution data
-        for execution in execution_trace {
-            // Validate receipts
-            assert_eq!(
-                execution.artifacts.header.receipts_root,
-                kona_executor::compute_receipts_root(
-                    execution.artifacts.execution_result.receipts.as_slice(),
-                    &boot.rollup_config,
-                    execution.attributes.payload_attributes.timestamp
-                )
-            );
-            // Validate requests
-            assert!(execution.artifacts.execution_result.requests.is_empty());
-            // Validate gas used
-            assert_eq!(
-                execution.artifacts.header.gas_used,
-                execution.artifacts.execution_result.gas_used
-            );
-        }
         // Construct expected proof journal
         let encoded_journal = ProofJournal::new_stitched(
             fpvm_image_id,
@@ -403,7 +384,7 @@ pub fn stitch_executions(
             },
         )
         .encode_packed();
-        // Require transition proof for entire batch
+        // Require an execution-only proof for the entire batch
         verify_stitching_journal(
             fpvm_image_id,
             encoded_journal,

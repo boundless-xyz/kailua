@@ -70,7 +70,7 @@ pub fn flatten_pipeline_cursor(pipeline_cursor: &PipelineCursor) -> Vec<u8> {
                 [
                     k.to_be_bytes().as_slice(),
                     flatten_l2_block_info(&v.l2_safe_head).as_slice(),
-                    v.l2_safe_head_header.hash().as_slice(),
+                    v.l2_safe_head_header.hash_slow().as_slice(),
                     v.l2_safe_head_output_root.as_slice(),
                 ]
                 .concat()
@@ -84,38 +84,7 @@ pub fn flatten_pipeline_cursor(pipeline_cursor: &PipelineCursor) -> Vec<u8> {
 
 pub fn flatten_safe_head_artifacts(artifacts: &(BlockBuildingOutcome, Vec<Bytes>)) -> Vec<u8> {
     [
-        artifacts.0.header.hash().as_slice(),
-        (artifacts.0.execution_result.receipts.len() as u64)
-            .to_be_bytes()
-            .as_slice(),
-        artifacts
-            .0
-            .execution_result
-            .receipts
-            .iter()
-            .map(alloy_rlp::encode)
-            .map(flatten_bytes)
-            .collect::<Vec<_>>()
-            .concat()
-            .as_slice(),
-        (artifacts.0.execution_result.requests.len() as u64)
-            .to_be_bytes()
-            .as_slice(),
-        artifacts
-            .0
-            .execution_result
-            .requests
-            .iter()
-            .map(flatten_bytes)
-            .collect::<Vec<_>>()
-            .concat()
-            .as_slice(),
-        artifacts
-            .0
-            .execution_result
-            .gas_used
-            .to_be_bytes()
-            .as_slice(),
+        flatten_block_build_outcome(&artifacts.0).as_slice(),
         (artifacts.1.len() as u64).to_be_bytes().as_slice(),
         artifacts
             .1
@@ -124,6 +93,37 @@ pub fn flatten_safe_head_artifacts(artifacts: &(BlockBuildingOutcome, Vec<Bytes>
             .collect::<Vec<_>>()
             .concat()
             .as_slice(),
+    ]
+    .concat()
+}
+
+pub fn flatten_block_build_outcome(outcome: &BlockBuildingOutcome) -> Vec<u8> {
+    [
+        outcome.header.hash_slow().as_slice(),
+        (outcome.execution_result.receipts.len() as u64)
+            .to_be_bytes()
+            .as_slice(),
+        outcome
+            .execution_result
+            .receipts
+            .iter()
+            .map(alloy_rlp::encode)
+            .map(flatten_bytes)
+            .collect::<Vec<_>>()
+            .concat()
+            .as_slice(),
+        (outcome.execution_result.requests.len() as u64)
+            .to_be_bytes()
+            .as_slice(),
+        outcome
+            .execution_result
+            .requests
+            .iter()
+            .map(flatten_bytes)
+            .collect::<Vec<_>>()
+            .concat()
+            .as_slice(),
+        outcome.execution_result.gas_used.to_be_bytes().as_slice(),
     ]
     .concat()
 }

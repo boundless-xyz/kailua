@@ -14,6 +14,7 @@
 
 use crate::config::safe_default;
 use crate::executor::Execution;
+use crate::precondition::derivation::flatten_block_build_outcome;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{Bytes, B256, B64};
 use anyhow::Context;
@@ -242,12 +243,12 @@ pub fn exec_precondition_hash(executions: &[Arc<Execution>]) -> B256 {
         .iter()
         .map(|e| {
             [
-                e.agreed_output.0,
+                e.agreed_output.as_slice(),
                 attributes_hash(&e.attributes)
                     .expect("Unhashable attributes.")
-                    .0,
-                e.artifacts.header.hash().0,
-                e.claimed_output.0,
+                    .as_slice(),
+                flatten_block_build_outcome(&e.artifacts).as_slice(),
+                e.claimed_output.as_slice(),
             ]
             .concat()
         })

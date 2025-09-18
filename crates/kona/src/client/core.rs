@@ -152,11 +152,14 @@ where
         let rollup_config = Arc::new(boot.rollup_config.clone());
 
         log("SAFE HEAD HASH");
-        let safe_head_hash =
-            fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
+        let safe_head_hash = fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root)
+            .await
+            .context("fetch_safe_head_hash")?;
 
         // Instantiate oracle-backed providers
-        let mut l1_provider = OracleL1ChainProvider::new(boot.l1_head, stream).await?;
+        let mut l1_provider = OracleL1ChainProvider::new(boot.l1_head, stream)
+            .await
+            .context("OracleL1ChainProvider::new")?;
         let mut l2_provider =
             OracleL2ChainProvider::new(safe_head_hash, rollup_config.clone(), oracle.clone());
 
@@ -165,7 +168,8 @@ where
         log("SAFE HEAD");
         let safe_head = l2_provider
             .header_by_hash(safe_head_hash)
-            .map(|header| Sealed::new_unchecked(header, safe_head_hash))?;
+            .map(|header| Sealed::new_unchecked(header, safe_head_hash))
+            .context("l2_provider.header_by_hash")?;
 
         if boot.claimed_l2_block_number < safe_head.number {
             bail!("Invalid claim: Safe l2 head block number below claimed l2 block number.");
@@ -208,31 +212,35 @@ where
                 boot.claimed_l2_block_number
             );
 
-            let mut latest_output_root = boot.agreed_l2_output_root;
             // Validate executed chain
+            let mut latest_output_root = boot.agreed_l2_output_root;
             for execution in execution_cache {
+                // Unpack [Execution]
+                let Execution {
+                    agreed_output,
+                    attributes,
+                    artifacts,
+                    claimed_output,
+                } = execution.as_ref();
                 // Verify initial state
-                assert_eq!(execution.agreed_output, latest_output_root);
+                assert_eq!(agreed_output, &latest_output_root);
                 // Verify transition
                 let executor_result = kona_executor
-                    .execute_payload(execution.attributes.clone())
+                    .execute_payload(attributes.clone())
                     .await
                     .context("execute_payload")?;
-                assert_eq!(execution.artifacts.header, executor_result.header);
-                assert_eq!(
-                    execution.artifacts.execution_result,
-                    executor_result.execution_result
-                );
+                assert_eq!(artifacts.header, executor_result.header);
+                assert_eq!(artifacts.execution_result, executor_result.execution_result);
                 // Update state
-                kona_executor.update_safe_head(execution.artifacts.header.clone());
+                kona_executor.update_safe_head(executor_result.header);
                 latest_output_root = kona_executor
                     .compute_output_root()
                     .context("compute_output_root: Verify post state")?;
                 // Verify post state
-                assert_eq!(execution.claimed_output, latest_output_root);
+                assert_eq!(claimed_output, &latest_output_root);
                 log(&format!(
                     "OUTPUT: {}/{}\t{latest_output_root}",
-                    execution.artifacts.header.number, boot.claimed_l2_block_number
+                    artifacts.header.number, boot.claimed_l2_block_number
                 ));
             }
 
@@ -271,22 +279,13 @@ where
             da_source_provider.new_from_parts(l1_provider.clone(), beacon, &rollup_config);
 
         // Load the Kailua executor with caching support
-        let cached_executor = CachedExecutor {
-            cache: {
-                // The cache elements will be popped from first to last
-                let mut cache = execution_cache;
-                cache.reverse();
-                cache
-            },
-            executor: KonaExecutor::new(
-                rollup_config.as_ref(),
-                l2_provider.clone(),
-                l2_provider.clone(),
-                OpEvmFactory::default(),
-                None,
-            ),
-            collection_target: execution_trace,
-        };
+        let cached_executor = CachedExecutor::new(
+            execution_cache,
+            rollup_config.as_ref(),
+            l2_provider.clone(),
+            l2_provider.clone(),
+            execution_trace,
+        );
 
         // Resume from cached derivation pipeline or start a new one
         let (derivation_cache_hash, mut driver) = match derivation_cache {
@@ -323,7 +322,7 @@ where
 
         // Run the derivation pipeline until we are able to produce the output root of the claimed
         // L2 block.
-        let mut output_roots = Vec::with_capacity(expected_output_count);
+        let mut derived_output_roots = Vec::with_capacity(expected_output_count);
         for starting_block in safe_head_number..boot.claimed_l2_block_number {
             // Advance to the next target
             let (output_block, output_root) = driver
@@ -342,7 +341,7 @@ where
                 "OUTPUT: {}/{}\t{output_root}",
                 output_block.block_info.number, boot.claimed_l2_block_number
             ));
-            output_roots.push(output_root);
+            derived_output_roots.push(output_root);
         }
 
         ////////////////////////////////////////////////////////////////
@@ -368,7 +367,7 @@ where
                     proposal_precondition,
                     blobs,
                     safe_head_number,
-                    &output_roots,
+                    &derived_output_roots,
                 )
             })
             .unwrap_or(Ok(B256::ZERO))
@@ -380,8 +379,10 @@ where
             .derivation(derivation_cache_hash, derivation_trace_hash);
 
         // Compile the final [BootInfo]
-        let claimed_l2_block_number = safe_head_number + output_roots.len() as u64;
-        let claimed_l2_output_root = output_roots.pop().unwrap_or(boot.agreed_l2_output_root);
+        let claimed_l2_block_number = safe_head_number + derived_output_roots.len() as u64;
+        let claimed_l2_output_root = derived_output_roots
+            .pop()
+            .unwrap_or(boot.agreed_l2_output_root);
         let boot = BootInfo {
             claimed_l2_output_root,
             claimed_l2_block_number,

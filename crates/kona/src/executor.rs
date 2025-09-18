@@ -17,13 +17,16 @@ use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
+use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Sealed, B256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
-use kona_executor::BlockBuildingOutcome;
+use kona_executor::{BlockBuildingOutcome, TrieDBProvider};
 use kona_genesis::RollupConfig;
+use kona_mpt::TrieHinter;
 use kona_preimage::CommsClient;
 use kona_proof::errors::OracleProviderError;
+use kona_proof::executor::KonaExecutor;
 use kona_proof::l2::OracleL2ChainProvider;
 use kona_proof::FlushableCache;
 use kona_protocol::{BatchValidationProvider, BlockInfo};
@@ -66,6 +69,37 @@ pub struct CachedExecutor<E: Executor + Send + Sync + Debug> {
     pub executor: E,
     /// An optional shared target for collecting executed tasks.
     pub collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
+}
+
+impl<'a, P, H> CachedExecutor<KonaExecutor<'a, P, H, OpEvmFactory>>
+where
+    P: TrieDBProvider + Send + Sync + Clone + Debug,
+    H: TrieHinter + Send + Sync + Clone + Debug,
+{
+    pub fn new(
+        execution_cache: Vec<Arc<Execution>>,
+        rollup_config: &'a RollupConfig,
+        trie_provider: P,
+        trie_hinter: H,
+        collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
+    ) -> CachedExecutor<KonaExecutor<'a, P, H, OpEvmFactory>> {
+        CachedExecutor {
+            cache: {
+                // The cache elements will be popped from first to last
+                let mut cache = execution_cache;
+                cache.reverse();
+                cache
+            },
+            executor: KonaExecutor::new(
+                rollup_config,
+                trie_provider,
+                trie_hinter,
+                OpEvmFactory::default(),
+                None,
+            ),
+            collection_target,
+        }
+    }
 }
 
 impl<E: Executor + Send + Sync + Debug> Drop for CachedExecutor<E> {
