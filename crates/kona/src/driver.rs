@@ -1122,7 +1122,7 @@ pub mod tests {
             },
             None,
             vec![],
-            None,
+            cached_safe_driver,
             false,
             stitched_preconditions,
             stitched_boot_info,

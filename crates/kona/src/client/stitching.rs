@@ -21,6 +21,7 @@ use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
 use crate::precondition::Precondition;
 use alloy_primitives::{Address, B256};
+use anyhow::Context;
 use kona_derive::prelude::{BlobProvider, ChainProvider};
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
@@ -463,7 +464,7 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
         None => None,
     };
 
-    // Stitch boots together into one journal
+    // Instantiate base proof journal for validating stitched proofs
     let mut journal = ProofJournal::new(
         fpvm_image_id,
         payout_recipient_address,
@@ -471,14 +472,37 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
         &boot,
     );
 
+    // Stitch boot info instances
+    let mut l1_head_number = match l1_provider.as_mut() {
+        Some(provider) if !boot.l1_head.is_zero() => Some(
+            provider
+                .header_by_hash(boot.l1_head)
+                .await
+                .context("boot header_by_hash")?
+                .number,
+        ),
+        _ => None,
+    };
     for (stitched_boot, stitched_precondition) in zip(stitched_boot_infos, stitched_preconditions) {
-        // Require stitched l1 head to be in the same chain
-        if let Some(l1_provider) = l1_provider.as_mut() {
-            let l1_header = l1_provider.header_by_hash(stitched_boot.l1_head).await?;
+        // Check if stitched l1 head is in the same chain
+        if boot.l1_head.is_zero() {
+            assert!(stitched_boot.l1_head.is_zero());
+        } else if let Some(l1_provider) = l1_provider.as_mut() {
+            // Retrieve the full header, which could be from another chain
+            let stitched_l1_header = l1_provider
+                .header_by_hash(stitched_boot.l1_head)
+                .await
+                .context("header_by_hash")?;
+            // Ensure non-increasing derivation heads
+            let l1_head_number = l1_head_number.as_mut().unwrap();
+            assert!(stitched_l1_header.number <= *l1_head_number);
+            *l1_head_number = stitched_l1_header.number;
+            // Ensure that querying the oracle by the header number yields the same header hash
             assert_eq!(
                 l1_provider
-                    .block_info_by_number(l1_header.number)
-                    .await?
+                    .block_info_by_number(stitched_l1_header.number)
+                    .await
+                    .context("block_info_by_number")?
                     .hash,
                 stitched_boot.l1_head
             );
@@ -488,7 +512,21 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
             precondition.proposal_blobs,
             stitched_precondition.proposal_blobs
         );
-        // Require proof for stitched boot
+        // Require backward stitching (stitched proof leads to current journal state)
+        assert_eq!(
+            stitched_boot.claimed_l2_output_root,
+            journal.agreed_l2_output_root
+        );
+        // Stitched boot's trace must be our cache
+        assert_eq!(
+            precondition.derivation_cache,
+            stitched_precondition.derivation_trace
+        );
+        // Update our initial l2 output root to that of the stitched boot
+        journal.agreed_l2_output_root = stitched_boot.agreed_l2_output_root;
+        // Update our cache to be that of the backwards stitched boot
+        precondition.derivation_cache = stitched_precondition.derivation_cache;
+        // Require derivation proof for stitched boot
         verify_stitching_journal(
             fpvm_image_id,
             ProofJournal::new_stitched(
@@ -502,22 +540,6 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
             #[cfg(target_os = "zkvm")]
             proven_fpvm_journals,
         );
-        // Require backward stitching (stitched proof leads to current journal state)
-        assert_eq!(
-            stitched_boot.claimed_l2_output_root,
-            journal.agreed_l2_output_root
-        );
-        // Update our initial l2 output root to that of the stitched boot
-        journal.agreed_l2_output_root = stitched_boot.agreed_l2_output_root;
-        // Stitched boot's trace must be our cache unless we have no cache
-        if !precondition.derivation_cache.is_zero() {
-            assert_eq!(
-                precondition.derivation_cache,
-                stitched_precondition.derivation_trace
-            );
-        }
-        // Update our cache to be that of the backwards stitched boot
-        precondition.derivation_cache = stitched_precondition.derivation_cache;
     }
 
     Ok((boot, journal, precondition))
