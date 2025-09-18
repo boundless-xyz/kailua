@@ -40,8 +40,6 @@ use std::fmt::Debug;
 use std::mem::take;
 use std::sync::{Arc, Mutex};
 
-pub const L1_HEAD_INSUFFICIENT: &str = "Expected zero claim hash.";
-
 pub trait DASourceProvider<
     C: ChainProvider + Send + Sync + Clone + Debug,
     B: BlobProvider + Send + Sync + Clone + Debug,

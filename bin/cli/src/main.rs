@@ -53,7 +53,12 @@ async fn main() -> anyhow::Result<()> {
         }
         KailuaCli::Prove { args, .. } => {
             maybe_restrict_permits(&args.proving).await;
-            await_tel!(context, kailua_prover::prove::prove(args))
+            let result = await_tel!(context, kailua_prover::prove::prove(args));
+            // Special exit code used to signal insufficient l1 data
+            if let Ok(false) = result {
+                std::process::exit(111);
+            }
+            result.map(|_| ())
         }
         KailuaCli::TestFault {
             #[cfg(feature = "devnet")]

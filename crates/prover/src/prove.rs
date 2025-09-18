@@ -25,7 +25,6 @@ use alloy_primitives::B256;
 use anyhow::{anyhow, bail, Context};
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
-use kailua_kona::client::core::L1_HEAD_INSUFFICIENT;
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
@@ -39,7 +38,7 @@ use tempfile::tempdir;
 use tokio::fs::remove_dir_all;
 use tracing::{error, info, warn};
 
-pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
+pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("prove"));
 
@@ -91,21 +90,26 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
 
     // create concurrent db
     let disk_kv_store = create_disk_kv_store(&args.kona);
-    // perform preflight to fetch data
-    if args.proving.num_concurrent_preflights > 0 {
-        // run parallelized preflight instances to populate kv store
-        info!(
-            "Running concurrent preflights with {} threads",
-            args.proving.num_concurrent_preflights
-        );
-        concurrent_execution_preflight(
-            &args,
-            rollup_config.clone(),
-            op_node_provider.as_ref().expect("Missing op_node_provider"),
-            disk_kv_store.clone(),
-        )
-        .await
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+    // perform preflight
+    if args.proving.num_concurrent_preflights == 0 {
+        warn!("Performing mandatory single-thread preflight.");
+        args.proving.num_concurrent_preflights = 1;
+    }
+    // run parallelized preflight instances to populate kv store
+    info!(
+        "Running concurrent preflights with {} threads",
+        args.proving.num_concurrent_preflights
+    );
+    if !concurrent_execution_preflight(
+        &args,
+        rollup_config.clone(),
+        op_node_provider.as_ref().expect("Missing op_node_provider"),
+        disk_kv_store.clone(),
+    )
+    .await
+    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+    {
+        return Ok(false);
     }
     // We only use executionWitness/executePayload during preflight.
     args.kona.enable_experimental_witness_endpoint = false;
@@ -349,12 +353,6 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                         Default::default()
                     }
                     ProvingError::OtherError(e) => {
-                        if e.root_cause().to_string().contains(L1_HEAD_INSUFFICIENT) {
-                            // we use this special exit code to signal an insufficient l1 head
-                            error!("Insufficient L1 head.");
-                            // todo: revisit
-                            std::process::exit(111);
-                        }
                         bail!("Irrecoverable proving error: {e:?}")
                     }
                     ProvingError::BlockCountError(..) => {
@@ -501,7 +499,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
     cleanup_cache_data(&args).await;
 
     info!("Exiting prover program.");
-    Ok(())
+    Ok(true)
 }
 
 pub async fn cleanup_cache_data(args: &ProveArgs) {
