@@ -3120,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-fpvm-hana"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "blst",
  "c-kzg",
@@ -3133,7 +3133,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-hana"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "alloy-primitives",
  "anyhow",
@@ -3153,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-kona"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",

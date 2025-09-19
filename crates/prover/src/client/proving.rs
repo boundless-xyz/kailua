@@ -266,7 +266,7 @@ where
     let precondition_hash = B256::new(precondition.digest().into());
     if proof_journal.precondition_hash != precondition_hash {
         error!(
-            "ProofJournal precondition hash mismatch: found {} expected {}.",
+            "ProofJournal precondition hash mismatch: found {} expected {} for {precondition:?}.",
             proof_journal.precondition_hash, precondition_hash
         );
     }

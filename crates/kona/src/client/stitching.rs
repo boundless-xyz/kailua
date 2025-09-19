@@ -468,7 +468,7 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
     let mut journal = ProofJournal::new(
         fpvm_image_id,
         payout_recipient_address,
-        B256::new(precondition.digest().into()),
+        B256::ZERO, // Precondition digest will be finalized below
         &boot,
     );
 
@@ -541,6 +541,14 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
             proven_fpvm_journals,
         );
     }
+
+    // Update the final precondition hash
+    journal.precondition_hash = B256::new(precondition.digest().into());
+
+    // Report final precondition
+    log("STITCHED");
+    log(&format!("{journal:?}"));
+    log(&format!("{precondition:?}"));
 
     Ok((boot, journal, precondition))
 }

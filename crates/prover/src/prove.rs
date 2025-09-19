@@ -126,6 +126,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     let result_channel = async_channel::unbounded();
     // create channel for receiving proof requests to process and dispatch to handlers
     let prover_channel = async_channel::unbounded();
+    // create channel for receiving final derivation trace in case of stitching
+    let mut derivation_cache_receiver = None;
     // dispatch requested proof
     let mut num_proofs = 0;
     if let (Some(l2_provider), Some(op_node_provider)) =
@@ -146,7 +148,6 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
         .number;
         let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
         let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
-        let mut derivation_cache_receiver = None;
         while agreed_l2_output_root != args.kona.claimed_l2_output_root {
             let claimed_l2_block_number = agreed_l2_block_number
                 .saturating_add(args.proving.max_block_derivations as u64)
@@ -330,7 +331,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
             }
             Err(err) => {
                 // Handle error case
-                let (derivation_cache, derivation_trace) = match err {
+                let (derivation_cache, mut derivation_trace) = match err {
                     ProvingError::WitnessSizeError(f, t, _, d, s) => {
                         if force_attempt {
                             bail!(
@@ -376,6 +377,11 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                         continue;
                     }
                 };
+                // Instantiate driver cache relays
+                if num_proofs == 1 {
+                    (derivation_trace, derivation_cache_receiver) =
+                        Some(async_channel::bounded::<CachedDriver>(1)).unzip();
+                }
                 // Require additional proof
                 num_proofs += 1;
                 // Split workload at midpoint (num_blocks > 1)
@@ -435,7 +441,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     }
 
     // recursively combine expected proofs
-    if !args.proving.skip_stitching() {
+    if !args.proving.skip_stitching() && result_pq.len() > 1 {
         // gather sorted proofs into vec
         let results = result_pq
             .into_sorted_vec()
@@ -445,53 +451,51 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
             .collect::<Vec<_>>();
 
         // stitch contiguous proofs together
-        if results.len() > 1 {
-            info!("Composing {} proofs together.", results.len());
-            // construct a proving instruction with no blocks to derive
-            let mut base_args = args.clone();
-            {
-                // set last block as starting point
-                base_args.kona.agreed_l2_output_root = base_args.kona.claimed_l2_output_root;
-                let l2_provider = l2_provider.as_ref().unwrap();
-                base_args.kona.agreed_l2_head_hash = await_tel!(
-                    context,
-                    tracer,
-                    "l2_provider get_block_by_number claimed_l2_block_number",
-                    retry_res_ctx_timeout!(l2_provider
-                        .get_block_by_number(BlockNumberOrTag::Number(
-                            base_args.kona.claimed_l2_block_number,
-                        ))
-                        .await
-                        .context("l2_provider get_block_by_number claimed_l2_block_number")?
-                        .ok_or_else(|| anyhow!("Claimed L2 block not found")))
-                )
-                .header
-                .hash;
-            }
-            // construct a list of boot info to backward stitch
-            let (proofs, stitched_preconditions): (Vec<_>, Vec<_>) = results.into_iter().unzip();
-            let stitched_boot_info = proofs
-                .iter()
-                .map(StitchedBootInfo::from)
-                .collect::<Vec<_>>();
-
-            crate::tasks::compute_fpvm_proof(
-                base_args,
-                rollup_config.clone(),
-                disk_kv_store.clone(),
-                Precondition::default().proposal(proposal_precondition_hash),
-                proposal_data_hash,
-                None,
-                None,
-                stitched_preconditions,
-                stitched_boot_info,
-                proofs,
-                true,
-                task_channel.0.clone(),
+        info!("Composing {} proofs together.", results.len());
+        // construct a proving instruction with no blocks to derive
+        let mut base_args = args.clone();
+        {
+            // set last block as starting point
+            base_args.kona.agreed_l2_output_root = base_args.kona.claimed_l2_output_root;
+            let l2_provider = l2_provider.as_ref().unwrap();
+            base_args.kona.agreed_l2_head_hash = await_tel!(
+                context,
+                tracer,
+                "l2_provider get_block_by_number claimed_l2_block_number",
+                retry_res_ctx_timeout!(l2_provider
+                    .get_block_by_number(BlockNumberOrTag::Number(
+                        base_args.kona.claimed_l2_block_number,
+                    ))
+                    .await
+                    .context("l2_provider get_block_by_number claimed_l2_block_number")?
+                    .ok_or_else(|| anyhow!("Claimed L2 block not found")))
             )
-            .await
-            .context("Failed to compute FPVM proof.")?;
+            .header
+            .hash;
         }
+        // construct a list of boot info to backward stitch
+        let (proofs, stitched_preconditions): (Vec<_>, Vec<_>) = results.into_iter().unzip();
+        let stitched_boot_info = proofs
+            .iter()
+            .map(StitchedBootInfo::from)
+            .collect::<Vec<_>>();
+
+        crate::tasks::compute_fpvm_proof(
+            base_args,
+            rollup_config.clone(),
+            disk_kv_store.clone(),
+            Precondition::default().proposal(proposal_precondition_hash),
+            proposal_data_hash,
+            derivation_cache_receiver,
+            None,
+            stitched_preconditions,
+            stitched_boot_info,
+            proofs,
+            true,
+            task_channel.0.clone(),
+        )
+        .await
+        .context("Failed to compute stitched FPVM proof.")?;
     }
 
     // Cleanup cached data
