@@ -44,6 +44,7 @@ contract BondTest is KailuaTest {
         );
         // Set collateral requirement
         treasury.setParticipationBond(987);
+        treasury.setEliminationRewardSplit(10_000, 0, 0);
     }
 
     function maybeReenter() internal {
@@ -225,10 +226,8 @@ contract BondTest is KailuaTest {
 
     function test_claimEliminationBond() public {
         // Claim nothing
-        for (uint256 i = 0; i < 32; i++) {
-            treasury.claimEliminationBonds(i);
-            vm.assertEq(treasury.eliminationsPaid(address(this)), 0);
-        }
+        treasury.claimEliminationRewards();
+        vm.assertEq(totalReceived, 0);
 
         vm.warp(
             game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
@@ -254,15 +253,14 @@ contract BondTest is KailuaTest {
         vm.stopPrank();
 
         // Succeed to claim own elimination bond
-        treasury.claimEliminationBonds(1);
+        treasury.claimEliminationRewards();
         vm.assertEq(lastReceived, 987);
         vm.assertEq(totalReceived, 987);
         vm.assertEq(treasury.paidBonds(address(this)), 0);
-        vm.assertEq(treasury.eliminationsPaid(address(this)), 1);
+        vm.assertEq(treasury.eliminationRewards(address(this)), 0);
 
         // Nothing else to claim
-        treasury.claimEliminationBonds(100);
+        treasury.claimEliminationRewards();
         vm.assertEq(totalReceived, 987);
-        vm.assertEq(treasury.eliminationsPaid(address(this)), 1);
     }
 }

@@ -177,7 +177,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     mapping(address => address) public proposerOf;
 
     /// @inheritdoc IKailuaTreasury
-    function eliminate(address _child, address prover) external {
+    function eliminate(address _child, address prover) external returns (uint256) {
         KailuaTournament child = KailuaTournament(_child);
 
         // INVARIANT: Only the child's parent may call this
@@ -200,8 +200,20 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         // Record elimination round
         eliminationRound[eliminated] = child.gameIndex();
 
-        // Allocate bond to prover
-        eliminations[prover].push(eliminated);
+        uint256 bond = paidBonds[eliminated];
+        paidBonds[eliminated] = 0;
+
+        // Calculate the 3-way split
+        uint256 proverShare = (bond * proverShareBps) / TOTAL_BPS;
+        uint256 winnerShare = (bond * winnerShareBps) / TOTAL_BPS;
+        uint256 burnShare = bond - proverShare - winnerShare;
+
+        if (burnShare > 0) {
+            pay(burnShare, address(0)); // Burn the remainder
+        }
+        eliminationRewards[prover] += proverShare;
+
+        return winnerShare;
     }
 
     /// @inheritdoc IKailuaTreasury
@@ -212,10 +224,15 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
 
     /// @inheritdoc IKailuaTreasury
     function updateLastResolved() external {
+        address proposer = proposerOf[msg.sender];
+
         // INVARIANT: Only known proposal contracts may call this function
-        if (proposerOf[msg.sender] == address(0x0)) {
+        if (proposer == address(0x0)) {
             revert NotProposed();
         }
+
+        // INVARIANT: This function is only called for one child
+        eliminationRewards[proposer] += KailuaTournament(msg.sender).parentGame().winnings();
 
         lastResolved = msg.sender;
     }
@@ -224,17 +241,24 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     // Treasury
     // ------------------------------
 
+    /// @notice The denominator for basis points calculations, representing 100% (10,000 BPS).
+    uint256 private constant TOTAL_BPS = 10_000;
+
     /// @notice The locked collateral required for proposal submission
     uint256 public participationBond;
+
+    /// @notice The share of a slashed participation bond allocated to the prover, in basis points.
+    uint256 public proverShareBps;
+
+    /// @notice The share of a slashed participation bond allocated to the honest proposer who
+    ///         won the tournament, in basis points.
+    uint256 public winnerShareBps;
 
     /// @notice The locked collateral still paid by proposers for participation
     mapping(address => uint256) public paidBonds;
 
-    /// @notice The list of players each prover has eliminated
-    mapping(address => address[]) public eliminations;
-
-    /// @notice The number of eliminations paid out to each prover
-    mapping(address => uint256) public eliminationsPaid;
+    /// @notice The unpaid rewards from eliminated invalid proposals
+    mapping(address => uint256) public eliminationRewards;
 
     /// @notice The last proposal made by each proposer
     mapping(address => KailuaTournament) public lastProposal;
@@ -261,24 +285,11 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         _;
     }
 
-    /// @notice Pays out the prover for the eliminations it has accrued
-    function claimEliminationBonds(uint256 claims) public nonReentrant {
-        uint256 claimed = 0;
-        uint256 payout = 0;
-        for (
-            uint256 i = eliminationsPaid[msg.sender];
-            claimed < claims && i < eliminations[msg.sender].length;
-            (i++, claimed++)
-        ) {
-            address eliminated = eliminations[msg.sender][i];
-            payout += paidBonds[eliminated];
-            paidBonds[eliminated] = 0;
-        }
-        // Increase number of bonds claimed
-        if (claimed > 0) {
-            eliminationsPaid[msg.sender] += claimed;
-        }
-        // Transfer payout
+    /// @notice Pays the elimination rewards the sender has accrued
+    function claimEliminationRewards() public nonReentrant {
+        uint256 payout = eliminationRewards[msg.sender];
+        eliminationRewards[msg.sender] = 0;
+
         if (payout > 0) {
             pay(payout, msg.sender);
         }
@@ -321,6 +332,18 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     function setParticipationBond(uint256 amount) external onlyFactoryOwner {
         participationBond = amount;
         emit BondUpdated(amount);
+    }
+
+    /// @notice Updates the payout split percentages in basis points.
+    /// @dev The sum of the shares must equal 10,000 (100%).
+    function setEliminationRewardSplit(uint256 _proverShareBps, uint256 _winnerShareBps, uint256 _burnShareBps)
+        external
+        onlyFactoryOwner
+    {
+        require(_proverShareBps + _winnerShareBps + _burnShareBps == TOTAL_BPS, "shares must sum to 10,000 BPS");
+
+        proverShareBps = _proverShareBps;
+        winnerShareBps = _winnerShareBps;
     }
 
     /// @notice Updates the vanguard address and advantage duration
