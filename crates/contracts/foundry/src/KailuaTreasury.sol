@@ -232,7 +232,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         }
 
         // INVARIANT: This function is only called for one child
-        eliminationRewards[proposer] += KailuaTournament(msg.sender).parentGame().winnings();
+        eliminationRewards[proposer] += KailuaTournament(msg.sender).parentGame().winnerSharesAccumulated();
 
         lastResolved = msg.sender;
     }

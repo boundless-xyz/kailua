@@ -101,7 +101,7 @@ interface IKailuaTreasury {
     /// @notice Returns the proposer of a game
     function proposerOf(address game) external view returns (address);
 
-    /// @notice Eliminates a child's proposer and allocates their bond to the prover
+    /// @notice Eliminates a child's proposer and distributes their bond
     function eliminate(address child, address prover) external returns (uint256);
 
     /// @notice Returns true iff a proposal is currently being submitted
