@@ -203,13 +203,16 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         uint256 bond = paidBonds[eliminated];
         paidBonds[eliminated] = 0;
 
-        // Calculate the 3-way split
+        // Split the slashed bond into prover / winner / burn.
         uint256 proverShare = (bond * proverShareBps) / TOTAL_BPS;
         uint256 winnerShare = (bond * winnerShareBps) / TOTAL_BPS;
         uint256 burnShare = bond - proverShare - winnerShare;
 
+        // Burn by sending it to the zero address.
+        // The zero address has no code, so this external call cannot reenter.
+        // The pay() helper reverts on failure (e.g., insufficient balance),preserving accounting invariants.
         if (burnShare > 0) {
-            pay(burnShare, address(0)); // Burn the remainder
+            pay(burnShare, address(0));
         }
         eliminationRewards[prover] += proverShare;
 

@@ -44,7 +44,6 @@ contract BondTest is KailuaTest {
         );
         // Set collateral requirement
         treasury.setParticipationBond(987);
-        treasury.setEliminationRewardSplit(10_000, 0, 0);
     }
 
     function maybeReenter() internal {
@@ -222,45 +221,5 @@ contract BondTest is KailuaTest {
         // Reclaim bond as duplicator
         vm.startPrank(address(0x01));
         treasury.claimProposerBond();
-    }
-
-    function test_claimEliminationBond() public {
-        // Claim nothing
-        treasury.claimEliminationRewards();
-        vm.assertEq(totalReceived, 0);
-
-        vm.warp(
-            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
-        );
-        // Succeed to propose after min creation time
-        KailuaTournament proposal_128_0 = treasury.propose{value: 987}(
-            Claim.wrap(0x0001010000010100000010100000101000001010000010100000010100000101),
-            abi.encodePacked(uint64(128), uint64(anchor.gameIndex()), uint64(0))
-        );
-        vm.warp(
-            game.GENESIS_TIME_STAMP()
-                + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME() * 2
-        );
-        // Succeed to propose after min creation time
-        KailuaTournament proposal_256_0 = treasury.propose(
-            Claim.wrap(0x0001010000010100000010100000101000001010000010100000010100000101),
-            abi.encodePacked(uint64(256), uint64(proposal_128_0.gameIndex()), uint64(0))
-        );
-
-        // Succeed to eliminate from parent address
-        vm.startPrank(address(proposal_128_0));
-        treasury.eliminate(address(proposal_256_0), address(this));
-        vm.stopPrank();
-
-        // Succeed to claim own elimination bond
-        treasury.claimEliminationRewards();
-        vm.assertEq(lastReceived, 987);
-        vm.assertEq(totalReceived, 987);
-        vm.assertEq(treasury.paidBonds(address(this)), 0);
-        vm.assertEq(treasury.eliminationRewards(address(this)), 0);
-
-        // Nothing else to claim
-        treasury.claimEliminationRewards();
-        vm.assertEq(totalReceived, 987);
     }
 }
