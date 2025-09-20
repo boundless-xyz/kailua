@@ -17,7 +17,7 @@ pragma solidity ^0.8.24;
 
 import "./KailuaTest.t.sol";
 
-contract BondTest is KailuaTest {
+contract RewardTest is KailuaTest {
     KailuaTreasury treasury;
     KailuaGame game;
     KailuaTournament anchor;
@@ -170,8 +170,8 @@ contract BondTest is KailuaTest {
 
             uint256 zeroBefore = address(0).balance;
 
-            // resolve tournament
-            vm.warp(block.timestamp + game.MAX_CLOCK_DURATION().raw());
+            // expire challenger clock precisely for this child
+            vm.warp(good.createdAt().raw() + game.MAX_CLOCK_DURATION().raw());
             vm.assertTrue(good.resolve() == GameStatus.DEFENDER_WINS);
 
             (uint256 p, uint256 w, uint256 b) = expectedSplit(c.bond, c.proverBps, c.winnerBps);

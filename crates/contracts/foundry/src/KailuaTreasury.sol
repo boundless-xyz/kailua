@@ -210,7 +210,6 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
 
         // Burn by sending it to the zero address.
         // The zero address has no code, so this external call cannot reenter.
-        // The pay() helper reverts on failure (e.g., insufficient balance),preserving accounting invariants.
         if (burnShare > 0) {
             pay(burnShare, address(0));
         }
