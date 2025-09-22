@@ -294,15 +294,15 @@ pub async fn compute_fpvm_proof(
     )
     .await;
 
-    // on WitnessSizeError or NotSeekingProof, extract execution and derivation traces
+    // Extract execution and derivation traces when possible on error
     let (executed_blocks, derivation_trace) = match complete_proof_result {
+        Err(ProvingError::WitnessSizeError(_, _, _, executed_blocks, _, derivation_trace)) => {
+            (executed_blocks, derivation_trace)
+        }
         Err(ProvingError::BlockCountError(_, _, executed_blocks, _, derivation_trace)) => {
             (executed_blocks, derivation_trace)
         }
-        Err(ProvingError::WitnessSizeError(_, _, executed_blocks, _, derivation_trace)) => {
-            (executed_blocks, derivation_trace)
-        }
-        Err(ProvingError::NotSeekingProof(_, executed_blocks, _, derivation_trace, _)) => {
+        Err(ProvingError::NotSeekingProof(_, _, executed_blocks, _, derivation_trace, _)) => {
             (executed_blocks, derivation_trace)
         }
         other_result => return Ok(Some(other_result?)),
@@ -317,6 +317,7 @@ pub async fn compute_fpvm_proof(
     let (_, execution_cache) = split_executions(executed_blocks.clone());
 
     // perform a derivation-only run to check its provability unless not proving derivation
+    // todo: use streamed witness size to skip this derivation-only run
     if !args.proving.skip_derivation_proof {
         info!(
             "Performing derivation-only run for {} executions.",
@@ -417,50 +418,52 @@ pub async fn compute_fpvm_proof(
     // process execution-only proving results
     while result_pq.len() < num_proofs {
         // Wait for more proving results
-        let oneshot_result = result_channel
+        let OneshotResult {
+            cached_task,
+            result,
+        } = result_channel
             .1
             .recv()
             .await
             .expect("result_channel should not be closed");
-        let Err(err) = oneshot_result.result else {
-            result_pq.push(oneshot_result);
+        let Err(err) = result else {
+            result_pq.push(OneshotResult {
+                cached_task,
+                result,
+            });
             continue;
         };
         // Require additional proof
         num_proofs += 1;
-        let executed_blocks = oneshot_result.cached_task.stitched_executions[0].clone();
+        let executed_blocks = cached_task.stitched_executions[0].clone();
         let agreed_block = executed_blocks[0].artifacts.header.number - 1;
-        let num_blocks =
-            oneshot_result.cached_task.args.kona.claimed_l2_block_number - agreed_block;
+        let num_blocks = cached_task.args.kona.claimed_l2_block_number - agreed_block;
         let forced_attempt = num_blocks == 1;
         // divide or bail out on error
         match err {
-            ProvingError::WitnessSizeError(f, t, e, ..) => {
+            ProvingError::WitnessSizeError(preloaded, streamed, limit, e, ..) => {
                 if forced_attempt {
                     error!(
-                        "Execution-only proof witness size {} above safety threshold {}.",
-                        human_bytes(f as f64),
-                        human_bytes(t as f64)
+                        "Execution-only proof witness size {} + {} above safety threshold {}.",
+                        human_bytes(preloaded as f64),
+                        human_bytes(streamed as f64),
+                        human_bytes(limit as f64),
                     );
                     return Err(ProvingError::WitnessSizeError(
-                        f,
-                        t,
+                        preloaded,
+                        streamed,
+                        limit,
                         e,
                         Box::new(None),
                         None,
                     ));
                 }
                 warn!(
-                    "Execution-only proof witness size {} above safety threshold {}. Splitting workload.",
-                    human_bytes(f as f64),
-                    human_bytes(t as f64)
+                    "Execution-only proof witness size {} + {} above safety threshold {}. Splitting workload.",
+                        human_bytes(preloaded as f64),
+                        human_bytes(streamed as f64),
+                        human_bytes(limit as f64),
                 )
-            }
-            ProvingError::ExecutionError(e) => {
-                if forced_attempt {
-                    return Err(ProvingError::ExecutionError(e));
-                }
-                warn!("Splitting execution-only proof after ZKVM execution error: {e:?}")
             }
             ProvingError::OtherError(e) => {
                 return Err(ProvingError::OtherError(e));
@@ -489,7 +492,7 @@ pub async fn compute_fpvm_proof(
         let mid_output = mid_exec.claimed_output;
 
         // Lower half workload ends at midpoint (inclusive)
-        let mut lower_job_args = oneshot_result.cached_task.args.clone();
+        let mut lower_job_args = cached_task.args.clone();
         lower_job_args.kona.claimed_l2_output_root = mid_output;
         lower_job_args.kona.claimed_l2_block_number = mid_point;
         task_sender
@@ -506,7 +509,7 @@ pub async fn compute_fpvm_proof(
             .expect("task_channel should not be closed");
 
         // upper half workload starts after midpoint
-        let mut upper_job_args = oneshot_result.cached_task.args;
+        let mut upper_job_args = cached_task.args;
         upper_job_args.kona.agreed_l2_output_root = mid_output;
         upper_job_args.kona.agreed_l2_head_hash = mid_exec.artifacts.header.hash();
         task_sender
@@ -651,7 +654,7 @@ pub async fn compute_cached_proof(
     seek_proof: bool,
 ) -> Result<OneshotResultResponse, ProvingError> {
     // extract single chain kona config
-    let boot = BootInfo {
+    let mut boot = BootInfo {
         l1_head: args.kona.l1_head,
         agreed_l2_output_root: args.kona.agreed_l2_output_root,
         claimed_l2_output_root: args.kona.claimed_l2_output_root,
@@ -665,6 +668,7 @@ pub async fn compute_cached_proof(
     // Check derivation driver cache if needed
     let driver_file = driver_file_name(image_id, &boot, &precondition);
     let trace_derivation = derivation_trace.is_some() || !precondition.derivation_trace.is_zero();
+    // Update derivation trace precondition
     if trace_derivation {
         if let Some(derivation_trace_hash) = signal_derivation_trace(
             derivation_trace.clone(),
@@ -680,6 +684,31 @@ pub async fn compute_cached_proof(
             } else if precondition.derivation_trace != derivation_trace_hash {
                 warn!("Precondition derivation trace hash mismatch. Input: {}, Cached: {derivation_trace_hash}", precondition.derivation_trace);
             }
+        }
+    }
+    // Update boot info
+    if let Some(derivation_trace) = try_read_driver(&driver_file).await {
+        let claimed_l2_output_root = *derivation_trace.cursor.l2_safe_head_output_root();
+        // Update claim if l1 head insufficient
+        if claimed_l2_output_root != boot.claimed_l2_output_root {
+            let claimed_l2_block_number = derivation_trace.cursor.l2_safe_head().block_info.number;
+            info!(
+                "Correcting claim {}/{} to {claimed_l2_output_root}/{claimed_l2_block_number}",
+                boot.claimed_l2_output_root, boot.claimed_l2_block_number
+            );
+            boot.claimed_l2_output_root = claimed_l2_output_root;
+            boot.claimed_l2_block_number = claimed_l2_block_number;
+        }
+    }
+    // Sanity check initial conditions
+    if let Some(derivation_cache) = derivation_cache.as_ref() {
+        let agreed_l2_output_root = *derivation_cache.cursor.l2_safe_head_output_root();
+        if agreed_l2_output_root != boot.agreed_l2_output_root {
+            error!(
+                "DriverCache {} cursor L2 safe head {agreed_l2_output_root} does not match BootInfo {}",
+                B256::new(derivation_cache.digest().into()),
+                boot.agreed_l2_output_root
+            );
         }
     }
 
@@ -791,7 +820,16 @@ pub async fn compute_cached_proof(
                 image_id,
                 &stitch_boot_info::<VecOracle>(
                     None, // assume l1 head chain continuity on host side
-                    boot,
+                    BootInfo {
+                        // update l2 claim if l1 head insufficient
+                        claimed_l2_output_root: *derivation_trace.cursor.l2_safe_head_output_root(),
+                        claimed_l2_block_number: derivation_trace
+                            .cursor
+                            .l2_safe_head()
+                            .block_info
+                            .number,
+                        ..boot
+                    },
                     bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
                     args.proving.payout_recipient_address.unwrap_or_default(),
                     precondition,

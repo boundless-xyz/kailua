@@ -95,6 +95,7 @@ where
     let witgen_permit = acquire_owned_permit(SEMAPHORE_WITGEN.clone())
         .await
         .map_err(ProvingError::OtherError);
+    // Run witgen client to get correct BootInfo and Precondition
     let (
         boot_info,
         proof_journal,
@@ -377,7 +378,8 @@ pub fn process_witness(
         if !force_attempt {
             warn!("Aborting.");
             return Err(ProvingError::WitnessSizeError(
-                total_wit_size,
+                preloaded_wit_size,
+                streamed_wit_size,
                 proving.max_witness_size,
                 execution_trace,
                 Box::new(derivation_cache),
@@ -408,7 +410,8 @@ pub fn process_witness(
 
     if !seek_proof {
         return Err(ProvingError::NotSeekingProof(
-            total_wit_size,
+            preloaded_wit_size,
+            streamed_wit_size,
             execution_trace,
             Box::new(derivation_cache),
             derivation_trace,

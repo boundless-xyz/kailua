@@ -332,26 +332,19 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
             Err(err) => {
                 // Handle error case
                 let (derivation_cache, mut derivation_trace) = match err {
-                    ProvingError::WitnessSizeError(f, t, _, d, s) => {
+                    ProvingError::WitnessSizeError(preloaded, streamed, limit, _, d, s) => {
                         if force_attempt {
                             bail!(
-                                "Received WitnessSizeError({f},{t}) for a forced proving attempt."
+                                "Received WitnessSizeError({preloaded},{streamed},{limit}) for a forced proving attempt."
                             );
                         }
                         warn!(
-                            "Proof witness size {} above safety threshold {}. Splitting workload.",
-                            human_bytes(f as f64),
-                            human_bytes(t as f64),
+                            "Proof witness size {} + {} above safety threshold {}. Splitting workload.",
+                            human_bytes(preloaded as f64),
+                            human_bytes(streamed as f64),
+                            human_bytes(limit as f64),
                         );
                         (*d, s)
-                    }
-                    ProvingError::ExecutionError(e) => {
-                        if force_attempt {
-                            bail!("Irrecoverable ZKVM execution error: {e:?}")
-                        }
-                        warn!("Splitting proof after ZKVM execution error: {e:?}");
-                        // todo: should we reuse sender/receiver here?
-                        Default::default()
                     }
                     ProvingError::OtherError(e) => {
                         bail!("Irrecoverable proving error: {e:?}")

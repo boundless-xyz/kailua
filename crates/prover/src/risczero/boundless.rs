@@ -755,7 +755,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             .await
             .context("spawn_blocking")
             .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-            .map_err(|e| ProvingError::ExecutionError(anyhow!(e)))?;
+            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
             drop(r0vm_permit);
             let cycle_count = session_info
                 .segments

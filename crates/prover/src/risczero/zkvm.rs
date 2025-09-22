@@ -74,7 +74,7 @@ pub async fn run_zkvm_client<A: NoUninit + Into<Digest>>(
     })
     .await
     .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-    .map_err(|e| ProvingError::ExecutionError(anyhow!(e)))?;
+    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
     drop(r0vm_permit);
 
     info!(
