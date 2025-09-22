@@ -132,9 +132,6 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
     /// @notice The signature of the child accepted through a validity proof
     bytes32 public validChildSignature;
 
-    /// @notice The total share of the elimination bonds accumulated for the eventual tournament winner.
-    uint256 public winnerSharesAccumulated;
-
     /// @notice Returns the hash of the output claim and all blob hashes associated with this proposal
     function signature() public view returns (bytes32 signature_) {
         // note: the absence of the l1Head in the signature implies that
@@ -336,7 +333,7 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
             for (uint256 i = contenderDuplicates.length; i > 0 && stepLimit > 0; (i--, stepLimit--)) {
                 KailuaTournament duplicate = children[contenderDuplicates[i - 1]];
                 if (!isChildEliminated(duplicate)) {
-                    winnerSharesAccumulated += KAILUA_TREASURY.eliminate(address(duplicate), payoutRecipient);
+                    KAILUA_TREASURY.eliminate(address(duplicate), payoutRecipient);
                 }
                 contenderDuplicates.pop();
             }
@@ -348,7 +345,7 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
 
             // Eliminate contender
             if (!isChildEliminated(contender)) {
-                winnerSharesAccumulated += KAILUA_TREASURY.eliminate(address(contender), payoutRecipient);
+                KAILUA_TREASURY.eliminate(address(contender), payoutRecipient);
             }
             stepLimit--;
 
@@ -365,8 +362,7 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
                 contenderSignature = contender.signature();
                 if (!isViableSignature(contenderSignature)) {
                     // eliminate the unviable contender
-                    winnerSharesAccumulated +=
-                        KAILUA_TREASURY.eliminate(address(contender), getPayoutRecipient(contenderSignature));
+                    KAILUA_TREASURY.eliminate(address(contender), getPayoutRecipient(contenderSignature));
                     continue;
                 }
                 // Select u as next viable contender
@@ -405,8 +401,7 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
                     revert NotProven();
                 }
                 // eliminate the opponent with the unviable proposal
-                winnerSharesAccumulated +=
-                    KAILUA_TREASURY.eliminate(address(opponent), getPayoutRecipient(opponentSignature));
+                KAILUA_TREASURY.eliminate(address(opponent), getPayoutRecipient(opponentSignature));
             }
 
             // INVARIANT: v > u && contender == children[u]

@@ -177,7 +177,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     mapping(address => address) public proposerOf;
 
     /// @inheritdoc IKailuaTreasury
-    function eliminate(address _child, address prover) external returns (uint256) {
+    function eliminate(address _child, address prover) external {
         KailuaTournament child = KailuaTournament(_child);
 
         // INVARIANT: Only the child's parent may call this
@@ -214,8 +214,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
             pay(burnShare, address(0));
         }
         eliminationRewards[prover] += proverShare;
-
-        return winnerShare;
+        winnerSharesAccumulated[parent] += winnerShare;
     }
 
     /// @inheritdoc IKailuaTreasury
@@ -233,8 +232,9 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
             revert NotProposed();
         }
 
-        // INVARIANT: This function is only called for one child
-        eliminationRewards[proposer] += KailuaTournament(msg.sender).parentGame().winnerSharesAccumulated();
+        KailuaTournament parent = KailuaTournament(msg.sender).parentGame();
+        eliminationRewards[proposer] += winnerSharesAccumulated[parent];
+        winnerSharesAccumulated[parent] = 0;
 
         lastResolved = msg.sender;
     }
@@ -242,22 +242,24 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     // ------------------------------
     // Treasury
     // ------------------------------
-
-    /// @notice The denominator for basis points calculations, representing 100% (10,000 BPS).
-    uint256 private constant TOTAL_BPS = 10_000;
-
     /// @notice The locked collateral required for proposal submission
     uint256 public participationBond;
 
+    /// @notice The denominator for basis points calculations, representing 100% (10,000 BPS).
+    uint256 internal constant TOTAL_BPS = 10_000;
+
     /// @notice The share of a slashed participation bond allocated to the prover, in basis points.
-    uint256 public proverShareBps;
+    uint256 internal proverShareBps;
 
     /// @notice The share of a slashed participation bond allocated to the honest proposer who
     ///         won the tournament, in basis points.
-    uint256 public winnerShareBps;
+    uint256 internal winnerShareBps;
 
     /// @notice The locked collateral still paid by proposers for participation
     mapping(address => uint256) public paidBonds;
+
+    /// @notice The total share of the elimination bonds accumulated for the eventual tournament winner.
+    mapping(KailuaTournament => uint256) internal winnerSharesAccumulated;
 
     /// @notice The unpaid rewards from eliminated invalid proposals
     mapping(address => uint256) public eliminationRewards;
@@ -283,7 +285,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
 
     modifier onlyFactoryOwner() {
         OwnableUpgradeable factoryContract = OwnableUpgradeable(address(DISPUTE_GAME_FACTORY));
-        require(msg.sender == factoryContract.owner(), "not owner");
+        if (msg.sender != factoryContract.owner()) revert NotFactoryOwner();
         _;
     }
 
@@ -336,16 +338,17 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         emit BondUpdated(amount);
     }
 
-    /// @notice Updates the payout split percentages in basis points.
+    /// @notice Updates the elimination reward split percentages in basis points.
     /// @dev The sum of the shares must equal 10,000 (100%).
     function setEliminationRewardSplit(uint256 _proverShareBps, uint256 _winnerShareBps, uint256 _burnShareBps)
         external
         onlyFactoryOwner
     {
-        require(_proverShareBps + _winnerShareBps + _burnShareBps == TOTAL_BPS, "shares must sum to 10,000 BPS");
+        if (_proverShareBps + _winnerShareBps + _burnShareBps != TOTAL_BPS) revert InvalidEliminationRewardSplit();
 
         proverShareBps = _proverShareBps;
         winnerShareBps = _winnerShareBps;
+        emit EliminationRewardSplitUpdated(_proverShareBps, _winnerShareBps, _burnShareBps);
     }
 
     /// @notice Updates the vanguard address and advantage duration

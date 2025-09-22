@@ -77,7 +77,7 @@ contract BondTest is KailuaTest {
     function test_setParticipationBond() public {
         // Fail to set collateral
         vm.prank(address(0xbeef));
-        vm.expectRevert("not owner");
+        vm.expectRevert(NotFactoryOwner.selector);
         treasury.setParticipationBond(123);
     }
 

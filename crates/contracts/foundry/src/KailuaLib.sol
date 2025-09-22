@@ -85,6 +85,14 @@ error BlockNumberMismatch(uint256 anchored, uint256 initialized);
 /// @param parentGame The address of the parent proposal being extended
 error VanguardError(address parentGame);
 
+// 0x916ee232
+/// @notice Thrown when the elimination reward split does not sum up to 10,000 BPS.
+error InvalidEliminationRewardSplit();
+
+// 0x428e0b92
+/// @notice Thrown when a non-factory owner calls an owner-only function.
+error NotFactoryOwner();
+
 /// @notice Emitted when a proof is submitted.
 /// @param signature The proposal signature
 /// @param status The proven status
@@ -94,6 +102,12 @@ event Proven(bytes32 indexed signature, ProofStatus indexed status);
 /// @param amount The new required bond amount
 event BondUpdated(uint256 amount);
 
+/// @notice Emitted when the elimination reward split is updated.
+/// @param proverShareBps Share of the slashed bond allocated to the prover, in basis points.
+/// @param winnerShareBps Share of the slashed bond allocated to the eventual tournament winner, in basis points.
+/// @param burnShareBps   Share of the slashed bond sent to the zero address (burned), in basis points.
+event EliminationRewardSplitUpdated(uint256 proverShareBps, uint256 winnerShareBps, uint256 burnShareBps);
+
 interface IKailuaTreasury {
     /// @notice Returns the game index at which proposer was proven faulty
     function eliminationRound(address proposer) external view returns (uint256);
@@ -101,8 +115,8 @@ interface IKailuaTreasury {
     /// @notice Returns the proposer of a game
     function proposerOf(address game) external view returns (address);
 
-    /// @notice Eliminates a child's proposer and distributes their bond
-    function eliminate(address child, address prover) external returns (uint256);
+    /// @notice Eliminates a child's proposer and allocates their bond to the prover
+    function eliminate(address child, address prover) external;
 
     /// @notice Returns true iff a proposal is currently being submitted
     function isProposing() external view returns (bool);
