@@ -214,7 +214,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
             pay(burnShare, address(0));
         }
         eliminationRewards[prover] += proverShare;
-        winnerSharesAccumulated[parent] += winnerShare;
+        winnerSharesByParent[parent] += winnerShare;
     }
 
     /// @inheritdoc IKailuaTreasury
@@ -233,8 +233,8 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         }
 
         KailuaTournament parent = KailuaTournament(msg.sender).parentGame();
-        eliminationRewards[proposer] += winnerSharesAccumulated[parent];
-        winnerSharesAccumulated[parent] = 0;
+        eliminationRewards[proposer] += winnerSharesByParent[parent];
+        winnerSharesByParent[parent] = 0;
 
         lastResolved = msg.sender;
     }
@@ -246,20 +246,21 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     uint256 public participationBond;
 
     /// @notice The denominator for basis points calculations, representing 100% (10,000 BPS).
-    uint256 internal constant TOTAL_BPS = 10_000;
+    uint256 private constant TOTAL_BPS = 10_000;
 
     /// @notice The share of a slashed participation bond allocated to the prover, in basis points.
-    uint256 internal proverShareBps;
+    uint256 private proverShareBps;
 
     /// @notice The share of a slashed participation bond allocated to the honest proposer who
     ///         won the tournament, in basis points.
-    uint256 internal winnerShareBps;
+    uint256 private winnerShareBps;
 
     /// @notice The locked collateral still paid by proposers for participation
     mapping(address => uint256) public paidBonds;
 
-    /// @notice The total share of the elimination bonds accumulated for the eventual tournament winner.
-    mapping(KailuaTournament => uint256) internal winnerSharesAccumulated;
+    /// @notice The total share of elimination bonds accumulated for the eventual tournament winner.
+    /// @dev Keyed by the parent game (tournament) contract.
+    mapping(KailuaTournament => uint256) private winnerSharesByParent;
 
     /// @notice The unpaid rewards from eliminated invalid proposals
     mapping(address => uint256) public eliminationRewards;
