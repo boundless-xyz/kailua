@@ -26,6 +26,7 @@ use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{split_executions, stitch_boot_info};
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
+use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::vec::VecOracle;
 use kailua_kona::precondition::execution::exec_precondition_hash;
 use kailua_kona::precondition::Precondition;
@@ -763,10 +764,7 @@ pub async fn compute_fpvm_proof(
     let mut tail_proofs = Vec::with_capacity(num_tail_proofs);
     // iterate over receivers in reverse to enact backwards stitch
     for receiver in tail_proof_receivers.into_iter().rev() {
-        let OneshotResult {
-            cached_task,
-            result,
-        } = receiver
+        let OneshotResult { result, .. } = receiver
             .recv()
             .await
             .expect("result_channel should not be closed");
@@ -778,22 +776,20 @@ pub async fn compute_fpvm_proof(
             }
             Ok(result) => result,
         };
+        let stitched_boot = StitchedBootInfo::from(ProofJournal::from(&receipt));
         tail_proofs.push(receipt);
         tail_preconditions.push(precondition);
-        tail_boot_infos.push(StitchedBootInfo {
-            l1_head: cached_task.args.kona.l1_head,
-            agreed_l2_output_root: cached_task.args.kona.agreed_l2_output_root,
-            claimed_l2_output_root: cached_task.args.kona.claimed_l2_output_root,
-            claimed_l2_block_number: cached_task.args.kona.claimed_l2_block_number,
-        })
+        tail_boot_infos.push(stitched_boot);
     }
 
     // Combine execution/tail proofs with derivation proof
     let total_blocks = stitched_executions.iter().map(|e| e.len()).sum::<usize>();
     info!(
-        "Stitching {}/{} execution proofs for {total_blocks} blocks with derivation proof.",
+        "Stitching {}/{} execution proofs for {total_blocks} L2 blocks and {}/{} tail proofs with derivation proof.",
         execution_proofs.len(),
-        stitched_executions.len()
+        stitched_executions.len(),
+        tail_proofs.len(),
+        num_tail_proofs
     );
 
     Ok(Some(
@@ -950,8 +946,7 @@ pub async fn compute_cached_proof(
     }
 
     // Construct expected journal
-    // bug: this may fail when mixing proving with stitching boot infos
-    let (boot, proof_journal, _) = stitch_boot_info::<VecOracle>(
+    let (boot, proof_journal, mut updated_precondition) = stitch_boot_info::<VecOracle>(
         None, // assume l1 head chain continuity on host side
         boot,
         bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
@@ -1060,36 +1055,41 @@ pub async fn compute_cached_proof(
         None
     };
     // Correct precondition and target proof file if needed
-    if precondition.derivation_trace.is_zero() && trace_derivation {
+    if trace_derivation {
         if let Some(derivation_trace) = derivation_trace.as_ref() {
             // Update derivation trace precondition
             precondition.derivation_trace = B256::new(derivation_trace.digest().into());
-            // Recalculate receipt file name with new precondition
-            proof_file = proof_file_name(
-                image_id,
-                &stitch_boot_info::<VecOracle>(
-                    None, // assume l1 head chain continuity on host side
-                    BootInfo {
-                        // update l2 claim if l1 head insufficient
-                        claimed_l2_output_root: *derivation_trace.cursor.l2_safe_head_output_root(),
-                        claimed_l2_block_number: derivation_trace
-                            .cursor
-                            .l2_safe_head()
-                            .block_info
-                            .number,
-                        ..boot
+            // Recalculate receipt file name with new precondition derivation trace
+            let claimed_l2_output_root = *derivation_trace.cursor.l2_safe_head_output_root();
+            let (_, proof_journal, precondition) = stitch_boot_info::<VecOracle>(
+                None, // assume l1 head chain continuity on host side
+                BootInfo {
+                    // update l2 claim if l1 head insufficient
+                    claimed_l2_output_root: if claimed_l2_output_root.is_zero() {
+                        boot.agreed_l2_output_root
+                    } else {
+                        claimed_l2_output_root
                     },
-                    bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
-                    args.proving.payout_recipient_address.unwrap_or_default(),
-                    precondition,
-                    stitched_preconditions,
-                    stitched_boot_info,
-                )
-                .await
-                .context("Failed to stitch boot info.")
-                .map_err(ProvingError::OtherError)?
-                .1,
-            );
+                    claimed_l2_block_number: derivation_trace
+                        .cursor
+                        .l2_safe_head()
+                        .block_info
+                        .number,
+                    ..boot
+                },
+                bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
+                args.proving.payout_recipient_address.unwrap_or_default(),
+                precondition,
+                stitched_preconditions,
+                stitched_boot_info,
+            )
+            .await
+            .context("Failed to stitch boot info.")
+            .map_err(ProvingError::OtherError)?;
+            proof_file = proof_file_name(image_id, &proof_journal);
+            updated_precondition = precondition;
+        } else {
+            error!("Missing expected derivation trace {driver_file}.");
         }
     }
     // Load receipt
@@ -1098,5 +1098,5 @@ pub async fn compute_cached_proof(
         .context(format!("Failed to read proof file {proof_file} contents."))
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
     // Return combined response
-    Ok((receipt, precondition))
+    Ok((receipt, updated_precondition))
 }

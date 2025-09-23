@@ -34,7 +34,7 @@ use kailua_kona::witness::Witness;
 use kona_derive::prelude::ChainProvider;
 use kona_preimage::{HintWriterClient, PreimageOracleClient};
 use kona_proof::l1::OracleBlobProvider;
-use kona_proof::CachingOracle;
+use kona_proof::{BootInfo, CachingOracle};
 use lazy_static::lazy_static;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::{Journal, Receipt};
@@ -97,7 +97,7 @@ where
         .map_err(ProvingError::OtherError);
     // Run witgen client to get correct BootInfo and Precondition
     let (
-        boot_info,
+        _boot_info,
         proof_journal,
         precondition,
         traced_driver,
@@ -235,7 +235,11 @@ where
     drop(witgen_permit);
 
     // Commit derivation trace to driver file
-    let driver_file = driver_file_name(proving.image_id(), &boot_info, &precondition);
+    let driver_boot = BootInfo::load(preimage_oracle.as_ref())
+        .await
+        .context("BootInfo::load")
+        .map_err(ProvingError::OtherError)?;
+    let driver_file = driver_file_name(proving.image_id(), &driver_boot, &precondition);
     if let Some(traced_driver) = traced_driver.as_ref() {
         let driver_digest = B256::new(traced_driver.digest().into());
         if driver_digest != precondition.derivation_trace {
