@@ -6304,6 +6304,7 @@ dependencies = [
  "kona-registry",
  "kona-std-fpvm",
  "lazy_static",
+ "op-alloy-consensus 0.17.2",
  "op-alloy-network",
  "opentelemetry",
  "risc0-ethereum-contracts",

@@ -283,7 +283,8 @@ where
         .as_ref()
         .map(|d| B256::new(d.digest().into()))
         .unwrap_or_default();
-    let witness_frames = process_witness(
+
+    let processed_witness = process_witness(
         &proving,
         witness,
         stitched_executions,
@@ -293,13 +294,23 @@ where
         derivation_cache,
         derivation_trace.clone(),
         traced_driver_hash,
-    )?;
+    );
 
-    // signal the cached driver to the tracer before seeking a proof
-    if trace_derivation && derivation_trace.is_none() {
-        warn!("Traced derivation without signaling.");
+    if processed_witness.is_ok()
+        || matches!(
+            processed_witness.as_ref(),
+            Err(ProvingError::NotSeekingProof(..))
+        )
+    {
+        // signal the cached driver to the tracer before seeking a proof
+        if trace_derivation && derivation_trace.is_none() {
+            warn!("Traced derivation without signaling.");
+        }
+        signal_derivation_trace(derivation_trace, traced_driver).await;
     }
-    signal_derivation_trace(derivation_trace, traced_driver).await;
+
+    // Bubble up any ProvingError
+    let witness_frames = processed_witness?;
 
     // seek corresponding proof
     crate::risczero::seek_proof(
