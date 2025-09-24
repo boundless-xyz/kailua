@@ -182,6 +182,8 @@ pub async fn concurrent_execution_preflight(
     let mut extra_blocks = num_blocks % args.proving.num_concurrent_preflights;
     let mut jobs = vec![];
     let mut args = args.clone();
+    args.proving.max_block_executions = usize::MAX;
+    args.proving.max_block_derivations = usize::MAX;
     while num_blocks > 0 {
         let processed_blocks = if extra_blocks > 0 {
             extra_blocks -= 1;

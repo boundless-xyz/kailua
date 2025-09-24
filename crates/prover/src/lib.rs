@@ -34,7 +34,7 @@ pub mod tasks;
 #[derive(Debug, thiserror::Error)]
 pub enum ProvingError {
     #[error("DerivationProofError error: execution proofs {0}")]
-    DerivationProofError(usize),
+    SkippingDerivation(usize),
 
     #[error("NotSeekingProof error: preloaded {0} streamed {1}")]
     NotSeekingProof(

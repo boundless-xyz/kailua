@@ -214,7 +214,7 @@ pub async fn compute_oneshot_task(
 /// Computes a receipt if it is not cached
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_fpvm_proof(
-    args: ProveArgs,
+    mut args: ProveArgs,
     rollup_config: RollupConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     mut precondition: Precondition,
@@ -243,11 +243,11 @@ pub async fn compute_fpvm_proof(
     //      on failure, take execution trace
     //      on success, signal driver trace
     //  2. trim derivation tail
-    //  3. try derivation-only proof
+    //  3. try head proof
     //      on failure, report error
     //      on success, signal driver trace
-    //  3. compute series of execution-only proofs
-    //  4. compute derivation-proof with stitched executions
+    //  3. compute execution-only proofs
+    //  4. stitch tail/execution proofs
 
     // Wait for the cached driver to be reported before derivation unless it is skipped
     let mut derivation_cache = if !args.proving.skip_derivation_proof {
@@ -274,9 +274,16 @@ pub async fn compute_fpvm_proof(
         None
     };
 
-    let stitching_only = args.kona.agreed_l2_output_root == args.kona.claimed_l2_output_root;
+    // Check if we can do execution-only proofs
+    let can_stitch_executions = args.proving.max_block_executions > 0;
+    // Remove block count constraint if execution stitching is disabled
+    if !can_stitch_executions {
+        args.proving.max_block_executions = usize::MAX;
+    }
+
     // generate master proof
     info!("Attempting complete proof.");
+    let stitching_only = args.kona.agreed_l2_output_root == args.kona.claimed_l2_output_root;
     let complete_proof_result = compute_oneshot_task(
         args.clone(),
         rollup_config.clone(),
@@ -321,10 +328,11 @@ pub async fn compute_fpvm_proof(
     // flatten executed l2 blocks
     let (_, execution_cache) = split_executions(executed_blocks.clone());
 
-    // Stitch derivation tail proofs
+    // Check if we can do tail proofs
+    let can_stitch_tail_proofs =
+        args.proving.num_tail_blocks > 0 && !args.proving.skip_derivation_proof;
     let mut tail_proof_jobs = vec![];
-    if !args.proving.skip_derivation_proof
-        && streamed_witness_size > (args.proving.max_witness_size * 90) / 100
+    if can_stitch_tail_proofs && streamed_witness_size > (args.proving.max_witness_size * 90) / 100
     {
         let chain_providers = retry_res_ctx_timeout!(20, args.create_providers().await).await;
         // Fetch earliest l1 block to start from
@@ -497,20 +505,22 @@ pub async fn compute_fpvm_proof(
         }
     }
 
-    // Check if we can do execution-only proofs
-    if args.proving.max_block_executions == 0 {
-        return Err(ProvingError::OtherError(anyhow!(
-            "Execution only proofs are disabled because max_block_executions=0."
-        )));
-    }
+    // Clear execution cache if we cannot stitch execution proofs
+    let num_executed_blocks = executed_blocks.iter().map(|e| e.len()).sum::<usize>();
+    let (executed_blocks, execution_cache) = if can_stitch_executions {
+        (executed_blocks, execution_cache)
+    } else {
+        warn!("Skipping execution stitching.");
+        (vec![], vec![])
+    };
 
-    // perform a derivation-only run to check its provability unless not proving derivation
+    // Reevaluate complete provability with stitching unless not proving derivation
     if !args.proving.skip_derivation_proof {
         info!(
-            "Performing derivation-only run for {} executions.",
+            "Reevaluating provability with {} cached executions.",
             execution_cache.len()
         );
-        let derivation_only_result = compute_oneshot_task(
+        let provability_result = compute_oneshot_task(
             args.clone(),
             rollup_config.clone(),
             disk_kv_store.clone(),
@@ -529,80 +539,64 @@ pub async fn compute_fpvm_proof(
         )
         .await;
         // propagate unexpected error up on failure to trigger higher-level division
-        let Err(ProvingError::NotSeekingProof(witness_size, .., derivation_trace_hash)) =
-            derivation_only_result
+        let Err(ProvingError::NotSeekingProof(.., derivation_trace_hash)) = provability_result
         else {
-            warn!(
-                "Unexpected derivation-only result (is_ok={}).",
-                derivation_only_result.is_ok()
-            );
-            return Ok(Some(derivation_only_result?));
+            warn!("Could not decompose derivation proof into tail/execution proofs.");
+            return Ok(Some(provability_result?));
         };
+        info!("Proceeding with execution/tail proof decomposition.");
         // update precondition
         if precondition.derivation_trace.is_zero() {
             precondition.derivation_trace = derivation_trace_hash;
         }
-
-        // warn if pure derivation witness exceeds limit
-        if witness_size > args.proving.max_witness_size {
-            // todo: investigate if this is reachable.
-            warn!(
-                "Derivation-only witness size {} exceeds limit {}.",
-                human_bytes(witness_size as f64),
-                human_bytes(args.proving.max_witness_size as f64)
-            );
-        } else {
-            info!(
-                "Derivation-only witness size {}.",
-                human_bytes(witness_size as f64)
-            );
-        }
     }
 
-    // schedule execution proofs
+    // dispatch execution proofs
     let execution_result_channel = async_channel::unbounded();
     let mut execution_result_pq = BinaryHeap::new();
     let mut num_execution_proofs = 0;
-    let mut next_claim_index = args.proving.max_block_executions.min(execution_cache.len()) - 1;
-    let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
-    let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
-    let last_claim_index = execution_cache.len() - 1;
-    while agreed_l2_output_root != args.kona.claimed_l2_output_root {
-        // Create sub-proof job
-        let mut job_args = args.clone();
-        job_args.kona.l1_head = B256::ZERO;
-        job_args.kona.agreed_l2_output_root = agreed_l2_output_root;
-        job_args.kona.agreed_l2_head_hash = agreed_l2_head_hash;
-        job_args.kona.claimed_l2_output_root = execution_cache[next_claim_index].claimed_output;
-        job_args.kona.claimed_l2_block_number =
-            execution_cache[next_claim_index].artifacts.header.number;
-        // advance pointers
-        agreed_l2_output_root = job_args.kona.claimed_l2_output_root;
-        agreed_l2_head_hash = execution_cache[next_claim_index].artifacts.header.hash();
-        // queue up job
-        num_execution_proofs += 1;
-        task_sender
-            .send(Oneshot {
-                cached_task: create_cached_execution_task(
-                    job_args,
-                    rollup_config.clone(),
-                    disk_kv_store.clone(),
-                    &execution_cache,
-                ),
-                result_sender: execution_result_channel.0.clone(),
-            })
-            .await
-            .expect("task_channel should not be closed");
-        // next claim
-        if next_claim_index == last_claim_index {
-            break;
+    if can_stitch_executions {
+        let mut next_claim_index = args.proving.max_block_executions.min(execution_cache.len()) - 1;
+        let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
+        let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
+        let last_claim_index = execution_cache.len() - 1;
+        while agreed_l2_output_root != args.kona.claimed_l2_output_root {
+            // Create sub-proof job
+            let mut job_args = args.clone();
+            job_args.kona.l1_head = B256::ZERO;
+            job_args.kona.agreed_l2_output_root = agreed_l2_output_root;
+            job_args.kona.agreed_l2_head_hash = agreed_l2_head_hash;
+            job_args.kona.claimed_l2_output_root = execution_cache[next_claim_index].claimed_output;
+            job_args.kona.claimed_l2_block_number =
+                execution_cache[next_claim_index].artifacts.header.number;
+            // advance pointers
+            agreed_l2_output_root = job_args.kona.claimed_l2_output_root;
+            agreed_l2_head_hash = execution_cache[next_claim_index].artifacts.header.hash();
+            // queue up job
+            num_execution_proofs += 1;
+            task_sender
+                .send(Oneshot {
+                    cached_task: create_cached_execution_task(
+                        job_args,
+                        rollup_config.clone(),
+                        disk_kv_store.clone(),
+                        &execution_cache,
+                    ),
+                    result_sender: execution_result_channel.0.clone(),
+                })
+                .await
+                .expect("task_channel should not be closed");
+            // next claim
+            if next_claim_index == last_claim_index {
+                break;
+            }
+            next_claim_index = next_claim_index
+                .saturating_add(args.proving.max_block_executions)
+                .min(last_claim_index);
         }
-        next_claim_index = next_claim_index
-            .saturating_add(args.proving.max_block_executions)
-            .min(last_claim_index);
     }
 
-    // schedule tail proofs
+    // dispatch tail proofs
     let num_tail_proofs = tail_proof_jobs.len();
     let mut tail_proof_receivers = Vec::with_capacity(num_tail_proofs);
     for (args, derivation_cache, derivation_trace) in tail_proof_jobs.into_iter() {
@@ -641,7 +635,8 @@ pub async fn compute_fpvm_proof(
         tail_proof_receivers.push(result_receiver);
     }
 
-    // process execution-only proving results
+    // process (or skip await) execution-only proving results
+    let mut dispatched_execution_proofs = num_execution_proofs;
     while execution_result_pq.len() < num_execution_proofs {
         // Wait for more proving results
         let OneshotResult {
@@ -659,8 +654,6 @@ pub async fn compute_fpvm_proof(
             });
             continue;
         };
-        // Require additional proof
-        num_execution_proofs += 1;
         let executed_blocks = cached_task.stitched_executions[0].clone();
         let agreed_block = executed_blocks[0].artifacts.header.number - 1;
         let num_blocks = cached_task.args.kona.claimed_l2_block_number - agreed_block;
@@ -691,16 +684,19 @@ pub async fn compute_fpvm_proof(
                         human_bytes(limit as f64),
                 )
             }
+            ProvingError::NotAwaitingProof => {
+                // require one less proof
+                num_execution_proofs -= 1;
+                continue;
+            }
             ProvingError::OtherError(e) => {
                 return Err(ProvingError::OtherError(e));
             }
-            ProvingError::NotAwaitingProof => {
-                // reduce required proofs by two to cancel out prior addition and one more proof
-                num_execution_proofs -= 2;
-                continue;
-            }
             _ => unreachable!("Unexpected ProvingError {err:?}"),
         }
+        // Require additional proof
+        num_execution_proofs += 1;
+        dispatched_execution_proofs += 1;
         // Split workload at midpoint (num_blocks > 1)
         let mid_point = agreed_block + num_blocks / 2;
         let mid_exec = executed_blocks
@@ -744,27 +740,25 @@ pub async fn compute_fpvm_proof(
             .expect("task_channel should not be closed");
     }
 
+    // Return execution proof count without stitching if derivation is not required
+    if args.proving.skip_derivation_proof {
+        warn!("Skipping stitching {dispatched_execution_proofs} execution proofs with derivation.");
+        return Err(ProvingError::SkippingDerivation(
+            dispatched_execution_proofs,
+        ));
+    }
+
     // Read result_pq for stitched executions and proofs
     let (execution_proofs, stitched_executions): (Vec<_>, Vec<_>) = execution_result_pq
         .into_sorted_vec()
         .into_iter()
         .map(|mut r| {
             (
-                r.result.expect("pushed failing result to queue").0,
+                r.result.unwrap().0,
                 r.cached_task.stitched_executions.pop().unwrap(),
             )
         })
         .unzip();
-
-    // Return execution proof count without stitching if derivation is not required
-    if args.proving.skip_await_proof {
-        warn!("Skipping stitching unawaited execution proofs with derivation.");
-        return Err(ProvingError::NotAwaitingProof);
-    } else if args.proving.skip_derivation_proof {
-        let num_proofs = execution_proofs.len();
-        warn!("Skipping stitching {num_proofs} execution proofs with derivation.");
-        return Err(ProvingError::DerivationProofError(num_proofs));
-    }
 
     // process tail proving results
     let mut tail_preconditions = Vec::with_capacity(num_tail_proofs);
@@ -779,7 +773,9 @@ pub async fn compute_fpvm_proof(
         // unpack result
         let (receipt, precondition) = match result {
             Err(err) => {
-                error!("Tail proof error: {err:?}");
+                if !matches!(err, ProvingError::NotAwaitingProof) {
+                    error!("Tail proof error: {err:?}");
+                }
                 continue;
             }
             Ok(result) => result,
@@ -791,14 +787,24 @@ pub async fn compute_fpvm_proof(
     }
 
     // Combine execution/tail proofs with derivation proof
-    let total_blocks = stitched_executions.iter().map(|e| e.len()).sum::<usize>();
-    info!(
-        "Stitching {}/{} execution proofs for {total_blocks} L2 blocks and {}/{} tail proofs with derivation proof.",
-        execution_proofs.len(),
-        stitched_executions.len(),
-        tail_proofs.len(),
-        num_tail_proofs
-    );
+    if args.proving.skip_await_proof && dispatched_execution_proofs > 0 {
+        warn!("Skipping stitching unawaited execution proofs with derivation proof.");
+        return Err(ProvingError::NotAwaitingProof);
+    }
+
+    if args.proving.skip_await_proof {
+        info!(
+            "Dispatching stand-alone head proof for {num_tail_proofs} tails and {num_executed_blocks} L2 blocks."
+        );
+    } else {
+        info!(
+            "Stitching {}/{} execution proofs and {}/{} tail proofs for {num_executed_blocks} L2 blocks.",
+            execution_proofs.len(),
+            stitched_executions.len(),
+            tail_proofs.len(),
+            num_tail_proofs
+        );
+    }
 
     Ok(Some(
         compute_oneshot_task(
