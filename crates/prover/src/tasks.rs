@@ -389,9 +389,11 @@ pub async fn compute_fpvm_proof(
                 // move l1 tail forward
                 l1_tail = retry_res_ctx_timeout!(chain_providers
                     .l1
-                    .get_block_by_number((l1_tail.header.number + 10).into())
+                    .get_block_by_number(
+                        (l1_tail.header.number + args.proving.num_tail_blocks).into()
+                    )
                     .await
-                    .context("get_block_by_number l1_tail + 10")?
+                    .context("get_block_by_number l1_tail + num_tail_blocks")?
                     .ok_or_else(|| anyhow!("Failed to fetch l1 tail")))
                 .await;
                 args.kona.l1_head = l1_tail.header.hash;
@@ -458,9 +460,15 @@ pub async fn compute_fpvm_proof(
                 // move l1 tail backward for the next iteration to start under
                 l1_tail = retry_res_ctx_timeout!(chain_providers
                     .l1
-                    .get_block_by_number(l1_tail.header.number.saturating_sub(10).into())
+                    .get_block_by_number(
+                        l1_tail
+                            .header
+                            .number
+                            .saturating_sub(args.proving.num_tail_blocks)
+                            .into()
+                    )
                     .await
-                    .context("get_block_by_number l1_tail - 10")?
+                    .context("get_block_by_number l1_tail - tail_blocks")?
                     .ok_or_else(|| anyhow!("Failed to fetch l1 tail")))
                 .await;
                 args.kona.l1_head = l1_tail.header.hash;

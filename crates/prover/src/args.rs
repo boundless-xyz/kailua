@@ -42,6 +42,9 @@ pub struct ProvingArgs {
     /// Maximum input data size per proof
     #[clap(long, env, required = false, default_value_t = 2_684_354_560)]
     pub max_witness_size: usize,
+    /// Rate of growth of tail proofs in L1 blocks
+    #[clap(long, env, required = false, default_value_t = 10)]
+    pub num_tail_blocks: u64,
     /// How many threads to use for fetching preflight data
     #[clap(long, env, default_value_t = 4)]
     pub num_concurrent_preflights: u64,
