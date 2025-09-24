@@ -85,10 +85,6 @@ error BlockNumberMismatch(uint256 anchored, uint256 initialized);
 /// @param parentGame The address of the parent proposal being extended
 error VanguardError(address parentGame);
 
-// 0x916ee232
-/// @notice Thrown when the elimination reward split does not sum up to 10,000 BPS.
-error InvalidEliminationRewardSplit();
-
 // 0x428e0b92
 /// @notice Thrown when a non-factory owner calls an owner-only function.
 error NotFactoryOwner();
@@ -101,12 +97,6 @@ event Proven(bytes32 indexed signature, ProofStatus indexed status);
 /// @notice Emitted when the participation bond is updated
 /// @param amount The new required bond amount
 event BondUpdated(uint256 amount);
-
-/// @notice Emitted when the elimination reward split is updated.
-/// @param proverShareBps Share of the slashed bond allocated to the prover, in basis points.
-/// @param winnerShareBps Share of the slashed bond allocated to the eventual tournament winner, in basis points.
-/// @param burnShareBps   Share of the slashed bond sent to the zero address (burned), in basis points.
-event EliminationRewardSplitUpdated(uint256 proverShareBps, uint256 winnerShareBps, uint256 burnShareBps);
 
 interface IKailuaTreasury {
     /// @notice Returns the game index at which proposer was proven faulty

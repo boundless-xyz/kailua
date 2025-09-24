@@ -526,7 +526,6 @@ contract ClaimDisputeTest is KailuaTest {
 
     function test_proveOutputFault_disputed() public {
         treasury.setParticipationBond(3);
-        treasury.setEliminationRewardSplit(3_334, 3_334, 3_332);
 
         // Fund all proposers
         for (uint256 i = 1; i < PROPOSAL_BUFFER_LEN; i++) {

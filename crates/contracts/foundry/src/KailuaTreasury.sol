@@ -204,17 +204,15 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         paidBonds[eliminated] = 0;
 
         // Split the slashed bond into prover / winner / burn.
-        uint256 proverShare = (bond * proverShareBps) / TOTAL_BPS;
-        uint256 winnerShare = (bond * winnerShareBps) / TOTAL_BPS;
+        uint256 proverShare = (bond * ELIMINATION_SPLIT_PROVER_NUM) / ELIMINATION_SPLIT_DENOM;
+        uint256 winnerShare = (bond * ELIMINATION_SPLIT_WINNER_NUM) / ELIMINATION_SPLIT_DENOM;
         uint256 burnShare = bond - proverShare - winnerShare;
 
-        // Burn by sending it to the zero address.
-        // The zero address has no code, so this external call cannot reenter.
-        if (burnShare > 0) {
-            pay(burnShare, address(0));
-        }
         eliminationRewards[prover] += proverShare;
         winnerSharesByParent[parent] += winnerShare;
+        // Burn by sending it to the zero address.
+        // The zero address has no code, so this external call cannot reenter.
+        pay(burnShare, address(0));
     }
 
     /// @inheritdoc IKailuaTreasury
@@ -242,18 +240,14 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     // ------------------------------
     // Treasury
     // ------------------------------
+
+    /// @notice Fixed split of a slashed participation bond between prover, winner, and burn.
+    uint256 private constant ELIMINATION_SPLIT_DENOM = 3;
+    uint256 private constant ELIMINATION_SPLIT_PROVER_NUM = 1;
+    uint256 private constant ELIMINATION_SPLIT_WINNER_NUM = 1;
+
     /// @notice The locked collateral required for proposal submission
     uint256 public participationBond;
-
-    /// @notice The denominator for basis points calculations, representing 100% (10,000 BPS).
-    uint256 private constant TOTAL_BPS = 10_000;
-
-    /// @notice The share of a slashed participation bond allocated to the prover, in basis points.
-    uint256 private proverShareBps;
-
-    /// @notice The share of a slashed participation bond allocated to the honest proposer who
-    ///         won the tournament, in basis points.
-    uint256 private winnerShareBps;
 
     /// @notice The locked collateral still paid by proposers for participation
     mapping(address => uint256) public paidBonds;
@@ -337,19 +331,6 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     function setParticipationBond(uint256 amount) external onlyFactoryOwner {
         participationBond = amount;
         emit BondUpdated(amount);
-    }
-
-    /// @notice Updates the elimination reward split percentages in basis points.
-    /// @dev The sum of the shares must equal 10,000 (100%).
-    function setEliminationRewardSplit(uint256 _proverShareBps, uint256 _winnerShareBps, uint256 _burnShareBps)
-        external
-        onlyFactoryOwner
-    {
-        if (_proverShareBps + _winnerShareBps + _burnShareBps != TOTAL_BPS) revert InvalidEliminationRewardSplit();
-
-        proverShareBps = _proverShareBps;
-        winnerShareBps = _winnerShareBps;
-        emit EliminationRewardSplitUpdated(_proverShareBps, _winnerShareBps, _burnShareBps);
     }
 
     /// @notice Updates the vanguard address and advantage duration

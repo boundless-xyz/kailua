@@ -42,9 +42,6 @@ contract RewardTest is KailuaTest {
             uint256(0x1), // 1-second block times
             uint64(0xA) // 10-second dispute timeout
         );
-        // Set collateral requirement
-        treasury.setParticipationBond(987);
-        treasury.setEliminationRewardSplit(10_000, 0, 0);
     }
 
     function maybeReenter() internal {
@@ -84,13 +81,6 @@ contract RewardTest is KailuaTest {
         return sender.balance - balance;
     }
 
-    struct Case {
-        uint256 bond;
-        uint256 proverBps;
-        uint256 winnerBps;
-        uint256 burnBps;
-    }
-
     function propose(address proposer, uint64 l2Blocks, uint64 parentIndex) internal returns (KailuaTournament child) {
         uint256 need = treasury.participationBond();
         uint256 already = treasury.paidBonds(proposer);
@@ -103,99 +93,65 @@ contract RewardTest is KailuaTest {
         vm.stopPrank();
     }
 
-    function expectedSplit(uint256 bond, uint256 pBps, uint256 wBps)
-        internal
-        pure
-        returns (uint256 p, uint256 w, uint256 b)
-    {
-        p = (bond * pBps) / 10_000;
-        w = (bond * wBps) / 10_000;
+    function expectedSplit(uint256 bond) internal pure returns (uint256 p, uint256 w, uint256 b) {
+        p = bond / 3;
+        w = bond / 3;
         b = bond - p - w;
     }
 
-    function testCases() internal pure returns (Case[] memory cases) {
-        cases = new Case[](6);
-        cases[0] = Case({bond: 1, proverBps: 10_000, winnerBps: 0, burnBps: 0});
-        cases[1] = Case({bond: 1, proverBps: 0, winnerBps: 10_000, burnBps: 0});
-        cases[2] = Case({bond: 3, proverBps: 3_334, winnerBps: 3_333, burnBps: 3_333});
-        cases[3] = Case({bond: 10, proverBps: 2_500, winnerBps: 2_500, burnBps: 5_000});
-        cases[4] = Case({bond: 999, proverBps: 1, winnerBps: 9_998, burnBps: 1});
-        cases[5] = Case({bond: 10_001, proverBps: 3_334, winnerBps: 3_334, burnBps: 3_332});
-    }
-
     function test_setEliminationRewardSplit_table() public {
-        Case[] memory cases = testCases();
-        for (uint256 i = 0; i < cases.length; i++) {
-            Case memory c = cases[i];
-            uint256 step = i + 1;
+        uint256 bond = 99;
+        treasury.setParticipationBond(bond);
 
-            treasury.setParticipationBond(c.bond);
-            treasury.setEliminationRewardSplit(c.proverBps, c.winnerBps, c.burnBps);
+        vm.warp(
+            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
+        );
 
-            vm.warp(
-                game.GENESIS_TIME_STAMP()
-                    + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME() * step
+        address goodProposer = address(uint160(0xA100));
+        address badProposer = address(uint160(0xB200));
+        vm.deal(goodProposer, bond);
+        vm.deal(badProposer, bond);
+
+        uint64 parentIndex = uint64(anchor.gameIndex());
+
+        KailuaTournament good = propose(goodProposer, 128, parentIndex);
+        KailuaTournament bad = propose(badProposer, 128, parentIndex);
+
+        {
+            // limit lifetime of proof and intermediate arrays
+            bytes memory proof = mockFaultProof(
+                address(this),
+                good.l1Head().raw(),
+                anchor.rootClaim().raw(),
+                good.rootClaim().raw(),
+                uint64(good.l2BlockNumber())
             );
 
-            address goodProposer = address(uint160(0xA100 + step));
-            address badProposer = address(uint160(0xB200 + step));
-            vm.deal(goodProposer, c.bond);
-            vm.deal(badProposer, c.bond);
-
-            uint64 parentIndex = uint64(anchor.gameIndex());
-            uint64 blockHeight = uint64(step * 128);
-
-            KailuaTournament good = propose(goodProposer, blockHeight, parentIndex);
-            KailuaTournament bad = propose(badProposer, blockHeight, parentIndex);
-
-            {
-                // limit lifetime of proof and intermediate arrays
-                bytes memory proof = mockFaultProof(
-                    address(this),
-                    good.l1Head().raw(),
-                    anchor.rootClaim().raw(),
-                    good.rootClaim().raw(),
-                    uint64(good.l2BlockNumber())
-                );
-
-                anchor.proveOutputFault(
-                    [address(this), address(good)],
-                    [uint64(1), uint64(0)],
-                    proof,
-                    [anchor.rootClaim().raw(), good.rootClaim().raw()],
-                    KailuaKZGLib.hashToFe(bad.rootClaim().raw()),
-                    [new bytes[](0), new bytes[](0)]
-                );
-            }
-
-            uint256 zeroBefore = address(0).balance;
-
-            // expire challenger clock precisely for this child
-            vm.warp(good.createdAt().raw() + game.MAX_CLOCK_DURATION().raw());
-            vm.assertTrue(good.resolve() == GameStatus.DEFENDER_WINS);
-
-            (uint256 p, uint256 w, uint256 b) = expectedSplit(c.bond, c.proverBps, c.winnerBps);
-            vm.assertEq(p + w + b, c.bond, "split must sum to bond");
-
-            vm.assertEq(claimEliminationRewards(treasury.proposerOf(address(good))), w);
-            vm.assertEq(claimEliminationRewards(address(this)), p);
-            vm.assertEq(address(0).balance - zeroBefore, b);
-
-            anchor = good;
+            anchor.proveOutputFault(
+                [address(this), address(good)],
+                [uint64(1), uint64(0)],
+                proof,
+                [anchor.rootClaim().raw(), good.rootClaim().raw()],
+                KailuaKZGLib.hashToFe(bad.rootClaim().raw()),
+                [new bytes[](0), new bytes[](0)]
+            );
         }
-    }
 
-    function test_setEliminationRewardSplit_revert() public {
-        vm.expectRevert();
-        treasury.setEliminationRewardSplit(3_334, 3_334, 3_334);
+        uint256 zeroBefore = address(0).balance;
 
-        vm.expectRevert();
-        treasury.setEliminationRewardSplit(2_500, 2_500, 0);
+        // expire challenger clock precisely for this child
+        vm.warp(good.createdAt().raw() + game.MAX_CLOCK_DURATION().raw());
+        vm.assertTrue(good.resolve() == GameStatus.DEFENDER_WINS);
+
+        (uint256 p, uint256 w, uint256 b) = expectedSplit(bond);
+
+        vm.assertEq(claimEliminationRewards(treasury.proposerOf(address(good))), w);
+        vm.assertEq(claimEliminationRewards(address(this)), p);
+        vm.assertEq(address(0).balance - zeroBefore, b);
     }
 
     function test_claimEliminationBond() public {
-        treasury.setParticipationBond(987);
-        treasury.setEliminationRewardSplit(10_000, 0, 0);
+        treasury.setParticipationBond(987 * 3);
 
         // Claim nothing
         treasury.claimEliminationRewards();
