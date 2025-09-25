@@ -82,7 +82,7 @@ contract ProposeTest is KailuaTest {
     function test_vanguard() public {
         // Fail assignment
         vm.prank(address(0xbeef));
-        vm.expectRevert("not owner");
+        vm.expectRevert(NotFactoryOwner.selector);
         treasury.assignVanguard(address(0x007), Duration.wrap(0xFFFFFFFFFFFFFFFF));
         vm.assertEq(treasury.vanguard(), address(0x0));
 
@@ -419,7 +419,7 @@ contract ProposeTest is KailuaTest {
     function test_KailuaTreasury_resolve() public {
         // Fail to resolve anonymously
         vm.startPrank(address(0xdeadbeef));
-        vm.expectRevert("not owner");
+        vm.expectRevert(NotFactoryOwner.selector);
         treasury.resolve();
         vm.stopPrank();
         // Fail to resolve again

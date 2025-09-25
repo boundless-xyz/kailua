@@ -85,6 +85,10 @@ error BlockNumberMismatch(uint256 anchored, uint256 initialized);
 /// @param parentGame The address of the parent proposal being extended
 error VanguardError(address parentGame);
 
+// 0x428e0b92
+/// @notice Thrown when a non-factory owner calls an owner-only function.
+error NotFactoryOwner();
+
 /// @notice Emitted when a proof is submitted.
 /// @param signature The proposal signature
 /// @param status The proven status

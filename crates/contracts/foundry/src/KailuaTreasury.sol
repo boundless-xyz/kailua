@@ -200,8 +200,19 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         // Record elimination round
         eliminationRound[eliminated] = child.gameIndex();
 
-        // Allocate bond to prover
-        eliminations[prover].push(eliminated);
+        uint256 bond = paidBonds[eliminated];
+        paidBonds[eliminated] = 0;
+
+        // Split the slashed bond into prover / winner / burn.
+        uint256 proverShare = (bond * ELIMINATION_SPLIT_PROVER_NUM) / ELIMINATION_SPLIT_DENOM;
+        uint256 winnerShare = (bond * ELIMINATION_SPLIT_WINNER_NUM) / ELIMINATION_SPLIT_DENOM;
+        uint256 burnShare = bond - proverShare - winnerShare;
+
+        eliminationRewards[prover] += proverShare;
+        winnerSharesByParent[parent] += winnerShare;
+        // Burn by sending it to the zero address.
+        // The zero address has no code, so this external call cannot reenter.
+        pay(burnShare, address(0));
     }
 
     /// @inheritdoc IKailuaTreasury
@@ -212,10 +223,16 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
 
     /// @inheritdoc IKailuaTreasury
     function updateLastResolved() external {
+        address proposer = proposerOf[msg.sender];
+
         // INVARIANT: Only known proposal contracts may call this function
-        if (proposerOf[msg.sender] == address(0x0)) {
+        if (proposer == address(0x0)) {
             revert NotProposed();
         }
+
+        KailuaTournament parent = KailuaTournament(msg.sender).parentGame();
+        eliminationRewards[proposer] += winnerSharesByParent[parent];
+        winnerSharesByParent[parent] = 0;
 
         lastResolved = msg.sender;
     }
@@ -224,17 +241,23 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     // Treasury
     // ------------------------------
 
+    /// @notice Fixed split of a slashed participation bond between prover, winner, and burn.
+    uint256 private constant ELIMINATION_SPLIT_DENOM = 3;
+    uint256 private constant ELIMINATION_SPLIT_PROVER_NUM = 1;
+    uint256 private constant ELIMINATION_SPLIT_WINNER_NUM = 1;
+
     /// @notice The locked collateral required for proposal submission
     uint256 public participationBond;
 
     /// @notice The locked collateral still paid by proposers for participation
     mapping(address => uint256) public paidBonds;
 
-    /// @notice The list of players each prover has eliminated
-    mapping(address => address[]) public eliminations;
+    /// @notice The total share of elimination bonds accumulated for the eventual tournament winner.
+    /// @dev Keyed by the parent game (tournament) contract.
+    mapping(KailuaTournament => uint256) private winnerSharesByParent;
 
-    /// @notice The number of eliminations paid out to each prover
-    mapping(address => uint256) public eliminationsPaid;
+    /// @notice The unpaid rewards from eliminated invalid proposals
+    mapping(address => uint256) public eliminationRewards;
 
     /// @notice The last proposal made by each proposer
     mapping(address => KailuaTournament) public lastProposal;
@@ -257,28 +280,15 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
 
     modifier onlyFactoryOwner() {
         OwnableUpgradeable factoryContract = OwnableUpgradeable(address(DISPUTE_GAME_FACTORY));
-        require(msg.sender == factoryContract.owner(), "not owner");
+        if (msg.sender != factoryContract.owner()) revert NotFactoryOwner();
         _;
     }
 
-    /// @notice Pays out the prover for the eliminations it has accrued
-    function claimEliminationBonds(uint256 claims) public nonReentrant {
-        uint256 claimed = 0;
-        uint256 payout = 0;
-        for (
-            uint256 i = eliminationsPaid[msg.sender];
-            claimed < claims && i < eliminations[msg.sender].length;
-            (i++, claimed++)
-        ) {
-            address eliminated = eliminations[msg.sender][i];
-            payout += paidBonds[eliminated];
-            paidBonds[eliminated] = 0;
-        }
-        // Increase number of bonds claimed
-        if (claimed > 0) {
-            eliminationsPaid[msg.sender] += claimed;
-        }
-        // Transfer payout
+    /// @notice Pays the elimination rewards the sender has accrued
+    function claimEliminationRewards() public nonReentrant {
+        uint256 payout = eliminationRewards[msg.sender];
+        eliminationRewards[msg.sender] = 0;
+
         if (payout > 0) {
             pay(payout, msg.sender);
         }

@@ -38,6 +38,8 @@ contract ClaimDisputeTest is KailuaTest {
         );
     }
 
+    receive() external payable {}
+
     function test_getChallengerDuration() public {
         vm.warp(
             game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
@@ -523,6 +525,15 @@ contract ClaimDisputeTest is KailuaTest {
     }
 
     function test_proveOutputFault_disputed() public {
+        treasury.setParticipationBond(3);
+
+        // Fund all proposers
+        for (uint256 i = 1; i < PROPOSAL_BUFFER_LEN; i++) {
+            for (uint256 j = 0; j < PROPOSAL_BUFFER_LEN; j++) {
+                vm.deal(address(bytes20(uint160(100000 * i + j))), treasury.participationBond());
+            }
+        }
+
         uint64 parentIndex = uint64(anchor.gameIndex());
 
         for (uint256 i = 1; i < PROPOSAL_BUFFER_LEN; i++) {
@@ -538,12 +549,12 @@ contract ClaimDisputeTest is KailuaTest {
                 vm.startPrank(address(bytes20(uint160(100000 * i + j))));
                 if (j == i) {
                     // Send successful proposal
-                    proposals[j] = treasury.propose(
+                    proposals[j] = treasury.propose{value: treasury.participationBond()}(
                         Claim.wrap(0x0001010000010100000010100000101000001010000010100000010100000101),
                         abi.encodePacked(blockHeight, parentIndex, uint64(0))
                     );
                 } else {
-                    proposals[j] = treasury.propose(
+                    proposals[j] = treasury.propose{value: treasury.participationBond()}(
                         Claim.wrap(sha256(abi.encodePacked(bytes32(j)))),
                         abi.encodePacked(blockHeight, parentIndex, uint64(0))
                     );
@@ -560,7 +571,7 @@ contract ClaimDisputeTest is KailuaTest {
 
             // Publish late proposal
             vm.startPrank(address(bytes20(uint160(100000 * i))));
-            proposals[0] = treasury.propose(
+            proposals[0] = treasury.propose{value: treasury.participationBond()}(
                 Claim.wrap(sha256(abi.encodePacked(bytes32(0)))), abi.encodePacked(blockHeight, parentIndex, uint64(0))
             );
             vm.stopPrank();
@@ -622,6 +633,10 @@ contract ClaimDisputeTest is KailuaTest {
             // Finalize canonical proposal
             proposals[i].resolve();
             vm.assertEq(treasury.lastResolved(), address(proposals[i]));
+            // Proposer of the canonical proposal should receive 1 for each eliminated competitor
+            vm.assertEq(
+                treasury.eliminationRewards(treasury.proposerOf(address(proposals[i]))), PROPOSAL_BUFFER_LEN - 2
+            );
 
             // Fail to resolve any proposal after correct resolution
             for (uint256 j = 0; j < PROPOSAL_BUFFER_LEN; j++) {
@@ -633,16 +648,16 @@ contract ClaimDisputeTest is KailuaTest {
             parentIndex = uint64(proposals[i].gameIndex());
         }
 
-        // Validate eliminations count
         uint256 eliminationsCount = (PROPOSAL_BUFFER_LEN - 1) * (PROPOSAL_BUFFER_LEN - 2);
-        vm.expectRevert();
-        treasury.eliminations(address(this), eliminationsCount);
-        // This should not revert
-        treasury.eliminations(address(this), eliminationsCount - 1);
+        // Fault prover should receive 1 per each elimination
+        vm.assertEq(treasury.eliminationRewards(address(this)), eliminationsCount);
+        // 1 per elimination should be burned
+        vm.assertEq(address(0).balance, eliminationsCount);
 
-        // Claim elimination bonds
-        treasury.claimEliminationBonds(eliminationsCount);
-        vm.assertEq(treasury.eliminationsPaid(address(this)), eliminationsCount);
+        // Claim elimination bonds as prover
+        uint256 balance = address(this).balance;
+        treasury.claimEliminationRewards();
+        vm.assertEq(address(this).balance - balance, eliminationsCount);
     }
 
     function test_proveOutputFault_duplicates() public {
