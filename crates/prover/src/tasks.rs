@@ -253,20 +253,15 @@ pub async fn compute_fpvm_proof(
     let mut derivation_cache = if !args.proving.skip_derivation_proof {
         match derivation_cache {
             Some(receiver) => {
-                match receiver.recv().await {
-                    Ok(cached_driver) => {
-                        let derivation_cache_precondition =
-                            B256::new(cached_driver.digest().into());
-                        info!("Received CachedDriver {derivation_cache_precondition}");
-                        // add cached driver precondition
-                        precondition.derivation_cache = derivation_cache_precondition;
-                        Some(cached_driver)
-                    }
-                    Err(err) => {
-                        error!("Failed to receive CachedDriver: {err:?}. Proceeding with fresh derivation.");
-                        None
-                    }
-                }
+                let cached_driver = receiver
+                    .recv()
+                    .await
+                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+                let derivation_cache_precondition = B256::new(cached_driver.digest().into());
+                info!("Received CachedDriver {derivation_cache_precondition}");
+                // add cached driver precondition
+                precondition.derivation_cache = derivation_cache_precondition;
+                Some(cached_driver)
             }
             None => None,
         }
@@ -328,6 +323,13 @@ pub async fn compute_fpvm_proof(
     // flatten executed l2 blocks
     let (_, execution_cache) = split_executions(executed_blocks.clone());
 
+    // Sanity check proving task
+    if execution_cache.is_empty()
+        && args.kona.agreed_l2_output_root != args.kona.claimed_l2_output_root
+    {
+        return Err(ProvingError::OtherError(anyhow!("Insufficient L1 head.")));
+    }
+
     // Check if we can do tail proofs
     let can_stitch_tail_proofs =
         args.proving.num_tail_blocks > 0 && !args.proving.skip_derivation_proof;
@@ -336,48 +338,51 @@ pub async fn compute_fpvm_proof(
     {
         let chain_providers = retry_res_ctx_timeout!(20, args.create_providers().await).await;
         // Fetch earliest l1 block to start from
-        let l1_tail_number = match derivation_cache.as_ref() {
-            Some(cache) => cache.cursor.origin.number,
-            None => {
-                let safe_head_block = retry_res_ctx_timeout!(chain_providers
-                    .l2
-                    .get_block_by_hash(execution_cache[0].artifacts.header.parent_hash)
-                    .full()
-                    .await
-                    .context("get_block_by_hash")?
-                    .ok_or_else(|| anyhow!("Failed to fetch safe l2 head parent")))
-                .await;
-                let safe_head_block = op_alloy_consensus::OpBlock {
-                    header: safe_head_block.header.into(),
-                    body: alloy::consensus::BlockBody {
-                        transactions: safe_head_block
-                            .transactions
-                            .as_transactions()
-                            .unwrap()
-                            .iter()
-                            .map(|t| t.inner.inner.inner().clone())
-                            .collect(),
-                        ommers: vec![],
-                        withdrawals: safe_head_block.withdrawals,
-                    },
-                };
+        let l1_tail_number = {
+            let safe_head_block = retry_res_ctx_timeout!(chain_providers
+                .l2
+                .get_block_by_hash(args.kona.agreed_l2_head_hash)
+                .full()
+                .await
+                .context("get_block_by_hash")?
+                .ok_or_else(|| anyhow!("Failed to fetch safe l2 head parent")))
+            .await;
+            let safe_head_block = op_alloy_consensus::OpBlock {
+                header: safe_head_block.header.into(),
+                body: alloy::consensus::BlockBody {
+                    transactions: safe_head_block
+                        .transactions
+                        .as_transactions()
+                        .unwrap()
+                        .iter()
+                        .map(|t| t.inner.inner.inner().clone())
+                        .collect(),
+                    ommers: vec![],
+                    withdrawals: safe_head_block.withdrawals,
+                },
+            };
 
-                let safe_head_info =
-                    L2BlockInfo::from_block_and_genesis(&safe_head_block, &rollup_config.genesis)
-                        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+            let safe_head_info =
+                L2BlockInfo::from_block_and_genesis(&safe_head_block, &rollup_config.genesis)
+                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
-                // Note: we cannot use the snippet below to walk back the timeout
-                // let channel_timeout =
-                //     rollup_config.channel_timeout(safe_head_info.block_info.timestamp);
-                // let l1_origin_number = safe_head_info
-                //     .l1_origin
-                //     .number
-                //     .saturating_sub(channel_timeout)
-                //     .max(rollup_config.genesis.l1.number);
+            // Note: we cannot use the snippet below to walk back the timeout
+            // let channel_timeout =
+            //     rollup_config.channel_timeout(safe_head_info.block_info.timestamp);
+            // let l1_origin_number = safe_head_info
+            //     .l1_origin
+            //     .number
+            //     .saturating_sub(channel_timeout)
+            //     .max(rollup_config.genesis.l1.number);
 
-                safe_head_info.l1_origin.number
-            }
-        };
+            safe_head_info.l1_origin.number
+        }
+        .max(
+            derivation_cache
+                .as_ref()
+                .map(|cache| cache.cursor.origin.number)
+                .unwrap_or_default(),
+        );
         let mut l1_tail = retry_res_ctx_timeout!(chain_providers
             .l1
             .get_block_by_number(l1_tail_number.into())
@@ -386,7 +391,10 @@ pub async fn compute_fpvm_proof(
             .ok_or_else(|| anyhow!("Failed to fetch l1 tail")))
         .await;
         // Create tail proofs
-        info!("Scheduling tail proofs from l1 block {l1_tail_number}.");
+        info!(
+            "Scheduling tail proofs from l1 block {l1_tail_number} (derivation_cache={}).",
+            derivation_cache.is_some()
+        );
         loop {
             let mut tail_derivation_cache = derivation_cache.clone();
             // Job proving args

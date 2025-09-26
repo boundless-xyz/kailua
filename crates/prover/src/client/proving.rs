@@ -94,7 +94,7 @@ where
     // Run witness generation with oracles
     let witgen_permit = acquire_owned_permit(SEMAPHORE_WITGEN.clone())
         .await
-        .map_err(ProvingError::OtherError);
+        .map_err(ProvingError::OtherError)?;
     // Run witgen client to get correct BootInfo and Precondition
     let (
         _boot_info,

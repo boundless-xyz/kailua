@@ -731,7 +731,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             let elf = image.1.to_vec();
             let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
                 .await
-                .map_err(ProvingError::OtherError);
+                .map_err(ProvingError::OtherError)?;
             let session_info = tokio::task::spawn_blocking(move || {
                 let mut builder = ExecutorEnv::builder();
                 // Set segment po2

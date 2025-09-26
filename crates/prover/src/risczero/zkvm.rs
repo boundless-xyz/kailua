@@ -40,7 +40,7 @@ pub async fn run_zkvm_client<A: NoUninit + Into<Digest>>(
     let elf = image.1.to_vec();
     let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
         .await
-        .map_err(ProvingError::OtherError);
+        .map_err(ProvingError::OtherError)?;
     let prove_info = tokio::task::spawn_blocking(move || {
         let env = build_zkvm_env(
             witness_slices,

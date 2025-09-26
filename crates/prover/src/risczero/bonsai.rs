@@ -82,7 +82,7 @@ pub async fn run_bonsai_client<A: NoUninit + Into<Digest>>(
     // Create a session on Bonsai
     let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
         .await
-        .map_err(ProvingError::OtherError);
+        .map_err(ProvingError::OtherError)?;
     let mut stark_session = create_stark_session(
         image,
         &client,

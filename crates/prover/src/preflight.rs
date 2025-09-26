@@ -184,6 +184,7 @@ pub async fn concurrent_execution_preflight(
     let mut args = args.clone();
     args.proving.max_block_executions = usize::MAX;
     args.proving.max_block_derivations = usize::MAX;
+    args.proving.max_witness_size = usize::MAX;
     while num_blocks > 0 {
         let processed_blocks = if extra_blocks > 0 {
             extra_blocks -= 1;
@@ -259,23 +260,33 @@ pub async fn concurrent_execution_preflight(
     let mut l1_head_sufficient = true;
     for (target_l2_height, job) in jobs {
         let result = job.await?;
-        match result {
+        let claimed_l2_block_number = match result {
             Err(e) => {
-                if !matches!(e, ProvingError::NotSeekingProof(..)) {
+                let ProvingError::NotSeekingProof(_, _, executions, ..) = e else {
                     error!("Error during preflight execution: {e:?}");
-                }
-            }
-            Ok((receipt, _)) => {
-                let ProofJournal {
-                    claimed_l2_block_number,
-                    ..
-                } = ProofJournal::from(&receipt);
-                if claimed_l2_block_number < target_l2_height {
-                    error!("L1 Head insufficient to derive L2 block {target_l2_height}. Stopped at {claimed_l2_block_number}.");
+                    continue;
+                };
+                let Some(trace) = executions.first() else {
+                    error!("L1 Head insufficient to derive L2 block beyond {target_l2_height}.");
                     l1_head_sufficient = false;
-                }
+                    continue;
+                };
+                let Some(claimed_l2_block) = trace.last() else {
+                    error!("L1 Head insufficient to derive L2 block beyond {target_l2_height}.");
+                    l1_head_sufficient = false;
+                    continue;
+                };
+                claimed_l2_block.artifacts.header.number
             }
-        }
+            Ok((receipt, _)) => ProofJournal::from(&receipt).claimed_l2_block_number,
+        };
+
+        if claimed_l2_block_number < target_l2_height {
+            error!("L1 Head insufficient to derive L2 block {target_l2_height}. Stopped at {claimed_l2_block_number}.");
+            l1_head_sufficient = false;
+        } else {
+            info!("Preflight job for target {target_l2_height} terminated at {claimed_l2_block_number}.");
+        };
     }
 
     Ok(l1_head_sufficient)
