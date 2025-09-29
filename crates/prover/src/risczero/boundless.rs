@@ -325,7 +325,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             R2Storage::new(&storage, domain)
                 .await
                 .context("Failed to create R2 storage")
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
+                .map_err(ProvingError::OtherError)?,
         )
     } else {
         None
@@ -334,7 +334,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     // Instantiate storage provider (used when R2 is not configured)
     let storage_provider = StandardStorageProvider::from_config(&storage)
         .context("StandardStorageProvider::from_config")
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+        .map_err(ProvingError::OtherError)?;
 
     // Override deployment configuration if set
     let market_deployment = market
@@ -709,6 +709,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         };
     };
 
+    info!("Kailua ELF URL: {program_url}");
     // Preflight execution to get cycle count
     let req_file_name = request_file_name(image.0, journal.clone());
     let cycle_count = match (
@@ -734,6 +735,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             let elf = image.1.to_vec();
             let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
                 .await
+                .context("acquire_owned_permit")
                 .map_err(ProvingError::OtherError)?;
             let session_info = tokio::task::spawn_blocking(move || {
                 let mut builder = ExecutorEnv::builder();
@@ -749,15 +751,17 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 }
                 // Pass in proofs
                 for proof in &preflight_stitched_proofs {
-                    builder.write(proof)?;
+                    builder.write(proof).context("env::write")?;
                 }
-                let env = builder.build()?;
-                let session_info = default_executor().execute(env, &elf)?;
+                let env = builder.build().context("env::build")?;
+                let session_info = default_executor()
+                    .execute(env, &elf)
+                    .context("Executor::execute")?;
                 Ok::<_, anyhow::Error>(session_info)
             })
             .await
             .context("spawn_blocking")
-            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+            .map_err(ProvingError::OtherError)?
             .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
             drop(r0vm_permit);
             let cycle_count = session_info
@@ -772,6 +776,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             cycle_count
         }
     };
+    info!("Request cycle count: {cycle_count}.");
 
     // Pass in input frames
     let inp_file_name = input_file_name(image.0, journal.clone());
@@ -783,7 +788,6 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 .map(|s| Url::parse(&s)),
         ) {
             (true, Ok(Ok(url))) => {
-                info!("Using input data previously uploaded to {url}.");
                 break url;
             }
             _ => {
@@ -807,13 +811,13 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                     guest_env_builder = guest_env_builder
                         .write(proof)
                         .context("GuestEnvBuilder::write")
-                        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+                        .map_err(ProvingError::OtherError)?;
                 }
                 // Build input vector
                 let input = guest_env_builder
                     .build_vec()
                     .context("GuestEnvBuilder::build_vec")
-                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+                    .map_err(ProvingError::OtherError)?;
 
                 // Upload input
                 info!("Uploading {} input data.", human_bytes(input.len() as f64));
@@ -842,6 +846,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             }
         }
     };
+    info!("Input URL: {input_url}.");
 
     // Only one prover may submit a request at a time
     let boundless_req_lock = BOUNDLESS_REQ.lock().await;
@@ -876,14 +881,14 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         .with_cycles(cycle_count)
         .with_program_url(program_url)
         .context("RequestParams::with_program_url")
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+        .map_err(ProvingError::OtherError)?
         .with_input_url(input_url)
         .context("RequestParams::with_input_url")
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+        .map_err(ProvingError::OtherError)?
         .with_requirements(
             RequirementParams::try_from(requirements.clone())
                 .context("Failed to convert Requirements")
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
+                .map_err(ProvingError::OtherError)?,
         )
         .with_offer(
             OfferParams::builder()
@@ -896,7 +901,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 .timeout((corrected_expiry_factor * segment_count) as u32)
                 .build()
                 .context("OfferParamsBuilder::build()")
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
+                .map_err(ProvingError::OtherError)?,
         )
         .with_request_id(RequestId::new(boundless_wallet_address, fresh_nonce));
 
@@ -907,14 +912,14 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             .submit_offchain(request.clone())
             .await
             .context("Client::submit_offchain()")
-            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+            .map_err(ProvingError::OtherError)?
     } else {
         info!("Submitting onchain request.");
         boundless_client
             .submit_onchain(request.clone())
             .await
             .context("Client::submit_onchain()")
-            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+            .map_err(ProvingError::OtherError)?
     };
     info!(
         "Boundless request 0x{request_id:x} submitted. ({} sec cooldown).",
