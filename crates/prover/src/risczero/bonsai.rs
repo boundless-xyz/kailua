@@ -256,7 +256,7 @@ pub async fn create_stark_session<A: NoUninit + Into<Digest>>(
     // Upload the ELF with the image_id as its key.
     let elf = image.1.to_vec();
     let image_id_hex = hex::encode(image.0.into());
-    let is_image_present = retry_res_timeout!(client.has_img(&image_id_hex).await).await;
+    let is_image_present = retry_res_timeout!(10, client.has_img(&image_id_hex).await).await;
     if !is_image_present {
         info!(
             "Uploading {} Kailua ELF to Bonsai.",

@@ -47,7 +47,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
         None
     } else {
         Some(
-            retry_res_ctx_timeout!(20, args.create_providers().await)
+            retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await)
                 .await
                 .l2,
         )
@@ -138,11 +138,14 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
             context,
             tracer,
             "l2_provider get_block_by_hash agreed_l2_head_hash",
-            retry_res_ctx_timeout!(l2_provider
-                .get_block_by_hash(args.kona.agreed_l2_head_hash)
-                .await
-                .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
-                .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block number")))
+            retry_res_ctx_timeout!(
+                args.timeouts.op_geth_timeout,
+                l2_provider
+                    .get_block_by_hash(args.kona.agreed_l2_head_hash)
+                    .await
+                    .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
+                    .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block number"))
+            )
         )
         .header
         .number;
@@ -161,6 +164,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 tracer,
                 "claimed_l2_output_root",
                 retry_res_ctx_timeout!(
+                    args.timeouts.op_node_timeout,
                     op_node_provider
                         .output_at_block(claimed_l2_block_number)
                         .await
@@ -174,11 +178,14 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 context,
                 tracer,
                 "l2_provider get_block_by_number claimed_l2_block_number",
-                retry_res_ctx_timeout!(l2_provider
-                    .get_block_by_number(BlockNumberOrTag::Number(claimed_l2_block_number))
-                    .await
-                    .context("l2_provider get_block_by_number claimed_l2_block_number")?
-                    .ok_or_else(|| anyhow!("Failed to fetch claimed l2 block")))
+                retry_res_ctx_timeout!(
+                    args.timeouts.op_geth_timeout,
+                    l2_provider
+                        .get_block_by_number(BlockNumberOrTag::Number(claimed_l2_block_number))
+                        .await
+                        .context("l2_provider get_block_by_number claimed_l2_block_number")?
+                        .ok_or_else(|| anyhow!("Failed to fetch claimed l2 block"))
+                )
             )
             .header
             .hash;
@@ -228,11 +235,14 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     context,
                     tracer,
                     "l2_provider get_block_by_hash starting_block",
-                    retry_res_ctx_timeout!(l2_provider
-                        .get_block_by_hash(job_args.kona.agreed_l2_head_hash)
-                        .await
-                        .context("l2_provider get_block_by_hash starting_block")?
-                        .ok_or_else(|| anyhow!("Failed to fetch starting block")))
+                    retry_res_ctx_timeout!(
+                        args.timeouts.op_geth_timeout,
+                        l2_provider
+                            .get_block_by_hash(job_args.kona.agreed_l2_head_hash)
+                            .await
+                            .context("l2_provider get_block_by_hash starting_block")?
+                            .ok_or_else(|| anyhow!("Failed to fetch starting block"))
+                    )
                 )
                 .header
                 .number
@@ -384,21 +394,27 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     context,
                     tracer,
                     "op_node_provider output_at_block mid_output",
-                    retry_res_ctx_timeout!(op_node_provider
-                        .output_at_block(mid_point)
-                        .await
-                        .context("op_node_provider output_at_block mid_output"))
+                    retry_res_ctx_timeout!(
+                        args.timeouts.op_node_timeout,
+                        op_node_provider
+                            .output_at_block(mid_point)
+                            .await
+                            .context("op_node_provider output_at_block mid_output")
+                    )
                 );
                 let l2_provider = l2_provider.as_ref().expect("Missing l2_provider");
                 let mid_block = await_tel!(
                     context,
                     tracer,
                     "l2_provider get_block_by_number mid_block",
-                    retry_res_ctx_timeout!(l2_provider
-                        .get_block_by_number(BlockNumberOrTag::Number(mid_point))
-                        .await
-                        .context("l2_provider get_block_by_number mid_block")?
-                        .ok_or_else(|| anyhow!("Block {mid_point} not found")))
+                    retry_res_ctx_timeout!(
+                        args.timeouts.op_geth_timeout,
+                        l2_provider
+                            .get_block_by_number(BlockNumberOrTag::Number(mid_point))
+                            .await
+                            .context("l2_provider get_block_by_number mid_block")?
+                            .ok_or_else(|| anyhow!("Block {mid_point} not found"))
+                    )
                 );
                 // Instantiate derivation trace channel
                 let (lower_sender, upper_receiver) = async_channel::bounded(1);
@@ -455,13 +471,16 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 context,
                 tracer,
                 "l2_provider get_block_by_number claimed_l2_block_number",
-                retry_res_ctx_timeout!(l2_provider
-                    .get_block_by_number(BlockNumberOrTag::Number(
-                        base_args.kona.claimed_l2_block_number,
-                    ))
-                    .await
-                    .context("l2_provider get_block_by_number claimed_l2_block_number")?
-                    .ok_or_else(|| anyhow!("Claimed L2 block not found")))
+                retry_res_ctx_timeout!(
+                    args.timeouts.op_geth_timeout,
+                    l2_provider
+                        .get_block_by_number(BlockNumberOrTag::Number(
+                            base_args.kona.claimed_l2_block_number,
+                        ))
+                        .await
+                        .context("l2_provider get_block_by_number claimed_l2_block_number")?
+                        .ok_or_else(|| anyhow!("Claimed L2 block not found"))
+                )
             )
             .header
             .hash;

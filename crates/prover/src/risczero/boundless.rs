@@ -530,11 +530,14 @@ pub async fn look_back(
             break Ok(None);
         };
         // Check if not expired
-        let request_status = retry_res_timeout!(boundless_client
-            .boundless_market
-            .get_status(request_id, Some(request.expires_at()))
-            .await
-            .context("get_status"))
+        let request_status = retry_res_timeout!(
+            15,
+            boundless_client
+                .boundless_market
+                .get_status(request_id, Some(request.expires_at()))
+                .await
+                .context("get_status")
+        )
         .await;
 
         if matches!(request_status, RequestStatus::Expired) {
@@ -845,12 +848,15 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     // Build final request
     let boundless_wallet_address = boundless_client.signer.as_ref().unwrap().address();
 
-    let boundless_rpc_time = retry_res_timeout!(boundless_client
-        .provider()
-        .get_block_by_number(BlockNumberOrTag::Latest)
-        .await
-        .context("get_block_by_number latest")?
-        .ok_or_else(|| anyhow!("Failed to fetch latest block from Boundless RPC")))
+    let boundless_rpc_time = retry_res_timeout!(
+        15,
+        boundless_client
+            .provider()
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await
+            .context("get_block_by_number latest")?
+            .ok_or_else(|| anyhow!("Failed to fetch latest block from Boundless RPC"))
+    )
     .await
     .header
     .timestamp;

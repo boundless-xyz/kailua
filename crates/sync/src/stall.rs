@@ -26,10 +26,10 @@ use std::marker::PhantomData;
 
 #[async_trait]
 pub trait Stall<R> {
-    async fn stall(&self, span: &'static str) -> R;
+    async fn stall(&self, span: &'static str, timeout: u64) -> R;
 
-    async fn stall_with_context(&self, context: Context, span: &'static str) -> R {
-        self.stall(span).with_context(context).await
+    async fn stall_with_context(&self, context: Context, span: &'static str, timeout: u64) -> R {
+        self.stall(span, timeout).with_context(context).await
     }
 }
 
@@ -40,7 +40,7 @@ where
     EthCall<'coder, PhantomData<C>, N>: IntoFuture,
     C::Return: Send,
 {
-    async fn stall(&self, span: &'static str) -> C::Return {
+    async fn stall(&self, span: &'static str, timeout: u64) -> C::Return {
         let tracer = tracer("kailua");
         let context = Context::current_with_span(tracer.start(span));
 
@@ -48,10 +48,12 @@ where
             context,
             tracer,
             "call_raw",
-            retry_res_ctx_timeout!(self
-                .call_raw()
-                .await
-                .and_then(|response| self.decode_output(response)))
+            retry_res_ctx_timeout!(
+                timeout,
+                self.call_raw()
+                    .await
+                    .and_then(|response| self.decode_output(response))
+            )
         )
     }
 }

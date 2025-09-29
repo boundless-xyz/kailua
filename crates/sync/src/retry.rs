@@ -12,17 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub const MIN_DELAY_MS: u64 = 250;
+pub const MAX_DELAY_MS: u64 = 16000;
+
 #[macro_export]
 macro_rules! retry {
     ($e:expr) => {
-        $crate::retry!(250, 1000, $e)
+        $crate::retry!($crate::retry::MIN_DELAY_MS, $crate::retry::MAX_DELAY_MS, $e)
     };
-    ($m:literal, $e:expr) => {
-        $crate::retry!(250, $m, $e)
+    ($m:expr, $e:expr) => {
+        $crate::retry!($crate::retry::MIN_DELAY_MS, $m, $e)
     };
-    ($b:literal, $m:literal, $e:expr) => {
+    ($b:expr, $m:expr, $e:expr) => {
         tokio_retry::Retry::spawn(
-            tokio_retry::strategy::ExponentialBackoff::from_millis($b)
+            tokio_retry::strategy::ExponentialBackoff::from_millis(2)
+                .factor($b / 2u64)
                 .max_delay(std::time::Duration::from_millis($m)),
             || async {
                 let res = $e;
@@ -38,12 +42,12 @@ macro_rules! retry {
 #[macro_export]
 macro_rules! retry_res {
     ($e:expr) => {
-        $crate::retry_res!(250, 1000, $e)
+        $crate::retry_res!($crate::retry::MIN_DELAY_MS, $crate::retry::MAX_DELAY_MS, $e)
     };
-    ($m:literal, $e:expr) => {
-        $crate::retry_res!(250, $m, $e)
+    ($m:expr, $e:expr) => {
+        $crate::retry_res!($crate::retry::MIN_DELAY_MS, $m, $e)
     };
-    ($b:literal, $m:literal, $e:expr) => {
+    ($b:expr, $m:expr, $e:expr) => {
         async { $crate::retry!($b, $m, $e).await.unwrap() }
     };
 }
@@ -51,12 +55,12 @@ macro_rules! retry_res {
 #[macro_export]
 macro_rules! retry_ctx {
     ($e:expr) => {
-        $crate::retry_ctx!(250, 1000, $e)
+        $crate::retry_ctx!($crate::retry::MIN_DELAY_MS, $crate::retry::MAX_DELAY_MS, $e)
     };
-    ($m:literal, $e:expr) => {
-        $crate::retry_ctx!(250, $m, $e)
+    ($m:expr, $e:expr) => {
+        $crate::retry_ctx!($crate::retry::MIN_DELAY_MS, $m, $e)
     };
-    ($b:literal, $m:literal, $e:expr) => {
+    ($b:expr, $m:expr, $e:expr) => {
         $crate::retry!(
             $b,
             $m,
@@ -75,48 +79,69 @@ macro_rules! retry_ctx {
 #[macro_export]
 macro_rules! retry_res_ctx {
     ($e:expr) => {
-        $crate::retry_res_ctx!(250, 1000, $e)
+        $crate::retry_res_ctx!($crate::retry::MIN_DELAY_MS, $crate::retry::MAX_DELAY_MS, $e)
     };
-    ($m:literal, $e:expr) => {
-        $crate::retry_res_ctx!(250, $m, $e)
+    ($m:expr, $e:expr) => {
+        $crate::retry_res_ctx!($crate::retry::MIN_DELAY_MS, $m, $e)
     };
-    ($b:literal, $m:literal, $e:expr) => {
+    ($b:expr, $m:expr, $e:expr) => {
         async { $crate::retry_ctx!($b, $m, $e).await.unwrap() }
     };
 }
 
 #[macro_export]
 macro_rules! retry_timeout {
-    ($e:expr) => {
-        $crate::retry_timeout!(5, 250, 1000, $e)
-    };
+    // ($e:expr) => {
+    //     $crate::retry_timeout!(
+    //         5,
+    //         $crate::retry::MIN_DELAY_MS,
+    //         $crate::retry::MAX_DELAY_MS,
+    //         $e
+    //     )
+    // };
     ($t:expr, $e:expr) => {
-        $crate::retry_timeout!($t, 250, 1000, $e)
-    };
-    ($t:expr, $m:literal, $e:expr) => {
-        $crate::retry_timeout!($t, 250, $m, $e)
-    };
-    ($t:expr, $b:literal, $m:literal, $e:expr) => {
-        $crate::retry_res!(
-            $b,
-            $m,
-            tokio::time::timeout(core::time::Duration::from_secs($t), async { $e }).await
+        $crate::retry_timeout!(
+            $t,
+            $crate::retry::MIN_DELAY_MS,
+            $crate::retry::MAX_DELAY_MS,
+            $e
         )
+    };
+    ($t:expr, $m:expr, $e:expr) => {
+        $crate::retry_timeout!($t, $crate::retry::MIN_DELAY_MS, $m, $e)
+    };
+    ($t:expr, $b:expr, $m:expr, $e:expr) => {
+        $crate::retry_res!($b, $m, {
+            let t = $t;
+            tokio::time::timeout(core::time::Duration::from_secs(t), async { $e })
+                .await
+                .context("timeout: {t}s")
+        })
     };
 }
 
 #[macro_export]
 macro_rules! retry_res_timeout {
-    ($e:expr) => {
-        $crate::retry_res_timeout!(5, 250, 1000, $e)
-    };
+    // ($e:expr) => {
+    //     $crate::retry_res_timeout!(
+    //         5,
+    //         $crate::retry::MIN_DELAY_MS,
+    //         $crate::retry::MAX_DELAY_MS,
+    //         $e
+    //     )
+    // };
     ($t:expr, $e:expr) => {
-        $crate::retry_res_timeout!($t, 250, 1000, $e)
+        $crate::retry_res_timeout!(
+            $t,
+            $crate::retry::MIN_DELAY_MS,
+            $crate::retry::MAX_DELAY_MS,
+            $e
+        )
     };
-    ($t:expr, $m:literal, $e:expr) => {
-        $crate::retry_res_timeout!($t, 250, $m, $e)
+    ($t:expr, $m:expr, $e:expr) => {
+        $crate::retry_res_timeout!($t, $crate::retry::MIN_DELAY_MS, $m, $e)
     };
-    ($t:expr, $b:literal, $m:literal, $e:expr) => {
+    ($t:expr, $b:expr, $m:expr, $e:expr) => {
         async {
             $crate::retry_res!(
                 $crate::retry_res!(
@@ -133,16 +158,26 @@ macro_rules! retry_res_timeout {
 
 #[macro_export]
 macro_rules! retry_res_ctx_timeout {
-    ($e:expr) => {
-        $crate::retry_res_ctx_timeout!(5, 250, 1000, $e)
-    };
+    // ($e:expr) => {
+    //     $crate::retry_res_ctx_timeout!(
+    //         5,
+    //         $crate::retry::MIN_DELAY_MS,
+    //         $crate::retry::MAX_DELAY_MS,
+    //         $e
+    //     )
+    // };
     ($t:expr, $e:expr) => {
-        $crate::retry_res_ctx_timeout!($t, 250, 1000, $e)
+        $crate::retry_res_ctx_timeout!(
+            $t,
+            $crate::retry::MIN_DELAY_MS,
+            $crate::retry::MAX_DELAY_MS,
+            $e
+        )
     };
-    ($t:expr, $m:literal, $e:expr) => {
-        $crate::retry_res_ctx_timeout!($t, 250, $m, $e)
+    ($t:expr, $m:expr, $e:expr) => {
+        $crate::retry_res_ctx_timeout!($t, $crate::retry::MIN_DELAY_MS, $m, $e)
     };
-    ($t:expr, $b:literal, $m:literal, $e:expr) => {
+    ($t:expr, $b:expr, $m:expr, $e:expr) => {
         async {
             $crate::retry_res_ctx!($crate::retry_res_ctx!(
                 $b,

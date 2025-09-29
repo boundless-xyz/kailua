@@ -18,7 +18,7 @@ use alloy::primitives::{Address, B256};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-#[derive(clap::Args, Debug, Clone)]
+#[derive(clap::Args, Debug, Clone, Default)]
 pub struct SyncArgs {
     #[clap(flatten)]
     pub provider: ProviderArgs,

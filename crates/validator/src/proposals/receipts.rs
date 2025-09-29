@@ -100,7 +100,10 @@ pub async fn publish_receipt_proofs<P: Provider>(
         // Abort early if a validity proof is already submitted in this tournament
         if await_tel!(
             context,
-            parent.fetch_is_successor_validity_proven(&agent.provider.l1_provider)
+            parent.fetch_is_successor_validity_proven(
+                &agent.provider.l1_provider,
+                args.sync.provider.timeouts.eth_rpc_timeout
+            )
         ) {
             info!(
                 "Skipping proof submission in tournament {} with validity proof.",
@@ -118,7 +121,11 @@ pub async fn publish_receipt_proofs<P: Provider>(
         let parent_contract = KailuaTournament::new(parent.contract, validator_provider);
         let expected_fpvm_image_id = parent_contract
             .FPVM_IMAGE_ID()
-            .stall_with_context(context.clone(), "KailuaTournament::FPVM_IMAGE_ID")
+            .stall_with_context(
+                context.clone(),
+                "KailuaTournament::FPVM_IMAGE_ID",
+                args.sync.provider.timeouts.eth_rpc_timeout,
+            )
             .await
             .0;
 
@@ -189,7 +196,11 @@ pub async fn publish_receipt_proofs<P: Provider>(
             {
                 let contract_blobs_hash = proposal_contract
                     .blobsHash()
-                    .stall_with_context(context.clone(), "KailuaGame::blobsHash")
+                    .stall_with_context(
+                        context.clone(),
+                        "KailuaGame::blobsHash",
+                        args.sync.provider.timeouts.eth_rpc_timeout,
+                    )
                     .await;
                 if proposal.blobs_hash() != contract_blobs_hash {
                     warn!(
@@ -216,7 +227,11 @@ pub async fn publish_receipt_proofs<P: Provider>(
                 }
                 let config_hash = proposal_contract
                     .ROLLUP_CONFIG_HASH()
-                    .stall_with_context(context.clone(), "KailuaGame::ROLLUP_CONFIG_HASH")
+                    .stall_with_context(
+                        context.clone(),
+                        "KailuaGame::ROLLUP_CONFIG_HASH",
+                        args.sync.provider.timeouts.eth_rpc_timeout,
+                    )
                     .await;
                 if proof_journal.config_hash != config_hash {
                     warn!(
@@ -266,7 +281,11 @@ pub async fn publish_receipt_proofs<P: Provider>(
                     info!("Validity proof submitted: {:?}", receipt.transaction_hash);
                     let proof_status = parent_contract
                         .provenAt(proposal.signature)
-                        .stall_with_context(context.clone(), "KailuaTournament::provenAt")
+                        .stall_with_context(
+                            context.clone(),
+                            "KailuaTournament::provenAt",
+                            args.sync.provider.timeouts.eth_rpc_timeout,
+                        )
                         .await;
                     info!("Validity proof timestamp: {proof_status}");
                     info!("KailuaTournament::proveValidity: {} gas", receipt.gas_used);
@@ -345,6 +364,7 @@ pub async fn publish_receipt_proofs<P: Provider>(
                 tracer,
                 "op_node_output",
                 retry_res_ctx_timeout!(
+                    args.sync.provider.timeouts.op_node_timeout,
                     agent
                         .provider
                         .op_provider
@@ -379,7 +399,11 @@ pub async fn publish_receipt_proofs<P: Provider>(
         // Skip proof submission if already proven
         let fault_proof_status = parent_contract
             .proofStatus(proposal.signature)
-            .stall_with_context(context.clone(), "KailuaTournament::proofStatus")
+            .stall_with_context(
+                context.clone(),
+                "KailuaTournament::proofStatus",
+                args.sync.provider.timeouts.eth_rpc_timeout,
+            )
             .await;
         if fault_proof_status != 0 {
             warn!("Skipping proof submission for already proven game at local index {proposal_index}.");
@@ -445,7 +469,11 @@ pub async fn publish_receipt_proofs<P: Provider>(
                         commitments.last().unwrap().clone(),
                         proofs.last().unwrap().clone(),
                     )
-                    .stall_with_context(context.clone(), "KailuaGame::verifyIntermediateOutput")
+                    .stall_with_context(
+                        context.clone(),
+                        "KailuaGame::verifyIntermediateOutput",
+                        args.sync.provider.timeouts.eth_rpc_timeout,
+                    )
                     .await;
                 if !proposal_has_output {
                     warn!("Could not verify proposed output");
@@ -478,7 +506,11 @@ pub async fn publish_receipt_proofs<P: Provider>(
                         commitments.first().unwrap().clone(),
                         proofs.first().unwrap().clone(),
                     )
-                    .stall_with_context(context.clone(), "KailuaGame::verifyIntermediateOutput")
+                    .stall_with_context(
+                        context.clone(),
+                        "KailuaGame::verifyIntermediateOutput",
+                        args.sync.provider.timeouts.eth_rpc_timeout,
+                    )
                     .await;
                 if !proposal_has_output {
                     warn!("Could not verify last common output for proposal");
@@ -512,7 +544,11 @@ pub async fn publish_receipt_proofs<P: Provider>(
         {
             let config_hash = parent_contract
                 .ROLLUP_CONFIG_HASH()
-                .stall_with_context(context.clone(), "KailuaTournament::ROLLUP_CONFIG_HASH")
+                .stall_with_context(
+                    context.clone(),
+                    "KailuaTournament::ROLLUP_CONFIG_HASH",
+                    args.sync.provider.timeouts.eth_rpc_timeout,
+                )
                 .await;
             if proof_journal.config_hash != config_hash {
                 warn!(
@@ -556,7 +592,11 @@ pub async fn publish_receipt_proofs<P: Provider>(
                 info!("Output fault proof submitted: {receipt:?}");
                 let proof_status = parent_contract
                     .proofStatus(proposal.signature)
-                    .stall_with_context(context.clone(), "KailuaTournament::proofStatus")
+                    .stall_with_context(
+                        context.clone(),
+                        "KailuaTournament::proofStatus",
+                        args.sync.provider.timeouts.eth_rpc_timeout,
+                    )
                     .await;
                 info!("Proposal {} proven: {proof_status}", proposal.index);
                 info!(

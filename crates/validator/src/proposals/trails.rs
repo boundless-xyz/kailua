@@ -115,7 +115,11 @@ pub async fn publish_trail_proofs<P: Provider>(
         // Skip proof submission if already proven
         let fault_proof_status = parent_contract
             .proofStatus(proposal.signature)
-            .stall_with_context(context.clone(), "KailuaTournament::proofStatus")
+            .stall_with_context(
+                context.clone(),
+                "KailuaTournament::proofStatus",
+                args.sync.provider.timeouts.eth_rpc_timeout,
+            )
             .await;
         if fault_proof_status != 0 {
             warn!("Skipping proof submission for already proven game at local index {proposal_index}.");
@@ -150,7 +154,11 @@ pub async fn publish_trail_proofs<P: Provider>(
                     blob_commitment.clone(),
                     kzg_proof.clone(),
                 )
-                .stall_with_context(context.clone(), "KailuaGame::verifyIntermediateOutput")
+                .stall_with_context(
+                    context.clone(),
+                    "KailuaGame::verifyIntermediateOutput",
+                    args.sync.provider.timeouts.eth_rpc_timeout,
+                )
                 .await
             {
                 warn!("Could not verify divergent trail output for proposal");
@@ -190,7 +198,11 @@ pub async fn publish_trail_proofs<P: Provider>(
                 info!("Trail fault proof submitted: {receipt:?}");
                 let proof_status = parent_contract
                     .proofStatus(proposal.signature)
-                    .stall_with_context(context.clone(), "KailuaTournament::proofStatus")
+                    .stall_with_context(
+                        context.clone(),
+                        "KailuaTournament::proofStatus",
+                        args.sync.provider.timeouts.eth_rpc_timeout,
+                    )
                     .await;
                 info!("Proposal {} proven: {proof_status}", proposal.index);
                 info!(

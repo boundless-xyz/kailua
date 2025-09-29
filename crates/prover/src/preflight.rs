@@ -39,6 +39,7 @@ use tracing::{error, info, warn};
 
 pub async fn get_blob_fetch_request(
     l1_provider: &RootProvider,
+    l1_timeout: u64,
     block_hash: B256,
     blob_hash: B256,
 ) -> anyhow::Result<BlobFetchRequest> {
@@ -49,12 +50,15 @@ pub async fn get_blob_fetch_request(
         context,
         tracer,
         "get_block_by_hash",
-        retry_res_ctx_timeout!(l1_provider
-            .get_block_by_hash(block_hash)
-            .full()
-            .await
-            .context("get_block_by_hash")?
-            .ok_or_else(|| anyhow!("Failed to fetch starting block")))
+        retry_res_ctx_timeout!(
+            l1_timeout,
+            l1_provider
+                .get_block_by_hash(block_hash)
+                .full()
+                .await
+                .context("get_block_by_hash")?
+                .ok_or_else(|| anyhow!("Failed to fetch starting block"))
+        )
     );
     let mut blob_index = 0;
     let mut blob_found = false;
@@ -100,7 +104,8 @@ pub async fn fetch_precondition_data(
 
     // fetch necessary data to validate blob equivalence precondition
     if hash_arguments.iter().all(|arg| !arg) {
-        let providers = retry_res_ctx_timeout!(20, cfg.create_providers().await).await;
+        let providers =
+            retry_res_ctx_timeout!(cfg.timeouts.max(), cfg.create_providers().await).await;
         if cfg.precondition_block_hashes.len() != cfg.precondition_blob_hashes.len() {
             bail!(
                 "Blob reference mismatch. Found {} block hashes and {} blob hashes",
@@ -116,8 +121,15 @@ pub async fn fetch_precondition_data(
                 cfg.precondition_blob_hashes.iter(),
             ) {
                 info!("Fetching blob hash {blob_hash} from block {block_hash}");
-                fetch_requests
-                    .push(get_blob_fetch_request(&providers.l1, *block_hash, *blob_hash).await?);
+                fetch_requests.push(
+                    get_blob_fetch_request(
+                        &providers.l1,
+                        cfg.timeouts.eth_rpc_timeout,
+                        *block_hash,
+                        *blob_hash,
+                    )
+                    .await?,
+                );
             }
             ProposalPrecondition {
                 proposal_l2_head_number: cfg.precondition_params[0],
@@ -158,18 +170,21 @@ pub async fn concurrent_execution_preflight(
     let context =
         opentelemetry::Context::current_with_span(tracer.start("concurrent_execution_preflight"));
 
-    let l2_provider = retry_res_ctx_timeout!(20, args.create_providers().await)
+    let l2_provider = retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await)
         .await
         .l2;
     let starting_block = await_tel!(
         context,
         tracer,
         "l2_provider get_block_by_hash agreed_l2_head_hash",
-        retry_res_ctx_timeout!(l2_provider
-            .get_block_by_hash(args.kona.agreed_l2_head_hash)
-            .await
-            .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
-            .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block")))
+        retry_res_ctx_timeout!(
+            args.timeouts.op_geth_timeout,
+            l2_provider
+                .get_block_by_hash(args.kona.agreed_l2_head_hash)
+                .await
+                .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
+                .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block"))
+        )
     )
     .header
     .number;
@@ -199,11 +214,14 @@ pub async fn concurrent_execution_preflight(
             context,
             tracer,
             "l2_provider get_block_by_hash agreed_l2_head_hash",
-            retry_res_ctx_timeout!(l2_provider
-                .get_block_by_hash(args.kona.agreed_l2_head_hash)
-                .await
-                .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
-                .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block")))
+            retry_res_ctx_timeout!(
+                args.timeouts.op_geth_timeout,
+                l2_provider
+                    .get_block_by_hash(args.kona.agreed_l2_head_hash)
+                    .await
+                    .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
+                    .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block"))
+            )
         )
         .header
         .number
@@ -213,6 +231,7 @@ pub async fn concurrent_execution_preflight(
             tracer,
             "output_at_block claimed_l2_block_number",
             retry_res_ctx_timeout!(
+                args.timeouts.op_node_timeout,
                 op_node_provider
                     .output_at_block(args.kona.claimed_l2_block_number)
                     .await
@@ -242,13 +261,16 @@ pub async fn concurrent_execution_preflight(
                 context,
                 tracer,
                 "l2_provider get_block_by_number claimed_l2_block_number",
-                retry_res_ctx_timeout!(l2_provider
-                    .get_block_by_number(BlockNumberOrTag::Number(
-                        args.kona.claimed_l2_block_number
-                    ))
-                    .await
-                    .context("l2_provider get_block_by_number claimed_l2_block_number")?
-                    .ok_or_else(|| anyhow!("Failed to claimed l2 block")))
+                retry_res_ctx_timeout!(
+                    args.timeouts.op_geth_timeout,
+                    l2_provider
+                        .get_block_by_number(BlockNumberOrTag::Number(
+                            args.kona.claimed_l2_block_number
+                        ))
+                        .await
+                        .context("l2_provider get_block_by_number claimed_l2_block_number")?
+                        .ok_or_else(|| anyhow!("Failed to claimed l2 block"))
+                )
             )
             .header
             .hash;

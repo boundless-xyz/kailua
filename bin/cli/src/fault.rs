@@ -87,7 +87,11 @@ pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
     let system_config = SystemConfig::new(config.l1_system_config_address, &eth_rpc_provider);
     let dgf_address = system_config
         .disputeGameFactory()
-        .stall_with_context(context.clone(), "SystemConfig::disputeGameFactory")
+        .stall_with_context(
+            context.clone(),
+            "SystemConfig::disputeGameFactory",
+            args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+        )
         .await;
 
     // init l1 stuff
@@ -118,41 +122,69 @@ pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
     let kailua_game_implementation = KailuaGame::new(
         dispute_game_factory
             .gameImpls(KAILUA_GAME_TYPE)
-            .stall_with_context(context.clone(), "DisputeGameFactory::gameImpls")
+            .stall_with_context(
+                context.clone(),
+                "DisputeGameFactory::gameImpls",
+                args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+            )
             .await,
         &tester_provider,
     );
     let kailua_treasury_address = kailua_game_implementation
         .KAILUA_TREASURY()
-        .stall_with_context(context.clone(), "KailuaGame::KAILUA_TREASURY")
+        .stall_with_context(
+            context.clone(),
+            "KailuaGame::KAILUA_TREASURY",
+            args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+        )
         .await;
     let kailua_treasury_instance = KailuaTreasury::new(kailua_treasury_address, &tester_provider);
 
     // load constants
     let proposal_output_count = kailua_game_implementation
         .PROPOSAL_OUTPUT_COUNT()
-        .stall_with_context(context.clone(), "KailuaGame::PROPOSAL_OUTPUT_COUNT")
+        .stall_with_context(
+            context.clone(),
+            "KailuaGame::PROPOSAL_OUTPUT_COUNT",
+            args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+        )
         .await;
     let output_block_span = kailua_game_implementation
         .OUTPUT_BLOCK_SPAN()
-        .stall_with_context(context.clone(), "KailuaGame::OUTPUT_BLOCK_SPAN")
+        .stall_with_context(
+            context.clone(),
+            "KailuaGame::OUTPUT_BLOCK_SPAN",
+            args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+        )
         .await;
     let proposal_block_count = proposal_output_count * output_block_span;
 
     // get proposal parent
     let games_count = dispute_game_factory
         .gameCount()
-        .stall_with_context(context.clone(), "DisputeGameFactory::gameCount")
+        .stall_with_context(
+            context.clone(),
+            "DisputeGameFactory::gameCount",
+            args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+        )
         .await;
     let parent_game_address = dispute_game_factory
         .gameAtIndex(U256::from(args.fault_parent))
-        .stall_with_context(context.clone(), "DisputeGameFactory::gameAtIndex")
+        .stall_with_context(
+            context.clone(),
+            "DisputeGameFactory::gameAtIndex",
+            args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+        )
         .await
         .proxy_;
     let parent_game_contract = KailuaGame::new(parent_game_address, &tester_provider);
     let parent_block_number: u64 = parent_game_contract
         .l2BlockNumber()
-        .stall_with_context(context.clone(), "KailuaTournament::l2BlockNumber")
+        .stall_with_context(
+            context.clone(),
+            "KailuaTournament::l2BlockNumber",
+            args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+        )
         .await
         .to();
     // Prepare faulty proposal
@@ -168,6 +200,7 @@ pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
             tracer,
             "proposed_output_root",
             retry_res_ctx_timeout!(
+                args.propose_args.sync.provider.timeouts.op_node_timeout,
                 op_node_provider
                     .output_at_block(proposed_block_number)
                     .await
@@ -190,7 +223,10 @@ pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
                 context,
                 tracer,
                 "output_hash",
-                retry_res_ctx_timeout!(op_node_provider.output_at_block(io_block_number).await)
+                retry_res_ctx_timeout!(
+                    args.propose_args.sync.provider.timeouts.op_node_timeout,
+                    op_node_provider.output_at_block(io_block_number).await
+                )
             )
         } else {
             B256::ZERO
@@ -216,7 +252,11 @@ pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
                 proposed_output_root,
                 Bytes::from(extra_data.clone()),
             )
-            .stall_with_context(context.clone(), "DisputeGameFactory::games")
+            .stall_with_context(
+                context.clone(),
+                "DisputeGameFactory::games",
+                args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+            )
             .await
             .proxy_;
         if dupe_game_address.is_zero() {
@@ -229,11 +269,19 @@ pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
 
     let bond_value = kailua_treasury_instance
         .participationBond()
-        .stall_with_context(context.clone(), "KailuaTreasury::participationBond")
+        .stall_with_context(
+            context.clone(),
+            "KailuaTreasury::participationBond",
+            args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+        )
         .await;
     let paid_in = kailua_treasury_instance
         .paidBonds(tester_address)
-        .stall_with_context(context.clone(), "KailuaTreasury::paidBonds")
+        .stall_with_context(
+            context.clone(),
+            "KailuaTreasury::paidBonds",
+            args.propose_args.sync.provider.timeouts.eth_rpc_timeout,
+        )
         .await;
     let owed_collateral = bond_value.saturating_sub(paid_in);
 

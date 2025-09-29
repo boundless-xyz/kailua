@@ -48,7 +48,7 @@ impl HanaHintHandler {
         Ok(blobstream_contract
             .latestBlock()
             .block(BlockId::Hash(l1_head.into()))
-            .stall("SP1Blobstream::latestBlock")
+            .stall("SP1Blobstream::latestBlock", 12)
             .await)
     }
 

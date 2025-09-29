@@ -58,6 +58,7 @@ impl SyncCursor {
         deployment: &SyncDeployment,
         provider: &SyncProvider,
         starting_proposal: Option<Address>,
+        timeout: u64,
     ) -> anyhow::Result<Self> {
         let tracer = tracer("kailua");
         let context = Context::current_with_span(tracer.start("SyncCursor::load"));
@@ -67,7 +68,7 @@ impl SyncCursor {
             None => {
                 KailuaTreasury::new(deployment.treasury, &provider.l1_provider)
                     .lastResolved()
-                    .stall_with_context(context.clone(), "KailuaTreasury::lastResolved")
+                    .stall_with_context(context.clone(), "KailuaTreasury::lastResolved", timeout)
                     .await
             }
         };
@@ -80,7 +81,11 @@ impl SyncCursor {
 
         let anchor_treasury = anchor
             .KAILUA_TREASURY()
-            .stall_with_context(context.clone(), "KailuaTournament::KAILUA_TREASURY")
+            .stall_with_context(
+                context.clone(),
+                "KailuaTournament::KAILUA_TREASURY",
+                timeout,
+            )
             .await;
         if anchor_treasury != deployment.treasury {
             bail!("Anchor is not part of the correct deployment.");
@@ -88,14 +93,14 @@ impl SyncCursor {
 
         let anchor_index: u64 = anchor
             .gameIndex()
-            .stall_with_context(context.clone(), "KailuaTournament::gameIndex")
+            .stall_with_context(context.clone(), "KailuaTournament::gameIndex", timeout)
             .await
             .to();
 
         let Some(true) = Proposal::parse_finality(
             anchor
                 .status()
-                .stall_with_context(context.clone(), "KailuaTournament::status")
+                .stall_with_context(context.clone(), "KailuaTournament::status", timeout)
                 .await,
         )?
         else {
@@ -104,13 +109,13 @@ impl SyncCursor {
 
         let anchor_block_height: u64 = anchor
             .l2BlockNumber()
-            .stall_with_context(context.clone(), "KailuaTournament::l2BlockNumber")
+            .stall_with_context(context.clone(), "KailuaTournament::l2BlockNumber", timeout)
             .await
             .to();
 
         let parent_address = anchor
             .parentGame()
-            .stall_with_context(context.clone(), "KailuaTournament::parentGame")
+            .stall_with_context(context.clone(), "KailuaTournament::parentGame", timeout)
             .await;
 
         let last_output_index = if parent_address == anchor_address {

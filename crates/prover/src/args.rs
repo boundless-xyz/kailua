@@ -19,6 +19,7 @@ use alloy_primitives::{Address, B256};
 use clap::Parser;
 use futures::FutureExt;
 use kailua_sync::args::{parse_address, parse_b256};
+use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::telemetry::TelemetryArgs;
 use kona_host::single::{SingleChainHostError, SingleChainProviders};
 use std::cmp::Ordering;
@@ -178,6 +179,8 @@ pub struct ProveArgs {
 
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
+    #[clap(flatten)]
+    pub timeouts: ProviderTimeoutArgs,
 }
 
 impl ProveArgs {

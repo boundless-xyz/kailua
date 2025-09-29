@@ -26,6 +26,7 @@ use opentelemetry::trace::{TraceContextExt, Tracer};
 pub async fn get_next_block<P: Provider<N>, N: Network>(
     provider: P,
     parent_hash: B256,
+    timeout: u64,
 ) -> anyhow::Result<N::BlockResponse> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("get_next_block"));
@@ -34,14 +35,20 @@ pub async fn get_next_block<P: Provider<N>, N: Network>(
         context,
         tracer,
         "Provider::get_block_by_hash",
-        retry_res_ctx_timeout!(provider
-            .get_block_by_hash(parent_hash)
-            .await
-            .context("get_block_by_hash")?
-            .ok_or_else(|| anyhow!("Failed to fetch parent block")))
+        retry_res_ctx_timeout!(
+            timeout,
+            provider
+                .get_block_by_hash(parent_hash)
+                .await
+                .context("get_block_by_hash")?
+                .ok_or_else(|| anyhow!("Failed to fetch parent block"))
+        )
     );
     let parent_number = block_parent.header().number();
-    let block = await_tel!(context, get_block_by_number(&provider, parent_number + 1))?;
+    let block = await_tel!(
+        context,
+        get_block_by_number(&provider, parent_number + 1, timeout)
+    )?;
 
     Ok(block)
 }
@@ -49,6 +56,7 @@ pub async fn get_next_block<P: Provider<N>, N: Network>(
 pub async fn get_block_by_number<P: Provider<N>, N: Network>(
     provider: P,
     block_number: BlockNumber,
+    timeout: u64,
 ) -> anyhow::Result<N::BlockResponse> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("get_block_by_number"));
@@ -57,11 +65,14 @@ pub async fn get_block_by_number<P: Provider<N>, N: Network>(
         context,
         tracer,
         "Provider::get_block_by_number",
-        retry_res_ctx_timeout!(provider
-            .get_block_by_number(BlockNumberOrTag::Number(block_number))
-            .await
-            .context("get_block_by_number")?
-            .ok_or_else(|| anyhow!("Failed to fetch block")))
+        retry_res_ctx_timeout!(
+            timeout,
+            provider
+                .get_block_by_number(BlockNumberOrTag::Number(block_number))
+                .await
+                .context("get_block_by_number")?
+                .ok_or_else(|| anyhow!("Failed to fetch block"))
+        )
     );
 
     Ok(block)
@@ -70,6 +81,7 @@ pub async fn get_block_by_number<P: Provider<N>, N: Network>(
 pub async fn get_block<P: Provider<N>, N: Network>(
     provider: P,
     block_id: BlockNumberOrTag,
+    timeout: u64,
 ) -> N::BlockResponse {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("get_block"));
@@ -78,10 +90,13 @@ pub async fn get_block<P: Provider<N>, N: Network>(
         context,
         tracer,
         "Provider::get_block",
-        retry_res_ctx_timeout!(provider
-            .get_block(BlockId::Number(block_id))
-            .await
-            .context("get_block")?
-            .ok_or_else(|| anyhow!("Failed to fetch block")))
+        retry_res_ctx_timeout!(
+            timeout,
+            provider
+                .get_block(BlockId::Number(block_id))
+                .await
+                .context("get_block")?
+                .ok_or_else(|| anyhow!("Failed to fetch block"))
+        )
     )
 }

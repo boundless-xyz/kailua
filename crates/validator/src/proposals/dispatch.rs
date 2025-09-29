@@ -29,8 +29,9 @@ use std::collections::{BTreeMap, BinaryHeap};
 use std::time::SystemTime;
 use tracing::{error, info, warn};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn dispatch_proof_requests(
-    #[cfg(feature = "devnet")] args: &crate::args::ValidateArgs,
+    args: &crate::args::ValidateArgs,
     agent: &mut SyncAgent,
     buffer: &mut BinaryHeap<(Reverse<u64>, u64)>,
     meter_proofs_requested: &Counter<u64>,
@@ -89,7 +90,11 @@ pub async fn dispatch_proof_requests(
         // Check that a proof had not already been posted
         let proof_status = parent_contract
             .proofStatus(proposal.signature)
-            .stall_with_context(context.clone(), "KailuaTournament::proofStatus")
+            .stall_with_context(
+                context.clone(),
+                "KailuaTournament::proofStatus",
+                args.sync.provider.timeouts.eth_rpc_timeout,
+            )
             .await;
         if proof_status != 0 {
             info!(
@@ -113,9 +118,25 @@ pub async fn dispatch_proof_requests(
 
         if let Err(err) = await_tel!(context, async {
             if is_fault {
-                request_fault_proof(agent, channel, parent, proposal, l1_head).await
+                request_fault_proof(
+                    agent,
+                    channel,
+                    parent,
+                    proposal,
+                    l1_head,
+                    &args.sync.provider.timeouts,
+                )
+                .await
             } else {
-                request_validity_proof(agent, channel, parent, proposal, l1_head).await
+                request_validity_proof(
+                    agent,
+                    channel,
+                    parent,
+                    proposal,
+                    l1_head,
+                    &args.sync.provider.timeouts,
+                )
+                .await
             }
         }) {
             error!("Could not request (is_fault={is_fault}) proof for {proposal_index}: {err:?}");
