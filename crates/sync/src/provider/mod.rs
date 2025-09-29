@@ -32,6 +32,9 @@ pub struct ProviderArgs {
     /// Number of L2 blocks to delay observation by
     #[clap(long, env, default_value_t = 0)]
     pub op_rpc_delay: u64,
+    /// Number of L2 outputs to fetch at once
+    #[clap(long, env, default_value_t = 64)]
+    pub op_rpc_concurrency: u64,
     /// Address of the ethereum rpc endpoint to use (eth namespace required)
     #[clap(long, env)]
     pub eth_rpc_url: String,

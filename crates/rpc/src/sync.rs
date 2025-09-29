@@ -72,7 +72,11 @@ pub async fn handle_sync(
         // fetch latest games
         let loaded_proposals = match await_tel!(
             context,
-            agent.sync(args.sync.provider.op_rpc_delay, args.sync.final_l2_block)
+            agent.sync(
+                args.sync.provider.op_rpc_delay,
+                args.sync.final_l2_block,
+                args.sync.provider.op_rpc_concurrency
+            )
         )
         .context("SyncAgent::sync")
         {

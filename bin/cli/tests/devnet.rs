@@ -156,6 +156,8 @@ async fn proposer_validator() {
             op_node_url: "http://127.0.0.1:7545".to_string(),
             op_rpc_delay: 0,
             beacon_rpc_url: "http://127.0.0.1:5052".to_string(),
+            op_rpc_concurrency: 64,
+            rpc_poll_interval: 1,
         },
         kailua_game_implementation: None,
         kailua_anchor_address: None,
@@ -194,7 +196,7 @@ async fn proposer_validator() {
         .await
         .unwrap();
     loop {
-        agent.sync(0, Some(75)).await.unwrap();
+        agent.sync(0, Some(75), 64).await.unwrap();
         if agent.cursor.last_output_index >= 75 {
             break;
         }
@@ -389,6 +391,8 @@ async fn prover() {
             op_node_url: "http://127.0.0.1:7545".to_string(),
             op_rpc_delay: 0,
             beacon_rpc_url: "http://127.0.0.1:5052".to_string(),
+            op_rpc_concurrency: 64,
+            rpc_poll_interval: 1,
         },
         kailua_game_implementation: None,
         kailua_anchor_address: None,
@@ -403,7 +407,7 @@ async fn prover() {
         .await
         .unwrap();
     loop {
-        agent.sync(0, Some(PROOF_SIZE)).await.unwrap();
+        agent.sync(0, Some(PROOF_SIZE), 64).await.unwrap();
         if agent.cursor.last_output_index >= PROOF_SIZE {
             break;
         }

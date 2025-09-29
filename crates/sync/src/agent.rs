@@ -231,6 +231,7 @@ impl SyncAgent {
         &mut self,
         op_rpc_delay: u64,
         final_l2_block: Option<u64>,
+        op_rpc_concurrency: u64,
     ) -> anyhow::Result<Vec<u64>> {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(tracer.start("SyncAgent::sync"));
@@ -260,7 +261,8 @@ impl SyncAgent {
                 self.sync_outputs(
                     self.cursor.last_output_index,
                     output_block_number,
-                    self.deployment.output_block_span
+                    self.deployment.output_block_span,
+                    op_rpc_concurrency
                 )
             );
         }
@@ -733,10 +735,10 @@ impl SyncAgent {
         self.outputs.get(&block_number).cloned()
     }
 
-    pub async fn sync_outputs(&mut self, mut start: u64, end: u64, step: u64) {
+    pub async fn sync_outputs(&mut self, mut start: u64, end: u64, step: u64, tasks: u64) {
         while start <= end {
             // perform at most 1024 tasks at a time
-            let end = end.min(start + 128 * step);
+            let end = end.min(start + tasks * step);
 
             // check persisted data
             for i in (start..=end).step_by(step as usize) {
