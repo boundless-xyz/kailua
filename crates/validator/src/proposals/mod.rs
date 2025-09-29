@@ -102,7 +102,7 @@ pub async fn handle_proposals(
     let mut last_proof_l1_head = BTreeMap::new();
     loop {
         // Wait for new data on every iteration
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(args.sync.provider.rpc_poll_interval)).await;
         // fetch latest games
         let loaded_proposals = match await_tel!(
             context,

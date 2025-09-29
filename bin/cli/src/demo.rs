@@ -152,7 +152,7 @@ pub async fn handle_blocks(
     let mut n = 1u64;
     loop {
         // Wait for new data on every iteration
-        sleep(Duration::from_secs(6)).await;
+        sleep(Duration::from_secs(args.provider.rpc_poll_interval)).await;
         // more output commitments
         let sync_status = await_tel!(
             context,

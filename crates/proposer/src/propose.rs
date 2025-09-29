@@ -94,7 +94,7 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
     let mut prioritize_proposing = true;
     loop {
         // Wait for new data on every iteration
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(args.sync.provider.rpc_poll_interval)).await;
         // fetch latest games
         if let Err(err) = await_tel!(
             context,

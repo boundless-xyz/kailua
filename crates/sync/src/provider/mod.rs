@@ -38,6 +38,9 @@ pub struct ProviderArgs {
     /// Address of the L1 Beacon API endpoint to use.
     #[clap(long, env)]
     pub beacon_rpc_url: String,
+    /// Time (in seconds) between successive RPC polls
+    #[clap(long, env, default_value_t = 6)]
+    pub rpc_poll_interval: u64,
 }
 
 /// A collection of RPC providers for L1 and L2 data
