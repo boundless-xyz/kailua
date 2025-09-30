@@ -12,15 +12,24 @@ Usage: kailua-cli propose [OPTIONS] --op-node-url <OP_NODE_URL> --op-geth-url <O
 ```
 
 ```admonish tip
-All the parameters above can be provided as environment variables.
+All parameters can be provided as environment variables.
 ```
 
-### Endpoints
+### Remote Endpoints
 The mandatory arguments specify the endpoints that the proposer should use for sequencing:
 * `eth-rpc-url`: The parent chain (ethereum) endpoint for reading/publishing proposals.
 * `beacon-rpc-url`: The DA layer (eth-beacon chain) endpoint for retrieving published proposal data.
 * `op-geth-url`: The rollup `op-geth` endpoint to read configuration data from.
 * `op-node-url`: The rollup `op-node` endpoint to read sequencing proposals from.
+
+### RPC Calls
+To fine-tune the interaction with the above endpoints, the following additional parameters can be specified:
+* `op-rpc-delay`: Number of L2 blocks to delay observation by (default: 0).
+* `rpc-poll-interval`: Time (in seconds) between successive RPC polls (default: 6).
+* `op-node-timeout`: Timeout (seconds) for an OP-NODE RPC request (default: 5).
+* `op-geth-timeout`: Timeout (seconds) for an OP-GETH RPC request (default: 2).
+* `eth-rpc-timeout`: Timeout (seconds) for an ETH RPC request (default: 2).
+* `beacon-rpc-timeout`: Timeout (seconds) for a BEACON RPC request (default: 20).
 
 ### Cache Directory
 The proposer saves data to disk as it tracks on-chain proposals.

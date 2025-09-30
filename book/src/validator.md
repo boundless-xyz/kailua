@@ -26,6 +26,15 @@ The mandatory arguments specify the endpoints that the validator should use to r
 * `op-geth-url`: The rollup `op-geth` endpoint to read configuration data from.
 * `op-node-url`: The rollup `op-node` endpoint to read sequencing proposals from.
 
+### RPC Calls
+To fine-tune the interaction with the above endpoints, the following additional parameters can be specified:
+* `op-rpc-delay`: Number of L2 blocks to delay observation by (default: 0).
+* `rpc-poll-interval`: Time (in seconds) between successive RPC polls (default: 6).
+* `op-node-timeout`: Timeout (seconds) for an OP-NODE RPC request (default: 5).
+* `op-geth-timeout`: Timeout (seconds) for an OP-GETH RPC request (default: 2).
+* `eth-rpc-timeout`: Timeout (seconds) for an ETH RPC request (default: 2).
+* `beacon-rpc-timeout`: Timeout (seconds) for a BEACON RPC request (default: 20).
+
 ### Cache Directory
 The validator saves data to disk as it tracks on-chain proposals.
 This allows it to restart quickly.
@@ -49,11 +58,27 @@ These arguments tell Kailua how to read the rollup configuration.
 ### Prover
 The validator proving behavior can be customized through the following arguments:
 * `kailua-cli`: The optional path of the external binary to call for custom proof generation.
-* `num-concurrent-provers`: Number of provers to run simultaneously (Default: 1)
-* `num-concurrent-preflights`: Number of threads per prover to use for fetching preflight data (Default: 4)
-* `num-concurrent-proofs`: Number of threads per prover to use for computing sub-proofs (Default: 1)
-* `segment-limit`: ZKVM Proving Segment Limit (Default 21)
-* `max-witness-size`: Maximum input data byte size per sub-proof (Default 2684354560)
+* `num-concurrent-provers`: Number of provers to run simultaneously (Default: 1).
+* `num-concurrent-preflights`: Number of threads per prover to use for fetching preflight data (Default: 4).
+* `num-concurrent-proofs`: Number of threads per prover to use for computing sub-proofs (Default: 1).
+* `num-concurrent-witgens`: How many threads to use for witness generation per prover.
+* `num-concurrent-r0vm`: How many threads to use for zkvm executors per prover.
+* `segment-limit`: ZKVM Proving Segment Limit (Default 21).
+* `max-witness-size`: Maximum input data byte size per single proof (Default 2.5 GB).
+* `max-block-derivations`: Maximum number of blocks to derive per single proof.
+* `max-block-executions`: Maximum number of blocks to execute per single proof.
+* `num-tail-blocks`: Rate of growth of tail proofs in L1 blocks (Default 10).
+* `enable-experimental-witness-endpoint`: Enables the use of `debug_executePayload` to collect the execution witness from the execution layer.
+* `max-fault-proving-delay`: The maximum amount of seconds to wait before starting to compute a fault proof (Default 86400).
+* `max-validity-proving-delay`: The maximum amount of seconds to wait before starting to compute a validity proof (Default 0).
+* `clear-cache-data`: Whether to clear cache data after successful completion (Default false).
+
+### Alt DA
+The following additional parameters are required if an alternative DA method is used:
+* `eigenda-proxy-address`: URL of the EigenDA RPC endpoint.
+* `celestia-connection`: Connection to celestia network.
+* `celestia-auth-token`: Token for the Celestia node connection.
+* `celestia-namespace`: Celestia Namespace to fetch data from.
 
 ### Wallet
 The validator requires a funded wallet to be able to publish fault proofs on chain, and an (optional) alternative address
@@ -101,8 +126,9 @@ The validator will not generate any proofs for proposals made using a different 
 ## Validity Proof Generation
 Instead of only generating fault proofs, the validator can be instructed to generate a validity proof for every correct
 canonical proposal it encounters to fast-forward finality until a specified block height.
-This is configured using the below parameter:
-*  `fast-forward-target`: The L2 block height until which validity proofs should be computed.
+This is configured using the below parameters:
+* `fast-forward-target`: The L2 block height until which validity proofs should be computed.
+* `fast-forward-start`: Block height to start fast-forwarding finality.
 
 ```admonish note
 To indefinitely power a validity-proof only rollup, this value can be specified to the maximum 64-bit value of
@@ -153,14 +179,19 @@ The following first set of parameters determine where/how requests are made:
 * `boundless-verifier-router-address`: Address of the RiscZeroVerifierRouter contract.
 * `boundless-set-verifier-address`: The address of the RISC Zero verifier supporting aggregated proofs for order validation.
 * `boundless-market-address`: The address of the Boundless market contract.
-* `boundless-stake-token-address`: Address of the stake token contract. The staking token is an ERC-20.
+* `boundless-collateral-token-address`: Address of the stake collateral ERC-20 contract.
 * `boundless-lookback`: (Defaults to `5`) The number of previous proof requests to inspect for duplicates before making a new proof request.
-* `boundless-cycle-min-wei`: (Defaults to `100000000`) Starting price (wei) per cycle of proving.
+* `boundless-assume-cycle-count`: Whether to skip preflighting execution and assume the given cycle count.
+* `boundless-cycle-min-wei`: (Defaults to `0`) Starting price (wei) per cycle of proving.
 * `boundless-cycle-max-wei`: (Defaults to `200000000`) Maximum price (wei) per cycle of proving.
+* `boundless-mega-cycle-collateral`: Collateral (ZKC) per megacycle of the proving order (Default 1000).
+* `boundless-order-bid-delay-factor`: Multiplier for delay before order price starts ramping up (Default 0.1)
 * `boundless-order-ramp-up-factor`: (Defaults to `0.25`) Multiplier for order price to ramp up to maximum.
 * `boundless-order-lock-timeout-factor`: (Defaults to `3`) Multiplier for order fulfillment timeout after locking.
 * `boundless-order-expiry-factor`: (Defaults to `10`) Multiplier for order expiry timeout after creation.
 * `boundless-order-check-interval`: (Defaults to `12`) Time in seconds between attempts to check order status.
+* `boundless-enable-upload-caching`: Whether to enable image/input upload caching.
+* `boundless-order-submission-cooldown`: Time in seconds between attempts to submit new orders (Default 12).
 
 ```admonish note
 Order timeouts are set by default to the number of megacycles in a proof request.
@@ -182,6 +213,7 @@ The below second set of parameters determine where the proven executable and its
 * `pinata-api-url`: The `pinata` api URL.
 * `ipfs-gateway-url`: The `pinata` gateway URL.
 * `file-path`: The file storage provider path.
+* `r2-domain`: Custom domain for file retrieval. Currently used to upload with a custom prefix and replace the download URL with this domain.
 
 ```admonish success
 Running `kailua-cli validate` with the above extra arguments should now delegate all validator proving to the [Boundless proving network](https://docs.beboundless.xyz/)!
@@ -189,7 +221,11 @@ Running `kailua-cli validate` with the above extra arguments should now delegate
 
 
 ## Advanced Settings
+```admonish warning
+The below settings should not be normally used in production.
+```
 
 When manually computing individual proofs, the following parameters (or equiv. env. vars) take effect:
 * `SKIP_AWAIT_PROOF`: Skips waiting for the proving process to complete on Bonsai/Boundless.
 * `SKIP_DERIVATION_PROOF`: Skips provably deriving L2 transactions using L1 data.
+* `L1_HEAD_JUMP_BACK`: The number of l1 heads to jump back when initially proving.

@@ -136,7 +136,7 @@ pub struct MarketProviderConfig {
     /// Maximum price (wei) per cycle of the proving order
     #[clap(long, env, required = false, default_value = "200000000")]
     pub boundless_cycle_max_wei: U256,
-    /// Collateral (ZKC) per gigacycle of the proving order
+    /// Collateral (ZKC) per megacycle of the proving order
     #[clap(long, env, required = false, default_value = "1000")]
     pub boundless_mega_cycle_collateral: U256,
     /// Multiplier for delay before order price starts ramping up.

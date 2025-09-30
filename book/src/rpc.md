@@ -36,6 +36,15 @@ The mandatory arguments specify the endpoints that the RPC should use to track s
 * `op-geth-url`: The rollup `op-geth` endpoint to read configuration data from.
 * `op-node-url`: The rollup `op-node` endpoint to read sequencing proposals from.
 
+### RPC Calls
+To fine-tune the interaction with the above endpoints, the following additional parameters can be specified:
+* `op-rpc-delay`: Number of L2 blocks to delay observation by (default: 0).
+* `rpc-poll-interval`: Time (in seconds) between successive RPC polls (default: 6).
+* `op-node-timeout`: Timeout (seconds) for an OP-NODE RPC request (default: 5).
+* `op-geth-timeout`: Timeout (seconds) for an OP-GETH RPC request (default: 2).
+* `eth-rpc-timeout`: Timeout (seconds) for an ETH RPC request (default: 2).
+* `beacon-rpc-timeout`: Timeout (seconds) for a BEACON RPC request (default: 20).
+
 ### RPC Endpoint
 These optional arguments configure the endpoint that the RPC server listens on:
 * `socket-addr`: Socket for http or ws connections.

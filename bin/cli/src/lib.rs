@@ -99,10 +99,8 @@ pub enum KailuaCli {
         cli: CliArgs,
     },
     Export {
-        #[clap(long, env)]
-        data_dir: Option<PathBuf>,
         #[clap(flatten)]
-        telemetry: TelemetryArgs,
+        args: export::ExportArgs,
         #[clap(flatten)]
         cli: CliArgs,
     },
@@ -139,7 +137,7 @@ impl KailuaCli {
             KailuaCli::Prove { args, .. } => args.kona.data_dir.clone(),
             KailuaCli::Demo { args, .. } => args.data_dir.clone(),
             KailuaCli::Rpc { args, .. } => args.sync.data_dir.clone(),
-            KailuaCli::Export { data_dir, .. } => data_dir.clone(),
+            KailuaCli::Export { args, .. } => args.data_dir.clone(),
             _ => None,
         }
     }
@@ -157,7 +155,7 @@ impl KailuaCli {
             KailuaCli::Rpc { args, .. } => &args.sync.telemetry,
             KailuaCli::Bonsai { args, .. } => &args.telemetry,
             KailuaCli::Boundless { args, .. } => &args.telemetry,
-            KailuaCli::Export { telemetry, .. } => telemetry,
+            KailuaCli::Export { args, .. } => &args.telemetry,
         }
     }
 }
