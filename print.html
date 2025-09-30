@@ -456,28 +456,37 @@ The timeout period for <code>E</code> had passed before <code>E'</code> was intr
 │   └── cli                 // Main Kailua CLI
 ├── book                    // This document
 ├── build                   
-│   └── risczero            // RISC Zero zkVM proving backend
+│   └── risczero            // RISC Zero zkVM proving binaries
+│       ├── hokulea         // Eigen DA
+│       ├── hana            // Celestia DA
+│       └── kona            // Native ETH DA
 ├── crates                  
-│   ├── common              // Fault proving primitives
 │   ├── contracts           // Fault proof contracts
+│   ├── hana                // Celestia DA support
+│   ├── hokulea             // Eigen DA support
+│   ├── kona                // Core Kona proving primitives
 │   ├── proposer            // Sequencing proposal submitter
 │   ├── prover              // Proof generation orcherstrator
+│   ├── rpc                 // RPC server for introspection
 │   ├── sync                // Sequencing proposal tracker
 │   └── validator           // Sequencing proposal validator
-├── justfile                // Convenience commands
-└── testdata
-    └── 16491249            // Example FPVM test data for op-sepolia block
+└── justfile                // Convenience commands
 </code></pre>
 <h2 id="cli"><a class="header" href="#cli">CLI</a></h2>
-<p>The CLI for Kailua is designed to support seven commands:</p>
+<p>The CLI for Kailua the main entry point for all supported commands:</p>
 <ul>
-<li><code>config</code>: Outputs configuration information required for migration.</li>
-<li><code>demo</code>: Automatically generate validity proofs for any running L2 chain.</li>
-<li><code>fast-track</code>: Automatically upgrades an existing rollup deployment to utilize Kailua for fault proving.</li>
-<li><code>propose</code>: Monitor a rollup for sequencing state and publish proposals on-chain (akin to op-proposer).</li>
-<li><code>validate</code>: Monitor a rollup for disputes and publish the necessary FPVM proofs for resolution.</li>
-<li><code>benchmark</code>: Generates proofs for performance benchmarking.</li>
-<li><code>fault</code>: Submit garbage proposals to test fault proving.</li>
+<li><code>config</code>      Inspect the configuration of a running rollup</li>
+<li><code>fast-track</code>  Fast-track migrate a rollup to use Kailua</li>
+<li><code>propose</code>     Start the agent for publishing on-chain sequencing proposals</li>
+<li><code>validate</code>    Start the agent for resolving on-chain Kailua disputes</li>
+<li><code>prove</code>       Run the prover to generate an execution/fault/validity proof</li>
+<li><code>test-fault</code>  Publish a faulty sequencing proposal to test fault proofs</li>
+<li><code>benchmark</code>   Benchmark proving cost and performance</li>
+<li><code>demo</code>        Validity prove any running OP Stack rollup</li>
+<li><code>rpc</code>         Start the RPC server for assisting withdrawals</li>
+<li><code>bonsai</code>      Download a receipt from Bonsai</li>
+<li><code>boundless</code>   Download a receipt from Boundless</li>
+<li><code>export</code>      Export the FPVM binaries and their hardcoded image ids</li>
 </ul>
 <h2 id="contracts"><a class="header" href="#contracts">Contracts</a></h2>
 <p>The contracts directory is a foundry project comprised of the following main contracts:</p>
@@ -492,11 +501,28 @@ The timeout period for <code>E</code> had passed before <code>E'</code> was intr
 <p>The Kailua FPVM executes Optimism's <code>Kona</code> inside the RISC Zero zkVM to derive and execute optimism blocks and create fault proofs.
 The following project components work together to enable this functionality:</p>
 <ul>
-<li><code>build/risczero/fpvm</code>: The zkVM binary to create ZK fault proofs with <code>Kona</code>.</li>
-<li><code>crates/common</code>: A wrapper crate around <code>Kona</code> with utilities for efficient ZK fault proving.</li>
+<li><code>build/risczero/kona</code>: The zkVM binary to create ZK fault proofs with <code>Kona</code>.</li>
+<li><code>crates/kona</code>: A wrapper crate around <code>Kona</code> with utilities for efficient ZK fault proving.</li>
 <li><code>crates/prover</code>: An orchestrator for proof generation locally, remotely on Bonsai, or through Boundless.</li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="setup"><a class="header" href="#setup">Setup</a></h1>
+<p>Rollups with alternative DA requirements are supported through the following components:</p>
+<ul>
+<li><code>build/risczero/hokulea</code>: The zkVM binary for rollups on EigenDA.</li>
+<li><code>build/risczero/hana</code>: The zkVM binary for rollups on Celestia.</li>
+<li><code>crates/hokulea</code>: A wrapper crate around <code>kailua-kona</code> with Eigen DA support.</li>
+<li><code>crates/hokulea</code>: A wrapper crate around <code>kailua-kona</code> with Celestia DA support.</li>
+</ul>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div class="admonition-title">
+<div id="admonition-warning-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="project.html#admonition-warning"></a>
+</div>
+<div>
+<p>Celestia DA support is still an experimental work in progress with known liveness vulnerabilities.</p>
+</div>
+</div><div style="break-before: page; page-break-before: always;"></div><h1 id="setup"><a class="header" href="#setup">Setup</a></h1>
 <p>Make sure to first install the <a href="quickstart.html#prerequisites">prerequisites</a> from the quickstart
 section before proceeding.</p>
 <h2 id="installation"><a class="header" href="#installation">Installation</a></h2>
@@ -1637,16 +1663,26 @@ It also attempts to resolve any finalizeable proposals.</p>
 <a class="admonition-anchor-link" href="proposer.html#admonition-tip"></a>
 </div>
 <div>
-<p>All the parameters above can be provided as environment variables.</p>
+<p>All parameters can be provided as environment variables.</p>
 </div>
 </div>
-<h3 id="endpoints-1"><a class="header" href="#endpoints-1">Endpoints</a></h3>
+<h3 id="remote-endpoints"><a class="header" href="#remote-endpoints">Remote Endpoints</a></h3>
 <p>The mandatory arguments specify the endpoints that the proposer should use for sequencing:</p>
 <ul>
 <li><code>eth-rpc-url</code>: The parent chain (ethereum) endpoint for reading/publishing proposals.</li>
 <li><code>beacon-rpc-url</code>: The DA layer (eth-beacon chain) endpoint for retrieving published proposal data.</li>
 <li><code>op-geth-url</code>: The rollup <code>op-geth</code> endpoint to read configuration data from.</li>
 <li><code>op-node-url</code>: The rollup <code>op-node</code> endpoint to read sequencing proposals from.</li>
+</ul>
+<h3 id="rpc-calls"><a class="header" href="#rpc-calls">RPC Calls</a></h3>
+<p>To fine-tune the interaction with the above endpoints, the following additional parameters can be specified:</p>
+<ul>
+<li><code>op-rpc-delay</code>: Number of L2 blocks to delay observation by (default: 0).</li>
+<li><code>rpc-poll-interval</code>: Time (in seconds) between successive RPC polls (default: 6).</li>
+<li><code>op-node-timeout</code>: Timeout (seconds) for an OP-NODE RPC request (default: 5).</li>
+<li><code>op-geth-timeout</code>: Timeout (seconds) for an OP-GETH RPC request (default: 2).</li>
+<li><code>eth-rpc-timeout</code>: Timeout (seconds) for an ETH RPC request (default: 2).</li>
+<li><code>beacon-rpc-timeout</code>: Timeout (seconds) for a BEACON RPC request (default: 20).</li>
 </ul>
 <h3 id="cache-directory"><a class="header" href="#cache-directory">Cache Directory</a></h3>
 <p>The proposer saves data to disk as it tracks on-chain proposals.
@@ -1758,8 +1794,7 @@ possible.</p>
 <div>
 <p>Running <code>kailua-cli propose</code> should now publish Kailua sequencing proposals for your rollup!</p>
 </div>
-</div>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="kailua-validator"><a class="header" href="#kailua-validator">Kailua Validator</a></h1>
+</div><div style="break-before: page; page-break-before: always;"></div><h1 id="kailua-validator"><a class="header" href="#kailua-validator">Kailua Validator</a></h1>
 <p>The Kailua validator watches your rollup for sequencing proposals that contradict each other and generates a ZK fault
 proof to settle the dispute between them.</p>
 <div id="admonition-note" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-title">
@@ -1789,13 +1824,23 @@ Node software other than <code>op-geth</code> is not as reliable for the necessa
 <p>All the parameters above can be provided as environment variables.</p>
 </div>
 </div>
-<h3 id="remote-endpoints"><a class="header" href="#remote-endpoints">Remote Endpoints</a></h3>
+<h3 id="remote-endpoints-1"><a class="header" href="#remote-endpoints-1">Remote Endpoints</a></h3>
 <p>The mandatory arguments specify the endpoints that the validator should use to resolve disputes:</p>
 <ul>
 <li><code>eth-rpc-url</code>: The parent chain (ethereum) endpoint for reading proposals.</li>
 <li><code>beacon-rpc-url</code>: The DA layer (eth-beacon chain) endpoint for retrieving rollup data.</li>
 <li><code>op-geth-url</code>: The rollup <code>op-geth</code> endpoint to read configuration data from.</li>
 <li><code>op-node-url</code>: The rollup <code>op-node</code> endpoint to read sequencing proposals from.</li>
+</ul>
+<h3 id="rpc-calls-1"><a class="header" href="#rpc-calls-1">RPC Calls</a></h3>
+<p>To fine-tune the interaction with the above endpoints, the following additional parameters can be specified:</p>
+<ul>
+<li><code>op-rpc-delay</code>: Number of L2 blocks to delay observation by (default: 0).</li>
+<li><code>rpc-poll-interval</code>: Time (in seconds) between successive RPC polls (default: 6).</li>
+<li><code>op-node-timeout</code>: Timeout (seconds) for an OP-NODE RPC request (default: 5).</li>
+<li><code>op-geth-timeout</code>: Timeout (seconds) for an OP-GETH RPC request (default: 2).</li>
+<li><code>eth-rpc-timeout</code>: Timeout (seconds) for an ETH RPC request (default: 2).</li>
+<li><code>beacon-rpc-timeout</code>: Timeout (seconds) for a BEACON RPC request (default: 20).</li>
 </ul>
 <h3 id="cache-directory-1"><a class="header" href="#cache-directory-1">Cache Directory</a></h3>
 <p>The validator saves data to disk as it tracks on-chain proposals.
@@ -1828,11 +1873,28 @@ This allows it to restart quickly.</p>
 <p>The validator proving behavior can be customized through the following arguments:</p>
 <ul>
 <li><code>kailua-cli</code>: The optional path of the external binary to call for custom proof generation.</li>
-<li><code>num-concurrent-provers</code>: Number of provers to run simultaneously (Default: 1)</li>
-<li><code>num-concurrent-preflights</code>: Number of threads per prover to use for fetching preflight data (Default: 4)</li>
-<li><code>num-concurrent-proofs</code>: Number of threads per prover to use for computing sub-proofs (Default: 1)</li>
-<li><code>segment-limit</code>: ZKVM Proving Segment Limit (Default 21)</li>
-<li><code>max-witness-size</code>: Maximum input data byte size per sub-proof (Default 2684354560)</li>
+<li><code>num-concurrent-provers</code>: Number of provers to run simultaneously (Default: 1).</li>
+<li><code>num-concurrent-preflights</code>: Number of threads per prover to use for fetching preflight data (Default: 4).</li>
+<li><code>num-concurrent-proofs</code>: Number of threads per prover to use for computing sub-proofs (Default: 1).</li>
+<li><code>num-concurrent-witgens</code>: How many threads to use for witness generation per prover.</li>
+<li><code>num-concurrent-r0vm</code>: How many threads to use for zkvm executors per prover.</li>
+<li><code>segment-limit</code>: ZKVM Proving Segment Limit (Default 21).</li>
+<li><code>max-witness-size</code>: Maximum input data byte size per single proof (Default 2.5 GB).</li>
+<li><code>max-block-derivations</code>: Maximum number of blocks to derive per single proof.</li>
+<li><code>max-block-executions</code>: Maximum number of blocks to execute per single proof.</li>
+<li><code>num-tail-blocks</code>: Rate of growth of tail proofs in L1 blocks (Default 10).</li>
+<li><code>enable-experimental-witness-endpoint</code>: Enables the use of <code>debug_executePayload</code> to collect the execution witness from the execution layer.</li>
+<li><code>max-fault-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a fault proof (Default 86400).</li>
+<li><code>max-validity-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a validity proof (Default 0).</li>
+<li><code>clear-cache-data</code>: Whether to clear cache data after successful completion (Default false).</li>
+</ul>
+<h3 id="alt-da"><a class="header" href="#alt-da">Alt DA</a></h3>
+<p>The following additional parameters are required if an alternative DA method is used:</p>
+<ul>
+<li><code>eigenda-proxy-address</code>: URL of the EigenDA RPC endpoint.</li>
+<li><code>celestia-connection</code>: Connection to celestia network.</li>
+<li><code>celestia-auth-token</code>: Token for the Celestia node connection.</li>
+<li><code>celestia-namespace</code>: Celestia Namespace to fetch data from.</li>
 </ul>
 <h3 id="wallet-1"><a class="header" href="#wallet-1">Wallet</a></h3>
 <p>The validator requires a funded wallet to be able to publish fault proofs on chain, and an (optional) alternative address
@@ -1909,9 +1971,10 @@ address using the optional <code>kailua-game-implementation</code> parameter.</p
 <h2 id="validity-proof-generation"><a class="header" href="#validity-proof-generation">Validity Proof Generation</a></h2>
 <p>Instead of only generating fault proofs, the validator can be instructed to generate a validity proof for every correct
 canonical proposal it encounters to fast-forward finality until a specified block height.
-This is configured using the below parameter:</p>
+This is configured using the below parameters:</p>
 <ul>
 <li><code>fast-forward-target</code>: The L2 block height until which validity proofs should be computed.</li>
+<li><code>fast-forward-start</code>: Block height to start fast-forwarding finality.</li>
 </ul>
 <div id="admonition-note-2" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-2-title">
 <div class="admonition-title">
@@ -1989,14 +2052,19 @@ These parameters can be passed in as CLI arguments or set as environment variabl
 <li><code>boundless-verifier-router-address</code>: Address of the RiscZeroVerifierRouter contract.</li>
 <li><code>boundless-set-verifier-address</code>: The address of the RISC Zero verifier supporting aggregated proofs for order validation.</li>
 <li><code>boundless-market-address</code>: The address of the Boundless market contract.</li>
-<li><code>boundless-stake-token-address</code>: Address of the stake token contract. The staking token is an ERC-20.</li>
+<li><code>boundless-collateral-token-address</code>: Address of the stake collateral ERC-20 contract.</li>
 <li><code>boundless-lookback</code>: (Defaults to <code>5</code>) The number of previous proof requests to inspect for duplicates before making a new proof request.</li>
-<li><code>boundless-cycle-min-wei</code>: (Defaults to <code>100000000</code>) Starting price (wei) per cycle of proving.</li>
+<li><code>boundless-assume-cycle-count</code>: Whether to skip preflighting execution and assume the given cycle count.</li>
+<li><code>boundless-cycle-min-wei</code>: (Defaults to <code>0</code>) Starting price (wei) per cycle of proving.</li>
 <li><code>boundless-cycle-max-wei</code>: (Defaults to <code>200000000</code>) Maximum price (wei) per cycle of proving.</li>
+<li><code>boundless-mega-cycle-collateral</code>: Collateral (ZKC) per megacycle of the proving order (Default 1000).</li>
+<li><code>boundless-order-bid-delay-factor</code>: Multiplier for delay before order price starts ramping up (Default 0.1)</li>
 <li><code>boundless-order-ramp-up-factor</code>: (Defaults to <code>0.25</code>) Multiplier for order price to ramp up to maximum.</li>
 <li><code>boundless-order-lock-timeout-factor</code>: (Defaults to <code>3</code>) Multiplier for order fulfillment timeout after locking.</li>
 <li><code>boundless-order-expiry-factor</code>: (Defaults to <code>10</code>) Multiplier for order expiry timeout after creation.</li>
 <li><code>boundless-order-check-interval</code>: (Defaults to <code>12</code>) Time in seconds between attempts to check order status.</li>
+<li><code>boundless-enable-upload-caching</code>: Whether to enable image/input upload caching.</li>
+<li><code>boundless-order-submission-cooldown</code>: Time in seconds between attempts to submit new orders (Default 12).</li>
 </ul>
 <div id="admonition-note-4" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-4-title">
 <div class="admonition-title">
@@ -2026,6 +2094,7 @@ The default scale values give a 1 MHz prover 3x the amount of time it needs to f
 <li><code>pinata-api-url</code>: The <code>pinata</code> api URL.</li>
 <li><code>ipfs-gateway-url</code>: The <code>pinata</code> gateway URL.</li>
 <li><code>file-path</code>: The file storage provider path.</li>
+<li><code>r2-domain</code>: Custom domain for file retrieval. Currently used to upload with a custom prefix and replace the download URL with this domain.</li>
 </ul>
 <div id="admonition-success-3" class="admonition admonish-success" role="note" aria-labelledby="admonition-success-3-title">
 <div class="admonition-title">
@@ -2039,10 +2108,22 @@ The default scale values give a 1 MHz prover 3x the amount of time it needs to f
 </div>
 </div>
 <h2 id="advanced-settings"><a class="header" href="#advanced-settings">Advanced Settings</a></h2>
+<div id="admonition-warning-1" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-1-title">
+<div class="admonition-title">
+<div id="admonition-warning-1-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="validator.html#admonition-warning-1"></a>
+</div>
+<div>
+<p>The below settings should not be normally used in production.</p>
+</div>
+</div>
 <p>When manually computing individual proofs, the following parameters (or equiv. env. vars) take effect:</p>
 <ul>
 <li><code>SKIP_AWAIT_PROOF</code>: Skips waiting for the proving process to complete on Bonsai/Boundless.</li>
 <li><code>SKIP_DERIVATION_PROOF</code>: Skips provably deriving L2 transactions using L1 data.</li>
+<li><code>L1_HEAD_JUMP_BACK</code>: The number of l1 heads to jump back when initially proving.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="kailua-rpc"><a class="header" href="#kailua-rpc">Kailua RPC</a></h1>
 <p>The Kailua RPC watches a Kailua chain deployment for proposals and keeps track of the canonical dispute game
@@ -2082,13 +2163,23 @@ number. (Returns null if no such contract yet exists.)</li>
 <p>All the parameters above can be provided as environment variables.</p>
 </div>
 </div>
-<h3 id="remote-endpoints-1"><a class="header" href="#remote-endpoints-1">Remote Endpoints</a></h3>
+<h3 id="remote-endpoints-2"><a class="header" href="#remote-endpoints-2">Remote Endpoints</a></h3>
 <p>The mandatory arguments specify the endpoints that the RPC should use to track sequencing proposals:</p>
 <ul>
 <li><code>eth-rpc-url</code>: The parent chain (ethereum) endpoint for reading proposals.</li>
 <li><code>beacon-rpc-url</code>: The DA layer (eth-beacon chain) endpoint for retrieving rollup data.</li>
 <li><code>op-geth-url</code>: The rollup <code>op-geth</code> endpoint to read configuration data from.</li>
 <li><code>op-node-url</code>: The rollup <code>op-node</code> endpoint to read sequencing proposals from.</li>
+</ul>
+<h3 id="rpc-calls-2"><a class="header" href="#rpc-calls-2">RPC Calls</a></h3>
+<p>To fine-tune the interaction with the above endpoints, the following additional parameters can be specified:</p>
+<ul>
+<li><code>op-rpc-delay</code>: Number of L2 blocks to delay observation by (default: 0).</li>
+<li><code>rpc-poll-interval</code>: Time (in seconds) between successive RPC polls (default: 6).</li>
+<li><code>op-node-timeout</code>: Timeout (seconds) for an OP-NODE RPC request (default: 5).</li>
+<li><code>op-geth-timeout</code>: Timeout (seconds) for an OP-GETH RPC request (default: 2).</li>
+<li><code>eth-rpc-timeout</code>: Timeout (seconds) for an ETH RPC request (default: 2).</li>
+<li><code>beacon-rpc-timeout</code>: Timeout (seconds) for a BEACON RPC request (default: 20).</li>
 </ul>
 <h3 id="rpc-endpoint"><a class="header" href="#rpc-endpoint">RPC Endpoint</a></h3>
 <p>These optional arguments configure the endpoint that the RPC server listens on:</p>

@@ -228,6 +228,16 @@ number. (Returns null if no such contract yet exists.)</li>
 <li><code>op-geth-url</code>: The rollup <code>op-geth</code> endpoint to read configuration data from.</li>
 <li><code>op-node-url</code>: The rollup <code>op-node</code> endpoint to read sequencing proposals from.</li>
 </ul>
+<h3 id="rpc-calls"><a class="header" href="#rpc-calls">RPC Calls</a></h3>
+<p>To fine-tune the interaction with the above endpoints, the following additional parameters can be specified:</p>
+<ul>
+<li><code>op-rpc-delay</code>: Number of L2 blocks to delay observation by (default: 0).</li>
+<li><code>rpc-poll-interval</code>: Time (in seconds) between successive RPC polls (default: 6).</li>
+<li><code>op-node-timeout</code>: Timeout (seconds) for an OP-NODE RPC request (default: 5).</li>
+<li><code>op-geth-timeout</code>: Timeout (seconds) for an OP-GETH RPC request (default: 2).</li>
+<li><code>eth-rpc-timeout</code>: Timeout (seconds) for an ETH RPC request (default: 2).</li>
+<li><code>beacon-rpc-timeout</code>: Timeout (seconds) for a BEACON RPC request (default: 20).</li>
+</ul>
 <h3 id="rpc-endpoint"><a class="header" href="#rpc-endpoint">RPC Endpoint</a></h3>
 <p>These optional arguments configure the endpoint that the RPC server listens on:</p>
 <ul>

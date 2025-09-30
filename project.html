@@ -189,28 +189,37 @@
 │   └── cli                 // Main Kailua CLI
 ├── book                    // This document
 ├── build                   
-│   └── risczero            // RISC Zero zkVM proving backend
+│   └── risczero            // RISC Zero zkVM proving binaries
+│       ├── hokulea         // Eigen DA
+│       ├── hana            // Celestia DA
+│       └── kona            // Native ETH DA
 ├── crates                  
-│   ├── common              // Fault proving primitives
 │   ├── contracts           // Fault proof contracts
+│   ├── hana                // Celestia DA support
+│   ├── hokulea             // Eigen DA support
+│   ├── kona                // Core Kona proving primitives
 │   ├── proposer            // Sequencing proposal submitter
 │   ├── prover              // Proof generation orcherstrator
+│   ├── rpc                 // RPC server for introspection
 │   ├── sync                // Sequencing proposal tracker
 │   └── validator           // Sequencing proposal validator
-├── justfile                // Convenience commands
-└── testdata
-    └── 16491249            // Example FPVM test data for op-sepolia block
+└── justfile                // Convenience commands
 </code></pre>
 <h2 id="cli"><a class="header" href="#cli">CLI</a></h2>
-<p>The CLI for Kailua is designed to support seven commands:</p>
+<p>The CLI for Kailua the main entry point for all supported commands:</p>
 <ul>
-<li><code>config</code>: Outputs configuration information required for migration.</li>
-<li><code>demo</code>: Automatically generate validity proofs for any running L2 chain.</li>
-<li><code>fast-track</code>: Automatically upgrades an existing rollup deployment to utilize Kailua for fault proving.</li>
-<li><code>propose</code>: Monitor a rollup for sequencing state and publish proposals on-chain (akin to op-proposer).</li>
-<li><code>validate</code>: Monitor a rollup for disputes and publish the necessary FPVM proofs for resolution.</li>
-<li><code>benchmark</code>: Generates proofs for performance benchmarking.</li>
-<li><code>fault</code>: Submit garbage proposals to test fault proving.</li>
+<li><code>config</code>      Inspect the configuration of a running rollup</li>
+<li><code>fast-track</code>  Fast-track migrate a rollup to use Kailua</li>
+<li><code>propose</code>     Start the agent for publishing on-chain sequencing proposals</li>
+<li><code>validate</code>    Start the agent for resolving on-chain Kailua disputes</li>
+<li><code>prove</code>       Run the prover to generate an execution/fault/validity proof</li>
+<li><code>test-fault</code>  Publish a faulty sequencing proposal to test fault proofs</li>
+<li><code>benchmark</code>   Benchmark proving cost and performance</li>
+<li><code>demo</code>        Validity prove any running OP Stack rollup</li>
+<li><code>rpc</code>         Start the RPC server for assisting withdrawals</li>
+<li><code>bonsai</code>      Download a receipt from Bonsai</li>
+<li><code>boundless</code>   Download a receipt from Boundless</li>
+<li><code>export</code>      Export the FPVM binaries and their hardcoded image ids</li>
 </ul>
 <h2 id="contracts"><a class="header" href="#contracts">Contracts</a></h2>
 <p>The contracts directory is a foundry project comprised of the following main contracts:</p>
@@ -225,11 +234,28 @@
 <p>The Kailua FPVM executes Optimism's <code>Kona</code> inside the RISC Zero zkVM to derive and execute optimism blocks and create fault proofs.
 The following project components work together to enable this functionality:</p>
 <ul>
-<li><code>build/risczero/fpvm</code>: The zkVM binary to create ZK fault proofs with <code>Kona</code>.</li>
-<li><code>crates/common</code>: A wrapper crate around <code>Kona</code> with utilities for efficient ZK fault proving.</li>
+<li><code>build/risczero/kona</code>: The zkVM binary to create ZK fault proofs with <code>Kona</code>.</li>
+<li><code>crates/kona</code>: A wrapper crate around <code>Kona</code> with utilities for efficient ZK fault proving.</li>
 <li><code>crates/prover</code>: An orchestrator for proof generation locally, remotely on Bonsai, or through Boundless.</li>
 </ul>
-
+<p>Rollups with alternative DA requirements are supported through the following components:</p>
+<ul>
+<li><code>build/risczero/hokulea</code>: The zkVM binary for rollups on EigenDA.</li>
+<li><code>build/risczero/hana</code>: The zkVM binary for rollups on Celestia.</li>
+<li><code>crates/hokulea</code>: A wrapper crate around <code>kailua-kona</code> with Eigen DA support.</li>
+<li><code>crates/hokulea</code>: A wrapper crate around <code>kailua-kona</code> with Celestia DA support.</li>
+</ul>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div class="admonition-title">
+<div id="admonition-warning-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-warning"></a>
+</div>
+<div>
+<p>Celestia DA support is still an experimental work in progress with known liveness vulnerabilities.</p>
+</div>
+</div>
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
