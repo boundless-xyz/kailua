@@ -25,6 +25,7 @@ use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::B256;
 use anyhow::{anyhow, bail, Context};
 use human_bytes::human_bytes;
+use itertools::Itertools;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::journal::ProofJournal;
@@ -472,10 +473,18 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
             // compute a stitched proof for each subsequence of proofs
             for stitched_proofs in results.chunks(args.proving.max_proof_stitches) {
                 // construct a list of boot info to backward stitch
-                let (stitched_proofs, stitched_preconditions): (Vec<_>, Vec<_>) = stitched_proofs
+                let (stitched_proofs, stitched_preconditions, initial_preconditions, initial_args): (
+                    Vec<_>,
+                    Vec<_>,
+                    Vec<_>,
+                    Vec<_>,
+                ) = stitched_proofs
                     .iter()
-                    .map(|r| r.result.as_ref().unwrap().clone())
-                    .unzip();
+                    .map(|r| {
+                        let (proof, precondition) = r.result.as_ref().unwrap().clone();
+                        (proof, precondition, r.cached_task.precondition, r.cached_task.args.kona.clone())
+                    })
+                    .multiunzip();
                 let stitched_boot_info = stitched_proofs
                     .iter()
                     .map(StitchedBootInfo::from)
@@ -518,20 +527,22 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 let driver_cache = match last_stitched_precondition.derivation_trace.is_zero() {
                     true => None,
                     false => {
+                        let last_initial_precondition = initial_preconditions.first().unwrap();
+                        let last_initial_args = initial_args.first().unwrap();
                         let last_stitched_journal =
                             ProofJournal::from(stitched_proofs.first().unwrap());
                         let boot = BootInfo {
-                            l1_head: last_stitched_journal.l1_head,
-                            agreed_l2_output_root: last_stitched_journal.agreed_l2_output_root,
-                            claimed_l2_output_root: last_stitched_journal.claimed_l2_output_root,
-                            claimed_l2_block_number: last_stitched_journal.claimed_l2_block_number,
+                            l1_head: last_initial_args.l1_head,
+                            agreed_l2_output_root: last_initial_args.agreed_l2_output_root,
+                            claimed_l2_output_root: last_initial_args.claimed_l2_output_root,
+                            claimed_l2_block_number: last_initial_args.claimed_l2_block_number,
                             chain_id: rollup_config.l2_chain_id,
                             rollup_config: rollup_config.clone(),
                         };
                         let driver_file = driver_file_name(
                             *last_stitched_journal.fpvm_image_id,
                             &boot,
-                            last_stitched_precondition,
+                            last_initial_precondition,
                         );
                         try_read_driver(&driver_file).await
                     }
@@ -540,6 +551,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     .as_ref()
                     .map(|c| B256::new(c.digest().into()))
                     .unwrap_or_default();
+                info!("Preparing stitching task with driver trace: {driver_cache_hash}");
                 let derivation_cache_receiver = match driver_cache {
                     Some(cache) => {
                         let (sender, receiver) = async_channel::bounded(1);
@@ -557,13 +569,14 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 let disk_kv_store = disk_kv_store.clone();
                 let task_channel = task_channel.clone();
                 tokio::spawn(async move {
+                    let precondition = Precondition::default()
+                        .proposal(proposal_precondition_hash)
+                        .derivation(driver_cache_hash, driver_cache_hash);
                     let result = crate::tasks::compute_fpvm_proof(
                         stitch_job_args.clone(),
                         rollup_config,
                         disk_kv_store,
-                        Precondition::default()
-                            .proposal(proposal_precondition_hash)
-                            .derivation(driver_cache_hash, driver_cache_hash),
+                        precondition,
                         proposal_data_hash,
                         derivation_cache_receiver,
                         None,
@@ -576,7 +589,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     .await;
 
                     result_sender
-                        .send((stitch_job_args, result))
+                        .send((stitch_job_args, precondition, result))
                         .await
                         .expect("Failed to send fpvm proof result");
                 });
@@ -586,7 +599,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
             // assign new results
             results = Vec::with_capacity(stitched_proof_receivers.len());
             for receiver in stitched_proof_receivers {
-                let (stitch_job_args, result) = receiver
+                let (stitch_job_args, precondition, result) = receiver
                     .recv()
                     .await
                     .expect("stitched_proof_receiver should not be closed");
@@ -596,7 +609,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                         args: stitch_job_args,
                         rollup_config: rollup_config.clone(),
                         disk_kv_store: disk_kv_store.clone(),
-                        precondition: Default::default(),
+                        precondition,
                         proposal_data_hash,
                         stitched_executions: vec![],
                         derivation_cache: None,

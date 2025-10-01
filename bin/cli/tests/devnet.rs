@@ -283,6 +283,7 @@ async fn proposer_validator() {
                 segment_limit: 21,
                 max_block_derivations: usize::MAX,
                 max_block_executions: usize::MAX,
+                max_proof_stitches: usize::MAX,
                 max_witness_size: 2_684_354_560,
                 num_tail_blocks: 10,
                 num_concurrent_preflights: 1,
@@ -343,6 +344,7 @@ async fn proposer_validator() {
                 segment_limit: 21,
                 max_block_derivations: usize::MAX,
                 max_block_executions: usize::MAX,
+                max_proof_stitches: usize::MAX,
                 max_witness_size: 2_684_354_560,
                 num_tail_blocks: 10,
                 num_concurrent_preflights: 1,
@@ -490,6 +492,7 @@ async fn prover() {
             segment_limit: 21,
             max_block_derivations: usize::MAX,
             max_block_executions: usize::MAX,
+            max_proof_stitches: usize::MAX,
             max_witness_size: 5 * 1024 * 1024, // 5 MB witness maximum
             num_tail_blocks: 10,
             num_concurrent_preflights: 4,
