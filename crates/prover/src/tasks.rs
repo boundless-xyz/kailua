@@ -54,7 +54,7 @@ pub struct CachedTask {
     pub proposal_data_hash: B256,
     pub stitched_executions: Vec<Vec<Execution>>,
     pub derivation_cache: Option<CachedDriver>,
-    pub derivation_trace: Option<Sender<CachedDriver>>,
+    pub derivation_trace_sender: Option<Sender<CachedDriver>>,
     pub stitched_preconditions: Vec<Precondition>,
     pub stitched_boot_info: Vec<StitchedBootInfo>,
     pub stitched_proofs: Vec<Receipt>,
@@ -139,7 +139,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
                     cached_task.proposal_data_hash,
                     cached_task.stitched_executions,
                     cached_task.derivation_cache,
-                    cached_task.derivation_trace,
+                    cached_task.derivation_trace_sender,
                     cached_task.stitched_preconditions,
                     cached_task.stitched_boot_info,
                     cached_task.stitched_proofs,
@@ -184,7 +184,7 @@ pub async fn compute_oneshot_task(
         proposal_data_hash,
         stitched_executions,
         derivation_cache,
-        derivation_trace,
+        derivation_trace_sender: derivation_trace,
         stitched_preconditions,
         stitched_boot_info,
         stitched_proofs,
@@ -640,7 +640,7 @@ pub async fn compute_fpvm_proof(
                     proposal_data_hash,
                     stitched_executions: vec![],
                     derivation_cache,
-                    derivation_trace: None, // we don't need to send the trace anywhere
+                    derivation_trace_sender: None, // we don't need to send the trace anywhere
                     stitched_preconditions: vec![],
                     stitched_boot_info: vec![],
                     stitched_proofs: vec![],
@@ -897,7 +897,7 @@ pub fn create_cached_execution_task(
         proposal_data_hash: B256::ZERO,
         stitched_executions: vec![executed_blocks],
         derivation_cache: None,
-        derivation_trace: None,
+        derivation_trace_sender: None,
         stitched_preconditions: vec![],
         stitched_boot_info: vec![],
         stitched_proofs: vec![],
@@ -913,7 +913,7 @@ pub async fn compute_cached_proof(
     mut args: ProveArgs,
     rollup_config: RollupConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
-    mut precondition: Precondition,
+    precondition: Precondition,
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
     derivation_cache: Option<CachedDriver>,
@@ -940,7 +940,8 @@ pub async fn compute_cached_proof(
     // Check derivation driver cache if needed
     let driver_file = driver_file_name(image_id, &boot, &precondition);
     let trace_derivation = derivation_trace.is_some() || !precondition.derivation_trace.is_zero();
-    // Update boot info
+    // Update boot info and precondition if cached trace is available
+    let mut cached_precondition = precondition;
     if let Some(derivation_trace) = try_read_driver(&driver_file).await {
         // Update claim if l1 head insufficient
         let claimed_l2_output_root = *derivation_trace.cursor.l2_safe_head_output_root();
@@ -957,7 +958,7 @@ pub async fn compute_cached_proof(
         if trace_derivation {
             let derivation_trace_hash = B256::new(derivation_trace.digest().into());
             if precondition.derivation_trace.is_zero() {
-                precondition.derivation_trace = derivation_trace_hash;
+                cached_precondition.derivation_trace = derivation_trace_hash;
             } else if precondition.derivation_trace != derivation_trace_hash {
                 warn!("Precondition derivation trace hash mismatch. Input: {}, Cached: {derivation_trace_hash}", precondition.derivation_trace);
             }
@@ -986,7 +987,7 @@ pub async fn compute_cached_proof(
         boot,
         bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
         args.proving.payout_recipient_address.unwrap_or_default(),
-        precondition,
+        cached_precondition,
         stitched_preconditions.clone(),
         stitched_boot_info.clone(),
     )
@@ -1068,6 +1069,7 @@ pub async fn compute_cached_proof(
         crate::client::native::run_native_client(
             args.clone(),
             disk_kv_store,
+            precondition,
             proposal_data_hash,
             stitched_executions,
             derivation_cache,
@@ -1089,11 +1091,12 @@ pub async fn compute_cached_proof(
     } else {
         None
     };
+
     // Correct precondition and target proof file if needed
     if trace_derivation {
         if let Some(derivation_trace) = derivation_trace.as_ref() {
             // Update derivation trace precondition
-            precondition.derivation_trace = B256::new(derivation_trace.digest().into());
+            cached_precondition.derivation_trace = B256::new(derivation_trace.digest().into());
             // Recalculate receipt file name with new precondition derivation trace
             let claimed_l2_output_root = *derivation_trace.cursor.l2_safe_head_output_root();
             let (_, proof_journal, precondition) = stitch_boot_info::<VecOracle>(
@@ -1114,7 +1117,7 @@ pub async fn compute_cached_proof(
                 },
                 bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
                 args.proving.payout_recipient_address.unwrap_or_default(),
-                precondition,
+                cached_precondition,
                 stitched_preconditions,
                 stitched_boot_info,
             )

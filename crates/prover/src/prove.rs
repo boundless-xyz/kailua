@@ -15,6 +15,7 @@
 use crate::args::ProveArgs;
 use crate::channel::AsyncChannel;
 use crate::config::generate_rollup_config_file;
+use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::create_disk_kv_store;
 use crate::preflight::{concurrent_execution_preflight, fetch_precondition_data};
 use crate::tasks::{handle_oneshot_tasks, CachedTask, Oneshot, OneshotResult};
@@ -26,12 +27,16 @@ use anyhow::{anyhow, bail, Context};
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::driver::CachedDriver;
+use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::{await_tel, retry_res_ctx_timeout};
+use kona_host::single::SingleChainHost;
+use kona_proof::BootInfo;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
+use risc0_zkvm::sha::Digestible;
 use std::collections::BinaryHeap;
 use std::env::set_var;
 use tempfile::tempdir;
@@ -126,7 +131,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     let result_channel = async_channel::unbounded();
     // create channel for receiving proof requests to process and dispatch to handlers
     let prover_channel = async_channel::unbounded();
-    // create channel for receiving final derivation trace in case of stitching
+    // create channel for receiving the last derivation trace in case of stitching
     let mut derivation_cache_receiver = None;
     // dispatch requested proof
     let mut num_proofs = 0;
@@ -314,7 +319,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     proposal_data_hash,
                     stitched_executions: vec![],
                     derivation_cache: None,
-                    derivation_trace: None,
+                    derivation_trace_sender: None,
                     stitched_preconditions: vec![],
                     stitched_boot_info: vec![],
                     stitched_proofs: vec![],
@@ -341,7 +346,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
             }
             Err(err) => {
                 // Handle error case
-                let (derivation_cache, mut derivation_trace) = match err {
+                let (derivation_cache, derivation_trace) = match err {
                     ProvingError::WitnessSizeError(preloaded, streamed, limit, _, d, s) => {
                         if force_attempt {
                             bail!(
@@ -380,11 +385,12 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                         continue;
                     }
                 };
-                // Instantiate driver cache relays
-                if num_proofs == 1 {
-                    (derivation_trace, derivation_cache_receiver) =
-                        Some(async_channel::bounded::<CachedDriver>(1)).unzip();
-                }
+                // todo: delete
+                // // Instantiate driver cache relays
+                // if num_proofs == 1 {
+                //     (derivation_trace, derivation_cache_receiver) =
+                //         Some(async_channel::bounded::<CachedDriver>(1)).unzip();
+                // }
                 // Require additional proof
                 num_proofs += 1;
                 // Split workload at midpoint (num_blocks > 1)
@@ -452,62 +458,160 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     // recursively combine expected proofs
     if !args.proving.skip_stitching() && result_pq.len() > 1 {
         // gather sorted proofs into vec
-        let results = result_pq
+        let mut results = result_pq
             .into_sorted_vec()
             .into_iter()
             .rev()
-            .map(|r| r.result.expect("Failed to get result"))
             .collect::<Vec<_>>();
 
-        // stitch contiguous proofs together
-        info!("Composing {} proofs together.", results.len());
-        // construct a proving instruction with no blocks to derive
-        let mut base_args = args.clone();
-        {
-            // set last block as starting point
-            base_args.kona.agreed_l2_output_root = base_args.kona.claimed_l2_output_root;
-            let l2_provider = l2_provider.as_ref().unwrap();
-            base_args.kona.agreed_l2_head_hash = await_tel!(
-                context,
-                tracer,
-                "l2_provider get_block_by_number claimed_l2_block_number",
-                retry_res_ctx_timeout!(
-                    args.timeouts.op_geth_timeout,
-                    l2_provider
-                        .get_block_by_number(BlockNumberOrTag::Number(
-                            base_args.kona.claimed_l2_block_number,
-                        ))
+        let l2_provider = l2_provider.as_ref().unwrap();
+        // collapse results vector by stitching its proofs
+        while results.len() > 1 {
+            let num_stitch_proofs = results.len().div_ceil(args.proving.max_proof_stitches);
+            let mut stitched_proof_receivers = Vec::with_capacity(num_stitch_proofs);
+            // compute a stitched proof for each subsequence of proofs
+            for stitched_proofs in results.chunks(args.proving.max_proof_stitches) {
+                // construct a list of boot info to backward stitch
+                let (stitched_proofs, stitched_preconditions): (Vec<_>, Vec<_>) = stitched_proofs
+                    .iter()
+                    .map(|r| r.result.as_ref().unwrap().clone())
+                    .unzip();
+                let stitched_boot_info = stitched_proofs
+                    .iter()
+                    .map(StitchedBootInfo::from)
+                    .collect::<Vec<_>>();
+                // stitch contiguous proofs together
+                info!("Composing {} proofs together.", stitched_proofs.len());
+                // construct a proving instruction with no blocks to derive
+                let mut stitch_job_args = args.clone();
+                {
+                    let last_stitched_boot = stitched_boot_info.first().unwrap();
+                    // set last block as starting point
+                    let agreed_l2_head_hash = await_tel!(
+                        context,
+                        tracer,
+                        "l2_provider get_block_by_number claimed_l2_block_number",
+                        retry_res_ctx_timeout!(
+                            args.timeouts.op_geth_timeout,
+                            l2_provider
+                                .get_block_by_number(BlockNumberOrTag::Number(
+                                    last_stitched_boot.claimed_l2_block_number,
+                                ))
+                                .await
+                                .context("l2_provider get_block_by_number claimed_l2_block_number")?
+                                .ok_or_else(|| anyhow!("Claimed L2 block not found"))
+                        )
+                    )
+                    .header
+                    .hash;
+                    stitch_job_args.kona = SingleChainHost {
+                        l1_head: last_stitched_boot.l1_head,
+                        agreed_l2_head_hash,
+                        agreed_l2_output_root: last_stitched_boot.claimed_l2_output_root,
+                        claimed_l2_output_root: last_stitched_boot.claimed_l2_output_root,
+                        claimed_l2_block_number: last_stitched_boot.claimed_l2_block_number,
+                        ..stitch_job_args.kona
+                    };
+                }
+                // load the required CachedDriver for stitching
+                let last_stitched_precondition = stitched_preconditions.first().unwrap();
+                let driver_cache = match last_stitched_precondition.derivation_trace.is_zero() {
+                    true => None,
+                    false => {
+                        let last_stitched_journal =
+                            ProofJournal::from(stitched_proofs.first().unwrap());
+                        let boot = BootInfo {
+                            l1_head: last_stitched_journal.l1_head,
+                            agreed_l2_output_root: last_stitched_journal.agreed_l2_output_root,
+                            claimed_l2_output_root: last_stitched_journal.claimed_l2_output_root,
+                            claimed_l2_block_number: last_stitched_journal.claimed_l2_block_number,
+                            chain_id: rollup_config.l2_chain_id,
+                            rollup_config: rollup_config.clone(),
+                        };
+                        let driver_file = driver_file_name(
+                            *last_stitched_journal.fpvm_image_id,
+                            &boot,
+                            last_stitched_precondition,
+                        );
+                        try_read_driver(&driver_file).await
+                    }
+                };
+                let driver_cache_hash = driver_cache
+                    .as_ref()
+                    .map(|c| B256::new(c.digest().into()))
+                    .unwrap_or_default();
+                let derivation_cache_receiver = match driver_cache {
+                    Some(cache) => {
+                        let (sender, receiver) = async_channel::bounded(1);
+                        sender
+                            .send(cache)
+                            .await
+                            .expect("Failed to send driver cache for stitched proof");
+                        Some(receiver)
+                    }
+                    None => None,
+                };
+                // spawn an async task that computes the proof using one of the instantiated handlers and sends back the result to result_receiver
+                let (result_sender, result_receiver) = async_channel::unbounded();
+                let rollup_config = rollup_config.clone();
+                let disk_kv_store = disk_kv_store.clone();
+                let task_channel = task_channel.clone();
+                tokio::spawn(async move {
+                    let result = crate::tasks::compute_fpvm_proof(
+                        stitch_job_args.clone(),
+                        rollup_config,
+                        disk_kv_store,
+                        Precondition::default()
+                            .proposal(proposal_precondition_hash)
+                            .derivation(driver_cache_hash, driver_cache_hash),
+                        proposal_data_hash,
+                        derivation_cache_receiver,
+                        None,
+                        stitched_preconditions,
+                        stitched_boot_info,
+                        stitched_proofs,
+                        false,
+                        task_channel.0.clone(),
+                    )
+                    .await;
+
+                    result_sender
+                        .send((stitch_job_args, result))
                         .await
-                        .context("l2_provider get_block_by_number claimed_l2_block_number")?
-                        .ok_or_else(|| anyhow!("Claimed L2 block not found"))
-                )
-            )
-            .header
-            .hash;
-        }
-        // construct a list of boot info to backward stitch
-        let (proofs, stitched_preconditions): (Vec<_>, Vec<_>) = results.into_iter().unzip();
-        let stitched_boot_info = proofs
-            .iter()
-            .map(StitchedBootInfo::from)
-            .collect::<Vec<_>>();
+                        .expect("Failed to send fpvm proof result");
+                });
 
-        crate::tasks::compute_fpvm_proof(
-            base_args,
-            rollup_config.clone(),
-            disk_kv_store.clone(),
-            Precondition::default().proposal(proposal_precondition_hash),
-            proposal_data_hash,
-            derivation_cache_receiver,
-            None,
-            stitched_preconditions,
-            stitched_boot_info,
-            proofs,
-            true,
-            task_channel.0.clone(),
-        )
-        .await
-        .context("Failed to compute stitched FPVM proof.")?;
+                stitched_proof_receivers.push(result_receiver);
+            }
+            // assign new results
+            results = Vec::with_capacity(stitched_proof_receivers.len());
+            for receiver in stitched_proof_receivers {
+                let (stitch_job_args, result) = receiver
+                    .recv()
+                    .await
+                    .expect("stitched_proof_receiver should not be closed");
+
+                results.push(OneshotResult {
+                    cached_task: CachedTask {
+                        args: stitch_job_args,
+                        rollup_config: rollup_config.clone(),
+                        disk_kv_store: disk_kv_store.clone(),
+                        precondition: Default::default(),
+                        proposal_data_hash,
+                        stitched_executions: vec![],
+                        derivation_cache: None,
+                        derivation_trace_sender: None,
+                        stitched_preconditions: vec![],
+                        stitched_boot_info: vec![],
+                        stitched_proofs: vec![],
+                        prove_snark: false,
+                        force_attempt: false,
+                        seek_proof: true,
+                    },
+                    result: result.map(|inner| inner.expect("Missing stitched proof.")),
+                });
+            }
+        }
     }
 
     // Cleanup cached data

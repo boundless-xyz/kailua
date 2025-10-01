@@ -23,6 +23,7 @@ clap.workspace = true
 futures.workspace = true
 hex.workspace = true
 human_bytes.workspace = true
+itertools.workspace = true
 lazy_static.workspace = true
 rkyv.workspace = true
 serde.workspace = true

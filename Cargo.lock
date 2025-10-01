@@ -6289,6 +6289,7 @@ dependencies = [
  "hokulea-proof",
  "hokulea-witgen",
  "human_bytes",
+ "itertools 0.14.0",
  "kailua-build",
  "kailua-hana",
  "kailua-hokulea",

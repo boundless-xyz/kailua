@@ -61,6 +61,7 @@ pub async fn run_proving_client<P, H>(
     boundless: BoundlessArgs,
     oracle_client: P,
     hint_client: H,
+    precondition: Precondition,
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
     derivation_cache: Option<CachedDriver>,
@@ -99,7 +100,7 @@ where
     let (
         _boot_info,
         proof_journal,
-        precondition,
+        updated_precondition,
         traced_driver,
         witness,
         extra_frames,
@@ -242,10 +243,10 @@ where
     let driver_file = driver_file_name(proving.image_id(), &driver_boot, &precondition);
     if let Some(traced_driver) = traced_driver.as_ref() {
         let driver_digest = B256::new(traced_driver.digest().into());
-        if driver_digest != precondition.derivation_trace {
+        if driver_digest != updated_precondition.derivation_trace {
             error!(
                 "Witgen derivation trace hash mismatch: Output {driver_digest}, precondition: {}",
-                precondition.derivation_trace
+                updated_precondition.derivation_trace
             );
         }
         match rkyv::to_bytes::<Error>(traced_driver) {
@@ -268,10 +269,10 @@ where
     }
 
     // Sanity check
-    let precondition_hash = B256::new(precondition.digest().into());
+    let precondition_hash = B256::new(updated_precondition.digest().into());
     if proof_journal.precondition_hash != precondition_hash {
         error!(
-            "ProofJournal precondition hash mismatch: found {} expected {} for {precondition:?}.",
+            "ProofJournal precondition hash mismatch: found {} expected {} for {updated_precondition:?}.",
             proof_journal.precondition_hash, precondition_hash
         );
     }
