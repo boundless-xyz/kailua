@@ -122,7 +122,7 @@ impl ProvingArgs {
     }
 
     pub fn skip_stitching(&self) -> bool {
-        self.skip_derivation_proof || self.skip_await_proof || self.max_proof_stitches == 0
+        self.skip_derivation_proof || self.skip_await_proof || self.max_proof_stitches <= 1
     }
 
     pub fn use_hokulea(&self) -> bool {

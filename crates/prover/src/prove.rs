@@ -386,12 +386,6 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                         continue;
                     }
                 };
-                // todo: delete
-                // // Instantiate driver cache relays
-                // if num_proofs == 1 {
-                //     (derivation_trace, derivation_cache_receiver) =
-                //         Some(async_channel::bounded::<CachedDriver>(1)).unzip();
-                // }
                 // Require additional proof
                 num_proofs += 1;
                 // Split workload at midpoint (num_blocks > 1)
