@@ -23,8 +23,8 @@ import "./KailuaTreasury.sol";
 
 contract KailuaGame is KailuaTournament {
     /// @notice Semantic version.
-    /// @custom:semver 0.1.0
-    string public constant version = "0.1.0";
+    /// @custom:semver 1.0.0
+    string public constant version = "1.0.0";
 
     // ------------------------------
     // Immutable configuration

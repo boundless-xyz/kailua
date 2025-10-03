@@ -31,6 +31,12 @@ contract KailuaVerifier {
     /// @notice The hash of the game configuration
     bytes32 public immutable ROLLUP_CONFIG_HASH;
 
+    constructor(IRiscZeroVerifier _verifierContract, bytes32 _imageId, bytes32 _configHash) {
+        RISC_ZERO_VERIFIER = _verifierContract;
+        FPVM_IMAGE_ID = _imageId;
+        ROLLUP_CONFIG_HASH = _configHash;
+    }
+
     function verify(
         address payoutRecipient,
         bytes32 preconditionHash,
