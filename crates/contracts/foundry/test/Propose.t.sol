@@ -387,8 +387,6 @@ contract ProposeTest is KailuaTest {
         // Kailua
         KailuaTreasury new_treasury = new KailuaTreasury(
             verifier,
-            bytes32(0x0),
-            bytes32(0x0),
             treasury.PROPOSAL_OUTPUT_COUNT(),
             treasury.OUTPUT_BLOCK_SPAN(),
             GameType.wrap(1337),

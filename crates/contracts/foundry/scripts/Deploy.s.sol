@@ -55,7 +55,7 @@ contract DeployScript is Script {
     }
 
     function _6_2_disputeResolution() public returns (KailuaTreasury, KailuaGame) {
-        KailuaTreasury treasury = new KailuaTreasury(riscZeroVerifier, fpvmImageId, rollupConfigHash, proposalOutputCount, outputBlockSpan, gameType, optimismPortal, outputRootClaim, l2BlockNumber);
+        KailuaTreasury treasury = new KailuaTreasury(riscZeroVerifier,  proposalOutputCount, outputBlockSpan, gameType, optimismPortal, outputRootClaim, l2BlockNumber);
         KailuaGame game = new KailuaGame(treasury, genesisTimestamp, blocktime, maxClockDuration);
 
         return (treasury, game);

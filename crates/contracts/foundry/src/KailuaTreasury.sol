@@ -15,10 +15,10 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.15;
 
-import "./vendor/FlatOPImportV1.4.0.sol";
-import "./vendor/FlatR0ImportV2.0.2.sol";
 import "./KailuaLib.sol";
 import "./KailuaTournament.sol";
+import "./KailuaVerifier.sol";
+import "./vendor/FlatOPImportV1.4.0.sol";
 
 contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     /// @notice Semantic version.
@@ -36,9 +36,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     uint64 public immutable L2_BLOCK_NUMBER;
 
     constructor(
-        IRiscZeroVerifier _verifierContract,
-        bytes32 _imageId,
-        bytes32 _configHash,
+        KailuaVerifier _kailuaVerifier,
         uint64 _proposalOutputCount,
         uint64 _outputBlockSpan,
         GameType _gameType,
@@ -48,9 +46,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     )
         KailuaTournament(
             KailuaTreasury(this),
-            _verifierContract,
-            _imageId,
-            _configHash,
+            _kailuaVerifier,
             _proposalOutputCount,
             _outputBlockSpan,
             _gameType,

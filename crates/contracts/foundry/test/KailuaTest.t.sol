@@ -32,7 +32,8 @@ contract KailuaTest is Test {
 
     DisputeGameFactory factory;
     OptimismPortal2 portal;
-    RiscZeroMockVerifier verifier;
+    RiscZeroMockVerifier zkvm;
+    KailuaVerifier verifier;
 
     uint256 public constant BLOB_NZ_VALUE = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000;
     bytes public constant BLOB_NZ_COMMIT = abi.encodePacked(
@@ -52,7 +53,8 @@ contract KailuaTest is Test {
         );
         vm.assertEq(address(portal.disputeGameFactory()), address(factory));
         // RISC Zero
-        verifier = new RiscZeroMockVerifier(bytes4(bytes32(uint256(0xFF))));
+        zkvm = new RiscZeroMockVerifier(bytes4(bytes32(uint256(0xFF))));
+        verifier = new KailuaVerifier(zkvm, bytes32(0x0), bytes32(0x0));
     }
 
     function deployKailua(
@@ -67,8 +69,6 @@ contract KailuaTest is Test {
         // Kailua
         treasury = new KailuaTreasury(
             verifier,
-            bytes32(0x0),
-            bytes32(0x0),
             proposalOutputCount,
             outputBlockSpan,
             GameType.wrap(1337),
@@ -114,7 +114,7 @@ contract KailuaTest is Test {
         );
         bytes32 claimDigest = ReceiptClaimLib.digest(ReceiptClaimLib.ok(bytes32(0x0), journalDigest));
 
-        proof = abi.encodePacked(verifier.SELECTOR(), claimDigest);
+        proof = abi.encodePacked(zkvm.SELECTOR(), claimDigest);
     }
 
     function mockValidityProof(
@@ -156,7 +156,7 @@ contract KailuaTest is Test {
         );
         bytes32 claimDigest = ReceiptClaimLib.digest(ReceiptClaimLib.ok(bytes32(0x0), journalDigest));
 
-        proof = abi.encodePacked(verifier.SELECTOR(), claimDigest);
+        proof = abi.encodePacked(zkvm.SELECTOR(), claimDigest);
     }
 
     function versionedKZGHash(bytes calldata commitment) external pure returns (bytes32) {
