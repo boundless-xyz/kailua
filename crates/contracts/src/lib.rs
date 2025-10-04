@@ -36,6 +36,12 @@ sol!(
 
 sol!(
     #[sol(rpc)]
+    KailuaVerifier,
+    "foundry/out/KailuaVerifier.sol/KailuaVerifier.json"
+);
+
+sol!(
+    #[sol(rpc)]
     IRiscZeroVerifier,
     "foundry/out/FlatR0ImportV2.0.2.sol/IRiscZeroVerifier.json"
 );

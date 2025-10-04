@@ -119,11 +119,22 @@ pub async fn publish_receipt_proofs<P: Provider>(
             continue;
         }
         let parent_contract = KailuaTournament::new(parent.contract, validator_provider);
-        let expected_fpvm_image_id = parent_contract
+        let parent_verifier = KailuaVerifier::new(
+            parent_contract
+                .KAILUA_VERIFIER()
+                .stall_with_context(
+                    context.clone(),
+                    "KailuaTournament::KAILUA_VERIFIER",
+                    args.sync.provider.timeouts.eth_rpc_timeout,
+                )
+                .await,
+            validator_provider,
+        );
+        let expected_fpvm_image_id = parent_verifier
             .FPVM_IMAGE_ID()
             .stall_with_context(
                 context.clone(),
-                "KailuaTournament::FPVM_IMAGE_ID",
+                "KailuaVerifier::FPVM_IMAGE_ID",
                 args.sync.provider.timeouts.eth_rpc_timeout,
             )
             .await
@@ -225,11 +236,11 @@ pub async fn publish_receipt_proofs<P: Provider>(
                 } else {
                     info!("Precondition hash {precondition_hash} confirmed.")
                 }
-                let config_hash = proposal_contract
+                let config_hash = parent_verifier
                     .ROLLUP_CONFIG_HASH()
                     .stall_with_context(
                         context.clone(),
-                        "KailuaGame::ROLLUP_CONFIG_HASH",
+                        "KailuaVerifier::ROLLUP_CONFIG_HASH",
                         args.sync.provider.timeouts.eth_rpc_timeout,
                     )
                     .await;
@@ -542,7 +553,7 @@ pub async fn publish_receipt_proofs<P: Provider>(
 
         // sanity check config hash
         {
-            let config_hash = parent_contract
+            let config_hash = parent_verifier
                 .ROLLUP_CONFIG_HASH()
                 .stall_with_context(
                     context.clone(),

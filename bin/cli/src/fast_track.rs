@@ -215,7 +215,7 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         .connect_http(args.eth_rpc_url.as_str().try_into()?);
 
     // Deploy or reuse existing RISCZeroVerifier contracts
-    let verifier_contract_address = match &args.verifier_contract {
+    let zkvm_contract_address = match &args.verifier_contract {
         None => await_tel!(
             context,
             deploy_verifier(
@@ -228,6 +228,21 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         .context("deploy_verifier")?,
         Some(address) => Address::from_str(address)?,
     };
+
+    // Deploy KailuaVerifier contract
+    let receipt = KailuaVerifier::deploy_builder(
+        &deployer_provider,
+        zkvm_contract_address,
+        bytemuck::cast::<[u32; 8], [u8; 32]>(KAILUA_FPVM_KONA_ID).into(),
+        rollup_config_hash.into(),
+    )
+    .transact_with_context(context.clone(), "KailuaVerifier::deploy")
+    .await
+    .context("KailuaVerifier::deploy")?;
+    info!("KailuaVerifier::deploy: {} gas", receipt.gas_used);
+    let verifier_contract_address = receipt
+        .contract_address
+        .ok_or_else(|| anyhow!("KailuaVerifier not deployed"))?;
 
     // Deploy KailuaTreasury contract
     let root_claim = await_tel!(
@@ -245,8 +260,6 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
     let receipt = KailuaTreasury::deploy_builder(
         &deployer_provider,
         verifier_contract_address,
-        bytemuck::cast::<[u32; 8], [u8; 32]>(KAILUA_FPVM_KONA_ID).into(),
-        rollup_config_hash.into(),
         args.proposal_output_count,
         args.output_block_span,
         KAILUA_GAME_TYPE,
