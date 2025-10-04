@@ -38,24 +38,24 @@ contract DeployScript is Script {
     function run() public {
         vm.startBroadcast(deployerPrivateKey);
 
-        _6_1_proofVerification();
-        (KailuaTreasury treasury, KailuaGame game) = _6_2_disputeResolution();
+        KailuaVerifier verifier = _6_1_proofVerification();
+        (KailuaTreasury treasury, KailuaGame game) = _6_2_disputeResolution(verifier);
         _6_3_stateAnchoring(treasury);
         _6_4_sequencingProposal(treasury, game);
 
         vm.stopBroadcast();
     }
     
-    function _6_1_proofVerification() public {
+    function _6_1_proofVerification() public returns (KailuaVerifier) {
         RiscZeroVerifierRouter router = new RiscZeroVerifierRouter(deployer);
-
         RiscZeroGroth16Verifier groth16Verifier = new RiscZeroGroth16Verifier(controlRoot, controlId);
         bytes4 groth16Selector = groth16Verifier.SELECTOR();
         router.addVerifier(groth16Selector, groth16Verifier);
+        return new KailuaVerifier(riscZeroVerifier, fpvmImageId, rollupConfigHash);
     }
 
-    function _6_2_disputeResolution() public returns (KailuaTreasury, KailuaGame) {
-        KailuaTreasury treasury = new KailuaTreasury(riscZeroVerifier,  proposalOutputCount, outputBlockSpan, gameType, optimismPortal, outputRootClaim, l2BlockNumber);
+    function _6_2_disputeResolution(KailuaVerifier kailuaVerifier) public returns (KailuaTreasury, KailuaGame) {
+        KailuaTreasury treasury = new KailuaTreasury(kailuaVerifier,  proposalOutputCount, outputBlockSpan, gameType, optimismPortal, outputRootClaim, l2BlockNumber);
         KailuaGame game = new KailuaGame(treasury, genesisTimestamp, blocktime, maxClockDuration);
 
         return (treasury, game);
