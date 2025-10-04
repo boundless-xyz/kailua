@@ -24,6 +24,7 @@ use kailua_contracts::SystemConfig;
 use kailua_kona::config::config_hash;
 use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::provider::optimism::load_registry_config;
+use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::stall::Stall;
 use kailua_sync::telemetry::TelemetryArgs;
 use kailua_sync::{await_tel, KAILUA_GAME_TYPE};
@@ -52,6 +53,8 @@ pub struct ConfigArgs {
 
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
+    #[clap(flatten)]
+    pub timeouts: ProviderTimeoutArgs,
 }
 
 pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
@@ -173,13 +176,21 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     debug!("{system_config:?}");
     let portal_address = system_config
         .optimismPortal()
-        .stall_with_context(context.clone(), "SystemConfig::optimismPortal")
+        .stall_with_context(
+            context.clone(),
+            "SystemConfig::optimismPortal",
+            args.timeouts.eth_rpc_timeout,
+        )
         .await
         .0;
     debug!("{portal_address}");
     let dgf_address = system_config
         .disputeGameFactory()
-        .stall_with_context(context.clone(), "SystemConfig::disputeGameFactory")
+        .stall_with_context(
+            context.clone(),
+            "SystemConfig::disputeGameFactory",
+            args.timeouts.eth_rpc_timeout,
+        )
         .await
         .0;
     debug!("{dgf_address}");

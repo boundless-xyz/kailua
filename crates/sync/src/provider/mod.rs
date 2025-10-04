@@ -21,11 +21,14 @@ use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 pub mod beacon;
 pub mod optimism;
 
-#[derive(clap::Args, Debug, Clone)]
+#[derive(clap::Args, Debug, Clone, Default)]
 pub struct ProviderArgs {
     /// Address of the OP-NODE endpoint to use
     #[clap(long, env)]
     pub op_node_url: String,
+    /// Number of L2 outputs to fetch at once
+    #[clap(long, env, default_value_t = 64)]
+    pub op_rpc_concurrency: u64,
     /// Address of the OP-GETH endpoint to use (eth and debug namespace required).
     #[clap(long, env)]
     pub op_geth_url: String,
@@ -38,6 +41,48 @@ pub struct ProviderArgs {
     /// Address of the L1 Beacon API endpoint to use.
     #[clap(long, env)]
     pub beacon_rpc_url: String,
+    /// Time (in seconds) between successive RPC polls
+    #[clap(long, env, default_value_t = 6)]
+    pub rpc_poll_interval: u64,
+
+    #[clap(flatten)]
+    pub timeouts: ProviderTimeoutArgs,
+}
+
+#[derive(clap::Args, Debug, Clone, Copy)]
+pub struct ProviderTimeoutArgs {
+    /// Timeout (seconds) for an OP-NODE RPC request.
+    #[clap(long, env, default_value_t = 5)]
+    pub op_node_timeout: u64,
+    /// Timeout (seconds) for an OP-GETH RPC request.
+    #[clap(long, env, default_value_t = 2)]
+    pub op_geth_timeout: u64,
+    /// Timeout (seconds) for an ETH RPC request.
+    #[clap(long, env, default_value_t = 2)]
+    pub eth_rpc_timeout: u64,
+    /// Timeout (seconds) for a BEACON RPC request.
+    #[clap(long, env, default_value_t = 20)]
+    pub beacon_rpc_timeout: u64,
+}
+
+impl Default for ProviderTimeoutArgs {
+    fn default() -> Self {
+        Self {
+            op_node_timeout: 5,
+            op_geth_timeout: 2,
+            eth_rpc_timeout: 2,
+            beacon_rpc_timeout: 20,
+        }
+    }
+}
+
+impl ProviderTimeoutArgs {
+    pub fn max(&self) -> u64 {
+        self.op_node_timeout
+            .max(self.op_geth_timeout)
+            .max(self.eth_rpc_timeout)
+            .max(self.beacon_rpc_timeout)
+    }
 }
 
 /// A collection of RPC providers for L1 and L2 data
@@ -61,7 +106,10 @@ impl SyncProvider {
             context,
             tracer,
             "BlobProvider::new",
-            retry_res_ctx!(BlobProvider::new(args.beacon_rpc_url.clone()))
+            retry_res_ctx!(BlobProvider::new(
+                args.beacon_rpc_url.clone(),
+                args.timeouts.beacon_rpc_timeout
+            ))
         );
 
         let l1_provider = RootProvider::new_http(args.eth_rpc_url.as_str().try_into()?);

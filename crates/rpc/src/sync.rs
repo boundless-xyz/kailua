@@ -57,7 +57,11 @@ pub async fn handle_sync(
         IDisputeGameFactory::new(agent.deployment.factory, &agent.provider.l1_provider);
     let latest_game_impl_addr = dispute_game_factory
         .gameImpls(KAILUA_GAME_TYPE)
-        .stall_with_context(context.clone(), "DisputeGameFactory::gameImpls")
+        .stall_with_context(
+            context.clone(),
+            "DisputeGameFactory::gameImpls",
+            args.sync.provider.timeouts.eth_rpc_timeout,
+        )
         .await;
     if latest_game_impl_addr != agent.deployment.game {
         warn!(
@@ -68,28 +72,24 @@ pub async fn handle_sync(
 
     loop {
         // Wait for new data on every iteration
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(args.sync.provider.rpc_poll_interval)).await;
         // fetch latest games
-        let loaded_proposals = match await_tel!(
-            context,
-            agent.sync(args.sync.provider.op_rpc_delay, args.sync.final_l2_block)
-        )
-        .context("SyncAgent::sync")
-        {
-            Ok(result) => result,
-            Err(err) => {
-                if err
-                    .root_cause()
-                    .to_string()
-                    .contains(FINAL_L2_BLOCK_RESOLVED)
-                {
-                    warn!("handle_proposals terminated");
-                    return Ok(());
+        let loaded_proposals =
+            match await_tel!(context, agent.sync(&args.sync)).context("SyncAgent::sync") {
+                Ok(result) => result,
+                Err(err) => {
+                    if err
+                        .root_cause()
+                        .to_string()
+                        .contains(FINAL_L2_BLOCK_RESOLVED)
+                    {
+                        warn!("handle_proposals terminated");
+                        return Ok(());
+                    }
+                    error!("Synchronization error: {err:?}");
+                    vec![]
                 }
-                error!("Synchronization error: {err:?}");
-                vec![]
-            }
-        };
+            };
 
         let mut new_entries = vec![];
         for proposal_index in loaded_proposals {

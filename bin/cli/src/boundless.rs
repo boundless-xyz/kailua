@@ -28,6 +28,7 @@ use risc0_zkvm::Receipt;
 use std::str::FromStr;
 use tracing::{error, info};
 
+/// Download a receipt from Boundless
 #[derive(clap::Args, Debug, Clone)]
 pub struct BoundlessArgs {
     /// URL of the Ethereum RPC endpoint.

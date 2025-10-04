@@ -94,14 +94,9 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
     let mut prioritize_proposing = true;
     loop {
         // Wait for new data on every iteration
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(args.sync.provider.rpc_poll_interval)).await;
         // fetch latest games
-        if let Err(err) = await_tel!(
-            context,
-            agent.sync(args.sync.provider.op_rpc_delay, args.sync.final_l2_block)
-        )
-        .context("SyncAgent::sync")
-        {
+        if let Err(err) = await_tel!(context, agent.sync(&args.sync)).context("SyncAgent::sync") {
             if err
                 .root_cause()
                 .to_string()
@@ -135,6 +130,7 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
                 resolve_next_pending_proposal(
                     &agent,
                     &args.txn_args,
+                    &args.sync.provider.timeouts,
                     &proposer_provider,
                     &meter_prune_num,
                     &meter_prune_fail,
@@ -157,7 +153,11 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
             IDisputeGameFactory::new(agent.deployment.factory, &agent.provider.l1_provider);
         let latest_game_impl_addr = dispute_game_factory
             .gameImpls(KAILUA_GAME_TYPE)
-            .stall_with_context(context.clone(), "DisputeGameFactory::gameImpls")
+            .stall_with_context(
+                context.clone(),
+                "DisputeGameFactory::gameImpls",
+                args.sync.provider.timeouts.eth_rpc_timeout,
+            )
             .await;
         if latest_game_impl_addr != agent.deployment.game {
             warn!("Not proposing. Deployment {} outdated. Found new deployment {latest_game_impl_addr}.", agent.deployment.game);
@@ -206,7 +206,11 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
 
         let chain_time = await_tel!(
             context,
-            get_block(&agent.provider.l1_provider, BlockNumberOrTag::Latest)
+            get_block(
+                &agent.provider.l1_provider,
+                BlockNumberOrTag::Latest,
+                args.sync.provider.timeouts.eth_rpc_timeout
+            )
         )
         .header()
         .timestamp();
@@ -219,10 +223,16 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
         }
 
         // Wait for vanguard to make submission
-        let vanguard = await_tel!(context, fetch_vanguard(&agent));
+        let vanguard = await_tel!(
+            context,
+            fetch_vanguard(&agent, args.sync.provider.timeouts.eth_rpc_timeout)
+        );
         let vanguard_advantage_timeout =
             if canonical_tip.requires_vanguard_advantage(proposer_address, vanguard) {
-                let vanguard_advantage = await_tel!(context, fetch_vanguard_advantage(&agent));
+                let vanguard_advantage = await_tel!(
+                    context,
+                    fetch_vanguard_advantage(&agent, args.sync.provider.timeouts.eth_rpc_timeout)
+                );
                 min_proposal_time + vanguard_advantage
             } else {
                 min_proposal_time
@@ -278,7 +288,11 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
                     proposed_output_root,
                     Bytes::from(extra_data.clone()),
                 )
-                .stall_with_context(context.clone(), "DisputeGameFactory::games")
+                .stall_with_context(
+                    context.clone(),
+                    "DisputeGameFactory::games",
+                    args.sync.provider.timeouts.eth_rpc_timeout,
+                )
                 .await
                 .proxy_;
             if dupe_game_address.is_zero() {
@@ -290,7 +304,11 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
             let dupe_game_index: u64 =
                 KailuaTournament::new(dupe_game_address, &agent.provider.l1_provider)
                     .gameIndex()
-                    .stall_with_context(context.clone(), "KailuaTournament::gameIndex")
+                    .stall_with_context(
+                        context.clone(),
+                        "KailuaTournament::gameIndex",
+                        args.sync.provider.timeouts.eth_rpc_timeout,
+                    )
                     .await
                     .to();
             if dupe_game_index >= agent.cursor.next_factory_index {
@@ -320,13 +338,24 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
         };
 
         // Check collateral requirements
-        let bond_value = await_tel!(context, fetch_participation_bond(&agent));
-        let paid_in = await_tel!(context, fetch_paid_bond(&agent, proposer_address));
+        let bond_value = await_tel!(
+            context,
+            fetch_participation_bond(&agent, args.sync.provider.timeouts.eth_rpc_timeout)
+        );
+        let paid_in = await_tel!(
+            context,
+            fetch_paid_bond(
+                &agent,
+                proposer_address,
+                args.sync.provider.timeouts.eth_rpc_timeout
+            )
+        );
         let balance = await_tel!(
             context,
             tracer,
             "get_balance",
             retry_res_ctx_timeout!(
+                args.sync.provider.timeouts.eth_rpc_timeout,
                 agent
                     .provider
                     .l1_provider

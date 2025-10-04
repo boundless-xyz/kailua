@@ -96,25 +96,33 @@ pub enum ProposalSync {
 }
 
 impl Proposal {
-    pub async fn load(provider: &SyncProvider, address: Address) -> anyhow::Result<Self> {
+    pub async fn load(
+        provider: &SyncProvider,
+        address: Address,
+        timeout: u64,
+    ) -> anyhow::Result<Self> {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(tracer.start("Proposal::load"));
 
         let tournament_instance = KailuaTournament::new(address, &provider.l1_provider);
         let parent_address = tournament_instance
             .parentGame()
-            .stall_with_context(context.clone(), "KailuaTournament::parentGame")
+            .stall_with_context(context.clone(), "KailuaTournament::parentGame", timeout)
             .await;
         if parent_address == address {
             info!("Loading KailuaTreasury instance");
-            await_tel!(context, Self::load_treasury(provider, address))
+            await_tel!(context, Self::load_treasury(provider, address, timeout))
         } else {
             info!("Loading KailuaGame with parent {parent_address}");
-            await_tel!(context, Self::load_game(provider, address))
+            await_tel!(context, Self::load_game(provider, address, timeout))
         }
     }
 
-    async fn load_treasury(provider: &SyncProvider, address: Address) -> anyhow::Result<Self> {
+    async fn load_treasury(
+        provider: &SyncProvider,
+        address: Address,
+        timeout: u64,
+    ) -> anyhow::Result<Self> {
         let tracer = tracer("kailua");
         let context =
             opentelemetry::Context::current_with_span(tracer.start("Proposal::load_treasury"));
@@ -125,7 +133,7 @@ impl Proposal {
             async move {
                 treasury_instance
                     .KAILUA_TREASURY()
-                    .stall_with_context(context, "KailuaGame::KAILUA_TREASURY")
+                    .stall_with_context(context, "KailuaGame::KAILUA_TREASURY", timeout)
                     .await
             }
         });
@@ -135,7 +143,7 @@ impl Proposal {
             async move {
                 treasury_instance
                     .gameIndex()
-                    .stall_with_context(context.clone(), "KailuaTreasury::gameIndex")
+                    .stall_with_context(context.clone(), "KailuaTreasury::gameIndex", timeout)
                     .await
                     .to()
             }
@@ -146,7 +154,7 @@ impl Proposal {
             async move {
                 treasury_instance
                     .createdAt()
-                    .stall_with_context(context.clone(), "KailuaTreasury::createdAt")
+                    .stall_with_context(context.clone(), "KailuaTreasury::createdAt", timeout)
                     .await
             }
         });
@@ -157,7 +165,7 @@ impl Proposal {
             async move {
                 treasury_instance
                     .rootClaim()
-                    .stall_with_context(context.clone(), "KailuaTreasury::rootClaim")
+                    .stall_with_context(context.clone(), "KailuaTreasury::rootClaim", timeout)
                     .await
                     .0
                     .into()
@@ -169,7 +177,7 @@ impl Proposal {
             async move {
                 treasury_instance
                     .l2BlockNumber()
-                    .stall_with_context(context.clone(), "KailuaTreasury::l2BlockNumber")
+                    .stall_with_context(context.clone(), "KailuaTreasury::l2BlockNumber", timeout)
                     .await
                     .to()
             }
@@ -180,7 +188,7 @@ impl Proposal {
             async move {
                 treasury_instance
                     .l1Head()
-                    .stall_with_context(context.clone(), "KailuaTreasury::l1Head")
+                    .stall_with_context(context.clone(), "KailuaTreasury::l1Head", timeout)
                     .await
             }
         });
@@ -190,7 +198,7 @@ impl Proposal {
             async move {
                 treasury_instance
                     .signature()
-                    .stall_with_context(context.clone(), "KailuaTreasury::signature")
+                    .stall_with_context(context.clone(), "KailuaTreasury::signature", timeout)
                     .await
             }
         });
@@ -200,7 +208,7 @@ impl Proposal {
             async move {
                 treasury_instance
                     .resolvedAt()
-                    .stall_with_context(context.clone(), "KailuaTreasury::resolvedAt")
+                    .stall_with_context(context.clone(), "KailuaTreasury::resolvedAt", timeout)
                     .await
             }
         });
@@ -231,7 +239,11 @@ impl Proposal {
         })
     }
 
-    async fn load_game(provider: &SyncProvider, address: Address) -> anyhow::Result<Self> {
+    async fn load_game(
+        provider: &SyncProvider,
+        address: Address,
+        timeout: u64,
+    ) -> anyhow::Result<Self> {
         let tracer = tracer("kailua");
         let context =
             opentelemetry::Context::current_with_span(tracer.start("Proposal::load_game"));
@@ -242,7 +254,7 @@ impl Proposal {
             async move {
                 game_instance
                     .KAILUA_TREASURY()
-                    .stall_with_context(context, "KailuaGame::KAILUA_TREASURY")
+                    .stall_with_context(context, "KailuaGame::KAILUA_TREASURY", timeout)
                     .await
             }
         });
@@ -252,7 +264,7 @@ impl Proposal {
             async move {
                 game_instance
                     .gameIndex()
-                    .stall_with_context(context.clone(), "KailuaGame::gameIndex")
+                    .stall_with_context(context.clone(), "KailuaGame::gameIndex", timeout)
                     .await
                     .to()
             }
@@ -263,7 +275,7 @@ impl Proposal {
             async move {
                 game_instance
                     .parentGameIndex()
-                    .stall_with_context(context.clone(), "KailuaGame::parentGameIndex")
+                    .stall_with_context(context.clone(), "KailuaGame::parentGameIndex", timeout)
                     .await
             }
         });
@@ -273,7 +285,7 @@ impl Proposal {
             async move {
                 game_instance
                     .proposer()
-                    .stall_with_context(context.clone(), "KailuaGame::proposer")
+                    .stall_with_context(context.clone(), "KailuaGame::proposer", timeout)
                     .await
             }
         });
@@ -283,7 +295,7 @@ impl Proposal {
             async move {
                 game_instance
                     .createdAt()
-                    .stall_with_context(context.clone(), "KailuaGame::createdAt")
+                    .stall_with_context(context.clone(), "KailuaGame::createdAt", timeout)
                     .await
             }
         });
@@ -294,7 +306,7 @@ impl Proposal {
             async move {
                 game_instance
                     .rootClaim()
-                    .stall_with_context(context.clone(), "KailuaGame::rootClaim")
+                    .stall_with_context(context.clone(), "KailuaGame::rootClaim", timeout)
                     .await
                     .0
                     .into()
@@ -306,7 +318,7 @@ impl Proposal {
             async move {
                 game_instance
                     .l2BlockNumber()
-                    .stall_with_context(context.clone(), "KailuaGame::l2BlockNumber")
+                    .stall_with_context(context.clone(), "KailuaGame::l2BlockNumber", timeout)
                     .await
                     .to()
             }
@@ -317,7 +329,7 @@ impl Proposal {
             async move {
                 game_instance
                     .l1Head()
-                    .stall_with_context(context.clone(), "KailuaGame::l1Head")
+                    .stall_with_context(context.clone(), "KailuaGame::l1Head", timeout)
                     .await
                     .0
                     .into()
@@ -329,7 +341,7 @@ impl Proposal {
             async move {
                 game_instance
                     .signature()
-                    .stall_with_context(context.clone(), "KailuaGame::signature")
+                    .stall_with_context(context.clone(), "KailuaGame::signature", timeout)
                     .await
                     .0
                     .into()
@@ -341,7 +353,7 @@ impl Proposal {
             async move {
                 game_instance
                     .resolvedAt()
-                    .stall_with_context(context.clone(), "KailuaTreasury::resolvedAt")
+                    .stall_with_context(context.clone(), "KailuaTreasury::resolvedAt", timeout)
                     .await
             }
         });
@@ -352,7 +364,7 @@ impl Proposal {
             async move {
                 game_instance
                     .PROPOSAL_BLOBS()
-                    .stall_with_context(context.clone(), "KailuaGame::PROPOSAL_BLOBS")
+                    .stall_with_context(context.clone(), "KailuaGame::PROPOSAL_BLOBS", timeout)
                     .await
             }
         });
@@ -362,7 +374,11 @@ impl Proposal {
             async move {
                 game_instance
                     .PROPOSAL_OUTPUT_COUNT()
-                    .stall_with_context(context.clone(), "KailuaGame::PROPOSAL_OUTPUT_COUNT")
+                    .stall_with_context(
+                        context.clone(),
+                        "KailuaGame::PROPOSAL_OUTPUT_COUNT",
+                        timeout,
+                    )
                     .await
             }
         });
@@ -376,7 +392,7 @@ impl Proposal {
         for _ in 0..proposal_blobs {
             let blob_kzg_hash = game_instance
                 .proposalBlobHashes(U256::from(io_blobs.len()))
-                .stall_with_context(context.clone(), "KailuaGame::proposalBlobHashes")
+                .stall_with_context(context.clone(), "KailuaGame::proposalBlobHashes", timeout)
                 .await;
             let blob_data = await_tel!(
                 context,
@@ -575,6 +591,7 @@ impl Proposal {
     pub async fn fetch_parent_tournament_survivor<P: Provider<N>, N: Network>(
         &self,
         provider: P,
+        timeout: u64,
     ) -> anyhow::Result<Option<Address>> {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(
@@ -587,12 +604,12 @@ impl Proposal {
         let parent_tournament: Address = self
             .tournament_contract_instance(&provider)
             .parentGame()
-            .stall_with_context(context.clone(), "KailuaTournament::parentGame")
+            .stall_with_context(context.clone(), "KailuaTournament::parentGame", timeout)
             .await;
         let parent_tournament_instance = KailuaTournament::new(parent_tournament, &provider);
         let children = parent_tournament_instance
             .childCount()
-            .stall_with_context(context.clone(), "KailuaTournament::childCount")
+            .stall_with_context(context.clone(), "KailuaTournament::childCount", timeout)
             .await;
         let survivor = await_tel_res!(
             context,
@@ -613,14 +630,18 @@ impl Proposal {
     pub async fn fetch_parent_tournament_survivor_status<P: Provider<N>, N: Network>(
         &self,
         provider: P,
+        timeout: u64,
     ) -> anyhow::Result<Option<bool>> {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(
             tracer.start("Proposal::fetch_parent_tournament_survivor_status"),
         );
 
-        let survivor = await_tel!(context, self.fetch_parent_tournament_survivor(provider))
-            .context("Proposal::fetch_parent_tournament_survivor")?;
+        let survivor = await_tel!(
+            context,
+            self.fetch_parent_tournament_survivor(provider, timeout)
+        )
+        .context("Proposal::fetch_parent_tournament_survivor")?;
         let is_survivor_expected = survivor.map(|survivor| survivor == self.contract);
         if !is_survivor_expected.unwrap_or_default() {
             error!(
@@ -636,6 +657,7 @@ impl Proposal {
     pub async fn fetch_finality<P: Provider<N>, N: Network>(
         &self,
         provider: P,
+        timeout: u64,
     ) -> anyhow::Result<Option<bool>> {
         let tracer = tracer("kailua");
         let context =
@@ -644,19 +666,23 @@ impl Proposal {
         Self::parse_finality(
             self.tournament_contract_instance(provider)
                 .status()
-                .stall_with_context(context.clone(), "KailuaTournament::status")
+                .stall_with_context(context.clone(), "KailuaTournament::status", timeout)
                 .await,
         )
     }
 
-    pub async fn fetch_resolved_at<P: Provider<N>, N: Network>(&self, provider: P) -> u64 {
+    pub async fn fetch_resolved_at<P: Provider<N>, N: Network>(
+        &self,
+        provider: P,
+        timeout: u64,
+    ) -> u64 {
         let tracer = tracer("kailua");
         let context =
             opentelemetry::Context::current_with_span(tracer.start("Proposal::fetch_resolved_at"));
 
         self.tournament_contract_instance(provider)
             .resolvedAt()
-            .stall_with_context(context.clone(), "KailuaTournament::resolvedAt")
+            .stall_with_context(context.clone(), "KailuaTournament::resolvedAt", timeout)
             .await
     }
 
@@ -672,6 +698,7 @@ impl Proposal {
     pub async fn fetch_is_successor_validity_proven<P: Provider<N>, N: Network>(
         &self,
         provider: P,
+        timeout: u64,
     ) -> bool {
         let tracer = tracer("kailua");
         let context =
@@ -680,7 +707,11 @@ impl Proposal {
         !self
             .tournament_contract_instance(provider)
             .validChildSignature()
-            .stall_with_context(context.clone(), "KailuaTournament::validChildSignature")
+            .stall_with_context(
+                context.clone(),
+                "KailuaTournament::validChildSignature",
+                timeout,
+            )
             .await
             .is_zero()
     }

@@ -31,10 +31,11 @@ pub struct BlobProvider {
     pub client: Client,
     pub genesis_time: u64,
     pub seconds_per_slot: u64,
+    pub timeout: u64,
 }
 
 impl BlobProvider {
-    pub async fn new(cl_node_endpoint: String) -> anyhow::Result<Self> {
+    pub async fn new(cl_node_endpoint: String, timeout: u64) -> anyhow::Result<Self> {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(tracer.start("BlobProvider::new"));
 
@@ -46,7 +47,7 @@ impl BlobProvider {
             tracer,
             "BlobProvider::client_get (genesis)",
             retry_res_timeout!(
-                10,
+                timeout,
                 Self::client_get::<Value>(&client, &cl_node_endpoint, "eth/v1/beacon/genesis")
                     .with_context(context.clone())
                     .await
@@ -62,7 +63,7 @@ impl BlobProvider {
             tracer,
             "BlobProvider::client_get (spec)",
             retry_res_timeout!(
-                10,
+                timeout,
                 Self::client_get::<Value>(&client, &cl_node_endpoint, "eth/v1/config/spec")
                     .with_context(context.clone())
                     .await
@@ -78,6 +79,7 @@ impl BlobProvider {
             client,
             genesis_time,
             seconds_per_slot,
+            timeout,
         })
     }
 
@@ -121,7 +123,7 @@ impl BlobProvider {
             tracer,
             "BlobProvider::get",
             retry_res_timeout!(
-                10,
+                self.timeout,
                 self.get::<BeaconBlobBundle>(&format!("eth/v1/beacon/blob_sidecars/{slot}"))
                     .with_context(context.clone())
                     .await

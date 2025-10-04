@@ -34,7 +34,7 @@ use kailua_kona::witness::Witness;
 use kona_derive::prelude::ChainProvider;
 use kona_preimage::{HintWriterClient, PreimageOracleClient};
 use kona_proof::l1::OracleBlobProvider;
-use kona_proof::CachingOracle;
+use kona_proof::{BootInfo, CachingOracle};
 use lazy_static::lazy_static;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::{Journal, Receipt};
@@ -61,6 +61,7 @@ pub async fn run_proving_client<P, H>(
     boundless: BoundlessArgs,
     oracle_client: P,
     hint_client: H,
+    precondition: Precondition,
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
     derivation_cache: Option<CachedDriver>,
@@ -94,11 +95,12 @@ where
     // Run witness generation with oracles
     let witgen_permit = acquire_owned_permit(SEMAPHORE_WITGEN.clone())
         .await
-        .map_err(ProvingError::OtherError);
+        .map_err(ProvingError::OtherError)?;
+    // Run witgen client to get correct BootInfo and Precondition
     let (
-        boot_info,
+        _boot_info,
         proof_journal,
-        precondition,
+        updated_precondition,
         traced_driver,
         witness,
         extra_frames,
@@ -234,13 +236,17 @@ where
     drop(witgen_permit);
 
     // Commit derivation trace to driver file
-    let driver_file = driver_file_name(proving.image_id(), &boot_info, &precondition);
+    let driver_boot = BootInfo::load(preimage_oracle.as_ref())
+        .await
+        .context("BootInfo::load")
+        .map_err(ProvingError::OtherError)?;
+    let driver_file = driver_file_name(proving.image_id(), &driver_boot, &precondition);
     if let Some(traced_driver) = traced_driver.as_ref() {
         let driver_digest = B256::new(traced_driver.digest().into());
-        if driver_digest != precondition.derivation_trace {
+        if driver_digest != updated_precondition.derivation_trace {
             error!(
                 "Witgen derivation trace hash mismatch: Output {driver_digest}, precondition: {}",
-                precondition.derivation_trace
+                updated_precondition.derivation_trace
             );
         }
         match rkyv::to_bytes::<Error>(traced_driver) {
@@ -263,10 +269,10 @@ where
     }
 
     // Sanity check
-    let precondition_hash = B256::new(precondition.digest().into());
+    let precondition_hash = B256::new(updated_precondition.digest().into());
     if proof_journal.precondition_hash != precondition_hash {
         error!(
-            "ProofJournal precondition hash mismatch: found {} expected {} for {precondition:?}.",
+            "ProofJournal precondition hash mismatch: found {} expected {} for {updated_precondition:?}.",
             proof_journal.precondition_hash, precondition_hash
         );
     }
@@ -282,7 +288,8 @@ where
         .as_ref()
         .map(|d| B256::new(d.digest().into()))
         .unwrap_or_default();
-    let witness_frames = process_witness(
+
+    let processed_witness = process_witness(
         &proving,
         witness,
         stitched_executions,
@@ -292,13 +299,23 @@ where
         derivation_cache,
         derivation_trace.clone(),
         traced_driver_hash,
-    )?;
+    );
 
-    // signal the cached driver to the tracer before seeking a proof
-    if trace_derivation && derivation_trace.is_none() {
-        warn!("Traced derivation without signaling.");
+    if processed_witness.is_ok()
+        || matches!(
+            processed_witness.as_ref(),
+            Err(ProvingError::NotSeekingProof(..))
+        )
+    {
+        // signal the cached driver to the tracer before seeking a proof
+        if trace_derivation && derivation_trace.is_none() {
+            warn!("Traced derivation without signaling.");
+        }
+        signal_derivation_trace(derivation_trace, traced_driver).await;
     }
-    signal_derivation_trace(derivation_trace, traced_driver).await;
+
+    // Bubble up any ProvingError
+    let witness_frames = processed_witness?;
 
     // seek corresponding proof
     crate::risczero::seek_proof(
@@ -377,7 +394,8 @@ pub fn process_witness(
         if !force_attempt {
             warn!("Aborting.");
             return Err(ProvingError::WitnessSizeError(
-                total_wit_size,
+                preloaded_wit_size,
+                streamed_wit_size,
                 proving.max_witness_size,
                 execution_trace,
                 Box::new(derivation_cache),
@@ -408,7 +426,8 @@ pub fn process_witness(
 
     if !seek_proof {
         return Err(ProvingError::NotSeekingProof(
-            total_wit_size,
+            preloaded_wit_size,
+            streamed_wit_size,
             execution_trace,
             Box::new(derivation_cache),
             derivation_trace,

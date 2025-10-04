@@ -24,6 +24,7 @@ use risc0_zkvm::Receipt;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+/// Download a receipt from Bonsai
 #[derive(clap::Args, Debug, Clone)]
 pub struct BonsaiArgs {
     #[clap(long, env)]

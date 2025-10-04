@@ -20,6 +20,7 @@ use anyhow::{bail, Context};
 use kailua_contracts::*;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::proposal::{Proposal, ELIMINATIONS_LIMIT};
+use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::{Transact, TransactArgs};
 use kailua_sync::{await_tel, await_tel_res};
@@ -35,6 +36,7 @@ use tracing::{debug, error, info};
 pub async fn resolve_next_pending_proposal<P: Provider>(
     agent: &SyncAgent,
     txn_args: &TransactArgs,
+    timeouts: &ProviderTimeoutArgs,
     proposer_provider: P,
     meter_prune_num: &Counter<u64>,
     meter_prune_fail: &Counter<u64>,
@@ -67,7 +69,7 @@ pub async fn resolve_next_pending_proposal<P: Provider>(
     // Skip resolved games
     if await_tel!(
         context,
-        unresolved_successor.fetch_finality(&agent.provider.l1_provider)
+        unresolved_successor.fetch_finality(&agent.provider.l1_provider, timeouts.eth_rpc_timeout)
     )
     .context("Proposal::fetch_finality")?
     .unwrap_or_default()
@@ -78,11 +80,14 @@ pub async fn resolve_next_pending_proposal<P: Provider>(
     // Check for timeout and fast-forward status
     let challenger_duration = await_tel!(
         context,
-        fetch_current_challenger_duration(agent, unresolved_successor)
+        fetch_current_challenger_duration(agent, unresolved_successor, timeouts.eth_rpc_timeout)
     );
     let is_validity_proven = await_tel!(
         context,
-        resolved_parent.fetch_is_successor_validity_proven(&agent.provider.l1_provider)
+        resolved_parent.fetch_is_successor_validity_proven(
+            &agent.provider.l1_provider,
+            timeouts.eth_rpc_timeout
+        )
     );
     if !is_validity_proven && challenger_duration > 0 {
         info!("Waiting for {challenger_duration} more seconds of chain time before resolution of proposal {unresolved_successor_index}.");
@@ -177,7 +182,10 @@ pub async fn resolve_next_pending_proposal<P: Provider>(
     // Check if claim won in tournament
     if !await_tel!(
         context,
-        unresolved_successor.fetch_parent_tournament_survivor_status(&agent.provider.l1_provider)
+        unresolved_successor.fetch_parent_tournament_survivor_status(
+            &agent.provider.l1_provider,
+            timeouts.eth_rpc_timeout
+        )
     )
     .unwrap_or_default()
     .unwrap_or_default()
@@ -195,7 +203,7 @@ pub async fn resolve_next_pending_proposal<P: Provider>(
         unresolved_successor.index, unresolved_successor.output_block_number
     );
 
-    match resolve_proposal(unresolved_successor, &proposer_provider, txn_args)
+    match resolve_proposal(unresolved_successor, &proposer_provider, txn_args, timeouts)
         .await
         .context("KailuaTournament::resolve transact")
     {
@@ -258,6 +266,7 @@ pub async fn resolve_proposal<P: Provider<N>, N: Network>(
     proposal: &Proposal,
     provider: P,
     txn_args: &TransactArgs,
+    timeouts: &ProviderTimeoutArgs,
 ) -> anyhow::Result<N::ReceiptResponse> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("Proposal::resolve"));
@@ -265,7 +274,11 @@ pub async fn resolve_proposal<P: Provider<N>, N: Network>(
     let contract_instance = proposal.tournament_contract_instance(&provider);
     let parent_tournament: Address = contract_instance
         .parentGame()
-        .stall_with_context(context.clone(), "KailuaTournament::parentGame")
+        .stall_with_context(
+            context.clone(),
+            "KailuaTournament::parentGame",
+            timeouts.eth_rpc_timeout,
+        )
         .await;
     let parent_tournament_instance = KailuaTournament::new(parent_tournament, &provider);
 

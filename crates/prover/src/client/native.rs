@@ -52,6 +52,7 @@ use tracing::info;
 pub async fn run_native_client(
     args: ProveArgs,
     disk_kv_store: Option<RWLKeyValueStore>,
+    precondition: Precondition,
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
     derivation_cache: Option<CachedDriver>,
@@ -83,7 +84,7 @@ pub async fn run_native_client(
             hint.host,
             preimage.host,
             kona_host::single::SingleChainHintHandler,
-            retry_res_ctx_timeout!(20, args.create_providers().await).await,
+            retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await).await,
             args.kona.is_offline(),
             HintType::L2PayloadWitness,
         )
@@ -147,6 +148,7 @@ pub async fn run_native_client(
         args.boundless,
         OracleReader::new(preimage.client),
         HintWriter::new(hint.client),
+        precondition,
         proposal_data_hash,
         stitched_executions,
         derivation_cache,

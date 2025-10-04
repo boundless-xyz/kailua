@@ -116,7 +116,10 @@ pub async fn process_proposals(
         // Check that a validity proof has not already been posted
         let is_validity_proven = await_tel!(
             context,
-            parent.fetch_is_successor_validity_proven(&agent.provider.l1_provider)
+            parent.fetch_is_successor_validity_proven(
+                &agent.provider.l1_provider,
+                args.sync.provider.timeouts.eth_rpc_timeout
+            )
         );
         if is_validity_proven {
             info!(
@@ -270,7 +273,11 @@ pub async fn process_proposals(
         // Check that a fault proof had not already been posted
         let proof_status = parent_contract
             .proofStatus(proposal.signature)
-            .stall_with_context(context.clone(), "KailuaTournament::proofStatus")
+            .stall_with_context(
+                context.clone(),
+                "KailuaTournament::proofStatus",
+                args.sync.provider.timeouts.eth_rpc_timeout,
+            )
             .await;
         if proof_status != 0 {
             info!(

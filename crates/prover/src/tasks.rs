@@ -17,7 +17,7 @@ use crate::driver::{driver_file_name, signal_derivation_trace, try_read_driver};
 use crate::kv::RWLKeyValueStore;
 use crate::proof::{proof_file_name, read_bincoded_file};
 use crate::ProvingError;
-use alloy::providers::RootProvider;
+use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::B256;
 use anyhow::{anyhow, Context};
 use async_channel::{Receiver, Sender};
@@ -26,12 +26,16 @@ use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{split_executions, stitch_boot_info};
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
+use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::vec::VecOracle;
 use kailua_kona::precondition::execution::exec_precondition_hash;
 use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
+use kailua_sync::retry_res_ctx_timeout;
 use kona_genesis::RollupConfig;
 use kona_proof::BootInfo;
+use kona_protocol::L2BlockInfo;
+use opentelemetry::trace::{TraceContextExt, Tracer};
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Receipt;
 use std::cmp::Ordering;
@@ -50,7 +54,7 @@ pub struct CachedTask {
     pub proposal_data_hash: B256,
     pub stitched_executions: Vec<Vec<Execution>>,
     pub derivation_cache: Option<CachedDriver>,
-    pub derivation_trace: Option<Sender<CachedDriver>>,
+    pub derivation_trace_sender: Option<Sender<CachedDriver>>,
     pub stitched_preconditions: Vec<Precondition>,
     pub stitched_boot_info: Vec<StitchedBootInfo>,
     pub stitched_proofs: Vec<Receipt>,
@@ -135,7 +139,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
                     cached_task.proposal_data_hash,
                     cached_task.stitched_executions,
                     cached_task.derivation_cache,
-                    cached_task.derivation_trace,
+                    cached_task.derivation_trace_sender,
                     cached_task.stitched_preconditions,
                     cached_task.stitched_boot_info,
                     cached_task.stitched_proofs,
@@ -180,7 +184,7 @@ pub async fn compute_oneshot_task(
         proposal_data_hash,
         stitched_executions,
         derivation_cache,
-        derivation_trace,
+        derivation_trace_sender: derivation_trace,
         stitched_preconditions,
         stitched_boot_info,
         stitched_proofs,
@@ -210,7 +214,7 @@ pub async fn compute_oneshot_task(
 /// Computes a receipt if it is not cached
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_fpvm_proof(
-    args: ProveArgs,
+    mut args: ProveArgs,
     rollup_config: RollupConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     mut precondition: Precondition,
@@ -238,30 +242,26 @@ pub async fn compute_fpvm_proof(
     //  1. try entire proof
     //      on failure, take execution trace
     //      on success, signal driver trace
-    //  2. try derivation-only proof
+    //  2. trim derivation tail
+    //  3. try head proof
     //      on failure, report error
     //      on success, signal driver trace
-    //  3. compute series of execution-only proofs
-    //  4. compute derivation-proof with stitched executions
+    //  3. compute execution-only proofs
+    //  4. stitch tail/execution proofs
 
     // Wait for the cached driver to be reported before derivation unless it is skipped
-    let derivation_cache = if !args.proving.skip_derivation_proof {
+    let mut derivation_cache = if !args.proving.skip_derivation_proof {
         match derivation_cache {
             Some(receiver) => {
-                match receiver.recv().await {
-                    Ok(cached_driver) => {
-                        let derivation_cache_precondition =
-                            B256::new(cached_driver.digest().into());
-                        info!("Received CachedDriver {derivation_cache_precondition}");
-                        // add cached driver precondition
-                        precondition.derivation_cache = derivation_cache_precondition;
-                        Some(cached_driver)
-                    }
-                    Err(err) => {
-                        error!("Failed to receive CachedDriver: {err:?}. Proceeding with fresh derivation.");
-                        None
-                    }
-                }
+                let cached_driver = receiver
+                    .recv()
+                    .await
+                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+                let derivation_cache_precondition = B256::new(cached_driver.digest().into());
+                info!("Received CachedDriver {derivation_cache_precondition}");
+                // add cached driver precondition
+                precondition.derivation_cache = derivation_cache_precondition;
+                Some(cached_driver)
             }
             None => None,
         }
@@ -269,9 +269,16 @@ pub async fn compute_fpvm_proof(
         None
     };
 
-    let stitching_only = args.kona.agreed_l2_output_root == args.kona.claimed_l2_output_root;
+    // Check if we can do execution-only proofs
+    let can_stitch_executions = args.proving.max_block_executions > 0;
+    // Remove block count constraint if execution stitching is disabled
+    if !can_stitch_executions {
+        args.proving.max_block_executions = usize::MAX;
+    }
+
     // generate master proof
     info!("Attempting complete proof.");
+    let stitching_only = args.kona.agreed_l2_output_root == args.kona.claimed_l2_output_root;
     let complete_proof_result = compute_oneshot_task(
         args.clone(),
         rollup_config.clone(),
@@ -280,7 +287,7 @@ pub async fn compute_fpvm_proof(
         proposal_data_hash,
         vec![],
         derivation_cache.clone(),
-        derivation_trace, // note: the task sends its driver trace if it succeeds
+        derivation_trace, // note: the task sends its driver trace if it starts proving
         stitched_preconditions.clone(),
         stitched_boot_info.clone(),
         stitched_proofs.clone(),
@@ -294,35 +301,247 @@ pub async fn compute_fpvm_proof(
     )
     .await;
 
-    // on WitnessSizeError or NotSeekingProof, extract execution and derivation traces
-    let (executed_blocks, derivation_trace) = match complete_proof_result {
+    // Extract execution and derivation traces when possible on error
+    let (executed_blocks, derivation_trace, streamed_witness_size) = match complete_proof_result {
+        Err(ProvingError::WitnessSizeError(
+            _,
+            streamed_witness_size,
+            _,
+            executed_blocks,
+            _,
+            derivation_trace,
+        )) => (executed_blocks, derivation_trace, streamed_witness_size),
         Err(ProvingError::BlockCountError(_, _, executed_blocks, _, derivation_trace)) => {
-            (executed_blocks, derivation_trace)
+            (executed_blocks, derivation_trace, 0)
         }
-        Err(ProvingError::WitnessSizeError(_, _, executed_blocks, _, derivation_trace)) => {
-            (executed_blocks, derivation_trace)
-        }
-        Err(ProvingError::NotSeekingProof(_, executed_blocks, _, derivation_trace, _)) => {
-            (executed_blocks, derivation_trace)
+        Err(ProvingError::NotSeekingProof(_, _, executed_blocks, _, derivation_trace, _)) => {
+            (executed_blocks, derivation_trace, 0)
         }
         other_result => return Ok(Some(other_result?)),
     };
-    // Check if we can do execution-only proofs
-    if args.proving.max_block_executions == 0 {
-        return Err(ProvingError::OtherError(anyhow!(
-            "Execution only proofs are disabled because max_block_executions=0."
-        )));
-    }
+
     // flatten executed l2 blocks
     let (_, execution_cache) = split_executions(executed_blocks.clone());
 
-    // perform a derivation-only run to check its provability unless not proving derivation
+    // Sanity check proving task
+    if execution_cache.is_empty()
+        && args.kona.agreed_l2_output_root != args.kona.claimed_l2_output_root
+    {
+        return Err(ProvingError::OtherError(anyhow!("Insufficient L1 head.")));
+    }
+
+    // Check if we can do tail proofs
+    let can_stitch_tail_proofs =
+        args.proving.num_tail_blocks > 0 && !args.proving.skip_derivation_proof;
+    let mut tail_proof_jobs = vec![];
+    if can_stitch_tail_proofs && streamed_witness_size > (args.proving.max_witness_size * 90) / 100
+    {
+        let chain_providers =
+            retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await).await;
+        // Fetch earliest l1 block to start from
+        let l1_tail_number = {
+            let safe_head_block = retry_res_ctx_timeout!(
+                args.timeouts.op_geth_timeout,
+                chain_providers
+                    .l2
+                    .get_block_by_hash(args.kona.agreed_l2_head_hash)
+                    .full()
+                    .await
+                    .context("get_block_by_hash")?
+                    .ok_or_else(|| anyhow!("Failed to fetch safe l2 head parent"))
+            )
+            .await;
+            let safe_head_block = op_alloy_consensus::OpBlock {
+                header: safe_head_block.header.into(),
+                body: alloy::consensus::BlockBody {
+                    transactions: safe_head_block
+                        .transactions
+                        .as_transactions()
+                        .unwrap()
+                        .iter()
+                        .map(|t| t.inner.inner.inner().clone())
+                        .collect(),
+                    ommers: vec![],
+                    withdrawals: safe_head_block.withdrawals,
+                },
+            };
+
+            let safe_head_info =
+                L2BlockInfo::from_block_and_genesis(&safe_head_block, &rollup_config.genesis)
+                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+
+            // Note: we cannot use the snippet below to walk back the timeout
+            // let channel_timeout =
+            //     rollup_config.channel_timeout(safe_head_info.block_info.timestamp);
+            // let l1_origin_number = safe_head_info
+            //     .l1_origin
+            //     .number
+            //     .saturating_sub(channel_timeout)
+            //     .max(rollup_config.genesis.l1.number);
+
+            safe_head_info.l1_origin.number
+        }
+        .max(
+            derivation_cache
+                .as_ref()
+                .map(|cache| cache.cursor.origin.number)
+                .unwrap_or_default(),
+        );
+        let mut l1_tail = retry_res_ctx_timeout!(
+            args.timeouts.eth_rpc_timeout,
+            chain_providers
+                .l1
+                .get_block_by_number(l1_tail_number.into())
+                .await
+                .context("get_block_by_number l1_tail_number")?
+                .ok_or_else(|| anyhow!("Failed to fetch l1 tail"))
+        )
+        .await;
+        // Create tail proofs
+        info!(
+            "Scheduling tail proofs from l1 block {l1_tail_number} (derivation_cache={}).",
+            derivation_cache.is_some()
+        );
+        loop {
+            let mut tail_derivation_cache = derivation_cache.clone();
+            // Job proving args
+            let mut args = args.clone();
+            args.proving.max_block_executions = 0;
+            let mut job_wit_size = 0;
+            let should_continue = loop {
+                // move l1 tail forward
+                l1_tail = retry_res_ctx_timeout!(
+                    args.timeouts.eth_rpc_timeout,
+                    chain_providers
+                        .l1
+                        .get_block_by_number(
+                            (l1_tail.header.number + args.proving.num_tail_blocks).into()
+                        )
+                        .await
+                        .context("get_block_by_number l1_tail + num_tail_blocks")?
+                        .ok_or_else(|| anyhow!("Failed to fetch l1 tail"))
+                )
+                .await;
+                args.kona.l1_head = l1_tail.header.hash;
+                // Driver tracing
+                let (derivation_trace, traced_driver) = async_channel::bounded(1);
+                // trim l1 tail
+                info!("Growing tail to l1 block {}.", l1_tail.header.number);
+                let derivation_only_result = compute_oneshot_task(
+                    args.clone(),
+                    rollup_config.clone(),
+                    disk_kv_store.clone(),
+                    Precondition {
+                        derivation_cache: tail_derivation_cache
+                            .as_ref()
+                            .map(|c| B256::new(c.digest().into()))
+                            .unwrap_or_default(),
+                        ..precondition
+                    },
+                    proposal_data_hash,
+                    vec![],
+                    tail_derivation_cache.clone(),
+                    Some(derivation_trace), // note: the task sends its driver trace if witness size is fine
+                    vec![],
+                    vec![],
+                    vec![],
+                    false,
+                    false,
+                    false,
+                    task_sender.clone(),
+                )
+                .await;
+                // handle derivation result
+                match derivation_only_result.unwrap_err() {
+                    ProvingError::NotSeekingProof(preloaded, streamed, ..) => {
+                        job_wit_size += streamed + preloaded;
+                        // stop growing tail if witness size is above threshold
+                        if job_wit_size > args.proving.max_witness_size {
+                            break true;
+                        }
+                        // capture derivation trace for next iteration of tail growth
+                        tail_derivation_cache = Some(
+                            traced_driver
+                                .recv()
+                                .await
+                                .expect("Failed to receive tail derivation trace."),
+                        );
+                        continue;
+                    }
+                    ProvingError::BlockCountError(..) | ProvingError::WitnessSizeError(..) => {
+                        // stop growing tail if a block is derived
+                        break false;
+                    }
+                    err => {
+                        // propagate unexpected error up on failure to trigger higher-level division
+                        return Err(err);
+                    }
+                }
+            };
+            // Schedule a tail proof
+            if let Some(derivation_trace) = (job_wit_size > 0)
+                .then_some(tail_derivation_cache)
+                .flatten()
+            {
+                // move l1 tail backward for the next iteration to start under
+                l1_tail = retry_res_ctx_timeout!(
+                    args.timeouts.eth_rpc_timeout,
+                    chain_providers
+                        .l1
+                        .get_block_by_number(
+                            l1_tail
+                                .header
+                                .number
+                                .saturating_sub(args.proving.num_tail_blocks)
+                                .into()
+                        )
+                        .await
+                        .context("get_block_by_number l1_tail - tail_blocks")?
+                        .ok_or_else(|| anyhow!("Failed to fetch l1 tail"))
+                )
+                .await;
+                args.kona.l1_head = l1_tail.header.hash;
+                // Queue tail workload
+                info!(
+                    "Scheduling tail proof for claim height {} at l1 tail {}.",
+                    args.kona.claimed_l2_block_number, l1_tail.header.number
+                );
+                tail_proof_jobs.push((
+                    args,
+                    derivation_cache,
+                    B256::new(derivation_trace.digest().into()),
+                ));
+                // Update main job
+                precondition.derivation_cache = B256::new(derivation_trace.digest().into());
+                derivation_cache = Some(derivation_trace);
+            }
+            // Terminate if a block was derived
+            if !should_continue {
+                info!(
+                    "Terminating tail proof scheduling with {} jobs.",
+                    tail_proof_jobs.len()
+                );
+                break;
+            }
+        }
+    }
+
+    // Clear execution cache if we cannot stitch execution proofs
+    let num_executed_blocks = executed_blocks.iter().map(|e| e.len()).sum::<usize>();
+    let (executed_blocks, execution_cache) = if can_stitch_executions {
+        (executed_blocks, execution_cache)
+    } else {
+        warn!("Skipping execution stitching.");
+        (vec![], vec![])
+    };
+
+    // Reevaluate complete provability with stitching unless not proving derivation
     if !args.proving.skip_derivation_proof {
         info!(
-            "Performing derivation-only run for {} executions.",
+            "Reevaluating provability with {} cached executions.",
             execution_cache.len()
         );
-        let derivation_only_result = compute_oneshot_task(
+        let provability_result = compute_oneshot_task(
             args.clone(),
             rollup_config.clone(),
             disk_kv_store.clone(),
@@ -341,145 +560,164 @@ pub async fn compute_fpvm_proof(
         )
         .await;
         // propagate unexpected error up on failure to trigger higher-level division
-        let Err(ProvingError::NotSeekingProof(witness_size, .., derivation_trace_hash)) =
-            derivation_only_result
+        let Err(ProvingError::NotSeekingProof(.., derivation_trace_hash)) = provability_result
         else {
-            warn!(
-                "Unexpected derivation-only result (is_ok={}).",
-                derivation_only_result.is_ok()
-            );
-            return Ok(Some(derivation_only_result?));
+            warn!("Could not decompose derivation proof into tail/execution proofs.");
+            return Ok(Some(provability_result?));
         };
+        info!("Proceeding with execution/tail proof decomposition.");
         // update precondition
         if precondition.derivation_trace.is_zero() {
             precondition.derivation_trace = derivation_trace_hash;
         }
+    }
 
-        // warn if pure derivation witness exceeds limit
-        if witness_size > args.proving.max_witness_size {
-            // todo: investigate if this is reachable.
-            warn!(
-                "Derivation-only witness size {} exceeds limit {}.",
-                human_bytes(witness_size as f64),
-                human_bytes(args.proving.max_witness_size as f64)
-            );
-        } else {
-            info!(
-                "Derivation-only witness size {}.",
-                human_bytes(witness_size as f64)
-            );
+    // dispatch execution proofs
+    let execution_result_channel = async_channel::unbounded();
+    let mut execution_result_pq = BinaryHeap::new();
+    let mut num_execution_proofs = 0;
+    if can_stitch_executions {
+        let mut next_claim_index = args.proving.max_block_executions.min(execution_cache.len()) - 1;
+        let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
+        let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
+        let last_claim_index = execution_cache.len() - 1;
+        while agreed_l2_output_root != args.kona.claimed_l2_output_root {
+            // Create sub-proof job
+            let mut job_args = args.clone();
+            job_args.kona.l1_head = B256::ZERO;
+            job_args.kona.agreed_l2_output_root = agreed_l2_output_root;
+            job_args.kona.agreed_l2_head_hash = agreed_l2_head_hash;
+            job_args.kona.claimed_l2_output_root = execution_cache[next_claim_index].claimed_output;
+            job_args.kona.claimed_l2_block_number =
+                execution_cache[next_claim_index].artifacts.header.number;
+            // advance pointers
+            agreed_l2_output_root = job_args.kona.claimed_l2_output_root;
+            agreed_l2_head_hash = execution_cache[next_claim_index].artifacts.header.hash();
+            // queue up job
+            num_execution_proofs += 1;
+            task_sender
+                .send(Oneshot {
+                    cached_task: create_cached_execution_task(
+                        job_args,
+                        rollup_config.clone(),
+                        disk_kv_store.clone(),
+                        &execution_cache,
+                    ),
+                    result_sender: execution_result_channel.0.clone(),
+                })
+                .await
+                .expect("task_channel should not be closed");
+            // next claim
+            if next_claim_index == last_claim_index {
+                break;
+            }
+            next_claim_index = next_claim_index
+                .saturating_add(args.proving.max_block_executions)
+                .min(last_claim_index);
         }
     }
 
-    // create results channel
-    let result_channel = async_channel::unbounded();
-    let mut result_pq = BinaryHeap::new();
-    // divide and conquer executions
-    let mut num_proofs = 0;
-    let mut next_claim_index = args.proving.max_block_executions.min(execution_cache.len()) - 1;
-    let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
-    let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
-    let last_claim_index = execution_cache.len() - 1;
-    while agreed_l2_output_root != args.kona.claimed_l2_output_root {
-        // Create sub-proof job
-        let mut job_args = args.clone();
-        job_args.kona.l1_head = B256::ZERO;
-        job_args.kona.agreed_l2_output_root = agreed_l2_output_root;
-        job_args.kona.agreed_l2_head_hash = agreed_l2_head_hash;
-        job_args.kona.claimed_l2_output_root = execution_cache[next_claim_index].claimed_output;
-        job_args.kona.claimed_l2_block_number =
-            execution_cache[next_claim_index].artifacts.header.number;
-        // advance pointers
-        agreed_l2_output_root = job_args.kona.claimed_l2_output_root;
-        agreed_l2_head_hash = execution_cache[next_claim_index].artifacts.header.hash();
-        // queue up job
-        num_proofs += 1;
+    // dispatch tail proofs
+    let num_tail_proofs = tail_proof_jobs.len();
+    let mut tail_proof_receivers = Vec::with_capacity(num_tail_proofs);
+    for (args, derivation_cache, derivation_trace) in tail_proof_jobs.into_iter() {
+        let (result_sender, result_receiver) = async_channel::unbounded();
         task_sender
             .send(Oneshot {
-                cached_task: create_cached_execution_task(
-                    job_args,
-                    rollup_config.clone(),
-                    disk_kv_store.clone(),
-                    &execution_cache,
-                ),
-                result_sender: result_channel.0.clone(),
+                cached_task: CachedTask {
+                    args,
+                    rollup_config: rollup_config.clone(),
+                    disk_kv_store: disk_kv_store.clone(),
+                    precondition: Precondition {
+                        proposal_blobs: precondition.proposal_blobs,
+                        execution_trace: B256::ZERO,
+                        derivation_cache: derivation_cache
+                            .as_ref()
+                            .map(|c| B256::new(c.digest().into()))
+                            .unwrap_or_default(),
+                        derivation_trace,
+                    },
+                    proposal_data_hash,
+                    stitched_executions: vec![],
+                    derivation_cache,
+                    derivation_trace_sender: None, // we don't need to send the trace anywhere
+                    stitched_preconditions: vec![],
+                    stitched_boot_info: vec![],
+                    stitched_proofs: vec![],
+                    prove_snark: false,
+                    force_attempt: false,
+                    seek_proof: true,
+                },
+                result_sender,
             })
             .await
-            .expect("task_channel should not be closed");
-        // next claim
-        if next_claim_index == last_claim_index {
-            break;
-        }
-        next_claim_index = next_claim_index
-            .saturating_add(args.proving.max_block_executions)
-            .min(last_claim_index);
+            .expect("Oneshot task_sender channel closed.");
+        // store result receiver
+        tail_proof_receivers.push(result_receiver);
     }
-    // process execution-only proving results
-    while result_pq.len() < num_proofs {
+
+    // process (or skip await) execution-only proving results
+    let mut dispatched_execution_proofs = num_execution_proofs;
+    while execution_result_pq.len() < num_execution_proofs {
         // Wait for more proving results
-        let oneshot_result = result_channel
+        let OneshotResult {
+            cached_task,
+            result,
+        } = execution_result_channel
             .1
             .recv()
             .await
             .expect("result_channel should not be closed");
-        let Err(err) = oneshot_result.result else {
-            result_pq.push(oneshot_result);
+        let Err(err) = result else {
+            execution_result_pq.push(OneshotResult {
+                cached_task,
+                result,
+            });
             continue;
         };
-        // Require additional proof
-        num_proofs += 1;
-        let executed_blocks = oneshot_result.cached_task.stitched_executions[0].clone();
+        let executed_blocks = cached_task.stitched_executions[0].clone();
         let agreed_block = executed_blocks[0].artifacts.header.number - 1;
-        let num_blocks =
-            oneshot_result.cached_task.args.kona.claimed_l2_block_number - agreed_block;
+        let num_blocks = cached_task.args.kona.claimed_l2_block_number - agreed_block;
         let forced_attempt = num_blocks == 1;
         // divide or bail out on error
         match err {
-            ProvingError::WitnessSizeError(f, t, e, ..) => {
+            ProvingError::WitnessSizeError(preloaded, streamed, limit, e, ..) => {
                 if forced_attempt {
                     error!(
-                        "Execution-only proof witness size {} above safety threshold {}.",
-                        human_bytes(f as f64),
-                        human_bytes(t as f64)
+                        "Execution-only proof witness size {} + {} above safety threshold {}.",
+                        human_bytes(preloaded as f64),
+                        human_bytes(streamed as f64),
+                        human_bytes(limit as f64),
                     );
                     return Err(ProvingError::WitnessSizeError(
-                        f,
-                        t,
+                        preloaded,
+                        streamed,
+                        limit,
                         e,
                         Box::new(None),
                         None,
                     ));
                 }
                 warn!(
-                    "Execution-only proof witness size {} above safety threshold {}. Splitting workload.",
-                    human_bytes(f as f64),
-                    human_bytes(t as f64)
+                    "Execution-only proof witness size {} + {} above safety threshold {}. Splitting workload.",
+                        human_bytes(preloaded as f64),
+                        human_bytes(streamed as f64),
+                        human_bytes(limit as f64),
                 )
             }
-            ProvingError::ExecutionError(e) => {
-                if forced_attempt {
-                    return Err(ProvingError::ExecutionError(e));
-                }
-                warn!("Splitting execution-only proof after ZKVM execution error: {e:?}")
+            ProvingError::NotAwaitingProof => {
+                // require one less proof
+                num_execution_proofs -= 1;
+                continue;
             }
             ProvingError::OtherError(e) => {
                 return Err(ProvingError::OtherError(e));
             }
-            ProvingError::NotAwaitingProof => {
-                // reduce required proofs by two to cancel out prior addition and one more proof
-                num_proofs -= 2;
-                continue;
-            }
-            ProvingError::BlockCountError(..) => {
-                unreachable!("Unexpected BlockCountError {err:?}")
-            }
-            ProvingError::NotSeekingProof(..) => {
-                unreachable!("Unexpected NotSeekingProof {err:?}")
-            }
-            ProvingError::DerivationProofError(_) => {
-                unreachable!("Unexpected DerivationProofError {err:?}")
-            }
+            _ => unreachable!("Unexpected ProvingError {err:?}"),
         }
+        // Require additional proof
+        num_execution_proofs += 1;
+        dispatched_execution_proofs += 1;
         // Split workload at midpoint (num_blocks > 1)
         let mid_point = agreed_block + num_blocks / 2;
         let mid_exec = executed_blocks
@@ -489,7 +727,7 @@ pub async fn compute_fpvm_proof(
         let mid_output = mid_exec.claimed_output;
 
         // Lower half workload ends at midpoint (inclusive)
-        let mut lower_job_args = oneshot_result.cached_task.args.clone();
+        let mut lower_job_args = cached_task.args.clone();
         lower_job_args.kona.claimed_l2_output_root = mid_output;
         lower_job_args.kona.claimed_l2_block_number = mid_point;
         task_sender
@@ -500,13 +738,13 @@ pub async fn compute_fpvm_proof(
                     disk_kv_store.clone(),
                     &execution_cache,
                 ),
-                result_sender: result_channel.0.clone(),
+                result_sender: execution_result_channel.0.clone(),
             })
             .await
             .expect("task_channel should not be closed");
 
         // upper half workload starts after midpoint
-        let mut upper_job_args = oneshot_result.cached_task.args;
+        let mut upper_job_args = cached_task.args;
         upper_job_args.kona.agreed_l2_output_root = mid_output;
         upper_job_args.kona.agreed_l2_head_hash = mid_exec.artifacts.header.hash();
         task_sender
@@ -517,40 +755,77 @@ pub async fn compute_fpvm_proof(
                     disk_kv_store.clone(),
                     &execution_cache,
                 ),
-                result_sender: result_channel.0.clone(),
+                result_sender: execution_result_channel.0.clone(),
             })
             .await
             .expect("task_channel should not be closed");
     }
+
+    // Return execution proof count without stitching if derivation is not required
+    if args.proving.skip_derivation_proof {
+        warn!("Skipping stitching {dispatched_execution_proofs} execution proofs with derivation.");
+        return Err(ProvingError::SkippingDerivation(
+            dispatched_execution_proofs,
+        ));
+    }
+
     // Read result_pq for stitched executions and proofs
-    let (proofs, stitched_executions): (Vec<_>, Vec<_>) = result_pq
+    let (execution_proofs, stitched_executions): (Vec<_>, Vec<_>) = execution_result_pq
         .into_sorted_vec()
         .into_iter()
         .map(|mut r| {
             (
-                r.result.expect("pushed failing result to queue").0,
+                r.result.unwrap().0,
                 r.cached_task.stitched_executions.pop().unwrap(),
             )
         })
         .unzip();
 
-    // Return proof count without stitching if derivation is not required
-    if args.proving.skip_await_proof {
-        warn!("Skipping stitching unawaited execution proofs with derivation.");
-        return Err(ProvingError::NotAwaitingProof);
-    } else if args.proving.skip_derivation_proof {
-        let num_proofs = proofs.len();
-        warn!("Skipping stitching {num_proofs} execution proofs with derivation.");
-        return Err(ProvingError::DerivationProofError(num_proofs));
+    // process tail proving results
+    let mut tail_preconditions = Vec::with_capacity(num_tail_proofs);
+    let mut tail_boot_infos = Vec::with_capacity(num_tail_proofs);
+    let mut tail_proofs = Vec::with_capacity(num_tail_proofs);
+    // iterate over receivers in reverse to enact backwards stitch
+    for receiver in tail_proof_receivers.into_iter().rev() {
+        let OneshotResult { result, .. } = receiver
+            .recv()
+            .await
+            .expect("result_channel should not be closed");
+        // unpack result
+        let (receipt, precondition) = match result {
+            Err(err) => {
+                if !matches!(err, ProvingError::NotAwaitingProof) {
+                    error!("Tail proof error: {err:?}");
+                }
+                continue;
+            }
+            Ok(result) => result,
+        };
+        let stitched_boot = StitchedBootInfo::from(ProofJournal::from(&receipt));
+        tail_proofs.push(receipt);
+        tail_preconditions.push(precondition);
+        tail_boot_infos.push(stitched_boot);
     }
 
-    // Combine execution proofs with derivation proof
-    let total_blocks = stitched_executions.iter().map(|e| e.len()).sum::<usize>();
-    info!(
-        "Stitching {}/{} execution proofs for {total_blocks} blocks with derivation proof.",
-        proofs.len(),
-        stitched_executions.len()
-    );
+    // Combine execution/tail proofs with derivation proof
+    if args.proving.skip_await_proof && dispatched_execution_proofs > 0 {
+        warn!("Skipping stitching unawaited execution proofs with derivation proof.");
+        return Err(ProvingError::NotAwaitingProof);
+    }
+
+    if args.proving.skip_await_proof {
+        info!(
+            "Dispatching stand-alone head proof for {num_tail_proofs} tails and {num_executed_blocks} L2 blocks."
+        );
+    } else {
+        info!(
+            "Stitching {}/{} execution proofs and {}/{} tail proofs for {num_executed_blocks} L2 blocks.",
+            execution_proofs.len(),
+            stitched_executions.len(),
+            tail_proofs.len(),
+            num_tail_proofs
+        );
+    }
 
     Ok(Some(
         compute_oneshot_task(
@@ -561,10 +836,10 @@ pub async fn compute_fpvm_proof(
             proposal_data_hash,
             stitched_executions,
             derivation_cache,
-            None,
-            stitched_preconditions,
-            stitched_boot_info,
-            [stitched_proofs, proofs].concat(),
+            None, // driver trace precondition hash enforced by precondition arg having it
+            [tail_preconditions, stitched_preconditions].concat(),
+            [tail_boot_infos, stitched_boot_info].concat(),
+            [tail_proofs, stitched_proofs, execution_proofs].concat(),
             prove_snark,
             true,
             true,
@@ -622,7 +897,7 @@ pub fn create_cached_execution_task(
         proposal_data_hash: B256::ZERO,
         stitched_executions: vec![executed_blocks],
         derivation_cache: None,
-        derivation_trace: None,
+        derivation_trace_sender: None,
         stitched_preconditions: vec![],
         stitched_boot_info: vec![],
         stitched_proofs: vec![],
@@ -638,7 +913,7 @@ pub async fn compute_cached_proof(
     mut args: ProveArgs,
     rollup_config: RollupConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
-    mut precondition: Precondition,
+    precondition: Precondition,
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
     derivation_cache: Option<CachedDriver>,
@@ -651,7 +926,7 @@ pub async fn compute_cached_proof(
     seek_proof: bool,
 ) -> Result<OneshotResultResponse, ProvingError> {
     // extract single chain kona config
-    let boot = BootInfo {
+    let mut boot = BootInfo {
         l1_head: args.kona.l1_head,
         agreed_l2_output_root: args.kona.agreed_l2_output_root,
         claimed_l2_output_root: args.kona.claimed_l2_output_root,
@@ -665,32 +940,54 @@ pub async fn compute_cached_proof(
     // Check derivation driver cache if needed
     let driver_file = driver_file_name(image_id, &boot, &precondition);
     let trace_derivation = derivation_trace.is_some() || !precondition.derivation_trace.is_zero();
-    if trace_derivation {
-        if let Some(derivation_trace_hash) = signal_derivation_trace(
-            derivation_trace.clone(),
-            try_read_driver(&driver_file).await,
-        )
-        .await
-        {
-            // no need to double-send
-            let _ = derivation_trace.take();
-            // update precondition hash
+    // Update boot info and precondition if cached trace is available
+    let mut cached_precondition = precondition;
+    if let Some(derivation_trace) = try_read_driver(&driver_file).await {
+        // Update claim if l1 head insufficient
+        let claimed_l2_output_root = *derivation_trace.cursor.l2_safe_head_output_root();
+        if claimed_l2_output_root != boot.claimed_l2_output_root {
+            let claimed_l2_block_number = derivation_trace.cursor.l2_safe_head().block_info.number;
+            info!(
+                "Correcting claim {}/{} to {claimed_l2_output_root}/{claimed_l2_block_number}",
+                boot.claimed_l2_output_root, boot.claimed_l2_block_number
+            );
+            boot.claimed_l2_output_root = claimed_l2_output_root;
+            boot.claimed_l2_block_number = claimed_l2_block_number;
+        }
+        // Update derivation trace precondition
+        if trace_derivation {
+            let derivation_trace_hash = B256::new(derivation_trace.digest().into());
             if precondition.derivation_trace.is_zero() {
-                precondition.derivation_trace = derivation_trace_hash;
+                cached_precondition.derivation_trace = derivation_trace_hash;
             } else if precondition.derivation_trace != derivation_trace_hash {
                 warn!("Precondition derivation trace hash mismatch. Input: {}, Cached: {derivation_trace_hash}", precondition.derivation_trace);
             }
         }
     }
+    // Sanity check initial conditions
+    if let Some(derivation_cache) = derivation_cache.as_ref() {
+        let agreed_l2_output_root = *derivation_cache.cursor.l2_safe_head_output_root();
+        if agreed_l2_output_root.is_zero() {
+            warn!(
+                "DriverCache {} cursor L2 safe head output root is empty.",
+                B256::new(derivation_cache.digest().into())
+            );
+        } else if agreed_l2_output_root != boot.agreed_l2_output_root {
+            error!(
+                "DriverCache {} cursor L2 safe head output root {agreed_l2_output_root} does not match BootInfo {}",
+                B256::new(derivation_cache.digest().into()),
+                boot.agreed_l2_output_root
+            );
+        }
+    }
 
     // Construct expected journal
-    // bug: this may fail when mixing proving with stitching boot infos
-    let (boot, proof_journal, _) = stitch_boot_info::<VecOracle>(
+    let (boot, proof_journal, mut updated_precondition) = stitch_boot_info::<VecOracle>(
         None, // assume l1 head chain continuity on host side
         boot,
         bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
         args.proving.payout_recipient_address.unwrap_or_default(),
-        precondition,
+        cached_precondition,
         stitched_preconditions.clone(),
         stitched_boot_info.clone(),
     )
@@ -702,6 +999,18 @@ pub async fn compute_cached_proof(
     let mut proof_file = proof_file_name(image_id, &proof_journal);
     if Path::new(&proof_file).try_exists().is_ok_and(identity) && seek_proof {
         info!("Proving skipped. Proof file {proof_file} already exists.");
+        // Signal cached trace
+        if trace_derivation
+            && signal_derivation_trace(
+                derivation_trace.clone(),
+                try_read_driver(&driver_file).await,
+            )
+            .await
+            .is_some()
+        {
+            // no need to double-send
+            let _ = derivation_trace.take();
+        }
         // abort remainder of flow if no proof is to be awaited
         if skip_await_proof {
             return Err(ProvingError::NotAwaitingProof);
@@ -760,6 +1069,7 @@ pub async fn compute_cached_proof(
         crate::client::native::run_native_client(
             args.clone(),
             disk_kv_store,
+            precondition,
             proposal_data_hash,
             stitched_executions,
             derivation_cache,
@@ -781,28 +1091,43 @@ pub async fn compute_cached_proof(
     } else {
         None
     };
+
     // Correct precondition and target proof file if needed
-    if precondition.derivation_trace.is_zero() && trace_derivation {
+    if trace_derivation {
         if let Some(derivation_trace) = derivation_trace.as_ref() {
             // Update derivation trace precondition
-            precondition.derivation_trace = B256::new(derivation_trace.digest().into());
-            // Recalculate receipt file name with new precondition
-            proof_file = proof_file_name(
-                image_id,
-                &stitch_boot_info::<VecOracle>(
-                    None, // assume l1 head chain continuity on host side
-                    boot,
-                    bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
-                    args.proving.payout_recipient_address.unwrap_or_default(),
-                    precondition,
-                    stitched_preconditions,
-                    stitched_boot_info,
-                )
-                .await
-                .context("Failed to stitch boot info.")
-                .map_err(ProvingError::OtherError)?
-                .1,
-            );
+            cached_precondition.derivation_trace = B256::new(derivation_trace.digest().into());
+            // Recalculate receipt file name with new precondition derivation trace
+            let claimed_l2_output_root = *derivation_trace.cursor.l2_safe_head_output_root();
+            let (_, proof_journal, precondition) = stitch_boot_info::<VecOracle>(
+                None, // assume l1 head chain continuity on host side
+                BootInfo {
+                    // update l2 claim if l1 head insufficient
+                    claimed_l2_output_root: if claimed_l2_output_root.is_zero() {
+                        boot.agreed_l2_output_root
+                    } else {
+                        claimed_l2_output_root
+                    },
+                    claimed_l2_block_number: derivation_trace
+                        .cursor
+                        .l2_safe_head()
+                        .block_info
+                        .number,
+                    ..boot
+                },
+                bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
+                args.proving.payout_recipient_address.unwrap_or_default(),
+                cached_precondition,
+                stitched_preconditions,
+                stitched_boot_info,
+            )
+            .await
+            .context("Failed to stitch boot info.")
+            .map_err(ProvingError::OtherError)?;
+            proof_file = proof_file_name(image_id, &proof_journal);
+            updated_precondition = precondition;
+        } else {
+            error!("Missing expected derivation trace {driver_file}.");
         }
     }
     // Load receipt
@@ -811,5 +1136,5 @@ pub async fn compute_cached_proof(
         .context(format!("Failed to read proof file {proof_file} contents."))
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
     // Return combined response
-    Ok((receipt, precondition))
+    Ok((receipt, updated_precondition))
 }

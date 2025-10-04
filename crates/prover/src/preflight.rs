@@ -39,6 +39,7 @@ use tracing::{error, info, warn};
 
 pub async fn get_blob_fetch_request(
     l1_provider: &RootProvider,
+    l1_timeout: u64,
     block_hash: B256,
     blob_hash: B256,
 ) -> anyhow::Result<BlobFetchRequest> {
@@ -49,12 +50,15 @@ pub async fn get_blob_fetch_request(
         context,
         tracer,
         "get_block_by_hash",
-        retry_res_ctx_timeout!(l1_provider
-            .get_block_by_hash(block_hash)
-            .full()
-            .await
-            .context("get_block_by_hash")?
-            .ok_or_else(|| anyhow!("Failed to fetch starting block")))
+        retry_res_ctx_timeout!(
+            l1_timeout,
+            l1_provider
+                .get_block_by_hash(block_hash)
+                .full()
+                .await
+                .context("get_block_by_hash")?
+                .ok_or_else(|| anyhow!("Failed to fetch starting block"))
+        )
     );
     let mut blob_index = 0;
     let mut blob_found = false;
@@ -100,7 +104,8 @@ pub async fn fetch_precondition_data(
 
     // fetch necessary data to validate blob equivalence precondition
     if hash_arguments.iter().all(|arg| !arg) {
-        let providers = retry_res_ctx_timeout!(20, cfg.create_providers().await).await;
+        let providers =
+            retry_res_ctx_timeout!(cfg.timeouts.max(), cfg.create_providers().await).await;
         if cfg.precondition_block_hashes.len() != cfg.precondition_blob_hashes.len() {
             bail!(
                 "Blob reference mismatch. Found {} block hashes and {} blob hashes",
@@ -116,8 +121,15 @@ pub async fn fetch_precondition_data(
                 cfg.precondition_blob_hashes.iter(),
             ) {
                 info!("Fetching blob hash {blob_hash} from block {block_hash}");
-                fetch_requests
-                    .push(get_blob_fetch_request(&providers.l1, *block_hash, *blob_hash).await?);
+                fetch_requests.push(
+                    get_blob_fetch_request(
+                        &providers.l1,
+                        cfg.timeouts.eth_rpc_timeout,
+                        *block_hash,
+                        *blob_hash,
+                    )
+                    .await?,
+                );
             }
             ProposalPrecondition {
                 proposal_l2_head_number: cfg.precondition_params[0],
@@ -158,18 +170,21 @@ pub async fn concurrent_execution_preflight(
     let context =
         opentelemetry::Context::current_with_span(tracer.start("concurrent_execution_preflight"));
 
-    let l2_provider = retry_res_ctx_timeout!(20, args.create_providers().await)
+    let l2_provider = retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await)
         .await
         .l2;
     let starting_block = await_tel!(
         context,
         tracer,
         "l2_provider get_block_by_hash agreed_l2_head_hash",
-        retry_res_ctx_timeout!(l2_provider
-            .get_block_by_hash(args.kona.agreed_l2_head_hash)
-            .await
-            .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
-            .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block")))
+        retry_res_ctx_timeout!(
+            args.timeouts.op_geth_timeout,
+            l2_provider
+                .get_block_by_hash(args.kona.agreed_l2_head_hash)
+                .await
+                .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
+                .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block"))
+        )
     )
     .header
     .number;
@@ -182,6 +197,9 @@ pub async fn concurrent_execution_preflight(
     let mut extra_blocks = num_blocks % args.proving.num_concurrent_preflights;
     let mut jobs = vec![];
     let mut args = args.clone();
+    args.proving.max_block_executions = usize::MAX;
+    args.proving.max_block_derivations = usize::MAX;
+    args.proving.max_witness_size = usize::MAX;
     while num_blocks > 0 {
         let processed_blocks = if extra_blocks > 0 {
             extra_blocks -= 1;
@@ -196,11 +214,14 @@ pub async fn concurrent_execution_preflight(
             context,
             tracer,
             "l2_provider get_block_by_hash agreed_l2_head_hash",
-            retry_res_ctx_timeout!(l2_provider
-                .get_block_by_hash(args.kona.agreed_l2_head_hash)
-                .await
-                .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
-                .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block")))
+            retry_res_ctx_timeout!(
+                args.timeouts.op_geth_timeout,
+                l2_provider
+                    .get_block_by_hash(args.kona.agreed_l2_head_hash)
+                    .await
+                    .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
+                    .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block"))
+            )
         )
         .header
         .number
@@ -210,6 +231,7 @@ pub async fn concurrent_execution_preflight(
             tracer,
             "output_at_block claimed_l2_block_number",
             retry_res_ctx_timeout!(
+                args.timeouts.op_node_timeout,
                 op_node_provider
                     .output_at_block(args.kona.claimed_l2_block_number)
                     .await
@@ -239,13 +261,16 @@ pub async fn concurrent_execution_preflight(
                 context,
                 tracer,
                 "l2_provider get_block_by_number claimed_l2_block_number",
-                retry_res_ctx_timeout!(l2_provider
-                    .get_block_by_number(BlockNumberOrTag::Number(
-                        args.kona.claimed_l2_block_number
-                    ))
-                    .await
-                    .context("l2_provider get_block_by_number claimed_l2_block_number")?
-                    .ok_or_else(|| anyhow!("Failed to claimed l2 block")))
+                retry_res_ctx_timeout!(
+                    args.timeouts.op_geth_timeout,
+                    l2_provider
+                        .get_block_by_number(BlockNumberOrTag::Number(
+                            args.kona.claimed_l2_block_number
+                        ))
+                        .await
+                        .context("l2_provider get_block_by_number claimed_l2_block_number")?
+                        .ok_or_else(|| anyhow!("Failed to claimed l2 block"))
+                )
             )
             .header
             .hash;
@@ -257,23 +282,33 @@ pub async fn concurrent_execution_preflight(
     let mut l1_head_sufficient = true;
     for (target_l2_height, job) in jobs {
         let result = job.await?;
-        match result {
+        let claimed_l2_block_number = match result {
             Err(e) => {
-                if !matches!(e, ProvingError::NotSeekingProof(..)) {
+                let ProvingError::NotSeekingProof(_, _, executions, ..) = e else {
                     error!("Error during preflight execution: {e:?}");
-                }
-            }
-            Ok((receipt, _)) => {
-                let ProofJournal {
-                    claimed_l2_block_number,
-                    ..
-                } = ProofJournal::from(&receipt);
-                if claimed_l2_block_number < target_l2_height {
-                    error!("L1 Head insufficient to derive L2 block {target_l2_height}. Stopped at {claimed_l2_block_number}.");
+                    continue;
+                };
+                let Some(trace) = executions.first() else {
+                    error!("L1 Head insufficient to derive L2 block beyond {target_l2_height}.");
                     l1_head_sufficient = false;
-                }
+                    continue;
+                };
+                let Some(claimed_l2_block) = trace.last() else {
+                    error!("L1 Head insufficient to derive L2 block beyond {target_l2_height}.");
+                    l1_head_sufficient = false;
+                    continue;
+                };
+                claimed_l2_block.artifacts.header.number
             }
-        }
+            Ok((receipt, _)) => ProofJournal::from(&receipt).claimed_l2_block_number,
+        };
+
+        if claimed_l2_block_number < target_l2_height {
+            error!("L1 Head insufficient to derive L2 block {target_l2_height}. Stopped at {claimed_l2_block_number}.");
+            l1_head_sufficient = false;
+        } else {
+            info!("Preflight job for target {target_l2_height} terminated at {claimed_l2_block_number}.");
+        };
     }
 
     Ok(l1_head_sufficient)

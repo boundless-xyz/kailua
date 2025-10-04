@@ -34,10 +34,11 @@ pub mod tasks;
 #[derive(Debug, thiserror::Error)]
 pub enum ProvingError {
     #[error("DerivationProofError error: execution proofs {0}")]
-    DerivationProofError(usize),
+    SkippingDerivation(usize),
 
-    #[error("NotSeekingProof error: witness {0}")]
+    #[error("NotSeekingProof error: preloaded {0} streamed {1}")]
     NotSeekingProof(
+        usize,
         usize,
         Vec<Vec<Execution>>,
         Box<Option<CachedDriver>>,
@@ -48,7 +49,7 @@ pub enum ProvingError {
     #[error("NotAwaitingProof error")]
     NotAwaitingProof,
 
-    #[error("BlockCountError error: size {0} limit {0}")]
+    #[error("BlockCountError error: count {0} limit {1}")]
     BlockCountError(
         usize,
         usize,
@@ -57,17 +58,15 @@ pub enum ProvingError {
         Option<Sender<CachedDriver>>,
     ),
 
-    #[error("WitnessSizeError error: size {0} limit {0}")]
+    #[error("WitnessSizeError error: preloaded {0} streamed {1} limit {2}")]
     WitnessSizeError(
+        usize,
         usize,
         usize,
         Vec<Vec<Execution>>,
         Box<Option<CachedDriver>>,
         Option<Sender<CachedDriver>>,
     ),
-
-    #[error("ExecutionError error: ZKVM failed {0:?}")]
-    ExecutionError(anyhow::Error),
 
     #[error("OtherError error: {0:?}")]
     OtherError(anyhow::Error),

@@ -152,13 +152,16 @@ pub async fn handle_blocks(
     let mut n = 1u64;
     loop {
         // Wait for new data on every iteration
-        sleep(Duration::from_secs(6)).await;
+        sleep(Duration::from_secs(args.provider.rpc_poll_interval)).await;
         // more output commitments
         let sync_status = await_tel!(
             context,
             tracer,
             "sync_status",
-            retry_res_ctx_timeout!(provider.op_provider.sync_status().await)
+            retry_res_ctx_timeout!(
+                args.provider.timeouts.op_node_timeout,
+                provider.op_provider.sync_status().await
+            )
         );
         let Some(safe_l2_number) = sync_status["safe_l2"]["number"]
             .as_u64()
@@ -171,12 +174,15 @@ pub async fn handle_blocks(
             context,
             tracer,
             "l1_head",
-            retry_res_ctx_timeout!(provider
-                .l1_provider
-                .get_block_by_number(BlockNumberOrTag::Latest)
-                .await
-                .context("get_block_by_number")?
-                .ok_or_else(|| anyhow!("Failed to fetch l1 head")))
+            retry_res_ctx_timeout!(
+                args.provider.timeouts.eth_rpc_timeout,
+                provider
+                    .l1_provider
+                    .get_block_by_number(BlockNumberOrTag::Latest)
+                    .await
+                    .context("get_block_by_number")?
+                    .ok_or_else(|| anyhow!("Failed to fetch l1 head"))
+            )
         );
         // start from most recent block if unspecified
         if last_proven.is_none() {
@@ -192,18 +198,22 @@ pub async fn handle_blocks(
                 context,
                 tracer,
                 "agreed_l2_block",
-                retry_res_ctx_timeout!(provider
-                    .l2_provider
-                    .get_block_by_number(BlockNumberOrTag::Number(agreed_l2_block_number))
-                    .await
-                    .context("get_block_by_number")?
-                    .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block")))
+                retry_res_ctx_timeout!(
+                    args.provider.timeouts.op_geth_timeout,
+                    provider
+                        .l2_provider
+                        .get_block_by_number(BlockNumberOrTag::Number(agreed_l2_block_number))
+                        .await
+                        .context("get_block_by_number")?
+                        .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block"))
+                )
             );
             let agreed_l2_output_root = await_tel!(
                 context,
                 tracer,
                 "agreed_l2_output_root",
                 retry_res_ctx_timeout!(
+                    args.provider.timeouts.op_node_timeout,
                     provider
                         .op_provider
                         .output_at_block(agreed_l2_block_number)
@@ -216,6 +226,7 @@ pub async fn handle_blocks(
                 tracer,
                 "claimed_l2_output_root",
                 retry_res_ctx_timeout!(
+                    args.provider.timeouts.op_node_timeout,
                     provider
                         .op_provider
                         .output_at_block(claimed_l2_block_number)

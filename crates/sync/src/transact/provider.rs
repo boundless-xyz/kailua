@@ -68,7 +68,7 @@ where
             // Get latest block
             let latest_block = await_tel!(
                 context,
-                get_block(self.provider(), BlockNumberOrTag::Latest)
+                get_block(self.provider(), BlockNumberOrTag::Latest, 12)
             )
             .header()
             .number();

@@ -21,6 +21,7 @@ use serde::Serialize;
 use std::path::Path;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::log::warn;
 
 #[allow(deprecated)]
 /// Computes the expected proof file name based on the journal
@@ -58,6 +59,9 @@ pub async fn read_bincoded_file<T: DeserializeOwned>(file_name: &str) -> anyhow:
 }
 
 pub async fn save_to_bincoded_file<T: Serialize>(value: &T, file_name: &str) -> anyhow::Result<()> {
+    if Path::new(file_name).exists() {
+        warn!("Overwriting {file_name}.");
+    }
     let mut file = File::create(file_name)
         .await
         .context("Failed to create output file.")?;

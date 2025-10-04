@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::args::SyncArgs;
 use crate::cursor::SyncCursor;
 use crate::deployment::SyncDeployment;
 use crate::proposal::{Proposal, ProposalSync};
@@ -109,7 +110,12 @@ impl SyncAgent {
         // Load target deployment data
         let deployment = await_tel_res!(
             context,
-            SyncDeployment::load(&provider, &config, game_impl_address),
+            SyncDeployment::load(
+                &provider,
+                &config,
+                game_impl_address,
+                provider_args.timeouts.eth_rpc_timeout
+            ),
             "Deployment::load"
         )?;
         #[cfg(not(feature = "devnet"))]
@@ -140,7 +146,12 @@ impl SyncAgent {
         // Create cursor
         let cursor = await_tel_res!(
             context,
-            SyncCursor::load(&deployment, &provider, anchor_address),
+            SyncCursor::load(
+                &deployment,
+                &provider,
+                anchor_address,
+                provider_args.timeouts.op_geth_timeout
+            ),
             "SyncCursor::load"
         )?;
 
@@ -227,11 +238,7 @@ impl SyncAgent {
         Ok(proposals)
     }
 
-    pub async fn sync(
-        &mut self,
-        op_rpc_delay: u64,
-        final_l2_block: Option<u64>,
-    ) -> anyhow::Result<Vec<u64>> {
+    pub async fn sync(&mut self, args: &SyncArgs) -> anyhow::Result<Vec<u64>> {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(tracer.start("SyncAgent::sync"));
 
@@ -240,12 +247,15 @@ impl SyncAgent {
             context,
             tracer,
             "sync_status",
-            retry_res_ctx_timeout!(self.provider.op_provider.sync_status().await)
+            retry_res_ctx_timeout!(
+                args.provider.timeouts.op_node_timeout,
+                self.provider.op_provider.sync_status().await
+            )
         );
         let safe_l2_number = sync_status["safe_l2"]["number"]
             .as_u64()
             .ok_or_else(|| anyhow::anyhow!("failed to parse safe_l2"))?
-            .saturating_sub(op_rpc_delay);
+            .saturating_sub(args.provider.op_rpc_delay);
         let output_block_number = safe_l2_number
             .min(self.cursor.last_output_index + self.deployment.blocks_per_proposal());
         if self.cursor.last_output_index + self.deployment.output_block_span < output_block_number {
@@ -260,7 +270,8 @@ impl SyncAgent {
                 self.sync_outputs(
                     self.cursor.last_output_index,
                     output_block_number,
-                    self.deployment.output_block_span
+                    self.deployment.output_block_span,
+                    &args.provider
                 )
             );
         }
@@ -270,7 +281,11 @@ impl SyncAgent {
             IDisputeGameFactory::new(self.deployment.factory, self.provider.l1_provider.clone());
         let game_count: u64 = dispute_game_factory
             .gameCount()
-            .stall_with_context(context.clone(), "DisputeGameFactory::gameCount")
+            .stall_with_context(
+                context.clone(),
+                "DisputeGameFactory::gameCount",
+                args.provider.timeouts.eth_rpc_timeout,
+            )
             .await
             .to();
         let first_factory_index = self.cursor.next_factory_index;
@@ -279,14 +294,18 @@ impl SyncAgent {
             let proposal_index = self.cursor.next_index();
 
             match self
-                .sync_proposal(&dispute_game_factory, proposal_index)
+                .sync_proposal(
+                    &dispute_game_factory,
+                    proposal_index,
+                    args.provider.timeouts.eth_rpc_timeout,
+                )
                 .with_context(context.clone())
                 .await
             {
                 Ok(ProposalSync::IGNORED(contract, l1_head)) => {
                     // Record batcher nonce at proposal l1 head if needed
                     if !l1_head.is_zero() {
-                        self.sync_l1_head(contract, l1_head)
+                        self.sync_l1_head(args, contract, l1_head)
                             .with_context(context.clone())
                             .await;
                     }
@@ -301,7 +320,7 @@ impl SyncAgent {
                 }
                 Ok(ProposalSync::SUCCESS(contract, l1_head)) => {
                     // Record batcher nonce at proposal l1 head if needed
-                    self.sync_l1_head(contract, l1_head)
+                    self.sync_l1_head(args, contract, l1_head)
                         .with_context(context.clone())
                         .await;
                     // Update state according to proposal
@@ -369,7 +388,10 @@ impl SyncAgent {
             };
 
             let resolved_at = last_unresolved_proposal
-                .fetch_resolved_at(&self.provider.l1_provider)
+                .fetch_resolved_at(
+                    &self.provider.l1_provider,
+                    args.provider.timeouts.eth_rpc_timeout,
+                )
                 .await;
 
             // stop at last unresolved proposal
@@ -410,7 +432,7 @@ impl SyncAgent {
             .record(self.cursor.next_factory_index, &[]);
 
         // check termination condition
-        if let Some(final_l2_block) = final_l2_block {
+        if let Some(final_l2_block) = args.final_l2_block {
             let last_resolved_proposal = self
                 .proposals
                 .get(&self.cursor.last_resolved_game)
@@ -438,7 +460,7 @@ impl SyncAgent {
         Ok(proposals)
     }
 
-    pub async fn sync_l1_head(&mut self, proposal: Address, l1_head: B256) {
+    pub async fn sync_l1_head(&mut self, args: &SyncArgs, proposal: Address, l1_head: B256) {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(
             tracer.start("SyncAgent::sync_batcher_nonce"),
@@ -449,12 +471,14 @@ impl SyncAgent {
                 context,
                 tracer,
                 "get_block_by_hash",
-                retry_res_ctx_timeout!(self
-                    .provider
-                    .l1_provider
-                    .get_block_by_hash(l1_head)
-                    .await
-                    .context("get_block_by_hash"))
+                retry_res_ctx_timeout!(
+                    args.provider.timeouts.eth_rpc_timeout,
+                    self.provider
+                        .l1_provider
+                        .get_block_by_hash(l1_head)
+                        .await
+                        .context("get_block_by_hash")
+                )
             ) {
                 break block;
             }
@@ -472,6 +496,7 @@ impl SyncAgent {
         &mut self,
         dispute_game_factory: &IDisputeGameFactoryInstance<P, N>,
         index: u64,
+        timeout: u64,
     ) -> anyhow::Result<ProposalSync> {
         let tracer = tracer("kailua");
         let context =
@@ -484,7 +509,7 @@ impl SyncAgent {
             ..
         } = dispute_game_factory
             .gameAtIndex(U256::from(index))
-            .stall_with_context(context.clone(), "DisputeGameFactory::gameAtIndex")
+            .stall_with_context(context.clone(), "DisputeGameFactory::gameAtIndex", timeout)
             .await;
         // skip entries for other game types
         if game_type != KAILUA_GAME_TYPE {
@@ -492,7 +517,7 @@ impl SyncAgent {
             return Ok(ProposalSync::IGNORED(game_address, B256::ZERO));
         }
         info!("Processing tournament {index} at {game_address}");
-        let mut proposal = Proposal::load(&self.provider, game_address)
+        let mut proposal = Proposal::load(&self.provider, game_address, timeout)
             .with_context(context.clone())
             .await?;
         // Skip proposals unrelated to current run
@@ -512,7 +537,7 @@ impl SyncAgent {
                 KailuaTreasury::new(self.deployment.treasury, &self.provider.l1_provider);
             let elimination_round: u64 = treasury_contract
                 .eliminationRound(proposal.proposer)
-                .stall_with_context(context.clone(), "KailuaTreasury::eliminationRound")
+                .stall_with_context(context.clone(), "KailuaTreasury::eliminationRound", timeout)
                 .await
                 .to();
             if elimination_round > 0 {
@@ -733,10 +758,10 @@ impl SyncAgent {
         self.outputs.get(&block_number).cloned()
     }
 
-    pub async fn sync_outputs(&mut self, mut start: u64, end: u64, step: u64) {
+    pub async fn sync_outputs(&mut self, mut start: u64, end: u64, step: u64, args: &ProviderArgs) {
         while start <= end {
             // perform at most 1024 tasks at a time
-            let end = end.min(start + 128 * step);
+            let end = end.min(start + args.op_rpc_concurrency * step);
 
             // check persisted data
             for i in (start..=end).step_by(step as usize) {
@@ -757,7 +782,11 @@ impl SyncAgent {
                     Box::pin(async move {
                         (
                             i,
-                            retry_res_timeout!(provider.output_at_block(i).await).await,
+                            retry_res_timeout!(
+                                args.timeouts.op_node_timeout,
+                                provider.output_at_block(i).await
+                            )
+                            .await,
                         )
                     })
                 })

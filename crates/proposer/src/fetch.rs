@@ -25,45 +25,57 @@ use kailua_sync::transact::rpc::get_block;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 
-pub async fn fetch_vanguard(agent: &SyncAgent) -> Address {
+pub async fn fetch_vanguard(agent: &SyncAgent, timeout: u64) -> Address {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("fetch_vanguard"));
     KailuaTreasury::new(agent.deployment.treasury, &agent.provider.l1_provider)
         .vanguard()
-        .stall_with_context(context.clone(), "KailuaTreasury::vanguard")
+        .stall_with_context(context.clone(), "KailuaTreasury::vanguard", timeout)
         .await
 }
 
-pub async fn fetch_vanguard_advantage(agent: &SyncAgent) -> u64 {
+pub async fn fetch_vanguard_advantage(agent: &SyncAgent, timeout: u64) -> u64 {
     let tracer = tracer("kailua");
     let context =
         opentelemetry::Context::current_with_span(tracer.start("fetch_vanguard_advantage"));
     KailuaTreasury::new(agent.deployment.treasury, &agent.provider.l1_provider)
         .vanguardAdvantage()
-        .stall_with_context(context.clone(), "KailuaTreasury::vanguardAdvantage")
+        .stall_with_context(
+            context.clone(),
+            "KailuaTreasury::vanguardAdvantage",
+            timeout,
+        )
         .await
 }
 
-pub async fn fetch_participation_bond(agent: &SyncAgent) -> U256 {
+pub async fn fetch_participation_bond(agent: &SyncAgent, timeout: u64) -> U256 {
     let tracer = tracer("kailua");
     let context =
         opentelemetry::Context::current_with_span(tracer.start("fetch_participation_bond"));
     KailuaTreasury::new(agent.deployment.treasury, &agent.provider.l1_provider)
         .participationBond()
-        .stall_with_context(context.clone(), "KailuaTreasury::participationBond")
+        .stall_with_context(
+            context.clone(),
+            "KailuaTreasury::participationBond",
+            timeout,
+        )
         .await
 }
 
-pub async fn fetch_paid_bond(agent: &SyncAgent, address: Address) -> U256 {
+pub async fn fetch_paid_bond(agent: &SyncAgent, address: Address, timeout: u64) -> U256 {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("fetch_paid_bond"));
     KailuaTreasury::new(agent.deployment.treasury, &agent.provider.l1_provider)
         .paidBonds(address)
-        .stall_with_context(context.clone(), "KailuaTreasury::paidBonds")
+        .stall_with_context(context.clone(), "KailuaTreasury::paidBonds", timeout)
         .await
 }
 
-pub async fn fetch_current_challenger_duration(agent: &SyncAgent, proposal: &Proposal) -> u64 {
+pub async fn fetch_current_challenger_duration(
+    agent: &SyncAgent,
+    proposal: &Proposal,
+    timeout: u64,
+) -> u64 {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(
         tracer.start("Proposal::fetch_current_challenger_duration"),
@@ -71,7 +83,11 @@ pub async fn fetch_current_challenger_duration(agent: &SyncAgent, proposal: &Pro
 
     let chain_time = await_tel!(
         context,
-        get_block(&agent.provider.l1_provider, BlockNumberOrTag::Latest)
+        get_block(
+            &agent.provider.l1_provider,
+            BlockNumberOrTag::Latest,
+            timeout
+        )
     )
     .header()
     .timestamp();
@@ -79,6 +95,10 @@ pub async fn fetch_current_challenger_duration(agent: &SyncAgent, proposal: &Pro
     proposal
         .tournament_contract_instance(&agent.provider.l1_provider)
         .getChallengerDuration(U256::from(chain_time))
-        .stall_with_context(context.clone(), "KailuaTournament::getChallengerDuration")
+        .stall_with_context(
+            context.clone(),
+            "KailuaTournament::getChallengerDuration",
+            timeout,
+        )
         .await
 }

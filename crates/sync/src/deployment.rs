@@ -60,6 +60,7 @@ impl SyncDeployment {
         provider: &SyncProvider,
         config: &RollupConfig,
         game_impl_address: Option<Address>,
+        timeout: u64,
     ) -> anyhow::Result<Self> {
         let tracer = tracer("kailua");
         let context = Context::current_with_span(tracer.start("SyncDeployment::load"));
@@ -69,7 +70,7 @@ impl SyncDeployment {
             SystemConfig::new(config.l1_system_config_address, &provider.l1_provider);
         let dgf_address = system_config
             .disputeGameFactory()
-            .stall_with_context(context.clone(), "SystemConfig::disputeGameFactory")
+            .stall_with_context(context.clone(), "SystemConfig::disputeGameFactory", timeout)
             .await;
 
         // Init registry and factory contracts
@@ -77,7 +78,7 @@ impl SyncDeployment {
         info!("DisputeGameFactory({:?})", dispute_game_factory.address());
         let game_count: u64 = dispute_game_factory
             .gameCount()
-            .stall_with_context(context.clone(), "DisputeGameFactory::gameCount")
+            .stall_with_context(context.clone(), "DisputeGameFactory::gameCount", timeout)
             .await
             .to();
         info!("There have been {game_count} games created using DisputeGameFactory");
@@ -85,7 +86,7 @@ impl SyncDeployment {
         // Look up deployment to target
         let latest_game_impl_addr = dispute_game_factory
             .gameImpls(KAILUA_GAME_TYPE)
-            .stall_with_context(context.clone(), "DisputeGameFactory::gameImpls")
+            .stall_with_context(context.clone(), "DisputeGameFactory::gameImpls", timeout)
             .await;
         let kailua_game_implementation_address = game_impl_address.unwrap_or(latest_game_impl_addr);
         if game_impl_address.is_some() {
@@ -104,53 +105,57 @@ impl SyncDeployment {
 
         let treasury = kailua_game_implementation
             .KAILUA_TREASURY()
-            .stall_with_context(context.clone(), "KailuaGame::KAILUA_TREASURY")
+            .stall_with_context(context.clone(), "KailuaGame::KAILUA_TREASURY", timeout)
             .await;
         let game = *kailua_game_implementation.address();
         let verifier = kailua_game_implementation
             .RISC_ZERO_VERIFIER()
-            .stall_with_context(context.clone(), "KailuaGame::RISC_ZERO_VERIFIER")
+            .stall_with_context(context.clone(), "KailuaGame::RISC_ZERO_VERIFIER", timeout)
             .await;
         let image_id = kailua_game_implementation
             .FPVM_IMAGE_ID()
-            .stall_with_context(context.clone(), "KailuaGame::FPVM_IMAGE_ID")
+            .stall_with_context(context.clone(), "KailuaGame::FPVM_IMAGE_ID", timeout)
             .await;
         let cfg_hash = kailua_game_implementation
             .ROLLUP_CONFIG_HASH()
-            .stall_with_context(context.clone(), "KailuaGame::ROLLUP_CONFIG_HASH")
+            .stall_with_context(context.clone(), "KailuaGame::ROLLUP_CONFIG_HASH", timeout)
             .await;
         let proposal_output_count = kailua_game_implementation
             .PROPOSAL_OUTPUT_COUNT()
-            .stall_with_context(context.clone(), "KailuaGame::PROPOSAL_OUTPUT_COUNT")
+            .stall_with_context(
+                context.clone(),
+                "KailuaGame::PROPOSAL_OUTPUT_COUNT",
+                timeout,
+            )
             .await;
         let output_block_span = kailua_game_implementation
             .OUTPUT_BLOCK_SPAN()
-            .stall_with_context(context.clone(), "KailuaGame::OUTPUT_BLOCK_SPAN")
+            .stall_with_context(context.clone(), "KailuaGame::OUTPUT_BLOCK_SPAN", timeout)
             .await;
         let proposal_blobs = kailua_game_implementation
             .PROPOSAL_BLOBS()
-            .stall_with_context(context.clone(), "KailuaGame::PROPOSAL_BLOBS")
+            .stall_with_context(context.clone(), "KailuaGame::PROPOSAL_BLOBS", timeout)
             .await;
         let game_type = kailua_game_implementation
             .GAME_TYPE()
-            .stall_with_context(context.clone(), "KailuaGame::GAME_TYPE")
+            .stall_with_context(context.clone(), "KailuaGame::GAME_TYPE", timeout)
             .await as u8;
         let factory = kailua_game_implementation
             .DISPUTE_GAME_FACTORY()
-            .stall_with_context(context.clone(), "KailuaGame::DISPUTE_GAME_FACTORY")
+            .stall_with_context(context.clone(), "KailuaGame::DISPUTE_GAME_FACTORY", timeout)
             .await;
         let timeout = kailua_game_implementation
             .MAX_CLOCK_DURATION()
-            .stall_with_context(context.clone(), "KailuaGame::MAX_CLOCK_DURATION")
+            .stall_with_context(context.clone(), "KailuaGame::MAX_CLOCK_DURATION", timeout)
             .await;
         let genesis_time = kailua_game_implementation
             .GENESIS_TIME_STAMP()
-            .stall_with_context(context.clone(), "KailuaGame::GENESIS_TIME_STAMP")
+            .stall_with_context(context.clone(), "KailuaGame::GENESIS_TIME_STAMP", timeout)
             .await
             .to();
         let block_time = kailua_game_implementation
             .L2_BLOCK_TIME()
-            .stall_with_context(context.clone(), "KailuaGame::L2_BLOCK_TIME")
+            .stall_with_context(context.clone(), "KailuaGame::L2_BLOCK_TIME", timeout)
             .await
             .to();
         Ok(Self {
