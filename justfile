@@ -26,6 +26,8 @@ fmt:
   cargo fmt --all --manifest-path build/risczero/hokulea/Cargo.toml
   cargo fmt --all --manifest-path build/risczero/hana/Cargo.toml
 
+  forge fmt --root crates/contracts/foundry
+
 clippy:
   RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked --all-targets -- -D warnings
   RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -F eigen -F celestia --all-targets -- -D warnings

@@ -19,7 +19,7 @@ import "./KailuaLib.sol";
 import "./KailuaVerifier.sol";
 import "./vendor/FlatOPImportV1.4.0.sol";
 
-abstract contract KailuaTournament is Clone, IDisputeGame {
+abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     // ------------------------------
     // Immutable configuration
     // ------------------------------

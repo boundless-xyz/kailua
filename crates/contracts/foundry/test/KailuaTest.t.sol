@@ -54,7 +54,7 @@ contract KailuaTest is Test {
         vm.assertEq(address(portal.disputeGameFactory()), address(factory));
         // RISC Zero
         zkvm = new RiscZeroMockVerifier(bytes4(bytes32(uint256(0xFF))));
-        verifier = new KailuaVerifier(zkvm, bytes32(0x0), bytes32(0x0));
+        verifier = new KailuaVerifier(zkvm, bytes32(0x0), bytes32(0x0), Duration.wrap(1));
     }
 
     function deployKailua(

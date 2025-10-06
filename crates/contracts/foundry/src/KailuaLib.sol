@@ -116,6 +116,36 @@ interface IKailuaTreasury {
 
     /// @notice Updates the last resolved contract address to that of the caller
     function updateLastResolved() external;
+
+    /// @notice Returns the collateral required to submit proposals
+    function participationBond() external view returns (uint256);
+
+    /// @notice Returns the prover's number of shares in elimination rewards
+    function ELIMINATION_SPLIT_PROVER_NUM() external view returns (uint256);
+
+    /// @notice Returns the total number of shares for elimination rewards
+    function ELIMINATION_SPLIT_DENOM() external view returns (uint256);
+}
+
+interface IKailuaTournament {
+    /// @notice Returns the KailuaTreasury of this tournament
+    function KAILUA_TREASURY() external view returns (IKailuaTreasury);
+    /// @notice The timestamp of when the first proof for a proposal signature was made
+    function provenAt(bytes32) external view returns (Timestamp);
+    /// @notice Returns the hash of the output claim and all blob hashes associated with this proposal
+    function signature() external view returns (bytes32);
+    /// @notice Returns whether a child can be considered valid
+    function isViableSignature(bytes32 childSignature) external view returns (bool);
+    /// @notice Returns the signature of the child proven valid
+    function validChildSignature() external view returns (bytes32);
+}
+
+library KailuaPayLib {
+    /// @notice Transfers ETH from the contract's balance to the recipient
+    function pay(uint256 amount, address recipient) internal {
+        (bool success,) = recipient.call{value: amount}(hex"");
+        if (!success) revert BondTransferFailed();
+    }
 }
 
 library KailuaKZGLib {
