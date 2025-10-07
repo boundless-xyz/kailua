@@ -51,9 +51,10 @@ contract KailuaVerifier {
     /// @custom:field aggregateCollateral   Total collateral locked as of permit
     /// @custom:field timestamp             Timestamp of permit issuance
     struct FaultProofPermit {
-        address recipient;
         uint256 aggregateCollateral;
+        address recipient;
         uint64 timestamp;
+        bool released;
     }
 
     /// @notice Returns the key for indexing fault proving permits
@@ -63,6 +64,48 @@ contract KailuaVerifier {
         returns (bytes32)
     {
         return sha256(abi.encodePacked(address(proposalParent), proposalSignature));
+    }
+
+    /// @notice Returns the earliest timestamp at which a permit can be released
+    function earliestFaultProofPermitProof(IKailuaTournament proposalParent, bytes32 proposalSignature)
+        public
+        view
+        returns (uint64)
+    {
+        // Fetch both fault and validity proof timestamps
+        uint64 faultProofTimestamp = proposalParent.provenAt(proposalSignature).raw();
+        uint64 validityProofTimestamp = proposalParent.provenAt(proposalParent.validChildSignature()).raw();
+        // Return the smaller timestamp if both proofs are present
+        if (faultProofTimestamp > 0 && validityProofTimestamp > 0) {
+            return faultProofTimestamp < validityProofTimestamp ? faultProofTimestamp : validityProofTimestamp;
+        }
+        // Return the larger timestamp otherwise
+        return faultProofTimestamp > 0 ? faultProofTimestamp : validityProofTimestamp;
+    }
+
+    /// @notice Returns the exclusive beneficiary of a fault proof reward
+    function faultProofPermitBeneficiary(IKailuaTournament proposalParent, bytes32 proposalSignature)
+        public
+        view
+        returns (address)
+    {
+        // If the signature is still viable, there is no sole fault proof beneficiary
+        if (proposalParent.isViableSignature(proposalSignature)) {
+            return address(0x0);
+        }
+        // If there wasn't exactly one permit, then proving was not exclusive to one party
+        FaultProofPermit[] storage proposalPermits =
+            faultProofPermits[faultProofPermitKey(proposalParent, proposalSignature)];
+        if (proposalPermits.length != 1) {
+            return address(0x0);
+        }
+        // If the permit was expired as of proof submission, disqualify the beneficiary
+        uint64 provingTime = earliestFaultProofPermitProof(proposalParent, proposalSignature);
+        if (proposalPermits[0].timestamp + PERMIT_DURATION.raw() < provingTime) {
+            return address(0x0);
+        }
+        // Return the successful sool beneficiary of the locked fault proof reward
+        return proposalPermits[0].recipient;
     }
 
     /// @notice Given a reference timestamp, returns the number of expired permits, their total collateral, and the number of active permits
@@ -125,7 +168,7 @@ contract KailuaVerifier {
             aggregateCollateral += proposalPermits[totalPermitsIssued - 1].aggregateCollateral;
         }
         // Assign a new permit
-        proposalPermits.push(FaultProofPermit(payoutRecipient, aggregateCollateral, uint64(block.timestamp)));
+        proposalPermits.push(FaultProofPermit(aggregateCollateral, payoutRecipient, uint64(block.timestamp), false));
     }
 
     /// @notice Claims the total payout for a permit
@@ -139,22 +182,18 @@ contract KailuaVerifier {
         if (proposalParent.isViableSignature(proposalSignature)) {
             revert NotProven();
         }
-        uint64 proofTimestamp = proposalParent.provenAt(proposalSignature).raw();
-        if (proofTimestamp == 0) {
-            // If there is no proof time for the fault proof, count the validity proof time
-            proofTimestamp = proposalParent.provenAt(proposalParent.validChildSignature()).raw();
-        }
         // INVARIANT: There are exactly numExpiredPermits expired permits as of proof submission
+        uint64 proofTimestamp = earliestFaultProofPermitProof(proposalParent, proposalSignature);
         bytes32 permitKey = faultProofPermitKey(proposalParent, proposalSignature);
         (, uint256 expiredCollateral, uint64 numActivePermits) =
             countExpiredPermits(permitKey, numExpiredPermits, proofTimestamp);
-        // INVARIANT: The permit is not already claimed
+        // INVARIANT: The permit is not already released
         FaultProofPermit storage permit = faultProofPermits[permitKey][permitIndex];
-        if (permit.recipient == address(0x0)) {
+        if (permit.released) {
             revert NoCreditToClaim();
         }
-        // INVARIANT: The permit is not expired
-        if (permit.aggregateCollateral <= expiredCollateral) {
+        // INVARIANT: The permit is not expired as of proof submission
+        if (permit.timestamp + PERMIT_DURATION.raw() < proofTimestamp) {
             revert AlreadyEliminated();
         }
         // Calculate total payout
@@ -164,9 +203,8 @@ contract KailuaVerifier {
             payout += permit.aggregateCollateral - faultProofPermits[permitKey][permitIndex - 1].aggregateCollateral;
         }
         // Pay out recipient
-        address payable recipient = payable(permit.recipient);
-        permit.recipient = address(0x0);
-        KailuaPayLib.pay(payout, recipient);
+        permit.released = true;
+        KailuaPayLib.pay(payout, payable(permit.recipient));
     }
 
     /// @notice Verifies a ZK proof
