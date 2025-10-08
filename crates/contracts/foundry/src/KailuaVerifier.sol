@@ -67,7 +67,7 @@ contract KailuaVerifier {
     }
 
     /// @notice Returns the earliest timestamp at which a permit can be released
-    function earliestFaultProofPermitProof(IKailuaTournament proposalParent, bytes32 proposalSignature)
+    function faultProofPermitProvenAt(IKailuaTournament proposalParent, bytes32 proposalSignature)
         public
         view
         returns (uint64)
@@ -100,7 +100,7 @@ contract KailuaVerifier {
             return address(0x0);
         }
         // If the permit was expired as of proof submission, disqualify the beneficiary
-        uint64 provingTime = earliestFaultProofPermitProof(proposalParent, proposalSignature);
+        uint64 provingTime = faultProofPermitProvenAt(proposalParent, proposalSignature);
         if (proposalPermits[0].timestamp + PERMIT_DURATION.raw() < provingTime) {
             return address(0x0);
         }
@@ -183,7 +183,7 @@ contract KailuaVerifier {
             revert NotProven();
         }
         // INVARIANT: There are exactly numExpiredPermits expired permits as of proof submission
-        uint64 proofTimestamp = earliestFaultProofPermitProof(proposalParent, proposalSignature);
+        uint64 proofTimestamp = faultProofPermitProvenAt(proposalParent, proposalSignature);
         bytes32 permitKey = faultProofPermitKey(proposalParent, proposalSignature);
         (, uint256 expiredCollateral, uint64 numActivePermits) =
             countExpiredPermits(permitKey, numExpiredPermits, proofTimestamp);

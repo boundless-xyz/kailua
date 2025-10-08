@@ -212,6 +212,7 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
         bytes calldata kzgProof
     ) external virtual returns (bool success);
 
+    /// @notice Updates the provability of a child signature if not already set
     function updateProofStatus(address payoutRecipient, bytes32 childSignature, ProofStatus outcome) internal {
         // INVARIANT: Proofs can only be submitted once
         if (proofStatus[childSignature] != ProofStatus.NONE) {
