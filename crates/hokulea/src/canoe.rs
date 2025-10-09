@@ -14,7 +14,7 @@
 
 use eigenda_cert::AltDACommitment;
 use hokulea_proof::canoe_verifier::errors::HokuleaCanoeVerificationError;
-use hokulea_proof::canoe_verifier::{to_journal_bytes, CanoeVerifier};
+use hokulea_proof::canoe_verifier::{to_journals_bytes, CanoeVerifier};
 use hokulea_proof::cert_validity::CertValidity;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Receipt;
@@ -25,12 +25,12 @@ pub struct KailuaCanoeVerifier(pub [u8; 32]);
 impl CanoeVerifier for KailuaCanoeVerifier {
     fn validate_cert_receipt(
         &self,
-        cert_validity: CertValidity,
-        eigenda_cert: AltDACommitment,
+        cert_validity_pairs: Vec<(AltDACommitment, CertValidity)>,
+        canoe_proof: Option<Vec<u8>>,
     ) -> Result<(), HokuleaCanoeVerificationError> {
-        let journal_bytes = to_journal_bytes(&cert_validity, &eigenda_cert);
+        let journal_bytes = to_journals_bytes(cert_validity_pairs);
 
-        let Some(proof) = cert_validity.canoe_proof else {
+        let Some(proof) = canoe_proof else {
             kailua_kona::client::log(&format!("ASSUME {} (EIGEN)", journal_bytes.digest()));
             #[cfg(target_os = "zkvm")]
             return risc0_zkvm::guest::env::verify(self.0, &journal_bytes)

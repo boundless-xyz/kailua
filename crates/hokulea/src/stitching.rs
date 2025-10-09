@@ -17,15 +17,15 @@ use crate::da::EigenDADataSourceProvider;
 use crate::witness::{da_witness_postcondition, da_witness_precondition};
 use alloy_primitives::aliases::B256;
 use alloy_primitives::Address;
-use hokulea_proof::eigenda_blob_witness::EigenDABlobWitnessData;
-use hokulea_proof::preloaded_eigenda_provider::PreloadedEigenDABlobProvider;
+use hokulea_proof::eigenda_witness::EigenDAWitness;
+use hokulea_proof::preloaded_eigenda_provider::PreloadedEigenDAPreimageProvider;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::Precondition;
-use kona_derive::prelude::BlobProvider;
+use kona_derive::BlobProvider;
 use kona_preimage::CommsClient;
 use kona_proof::boot::BootInfo;
 use kona_proof::FlushableCache;
@@ -34,12 +34,12 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct HokuleaStitchingClient {
-    pub eigen_da_witness: EigenDABlobWitnessData,
+    pub eigen_da_witness: EigenDAWitness,
     pub canoe_image_id: B256,
 }
 
 impl HokuleaStitchingClient {
-    pub fn new(eigen_da_witness: EigenDABlobWitnessData, canoe_image_id: B256) -> Self {
+    pub fn new(eigen_da_witness: EigenDAWitness, canoe_image_id: B256) -> Self {
         Self {
             eigen_da_witness,
             canoe_image_id,
@@ -71,7 +71,7 @@ impl<
     {
         let eigen_da_precondition = da_witness_precondition(&self.eigen_da_witness);
 
-        let eigen_da = PreloadedEigenDABlobProvider::from_witness(
+        let eigen_da = PreloadedEigenDAPreimageProvider::from_witness(
             self.eigen_da_witness,
             KailuaCanoeVerifier(self.canoe_image_id.0),
         );

@@ -14,7 +14,7 @@
 
 use hana_celestia::{CelestiaDADataSource, CelestiaDASource, CelestiaProvider};
 use kailua_kona::client::core::{DASourceProvider, EthereumDataSourceProvider};
-use kona_derive::prelude::{BlobProvider, ChainProvider};
+use kona_derive::{BlobProvider, ChainProvider};
 use kona_genesis::RollupConfig;
 use std::fmt::Debug;
 

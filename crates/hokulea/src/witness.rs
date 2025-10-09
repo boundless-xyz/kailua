@@ -13,25 +13,25 @@
 // limitations under the License.
 
 use alloy_primitives::B256;
-use hokulea_proof::eigenda_blob_witness::EigenDABlobWitnessData;
+use hokulea_proof::eigenda_witness::EigenDAWitness;
 use kona_proof::BootInfo;
 
-pub fn da_witness_precondition(eigen_da: &EigenDABlobWitnessData) -> Option<(B256, u64, u64)> {
+pub fn da_witness_precondition(eigen_da: &EigenDAWitness) -> Option<(B256, u64, u64)> {
     // Enforce sufficient data requirements
-    assert!(eigen_da.recency.len() >= eigen_da.validity.len());
-    assert!(eigen_da.validity.len() >= eigen_da.blob.len());
+    assert!(eigen_da.recencies.len() >= eigen_da.validities.len());
+    assert!(eigen_da.validities.len() >= eigen_da.encoded_payloads.len());
     // Enforce L1 chain consistency
     let (l1_head, l1_chain_id) = eigen_da
-        .validity
+        .validities
         .first()
         .map(|(_, cert)| (cert.l1_head_block_hash, cert.l1_chain_id))?;
-    for (_, cert) in &eigen_da.validity {
+    for (_, cert) in &eigen_da.validities {
         assert_eq!(l1_head, cert.l1_head_block_hash);
         assert_eq!(l1_chain_id, cert.l1_chain_id);
     }
     // Enforce L2 configuration consistency
-    let recency = eigen_da.recency.first().map(|(_, r)| *r)?;
-    for (_, r) in &eigen_da.recency {
+    let recency = eigen_da.recencies.first().map(|(_, r)| *r)?;
+    for (_, r) in &eigen_da.recencies {
         assert_eq!(recency, *r);
     }
     Some((l1_head, l1_chain_id, recency))

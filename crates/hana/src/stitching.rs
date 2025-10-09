@@ -22,7 +22,7 @@ use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::precondition::Precondition;
-use kona_derive::prelude::BlobProvider;
+use kona_derive::BlobProvider;
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
 use std::fmt::Debug;
