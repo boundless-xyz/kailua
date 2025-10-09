@@ -254,7 +254,7 @@ pub fn config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
         // l1_chain_id
         rollup_config.l1_chain_id.to_be_bytes().as_slice(),
         // l2_chain_id
-        rollup_config.l2_chain_id.to_be_bytes().as_slice(),
+        rollup_config.l2_chain_id.id().to_be_bytes().as_slice(),
         // hardforks
         opt_byte_arr(
             rollup_config
@@ -401,6 +401,7 @@ mod tests {
                     eip1559_elasticity: Some(0),
                     operator_fee_scalar: Some(0),
                     operator_fee_constant: Some(0),
+                    min_base_fee: Some(0),
                 }),
             },
             block_time: 0,
@@ -409,7 +410,7 @@ mod tests {
             channel_timeout: 0,
             granite_channel_timeout: 0,
             l1_chain_id: 0,
-            l2_chain_id: 0,
+            l2_chain_id: 0u64.into(),
             chain_op_config: BaseFeeConfig {
                 eip1559_denominator: 0,
                 eip1559_elasticity: 0,
@@ -424,6 +425,7 @@ mod tests {
                 granite_time: Some(0),
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
+                jovian_time: Some(0),
                 interop_time: Some(0),
                 pectra_blob_schedule_time: Some(0),
             },
@@ -521,6 +523,13 @@ mod tests {
             .unwrap()
             .operator_fee_constant = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config)));
+        rollup_config
+            .genesis
+            .system_config
+            .as_mut()
+            .unwrap()
+            .min_base_fee = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.block_time = 1;
         assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.max_sequencer_drift = 1;
@@ -533,7 +542,7 @@ mod tests {
         assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.l1_chain_id = 1;
         assert!(hashes.insert(config_hash(&rollup_config)));
-        rollup_config.l2_chain_id = 1;
+        rollup_config.l2_chain_id = 1u64.into();
         assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.chain_op_config.eip1559_denominator = 1;
         assert!(hashes.insert(config_hash(&rollup_config)));
@@ -556,6 +565,8 @@ mod tests {
         rollup_config.hardforks.holocene_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.isthmus_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config)));
+        rollup_config.hardforks.jovian_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config)));
         rollup_config.hardforks.interop_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config)));
@@ -633,6 +644,7 @@ mod tests {
                     eip1559_elasticity: Some(0),
                     operator_fee_scalar: Some(0),
                     operator_fee_constant: Some(0),
+                    min_base_fee: Some(0),
                 }),
             },
             block_time: 0,
@@ -641,7 +653,7 @@ mod tests {
             channel_timeout: 0,
             granite_channel_timeout: 0,
             l1_chain_id: 0,
-            l2_chain_id: 0,
+            l2_chain_id: 0u64.into(),
             chain_op_config: BaseFeeConfig {
                 eip1559_denominator: 0,
                 eip1559_elasticity: 0,
@@ -656,6 +668,7 @@ mod tests {
                 granite_time: Some(0),
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
+                jovian_time: Some(0),
                 interop_time: Some(0),
                 pectra_blob_schedule_time: Some(0),
             },

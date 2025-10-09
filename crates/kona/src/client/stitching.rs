@@ -22,7 +22,7 @@ use crate::kona::OracleL1ChainProvider;
 use crate::precondition::Precondition;
 use alloy_primitives::{Address, B256};
 use anyhow::Context;
-use kona_derive::prelude::{BlobProvider, ChainProvider};
+use kona_derive::{BlobProvider, ChainProvider};
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
 use risc0_zkvm::sha::Digestible;
@@ -700,6 +700,7 @@ pub mod tests {
                 claimed_l2_block_number: ending_block_number,
                 chain_id: boot_info.chain_id,
                 rollup_config: boot_info.rollup_config.clone(),
+                l1_config: boot_info.l1_config.clone(),
             },
             precondition_validation_data.clone(),
             vec![],
@@ -726,6 +727,7 @@ pub mod tests {
                             claimed_l2_block_number: ending_block_number,
                             chain_id: boot_info.chain_id,
                             rollup_config: boot_info.rollup_config.clone(),
+                            l1_config: boot_info.l1_config.clone(),
                         },
                         precondition_validation_data.clone(),
                         vec![],
@@ -843,6 +845,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491250,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
             vec![],
@@ -873,6 +876,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491250,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
         )
@@ -899,6 +903,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
@@ -934,6 +939,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
@@ -965,6 +971,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
             vec![],
@@ -993,6 +1000,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,

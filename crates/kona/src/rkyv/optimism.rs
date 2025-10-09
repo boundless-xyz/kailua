@@ -35,6 +35,7 @@ pub struct OpPayloadAttributesRkyv {
     pub gas_limit: Option<u64>,
     #[rkyv(with = rkyv::with::Map<B64Def>)]
     pub eip_1559_params: Option<B64>,
+    pub min_base_fee: Option<u64>,
 }
 
 impl From<&OpPayloadAttributes> for OpPayloadAttributesRkyv {
@@ -53,6 +54,7 @@ impl From<&OpPayloadAttributes> for OpPayloadAttributesRkyv {
             no_tx_pool: value.no_tx_pool,
             gas_limit: value.gas_limit,
             eip_1559_params: value.eip_1559_params,
+            min_base_fee: value.min_base_fee,
         }
     }
 }
@@ -77,6 +79,7 @@ impl From<OpPayloadAttributesRkyv> for OpPayloadAttributes {
             no_tx_pool: value.no_tx_pool,
             gas_limit: value.gas_limit,
             eip_1559_params: value.eip_1559_params,
+            min_base_fee: value.min_base_fee,
         }
     }
 }
@@ -163,6 +166,7 @@ mod tests {
             no_tx_pool: Some(true),
             gas_limit: Some(1000000),
             eip_1559_params: Some(B64::from_str("0x0011223344556677").unwrap()),
+            min_base_fee: Some(9999),
         }
     }
 
