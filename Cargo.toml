@@ -88,30 +88,30 @@ kailua-rpc = { path = "crates/rpc" }
 kailua-sync = { path = "crates/sync" }
 kailua-validator = { path = "crates/validator" }
 
-# Kona git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2"
-kona-cli = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2", default-features = false }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2", default-features = false, features = ["serde"] }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2" }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2" }
-kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2", default-features = false, features = ["single"] }
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2", features = ["serde"] }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2", features = ["serde", "rkyv", "std"] }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2" }
-kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2" }
-kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2" }
-kona-std-fpvm = { git = "https://github.com/op-rs/kona", tag = "kona-node/v1.1.2" }
+# Kona git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3"
+kona-cli = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", default-features = false }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", default-features = false, features = ["serde"] }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", default-features = false, features = ["single"] }
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", features = ["serde"] }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", features = ["serde", "rkyv", "std"] }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-std-fpvm = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
 
-# Hokulea git = "https://github.com/Layr-Labs/hokulea", rev = "485ec667e08e1a76117c34f5a55e3aee48bfdb71"
-canoe-bindings = { git = "https://github.com/hashcashier/hokulea", branch = "kailua-fusaka" }
-canoe-provider = { git = "https://github.com/hashcashier/hokulea", branch = "kailua-fusaka" }
-canoe-steel-methods = { git = "https://github.com/hashcashier/hokulea", branch = "kailua-fusaka" }
-eigenda-cert = { git = "https://github.com/hashcashier/hokulea", branch = "kailua-fusaka" }
-hokulea-host-bin = { git = "https://github.com/hashcashier/hokulea", branch = "kailua-fusaka", default-features = false }
-hokulea-eigenda = { git = "https://github.com/hashcashier/hokulea", branch = "kailua-fusaka", default-features = false }
-hokulea-proof = { git = "https://github.com/hashcashier/hokulea", branch = "kailua-fusaka", default-features = false }
-hokulea-witgen = { git = "https://github.com/hashcashier/hokulea", branch = "kailua-fusaka", default-features = false }
+# Hokulea git = "https://github.com/Layr-Labs/hokulea", rev = "4fd1f3735f0343345008481aab46698158b6e4a8"
+canoe-bindings = { git = "https://github.com/Layr-Labs/hokulea", rev = "4fd1f3735f0343345008481aab46698158b6e4a8" }
+canoe-provider = { git = "https://github.com/Layr-Labs/hokulea", rev = "4fd1f3735f0343345008481aab46698158b6e4a8" }
+canoe-steel-methods = { git = "https://github.com/Layr-Labs/hokulea", rev = "4fd1f3735f0343345008481aab46698158b6e4a8" }
+eigenda-cert = { git = "https://github.com/Layr-Labs/hokulea", rev = "4fd1f3735f0343345008481aab46698158b6e4a8" }
+hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", rev = "4fd1f3735f0343345008481aab46698158b6e4a8", default-features = false }
+hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "4fd1f3735f0343345008481aab46698158b6e4a8", default-features = false }
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "4fd1f3735f0343345008481aab46698158b6e4a8", default-features = false }
+hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "4fd1f3735f0343345008481aab46698158b6e4a8", default-features = false }
 
 # Hana git = "https://github.com/celestiaorg/hana", rev = "f6edade757bef87185a1d8ece979e81927d03109"
 celestia-rpc = "0.14.0"
@@ -148,21 +148,3 @@ overflow-checks = true
 [profile.release.build-override]
 codegen-units = 1
 opt-level = 3
-
-[patch."https://github.com/op-rs/kona"]
-kona-cli = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-client = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-derive = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-driver = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-executor = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-genesis = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-host = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-interop = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-mpt = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-preimage = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-proof = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-protocol = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-providers-alloy = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-registry = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-std-fpvm = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
-kona-std-fpvm-proc = { git = "https://github.com/boundless-xyz/kona", branch = "derive-v1.1.2" }
