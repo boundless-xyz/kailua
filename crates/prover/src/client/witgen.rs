@@ -28,7 +28,7 @@ use kailua_kona::kona::OracleL1ChainProvider;
 use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
-use kona_derive::prelude::BlobProvider;
+use kona_derive::BlobProvider;
 use kona_preimage::errors::PreimageOracleResult;
 use kona_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};
 use kona_proof::{BootInfo, FlushableCache};
@@ -155,12 +155,15 @@ pub struct BlobWitnessProvider<T: BlobProvider> {
 impl<T: BlobProvider + Send> BlobProvider for BlobWitnessProvider<T> {
     type Error = T::Error;
 
-    async fn get_blobs(
+    async fn get_and_validate_blobs(
         &mut self,
         block_ref: &BlockInfo,
         blob_hashes: &[IndexedBlobHash],
     ) -> Result<Vec<Box<Blob>>, Self::Error> {
-        let blobs = self.provider.get_blobs(block_ref, blob_hashes).await?;
+        let blobs = self
+            .provider
+            .get_and_validate_blobs(block_ref, blob_hashes)
+            .await?;
         let settings = alloy::consensus::EnvKzgSettings::default();
         for blob in &blobs {
             let c_kzg_blob = c_kzg::Blob::from_bytes(blob.as_slice()).unwrap();

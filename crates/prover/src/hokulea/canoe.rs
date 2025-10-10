@@ -16,13 +16,15 @@ use crate::args::ProvingArgs;
 use crate::proof::{proof_file_name, read_bincoded_file};
 use crate::risczero::boundless::BoundlessArgs;
 use crate::risczero::seek_proof;
+use alloy::providers::Provider;
 use alloy::transports::http::reqwest::Url;
 use anyhow::{anyhow, bail, Context};
 use async_trait::async_trait;
 use canoe_bindings::StatusCode;
 use canoe_provider::{CanoeInput, CanoeProvider, CertVerifierCall};
-use hokulea_proof::canoe_verifier::{cert_verifier_address, to_journal_bytes};
+use hokulea_proof::canoe_verifier::to_journals_bytes;
 use hokulea_proof::cert_validity::CertValidity;
+use kailua_sync::retry_res_timeout;
 use risc0_steel::alloy::providers::ProviderBuilder;
 use risc0_steel::ethereum::{
     EthChainSpec, EthEvmEnv, ETH_HOLESKY_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC, ETH_SEPOLIA_CHAIN_SPEC,
@@ -45,59 +47,72 @@ pub struct KailuaCanoeSteelProvider {
     pub boundless_args: BoundlessArgs,
 }
 
-#[async_trait]
-impl CanoeProvider for KailuaCanoeSteelProvider {
-    type Receipt = risc0_zkvm::Receipt;
-
-    async fn create_cert_validity_proof(&self, input: CanoeInput) -> anyhow::Result<Self::Receipt> {
-        info!(
-            "Begin to generate a Canoe proof using l1 block number {}",
-            input.l1_head_block_number
-        );
-
+impl KailuaCanoeSteelProvider {
+    async fn prove(&self, inputs: Vec<CanoeInput>) -> anyhow::Result<risc0_zkvm::Receipt> {
+        // Instantiate L1
         let eth_rpc_url =
             Url::from_str(&self.eth_rpc_url).context("Failed to parse Ethereum RPC URL")?;
 
         // Create an alloy provider for that private key and URL.
         let l1_provider = ProviderBuilder::new().connect_http(eth_rpc_url);
+        let l1_chain_id = retry_res_timeout!(15, l1_provider.get_chain_id().await).await;
 
-        let chain_spec = match input.l1_chain_id {
+        // Instantiate chain spec
+        let chain_spec = match l1_chain_id {
             1 => ETH_MAINNET_CHAIN_SPEC.clone(),
             11155111 => ETH_SEPOLIA_CHAIN_SPEC.clone(),
             17000 => ETH_HOLESKY_CHAIN_SPEC.clone(),
-            _ => EthChainSpec::new_single(input.l1_chain_id, Default::default()),
+            _ => EthChainSpec::new_single(l1_chain_id, Default::default()),
         };
+
+        // Take the furthest l1 head as reference
+        let l1_head_block = inputs
+            .iter()
+            .map(|i| i.l1_head_block_number)
+            .max()
+            .map(|i| BlockNumberOrTag::Number(i))
+            .unwrap_or(BlockNumberOrTag::Safe);
+
+        info!("Begin to generate a Canoe proof using l1 block number {l1_head_block}");
 
         let mut env = EthEvmEnv::builder()
             .chain_spec(&chain_spec)
             .provider(l1_provider)
-            .block_number_or_tag(BlockNumberOrTag::Number(input.l1_head_block_number))
+            .block_number_or_tag(l1_head_block)
             .build()
             .await?;
 
-        let verifier_address = cert_verifier_address(input.l1_chain_id, &input.altda_commitment);
-        info!("Using Cert Verifier address: {verifier_address}");
+        // Prepare the function calls
+        let mut cert_validity_pairs = Vec::with_capacity(inputs.len());
+        for input in &inputs {
+            // Preflight the call to prepare the input that is required to execute the function in
+            // the guest without RPC access. It also returns the result of the call.
+            let mut contract = Contract::preflight(input.verifier_address, &mut env);
 
-        // Preflight the call to prepare the input that is required to execute the function in
-        // the guest without RPC access. It also returns the result of the call.
-        let mut contract = Contract::preflight(verifier_address, &mut env);
+            let preflight_validity = match CertVerifierCall::build(&input.altda_commitment) {
+                CertVerifierCall::V2(call) => contract.call_builder(&call).call().await?,
+                CertVerifierCall::Router(call) => {
+                    let status = contract.call_builder(&call).call().await?;
+                    status == StatusCode::SUCCESS as u8
+                }
+            };
 
-        // Prepare the function call
-        let preflight_validity = match CertVerifierCall::build(&input.altda_commitment) {
-            CertVerifierCall::V2(call) => contract.call_builder(&call).call().await?,
-            CertVerifierCall::Router(call) => {
-                let status = contract.call_builder(&call).call().await?;
-                status == StatusCode::SUCCESS as u8
+            // Verify same outcome
+            if input.claimed_validity != preflight_validity {
+                bail!(
+                    "claimed_validity={} != preflight_validity={}",
+                    input.claimed_validity,
+                    preflight_validity
+                );
             }
-        };
-
-        // Verify same outcome
-        if input.claimed_validity != preflight_validity {
-            bail!(
-                "claimed_validity={} != preflight_validity={}",
-                input.claimed_validity,
-                preflight_validity
-            );
+            cert_validity_pairs.push((
+                input.altda_commitment.clone(),
+                CertValidity {
+                    claimed_validity: input.claimed_validity,
+                    l1_head_block_hash: input.l1_head_block_hash,
+                    l1_chain_id,
+                },
+            ));
         }
 
         // Construct the input from the environment.
@@ -105,15 +120,7 @@ impl CanoeProvider for KailuaCanoeSteelProvider {
             env.into_input().await?;
 
         // Construct output
-        let journal = Journal::new(to_journal_bytes(
-            &CertValidity {
-                claimed_validity: input.claimed_validity,
-                canoe_proof: None,
-                l1_head_block_hash: input.l1_head_block_hash,
-                l1_chain_id: input.l1_chain_id,
-            },
-            &input.altda_commitment,
-        ));
+        let journal = Journal::new(to_journals_bytes(cert_validity_pairs));
 
         // todo: dynamic lookup of KAILUA_DA_HOKULEA_ID corresponding to KAILUA_FPVM_HOKULEA_ID
         let file_name = proof_file_name(kailua_build::KAILUA_DA_HOKULEA_ID, journal.clone());
@@ -122,11 +129,7 @@ impl CanoeProvider for KailuaCanoeSteelProvider {
             &self.proving_args,
             self.boundless_args.clone(),
             journal,
-            vec![
-                to_vec(&evm_input)?,
-                to_vec(&verifier_address)?,
-                to_vec(&input)?,
-            ],
+            vec![to_vec(&evm_input)?, to_vec(&inputs)?],
             vec![],
             vec![],
             false,
@@ -137,6 +140,23 @@ impl CanoeProvider for KailuaCanoeSteelProvider {
         read_bincoded_file(&file_name)
             .await
             .context(format!("Failed to read proof file {file_name} contents."))
+    }
+}
+
+#[async_trait]
+impl CanoeProvider for KailuaCanoeSteelProvider {
+    type Receipt = risc0_zkvm::Receipt;
+
+    async fn create_certs_validity_proof(
+        &self,
+        inputs: Vec<CanoeInput>,
+    ) -> Option<anyhow::Result<Self::Receipt>> {
+        // nothing to prove
+        if inputs.is_empty() {
+            return None;
+        }
+        // return result
+        Some(self.prove(inputs).await)
     }
 
     fn get_eth_rpc_url(&self) -> String {
