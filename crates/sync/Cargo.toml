@@ -50,3 +50,9 @@ devnet = []
 rebuild-fpvm = [
     "kailua-build/rebuild-fpvm",
 ]
+eigen = [
+    "kailua-build/eigen"
+]
+celestia = [
+    "kailua-build/celestia"
+]

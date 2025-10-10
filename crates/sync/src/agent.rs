@@ -124,9 +124,11 @@ impl SyncAgent {
                 B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
                     kailua_build::KAILUA_FPVM_KONA_ID,
                 )),
+                #[cfg(feature = "eigen")]
                 B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
                     kailua_build::KAILUA_FPVM_HOKULEA_ID,
                 )),
+                #[cfg(feature = "celestia")]
                 B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
                     kailua_build::KAILUA_FPVM_HANA_ID,
                 )),
