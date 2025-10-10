@@ -14,10 +14,10 @@
 
 use crate::args::ProveArgs;
 use kailua_sync::provider::optimism::fetch_rollup_config;
-use kona_genesis::RollupConfig;
+use kona_genesis::{L1ChainConfig, RollupConfig};
 use tempfile::TempDir;
 use tokio::fs;
-use tracing::debug;
+use tracing::{debug, warn};
 
 pub async fn generate_rollup_config_file(
     args: &mut ProveArgs,
@@ -47,6 +47,34 @@ pub async fn generate_rollup_config_file(
             args.kona.rollup_config_path = Some(tmp_cfg_file);
             debug!("{:?}", args.kona.rollup_config_path);
             args.kona.read_rollup_config()?
+        }
+    })
+}
+
+pub async fn generate_l1_config_file(
+    args: &mut ProveArgs,
+    tmp_dir: &TempDir,
+    chain_id: u64,
+) -> anyhow::Result<L1ChainConfig> {
+    Ok(match args.kona.read_l1_config().ok() {
+        Some(l1_config) => l1_config,
+        None => {
+            let tmp_cfg_file = tmp_dir.path().join("l1-config.json");
+            // read config
+            let l1_config = kona_registry::L1_CONFIGS
+                .get(&chain_id)
+                .cloned()
+                .unwrap_or_else(|| {
+                    warn!("Loading default L1ChainConfig.");
+                    Default::default()
+                });
+            // export
+            let ser_config = serde_json::to_string(&l1_config)?;
+            fs::write(&tmp_cfg_file, &ser_config).await?;
+
+            args.kona.l1_config_path = Some(tmp_cfg_file);
+            debug!("{:?}", args.kona.l1_config_path);
+            args.kona.read_l1_config()?
         }
     })
 }

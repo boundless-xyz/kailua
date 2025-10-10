@@ -521,7 +521,7 @@ pub mod tests {
     use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
     fn setup() {
-        kona_cli::LogConfig::new(kona_cli::LogArgs {
+        let _ = kona_cli::LogConfig::new(kona_cli::LogArgs {
             level: 1,
             stdout_quiet: false,
             stdout_format: Default::default(),
@@ -529,12 +529,11 @@ pub mod tests {
             file_format: Default::default(),
             file_rotation: Default::default(),
         })
-        .init_tracing_subscriber(None)
-        .unwrap();
+        .init_tracing_subscriber(None);
     }
 
     fn teardown() {
-        kona_cli::LogConfig::new(kona_cli::LogArgs {
+        let _ = kona_cli::LogConfig::new(kona_cli::LogArgs {
             level: 0,
             stdout_quiet: false,
             stdout_format: Default::default(),
@@ -542,8 +541,7 @@ pub mod tests {
             file_format: Default::default(),
             file_rotation: Default::default(),
         })
-        .init_tracing_subscriber(None)
-        .unwrap();
+        .init_tracing_subscriber(None);
     }
 
     fn validate_proof_journal(

@@ -5565,7 +5565,6 @@ dependencies = [
  "kona-preimage",
  "kona-proof",
  "kona-protocol",
- "kona-providers-alloy",
  "kona-registry",
  "kona-std-fpvm",
  "lazy_static",

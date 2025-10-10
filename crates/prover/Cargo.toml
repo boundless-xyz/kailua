@@ -49,7 +49,6 @@ kona-registry.workspace = true
 kona-preimage.workspace = true
 kona-proof.workspace = true
 kona-protocol.workspace = true
-kona-providers-alloy.workspace = true
 kona-std-fpvm.workspace = true
 
 bonsai-sdk.workspace = true

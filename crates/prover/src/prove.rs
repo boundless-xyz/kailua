@@ -14,7 +14,7 @@
 
 use crate::args::ProveArgs;
 use crate::channel::AsyncChannel;
-use crate::config::generate_rollup_config_file;
+use crate::config::{generate_l1_config_file, generate_rollup_config_file};
 use crate::kv::create_disk_kv_store;
 use crate::preflight::{concurrent_execution_preflight, fetch_precondition_data};
 use crate::tasks::{handle_oneshot_tasks, Cached, Oneshot, OneshotResult};
@@ -72,13 +72,10 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
     // fetch l1 config
-    let l1_config = kona_registry::L1_CONFIGS
-        .get(&rollup_config.l1_chain_id)
-        .cloned()
-        .unwrap_or_else(|| {
-            warn!("Loading default L1ChainConfig.");
-            Default::default()
-        });
+    let l1_config = generate_l1_config_file(&mut args, &tmp_dir, rollup_config.l1_chain_id)
+        .await
+        .context("generate_l1_config")
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
     // preload precondition data into KV store
     let (precondition_hash, precondition_validation_data_hash) =
