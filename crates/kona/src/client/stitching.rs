@@ -566,14 +566,31 @@ pub mod tests {
     use kona_proof::l1::OracleBlobProvider;
     use rayon::prelude::{IntoParallelIterator, ParallelIterator};
     use std::iter::repeat_n;
-    use tracing_subscriber::EnvFilter;
 
     fn setup() {
-        let _ = kona_cli::init_tracing_subscriber(1, None::<EnvFilter>);
+        kona_cli::LogConfig::new(kona_cli::LogArgs {
+            level: 1,
+            stdout_quiet: false,
+            stdout_format: Default::default(),
+            file_directory: None,
+            file_format: Default::default(),
+            file_rotation: Default::default(),
+        })
+        .init_tracing_subscriber(None)
+        .unwrap();
     }
 
     fn teardown() {
-        let _ = kona_cli::init_tracing_subscriber(0, None::<EnvFilter>);
+        kona_cli::LogConfig::new(kona_cli::LogArgs {
+            level: 0,
+            stdout_quiet: false,
+            stdout_format: Default::default(),
+            file_directory: None,
+            file_format: Default::default(),
+            file_rotation: Default::default(),
+        })
+        .init_tracing_subscriber(None)
+        .unwrap();
     }
 
     fn validate_proof_journal(

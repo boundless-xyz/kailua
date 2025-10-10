@@ -70,7 +70,7 @@ impl KailuaCanoeSteelProvider {
             .iter()
             .map(|i| i.l1_head_block_number)
             .max()
-            .map(|i| BlockNumberOrTag::Number(i))
+            .map(BlockNumberOrTag::Number)
             .unwrap_or(BlockNumberOrTag::Safe);
 
         info!("Begin to generate a Canoe proof using l1 block number {l1_head_block}");

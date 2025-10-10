@@ -4,10 +4,10 @@ set fallback := true
 default:
   @just --list
 
-build +ARGS="--release -F prove -F disable-dev-mode --locked":
+build +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode --locked":
   cargo build {{ARGS}}
 
-build-fpvm +ARGS="--release -F prove -F disable-dev-mode -F rebuild-fpvm --locked -vvv":
+build-fpvm +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm --locked -vvv":
   RISC0_USE_DOCKER=1 cargo build {{ARGS}}
 
 fmt:
@@ -18,8 +18,10 @@ fmt:
   cargo fmt --all --manifest-path build/risczero/hana/Cargo.toml
 
 clippy:
-  RISC0_SKIP_BUILD=true cargo clippy -F devnet --locked --workspace --all --all-targets -- -D warnings
-  RISC0_SKIP_BUILD=true cargo clippy --locked --workspace --all --all-targets -- -D warnings
+  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -- -D warnings
+  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -- -D warnings
+  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F eigen -- -D warnings
+  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -F eigen -- -D warnings
 
   cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
   CANOE_IMAGE_ID=0x cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
@@ -34,9 +36,9 @@ coverage-open:
 devnet-fetch:
   git clone --depth 1 --branch v1.9.1 --recursive https://github.com/ethereum-optimism/optimism.git
 
-devnet-build +ARGS="-F devnet -F prove": (build ARGS)
+devnet-build +ARGS="--bin kailua-cli -F devnet -F prove": (build ARGS)
 
-devnet-build-fpvm +ARGS="-F devnet -F prove -F rebuild-fpvm": (build ARGS)
+devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm": (build ARGS)
 
 devnet-up:
   make -C optimism devnet-up > devnet.log

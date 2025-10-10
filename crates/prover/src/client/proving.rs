@@ -151,7 +151,7 @@ where
                     l1_chain_id: validity.l1_chain_id,
                     verifier_address: hokulea_proof::canoe_verifier::cert_verifier_address(
                         validity.l1_chain_id,
-                        &commitment,
+                        commitment,
                     ),
                 });
             }

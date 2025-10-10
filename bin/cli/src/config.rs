@@ -16,10 +16,6 @@ use alloy::primitives::address;
 use alloy::providers::ProviderBuilder;
 use anyhow::Context;
 use human_bytes::human_bytes;
-use kailua_build::{
-    KAILUA_DA_HOKULEA_ELF, KAILUA_DA_HOKULEA_ID, KAILUA_FPVM_HANA_ELF, KAILUA_FPVM_HANA_ID,
-    KAILUA_FPVM_HOKULEA_ELF, KAILUA_FPVM_HOKULEA_ID, KAILUA_FPVM_KONA_ELF, KAILUA_FPVM_KONA_ID,
-};
 use kailua_contracts::SystemConfig;
 use kailua_kona::config::config_hash;
 use kailua_sync::provider::optimism::fetch_rollup_config;
@@ -74,7 +70,7 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     debug!("{config:?}");
     let rollup_config_hash = config_hash(&config);
 
-    if let Some(registry_config) = load_registry_config(config.l2_chain_id) {
+    if let Some(registry_config) = load_registry_config(config.l2_chain_id.id()) {
         debug!("{registry_config:?}");
         let registry_config_hash = config_hash(&registry_config);
         if rollup_config_hash != registry_config_hash {
@@ -86,25 +82,29 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     println!("RISC0_VERSION: {}", risc0_zkvm::get_version()?);
 
     // report image ids
+    #[allow(clippy::single_element_loop)]
     for (image_id, elf, label) in [
         (
-            KAILUA_FPVM_KONA_ID,
-            KAILUA_FPVM_KONA_ELF,
+            kailua_build::KAILUA_FPVM_KONA_ID,
+            kailua_build::KAILUA_FPVM_KONA_ELF,
             "KAILUA_FPVM_KONA",
         ),
+        #[cfg(feature = "eigen")]
         (
-            KAILUA_FPVM_HOKULEA_ID,
-            KAILUA_FPVM_HOKULEA_ELF,
+            kailua_build::KAILUA_FPVM_HOKULEA_ID,
+            kailua_build::KAILUA_FPVM_HOKULEA_ELF,
             "KAILUA_FPVM_HOKULEA",
         ),
+        #[cfg(feature = "eigen")]
         (
-            KAILUA_DA_HOKULEA_ID,
-            KAILUA_DA_HOKULEA_ELF,
+            kailua_build::KAILUA_DA_HOKULEA_ID,
+            kailua_build::KAILUA_DA_HOKULEA_ELF,
             "KAILUA_DA_HOKULEA",
         ),
+        #[cfg(feature = "celestia")]
         (
-            KAILUA_FPVM_HANA_ID,
-            KAILUA_FPVM_HANA_ELF,
+            kailua_build::KAILUA_FPVM_HANA_ID,
+            kailua_build::KAILUA_FPVM_HANA_ELF,
             "KAILUA_FPVM_HANA",
         ),
     ] {
