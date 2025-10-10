@@ -25,7 +25,7 @@ use kailua_kona::blobs::BlobFetchRequest;
 use kailua_kona::precondition::PreconditionValidationData;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::{await_tel, retry_res_ctx_timeout};
-use kona_genesis::RollupConfig;
+use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_preimage::{PreimageKey, PreimageKeyType};
 use kona_protocol::BlockInfo;
 use opentelemetry::global::tracer;
@@ -149,6 +149,7 @@ pub async fn fetch_precondition_data(
 pub async fn concurrent_execution_preflight(
     args: &ProveArgs,
     rollup_config: RollupConfig,
+    l1_config: L1ChainConfig,
     op_node_provider: &OpNodeProvider,
     disk_kv_store: Option<RWLKeyValueStore>,
 ) -> anyhow::Result<()> {
@@ -210,6 +211,7 @@ pub async fn concurrent_execution_preflight(
         jobs.push(tokio::spawn(crate::tasks::compute_cached_proof(
             args.clone(),
             rollup_config.clone(),
+            l1_config.clone(),
             disk_kv_store.clone(),
             B256::ZERO,
             B256::ZERO,

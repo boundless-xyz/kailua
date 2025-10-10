@@ -71,6 +71,15 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
         .context("generate_rollup_config")
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
+    // fetch l1 config
+    let l1_config = kona_registry::L1_CONFIGS
+        .get(&rollup_config.l1_chain_id)
+        .cloned()
+        .unwrap_or_else(|| {
+            warn!("Loading default L1ChainConfig.");
+            Default::default()
+        });
+
     // preload precondition data into KV store
     let (precondition_hash, precondition_validation_data_hash) =
         match fetch_precondition_data(&args)
@@ -100,6 +109,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
         concurrent_execution_preflight(
             &args,
             rollup_config.clone(),
+            l1_config.clone(),
             op_node_provider.as_ref().expect("Missing op_node_provider"),
             disk_kv_store.clone(),
         )
@@ -232,6 +242,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
 
             // spawn a job that computes the proof and sends back the result to result_channel
             let rollup_config = rollup_config.clone();
+            let l1_config = l1_config.clone();
             let disk_kv_store = disk_kv_store.clone();
             let task_channel = task_channel.clone();
             let result_channel = result_channel.clone();
@@ -239,6 +250,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                 let result = crate::tasks::compute_fpvm_proof(
                     job_args.clone(),
                     rollup_config,
+                    l1_config,
                     disk_kv_store,
                     precondition_hash,
                     precondition_validation_data_hash,
@@ -274,6 +286,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
                     args: job_args.clone(),
                     // all unused
                     rollup_config: rollup_config.clone(),
+                    l1_config: l1_config.clone(),
                     disk_kv_store: disk_kv_store.clone(),
                     precondition_hash,
                     precondition_validation_data_hash,
@@ -439,6 +452,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<()> {
             crate::tasks::compute_fpvm_proof(
                 base_args,
                 rollup_config.clone(),
+                l1_config.clone(),
                 disk_kv_store.clone(),
                 precondition_hash,
                 precondition_validation_data_hash,

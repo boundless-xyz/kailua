@@ -271,7 +271,7 @@ pub fn config_hash(rollup_config: &RollupConfig) -> anyhow::Result<[u8; 32]> {
         // l1_chain_id
         rollup_config.l1_chain_id.to_be_bytes().as_slice(),
         // l2_chain_id
-        rollup_config.l2_chain_id.to_be_bytes().as_slice(),
+        rollup_config.l2_chain_id.id().to_be_bytes().as_slice(),
         // hardforks
         safe_default(rollup_config.hardforks.regolith_time, u64::MAX)
             .context("regolith_time")?
@@ -417,6 +417,7 @@ mod tests {
                     eip1559_elasticity: Some(0),
                     operator_fee_scalar: Some(0),
                     operator_fee_constant: Some(0),
+                    min_base_fee: Some(0),
                 }),
             },
             block_time: 0,
@@ -425,7 +426,7 @@ mod tests {
             channel_timeout: 0,
             granite_channel_timeout: 0,
             l1_chain_id: 0,
-            l2_chain_id: 0,
+            l2_chain_id: 0u64.into(),
             chain_op_config: BaseFeeConfig {
                 eip1559_denominator: 0,
                 eip1559_elasticity: 0,
@@ -440,6 +441,7 @@ mod tests {
                 granite_time: Some(0),
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
+                jovian_time: Some(0),
                 interop_time: Some(0),
                 pectra_blob_schedule_time: Some(0),
             },
@@ -551,7 +553,7 @@ mod tests {
         assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
         rollup_config.l1_chain_id = 1;
         assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
-        rollup_config.l2_chain_id = 1;
+        rollup_config.l2_chain_id = 1u64.into();
         assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
         rollup_config.chain_op_config.eip1559_denominator = 1;
         assert!(hashes.insert(config_hash(&rollup_config).unwrap()));
@@ -651,6 +653,7 @@ mod tests {
                     eip1559_elasticity: Some(0),
                     operator_fee_scalar: Some(0),
                     operator_fee_constant: Some(0),
+                    min_base_fee: Some(0),
                 }),
             },
             block_time: 0,
@@ -659,7 +662,7 @@ mod tests {
             channel_timeout: 0,
             granite_channel_timeout: 0,
             l1_chain_id: 0,
-            l2_chain_id: 0,
+            l2_chain_id: 0u64.into(),
             chain_op_config: BaseFeeConfig {
                 eip1559_denominator: 0,
                 eip1559_elasticity: 0,
@@ -674,6 +677,7 @@ mod tests {
                 granite_time: Some(0),
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
+                jovian_time: Some(0),
                 interop_time: Some(0),
                 pectra_blob_schedule_time: Some(0),
             },

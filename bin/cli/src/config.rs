@@ -67,7 +67,7 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     debug!("{config:?}");
     let rollup_config_hash = config_hash(&config).expect("Configuration hash derivation error");
 
-    if let Some(registry_config) = load_registry_config(config.l2_chain_id) {
+    if let Some(registry_config) = load_registry_config(config.l2_chain_id.id()) {
         debug!("{registry_config:?}");
         let registry_config_hash =
             config_hash(&registry_config).expect("Registry config hash derivation error");
@@ -80,13 +80,12 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     println!("RISC0_VERSION: {}", risc0_zkvm::get_version()?);
 
     // report image ids
-    for (image_id, elf, label) in [
-        (
-            kailua_build::KAILUA_FPVM_KONA_ID,
-            kailua_build::KAILUA_FPVM_KONA_ELF,
-            "KAILUA_FPVM_KONA",
-        ),
-    ] {
+    #[allow(clippy::single_element_loop)]
+    for (image_id, elf, label) in [(
+        kailua_build::KAILUA_FPVM_KONA_ID,
+        kailua_build::KAILUA_FPVM_KONA_ELF,
+        "KAILUA_FPVM_KONA",
+    )] {
         report_image_id(image_id, elf, label);
     }
 

@@ -112,6 +112,7 @@ pub mod tests {
             claimed_l2_block_number: 16491349,
             chain_id: 11155420,
             rollup_config: Default::default(),
+            l1_config: Default::default(),
         };
         let stitched_executions = test_derivation(boot_info.clone(), None)
             .context("test_derivation")?

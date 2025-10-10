@@ -77,8 +77,8 @@ pub async fn run_native_client(
         args.kona.is_offline(),
         HintType::L2PayloadWitness,
     )
-        .await
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+    .await
+    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
     // Start the client program in a separate thread
     let client_task = tokio::spawn(crate::client::proving::run_proving_client(

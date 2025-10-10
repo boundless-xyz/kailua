@@ -43,7 +43,6 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio::{io, try_join};
-use tracing_subscriber::EnvFilter;
 
 lazy_static! {
     static ref DEVNET: Arc<Mutex<()>> = Default::default();
@@ -99,7 +98,16 @@ async fn deploy_kailua_contracts(challenge_timeout: u64) -> anyhow::Result<()> {
 
 async fn start_devnet() -> anyhow::Result<()> {
     // print out INFO logs
-    if let Err(err) = kona_cli::init_tracing_subscriber(3, None::<EnvFilter>) {
+    if let Err(err) = kona_cli::LogConfig::new(kona_cli::LogArgs {
+        level: 3,
+        stdout_quiet: false,
+        stdout_format: Default::default(),
+        file_directory: None,
+        file_format: Default::default(),
+        file_rotation: Default::default(),
+    })
+    .init_tracing_subscriber(None)
+    {
         eprintln!("Failed to set up tracing: {err:?}");
     }
     // start optimism devnet
@@ -445,8 +453,9 @@ async fn prover() {
             data_dir: Some(tmp_dir.path().join("prover").to_path_buf()),
             native: true,
             server: false,
-            l2_chain_id: Some(agent.config.l2_chain_id),
+            l2_chain_id: Some(agent.config.l2_chain_id.id()),
             rollup_config_path: None,
+            l1_config_path: None,
             enable_experimental_witness_endpoint: false,
         },
         op_node_address: Some(sync.provider.op_node_url),

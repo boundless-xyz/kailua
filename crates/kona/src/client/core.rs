@@ -19,9 +19,7 @@ use crate::{client, precondition};
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Sealed, B256};
 use anyhow::{bail, Context};
-use kona_derive::prelude::{
-    BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource,
-};
+use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
 use kona_driver::{Driver, Executor};
 use kona_executor::TrieDBProvider;
 use kona_genesis::RollupConfig;
@@ -143,6 +141,7 @@ where
             boot.claimed_l2_output_root, boot.claimed_l2_block_number
         ));
         let rollup_config = Arc::new(boot.rollup_config.clone());
+        let l1_config = Arc::new(boot.l1_config.clone());
 
         client::log("SAFE HEAD HASH");
         let safe_head_hash =
@@ -260,6 +259,7 @@ where
 
         let pipeline = OraclePipeline::new(
             rollup_config.clone(),
+            l1_config.clone(),
             cursor.clone(),
             oracle.clone(),
             da_provider,
@@ -510,6 +510,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491250,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
         )
@@ -532,6 +533,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
         )
@@ -548,6 +550,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             executions,
         )
@@ -570,6 +573,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             Some(PreconditionValidationData::Validity {
                 proposal_l2_head_number: 16491249,
@@ -596,6 +600,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
         )
@@ -619,6 +624,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
         )
@@ -641,6 +647,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491248,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
         )
@@ -663,6 +670,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491249,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
         )

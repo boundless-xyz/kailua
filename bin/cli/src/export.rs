@@ -18,9 +18,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::{error, info};
 
 pub async fn export(data_dir: PathBuf) -> anyhow::Result<()> {
-    let programs = [
-        (kailua_build::KAILUA_FPVM_KONA_ELF, "kailua-fpvm-kona.bin"),
-    ];
+    let programs = [(kailua_build::KAILUA_FPVM_KONA_ELF, "kailua-fpvm-kona.bin")];
 
     for (elf, file_name) in programs {
         let file_path = data_dir.join(file_name);

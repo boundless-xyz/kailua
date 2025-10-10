@@ -19,7 +19,7 @@ use crate::executor::Execution;
 use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
 use alloy_primitives::{Address, B256};
-use kona_derive::prelude::BlobProvider;
+use kona_derive::BlobProvider;
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
 use std::fmt::Debug;
@@ -211,14 +211,14 @@ pub fn load_stitching_journals(fpvm_image_id: B256) -> HashSet<Digest> {
     log("VERIFY");
 
     let fpvm_image_id = Digest::from(fpvm_image_id.0);
-    let mut proven_fpvm_journals = HashSet::new();
+    let mut proven_fpvm_journals: HashSet<Digest> = Default::default();
 
     loop {
         let Ok(receipt) =
             Receipt::deserialize(&mut Deserializer::new(risc0_zkvm::guest::env::stdin()))
         else {
             log(&format!("PROOFS {}", proven_fpvm_journals.len()));
-            break proven_fpvm_journals;
+            break;
         };
 
         let journal_digest = receipt.journal.digest();
@@ -231,6 +231,8 @@ pub fn load_stitching_journals(fpvm_image_id: B256) -> HashSet<Digest> {
 
         proven_fpvm_journals.insert(journal_digest);
     }
+
+    proven_fpvm_journals
 }
 
 /// Verifies the stitching journal of an FPVM image.
@@ -517,14 +519,31 @@ pub mod tests {
     use anyhow::Context;
     use kona_proof::l1::OracleBlobProvider;
     use rayon::prelude::{IntoParallelIterator, ParallelIterator};
-    use tracing_subscriber::EnvFilter;
 
     fn setup() {
-        let _ = kona_cli::init_tracing_subscriber(1, None::<EnvFilter>);
+        kona_cli::LogConfig::new(kona_cli::LogArgs {
+            level: 1,
+            stdout_quiet: false,
+            stdout_format: Default::default(),
+            file_directory: None,
+            file_format: Default::default(),
+            file_rotation: Default::default(),
+        })
+        .init_tracing_subscriber(None)
+        .unwrap();
     }
 
     fn teardown() {
-        let _ = kona_cli::init_tracing_subscriber(0, None::<EnvFilter>);
+        kona_cli::LogConfig::new(kona_cli::LogArgs {
+            level: 0,
+            stdout_quiet: false,
+            stdout_format: Default::default(),
+            file_directory: None,
+            file_format: Default::default(),
+            file_rotation: Default::default(),
+        })
+        .init_tracing_subscriber(None)
+        .unwrap();
     }
 
     fn validate_proof_journal(
@@ -630,6 +649,7 @@ pub mod tests {
                 claimed_l2_block_number: starting_block_number,
                 chain_id: boot_info.chain_id,
                 rollup_config: boot_info.rollup_config.clone(),
+                l1_config: boot_info.l1_config.clone(),
             },
             precondition_validation_data.clone(),
             vec![],
@@ -649,6 +669,7 @@ pub mod tests {
                 claimed_l2_block_number: ending_block_number,
                 chain_id: boot_info.chain_id,
                 rollup_config: boot_info.rollup_config.clone(),
+                l1_config: boot_info.l1_config.clone(),
             },
             precondition_validation_data.clone(),
             vec![],
@@ -670,6 +691,7 @@ pub mod tests {
                             claimed_l2_block_number: ending_block_number,
                             chain_id: boot_info.chain_id,
                             rollup_config: boot_info.rollup_config.clone(),
+                            l1_config: boot_info.l1_config.clone(),
                         },
                         precondition_validation_data.clone(),
                         vec![],
@@ -763,6 +785,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491250,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
             vec![],
@@ -790,6 +813,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491250,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
         )
@@ -816,6 +840,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             Some(PreconditionValidationData::Validity {
                 proposal_l2_head_number: 16491249,
@@ -848,6 +873,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             Some(PreconditionValidationData::Validity {
                 proposal_l2_head_number: 16491249,
@@ -879,6 +905,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
             vec![],
@@ -906,6 +933,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             Some(PreconditionValidationData::Validity {
                 proposal_l2_head_number: 16491249,

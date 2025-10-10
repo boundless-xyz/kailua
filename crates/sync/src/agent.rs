@@ -114,11 +114,9 @@ impl SyncAgent {
         )?;
         #[cfg(not(feature = "devnet"))]
         {
-            let known_image_ids = [
-                B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
-                    kailua_build::KAILUA_FPVM_KONA_ID,
-                )),
-            ];
+            let known_image_ids = [B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
+                kailua_build::KAILUA_FPVM_KONA_ID,
+            ))];
             if !known_image_ids.contains(&deployment.image_id) {
                 bail!("Deployment image ID {:?} unknown.", deployment.image_id);
             }

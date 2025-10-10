@@ -81,21 +81,20 @@ where
     let witgen_permit = acquire_owned_permit(SEMAPHORE_WITGEN.clone())
         .await
         .map_err(ProvingError::OtherError);
-    let (proof_journal, witness, extra_frames, extra_proofs) =
-        witgen::run_witgen_client(
-            preimage_oracle.clone(),
-            10 * 1024 * 1024, // default to 10MB chunks
-            blob_provider,
-            EthereumDataSourceProvider,
-            proving.payout_recipient_address.unwrap_or_default(),
-            precondition_validation_data_hash,
-            execution_cache.clone(),
-            stitched_boot_info.clone(),
-        )
-            .await
-            .context("Failed to run kona vec witgen client.")
-            .map_err(ProvingError::OtherError)
-            .map(|(_, j, w)| (j, w, vec![], vec![]))?;
+    let (proof_journal, witness, extra_frames, extra_proofs) = witgen::run_witgen_client(
+        preimage_oracle.clone(),
+        10 * 1024 * 1024, // default to 10MB chunks
+        blob_provider,
+        EthereumDataSourceProvider,
+        proving.payout_recipient_address.unwrap_or_default(),
+        precondition_validation_data_hash,
+        execution_cache.clone(),
+        stitched_boot_info.clone(),
+    )
+    .await
+    .context("Failed to run kona vec witgen client.")
+    .map_err(ProvingError::OtherError)
+    .map(|(_, j, w)| (j, w, vec![], vec![]))?;
     drop(witgen_permit);
 
     // Encode witness as frames

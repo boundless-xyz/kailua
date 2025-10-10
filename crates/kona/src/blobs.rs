@@ -21,8 +21,8 @@ use alloy_primitives::{B256, U256};
 use anyhow::bail;
 use async_trait::async_trait;
 use c_kzg::{ethereum_kzg_settings, Bytes48};
-use kona_derive::errors::BlobProviderError;
-use kona_derive::traits::BlobProvider;
+use kona_derive::BlobProvider;
+use kona_derive::BlobProviderError;
 use kona_protocol::BlockInfo;
 use serde::{Deserialize, Serialize};
 
@@ -185,7 +185,7 @@ impl BlobProvider for PreloadedBlobProvider {
     ///   A vector of boxed `Blob` instances if all blobs are successfully fetched and processed.
     /// - `Err(Self::Error)`:
     ///   An error result in case of any failure during blob retrieval.
-    async fn get_blobs(
+    async fn get_and_validate_blobs(
         &mut self,
         _block_ref: &BlockInfo,
         blob_hashes: &[IndexedBlobHash],
@@ -430,7 +430,7 @@ pub mod tests {
             .collect::<Vec<_>>();
         let mut blob_provider = PreloadedBlobProvider::from(blob_witness_data);
         let retrieved = blob_provider
-            .get_blobs(&Default::default(), &indexed_hashes)
+            .get_and_validate_blobs(&Default::default(), &indexed_hashes)
             .await
             .unwrap()
             .into_iter()
@@ -455,7 +455,7 @@ pub mod tests {
             .collect::<Vec<_>>();
         let mut blob_provider = PreloadedBlobProvider::from(blob_witness_data);
         let retrieved = blob_provider
-            .get_blobs(&Default::default(), &indexed_hashes)
+            .get_and_validate_blobs(&Default::default(), &indexed_hashes)
             .await;
 
         assert!(retrieved.is_err());

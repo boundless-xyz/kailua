@@ -63,6 +63,7 @@ pub mod tests {
             claimed_l2_block_number: 0,
             chain_id: 0,
             rollup_config: Default::default(),
+            l1_config: Default::default(),
         });
         let cloned = oracle.clone();
         // avoid double dropping
@@ -85,6 +86,7 @@ pub mod tests {
                 claimed_l2_block_number: 0,
                 chain_id: 0,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             })
         }
     }
