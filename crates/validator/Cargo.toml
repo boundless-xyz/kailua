@@ -63,3 +63,13 @@ rebuild-fpvm = [
     "kailua-prover/rebuild-fpvm",
     "kailua-sync/rebuild-fpvm"
 ]
+eigen = [
+    "kailua-build/eigen",
+    "kailua-prover/eigen",
+    "kailua-sync/eigen"
+]
+celestia = [
+    "kailua-build/celestia",
+    "kailua-prover/celestia",
+    "kailua-sync/eigen"
+]

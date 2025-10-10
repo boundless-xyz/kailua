@@ -164,8 +164,10 @@ pub async fn handle_proof_requests(
                 data_dir: Some(data_dir),
                 native: true,
                 server: false,
-                l2_chain_id: Some(rollup_config.l2_chain_id),
+                l2_chain_id: Some(rollup_config.l2_chain_id.id()),
+                // These paths can be specified explicitly through ENV vars.
                 rollup_config_path: None,
+                l1_config_path: None,
                 enable_experimental_witness_endpoint: args.enable_experimental_witness_endpoint,
             },
             op_node_address: Some(args.sync.provider.op_node_url.clone()),
