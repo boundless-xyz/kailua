@@ -19,3 +19,5 @@ kailua-elf
 kailua-input
 *.req
 .env
+*.driver
+.logs

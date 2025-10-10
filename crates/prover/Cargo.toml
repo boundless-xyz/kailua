@@ -40,8 +40,6 @@ op-alloy-network.workspace = true
 
 kailua-build.workspace = true
 kailua-kona.workspace = true
-kailua-hokulea.workspace = true
-kailua-hana.workspace = true
 kailua-sync.workspace = true
 
 kona-derive.workspace = true
@@ -54,18 +52,6 @@ kona-protocol.workspace = true
 kona-providers-alloy.workspace = true
 kona-std-fpvm.workspace = true
 
-canoe-bindings.workspace = true
-canoe-provider.workspace = true
-hokulea-host-bin.workspace = true
-hokulea-proof.workspace = true
-hokulea-witgen.workspace = true
-
-celestia-rpc.workspace = true
-celestia-types.workspace = true
-hana-blobstream.workspace = true
-hana-host.workspace = true
-hana-oracle.workspace = true
-
 bonsai-sdk.workspace = true
 boundless-market.workspace = true
 
@@ -73,8 +59,6 @@ opentelemetry.workspace = true
 
 risc0-ethereum-contracts.workspace = true
 risc0-zkvm.workspace = true
-
-risc0-steel = { workspace = true, features = ["host"] }
 
 [features]
 devnet = [

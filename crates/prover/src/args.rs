@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::hana::args::HanaArgs;
-use crate::hokulea::args::HokuleaArgs;
 use crate::risczero::boundless::BoundlessArgs;
 use alloy_primitives::{Address, B256};
 use clap::Parser;
@@ -66,11 +64,6 @@ pub struct ProvingArgs {
     /// Whether to keep cache data after successful completion
     #[clap(long, env, default_value_t = false)]
     pub clear_cache_data: bool,
-
-    #[clap(flatten)]
-    pub hokulea: HokuleaArgs,
-    #[clap(flatten)]
-    pub hana: HanaArgs,
 }
 
 impl ProvingArgs {
@@ -106,10 +99,6 @@ impl ProvingArgs {
                 payout_recipient_address.to_string(),
             ]);
         }
-        // Hokulea
-        proving_args.extend(self.hokulea.to_arg_vec());
-        // Hana
-        proving_args.extend(self.hana.to_arg_vec());
         // Return
         proving_args
     }
@@ -118,32 +107,12 @@ impl ProvingArgs {
         self.skip_derivation_proof || self.skip_await_proof
     }
 
-    pub fn use_hokulea(&self) -> bool {
-        self.hokulea.is_set()
-    }
-
-    pub fn use_hana(&self) -> bool {
-        !self.hokulea.is_set() && self.hana.is_set()
-    }
-
     pub fn image_id(&self) -> [u32; 8] {
-        if self.use_hokulea() {
-            kailua_build::KAILUA_FPVM_HOKULEA_ID
-        } else if self.use_hana() {
-            kailua_build::KAILUA_FPVM_HANA_ID
-        } else {
-            kailua_build::KAILUA_FPVM_KONA_ID
-        }
+        kailua_build::KAILUA_FPVM_KONA_ID
     }
 
     pub fn elf(&self) -> &'static [u8] {
-        if self.use_hokulea() {
-            kailua_build::KAILUA_FPVM_HOKULEA_ELF
-        } else if self.use_hana() {
-            kailua_build::KAILUA_FPVM_HANA_ELF
-        } else {
-            kailua_build::KAILUA_FPVM_KONA_ELF
-        }
+        kailua_build::KAILUA_FPVM_KONA_ELF
     }
 
     pub fn image(&self) -> ([u32; 8], &'static [u8]) {

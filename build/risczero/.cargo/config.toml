@@ -1,4 +1,4 @@
-paths = ["./kona", "./hokulea"]
+paths = ["./kona"]
 
 [term]
 color = "always"

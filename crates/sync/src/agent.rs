@@ -118,12 +118,6 @@ impl SyncAgent {
                 B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
                     kailua_build::KAILUA_FPVM_KONA_ID,
                 )),
-                B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
-                    kailua_build::KAILUA_FPVM_HOKULEA_ID,
-                )),
-                B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
-                    kailua_build::KAILUA_FPVM_HANA_ID,
-                )),
             ];
             if !known_image_ids.contains(&deployment.image_id) {
                 bail!("Deployment image ID {:?} unknown.", deployment.image_id);

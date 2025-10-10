@@ -37,9 +37,6 @@ jobs:
       - name: cargo fmt kailua-fpvm-kona
         run: |
           cargo fmt --all --check --manifest-path build/risczero/kona/Cargo.toml
-      - name: cargo fmt kailua-fpvm-hokulea
-        run: |
-          cargo fmt --all --check --manifest-path build/risczero/hokulea/Cargo.toml
 
   cargo-clippy:
     runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]
@@ -76,11 +73,6 @@ jobs:
       - name: cargo clippy kailua-fpvm-kona
         run: cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets --all-features
         env:
-          RUSTFLAGS: -Dwarnings
-      - name: cargo clippy kailua-fpvm-hokulea
-        run: cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets --all-features
-        env:
-          CANOE_IMAGE_ID: 0x
           RUSTFLAGS: -Dwarnings
 
   cargo-test:

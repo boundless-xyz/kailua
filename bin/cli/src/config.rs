@@ -16,10 +16,6 @@ use alloy::primitives::address;
 use alloy::providers::ProviderBuilder;
 use anyhow::Context;
 use human_bytes::human_bytes;
-use kailua_build::{
-    KAILUA_DA_HOKULEA_ELF, KAILUA_DA_HOKULEA_ID, KAILUA_FPVM_HANA_ELF, KAILUA_FPVM_HANA_ID,
-    KAILUA_FPVM_HOKULEA_ELF, KAILUA_FPVM_HOKULEA_ID, KAILUA_FPVM_KONA_ELF, KAILUA_FPVM_KONA_ID,
-};
 use kailua_contracts::SystemConfig;
 use kailua_kona::config::config_hash;
 use kailua_sync::provider::optimism::fetch_rollup_config;
@@ -86,24 +82,9 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     // report image ids
     for (image_id, elf, label) in [
         (
-            KAILUA_FPVM_KONA_ID,
-            KAILUA_FPVM_KONA_ELF,
+            kailua_build::KAILUA_FPVM_KONA_ID,
+            kailua_build::KAILUA_FPVM_KONA_ELF,
             "KAILUA_FPVM_KONA",
-        ),
-        (
-            KAILUA_FPVM_HOKULEA_ID,
-            KAILUA_FPVM_HOKULEA_ELF,
-            "KAILUA_FPVM_HOKULEA",
-        ),
-        (
-            KAILUA_DA_HOKULEA_ID,
-            KAILUA_DA_HOKULEA_ELF,
-            "KAILUA_DA_HOKULEA",
-        ),
-        (
-            KAILUA_FPVM_HANA_ID,
-            KAILUA_FPVM_HANA_ELF,
-            "KAILUA_FPVM_HANA",
         ),
     ] {
         report_image_id(image_id, elf, label);
