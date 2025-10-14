@@ -25,6 +25,7 @@ use kailua_sync::telemetry::TelemetryArgs;
 use kailua_validator::proposals::dispatch::current_time;
 use risc0_zkvm::Receipt;
 use std::str::FromStr;
+use boundless_market::request_builder::RequirementParams;
 use tracing::{error, info};
 
 #[derive(clap::Args, Debug, Clone)]
@@ -58,7 +59,9 @@ pub async fn boundless(args: BoundlessArgs) -> anyhow::Result<()> {
         .fetch_proof_request(U256::from_str(args.request_id.as_str())?, None, None)
         .await?;
 
-    let image_id = request.requirements.imageId.0;
+    let req_params = RequirementParams::try_from(request.requirements.clone())
+        .context("Failed to convert Requirements to RequirementParams")?;
+    let image_id = req_params.image_id.unwrap_or_default().0;
 
     let receipt = retrieve_proof(
         &boundless_client,

@@ -33,7 +33,7 @@ use boundless_market::contracts::boundless_market::MarketError;
 use boundless_market::contracts::{
     Predicate, RequestError, RequestId, RequestStatus, Requirements,
 };
-use boundless_market::request_builder::OfferParams;
+use boundless_market::request_builder::{OfferParams, RequirementParams};
 use boundless_market::storage::{StorageProviderConfig, StorageProviderType};
 use boundless_market::{Deployment, GuestEnv, ProofRequest, StandardStorageProvider};
 use bytemuck::NoUninit;
@@ -109,9 +109,9 @@ pub struct MarketProviderConfig {
     /// [RiscZeroSetVerifier]: https://github.com/risc0/risc0-ethereum/blob/main/contracts/src/RiscZeroSetVerifier.sol
     #[clap(long, env, required = false)]
     pub boundless_set_verifier_address: Option<Address>,
-    /// Address of the stake token contract. The staking token is an ERC-20.
+    /// Address of the collateral token contract. The staking token is an ERC-20.
     #[clap(long, env, required = false)]
-    pub boundless_stake_token_address: Option<Address>,
+    pub boundless_collateral_token_address: Option<Address>,
     /// URL for the offchain [order stream service].
     ///
     /// [order stream service]: crate::order_stream_client
@@ -136,9 +136,9 @@ pub struct MarketProviderConfig {
     /// Maximum price (wei) per cycle of the proving order
     #[clap(long, env, required = false, default_value = "200000000")]
     pub boundless_cycle_max_wei: U256,
-    /// Stake (USDC) per gigacycle of the proving order
+    /// Collateral (ZKC) per megacycle of the proving order
     #[clap(long, env, required = false, default_value = "1000")]
-    pub boundless_mega_cycle_stake: U256,
+    pub boundless_mega_cycle_collateral: U256,
     /// Multiplier for delay before order price starts ramping up.
     #[clap(long, env, required = false, default_value_t = 0.1)]
     pub boundless_order_bid_delay_factor: f64,
@@ -200,10 +200,10 @@ impl MarketProviderConfig {
                 boundless_set_verifier_address.to_string(),
             ]);
         };
-        if let Some(boundless_stake_token_address) = &self.boundless_stake_token_address {
+        if let Some(boundless_collateral_token_address) = &self.boundless_collateral_token_address {
             proving_args.extend(vec![
-                String::from("--boundless-stake-token-address"),
-                boundless_stake_token_address.to_string(),
+                String::from("--boundless-collateral-token-address"),
+                boundless_collateral_token_address.to_string(),
             ]);
         };
         if let Some(boundless_order_stream_url) = &self.boundless_order_stream_url {
@@ -229,8 +229,8 @@ impl MarketProviderConfig {
             self.boundless_cycle_min_wei.to_string(),
             String::from("--boundless-cycle-max-wei"),
             self.boundless_cycle_max_wei.to_string(),
-            String::from("--boundless-mega-cycle-stake"),
-            self.boundless_mega_cycle_stake.to_string(),
+            String::from("--boundless-mega-cycle-collateral"),
+            self.boundless_mega_cycle_collateral.to_string(),
             String::from("--boundless-order-bid-delay-factor"),
             self.boundless_order_bid_delay_factor.to_string(),
             String::from("--boundless-order-ramp-up-factor"),
@@ -325,7 +325,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             R2Storage::new(&storage, domain)
                 .await
                 .context("Failed to create R2 storage")
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
+                .map_err(ProvingError::OtherError)?,
         )
     } else {
         None
@@ -334,7 +334,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     // Instantiate storage provider (used when R2 is not configured)
     let storage_provider = StandardStorageProvider::from_config(&storage)
         .context("StandardStorageProvider::from_config")
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+        .map_err(ProvingError::OtherError)?;
 
     // Override deployment configuration if set
     let market_deployment = market
@@ -353,8 +353,10 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             if let Some(boundless_set_verifier_address) = market.boundless_set_verifier_address {
                 builder.set_verifier_address(boundless_set_verifier_address);
             };
-            if let Some(boundless_stake_token_address) = market.boundless_stake_token_address {
-                builder.stake_token_address(boundless_stake_token_address);
+            if let Some(boundless_collateral_token_address) =
+                market.boundless_collateral_token_address
+            {
+                builder.collateral_token_address(boundless_collateral_token_address);
             };
             if let Some(boundless_order_stream_url) = market.boundless_order_stream_url.clone() {
                 builder.order_stream_url(boundless_order_stream_url);
@@ -374,7 +376,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             .await
             .context("ClientBuilder::build()")
     )
-    .await;
+        .await;
 
     // Report boundless deployment info
     info!(
@@ -384,7 +386,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     debug!("Deployment: {:?}", boundless_client.deployment);
 
     // Set the proof request requirements
-    let requirements = Requirements::new(image.0, Predicate::digest_match(journal.digest()))
+    let requirements = Requirements::new(Predicate::digest_match(image.0, journal.digest()))
         // manually choose latest Groth16 receipt selector
         .with_selector((Selector::groth16_latest() as u32).into());
 
@@ -403,7 +405,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             proving_args,
             &requirements,
         )
-        .await
+            .await
         {
             Err(ProvingError::OtherError(e)) => {
                 error!("(Retrying) Boundless request failed: {e:?}");
@@ -418,16 +420,17 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
 pub fn next_nonce(requirements: &Requirements, previous_nonce: Option<u32>) -> u32 {
     let pred_type = (requirements.predicate.predicateType as u128).to_be_bytes();
     let prev_nonce = previous_nonce.unwrap_or(u32::MAX).to_be_bytes();
+    let req_params = RequirementParams::try_from(requirements.clone()).unwrap();
     let data = [
         requirements.selector.as_slice(),
-        requirements.imageId.as_slice(),
+        req_params.image_id.unwrap_or_default().as_slice(),
         pred_type.as_slice(),
         requirements.callback.addr.as_slice(),
         requirements.callback.gasLimit.as_le_slice(),
         prev_nonce.as_slice(),
         requirements.predicate.data.as_ref(),
     ]
-    .concat();
+        .concat();
     let digest = data.digest().as_bytes().to_vec();
     u32::from_be_bytes(digest[..4].try_into().unwrap())
 }
@@ -527,12 +530,15 @@ pub async fn look_back(
             break Ok(None);
         };
         // Check if not expired
-        let request_status = retry_res_timeout!(boundless_client
-            .boundless_market
-            .get_status(request_id, Some(request.expires_at()))
-            .await
-            .context("get_status"))
-        .await;
+        let request_status = retry_res_timeout!(
+            15,
+            boundless_client
+                .boundless_market
+                .get_status(request_id, Some(request.expires_at()))
+                .await
+                .context("get_status")
+        )
+            .await;
 
         if matches!(request_status, RequestStatus::Expired) {
             // We found a duplicate but it was expired
@@ -552,14 +558,15 @@ pub async fn look_back(
         }
 
         // Return result if okay
+        let req_params = RequirementParams::try_from(requirements.clone()).unwrap();
         match retrieve_proof(
             boundless_client,
             request_id,
-            requirements.imageId.0,
+            req_params.image_id.unwrap_or_default().0,
             market.boundless_order_check_interval,
             request.expires_at(),
         )
-        .await
+            .await
         {
             Ok(proof) => {
                 break Ok(Some(proof));
@@ -586,9 +593,20 @@ pub async fn retrieve_proof(
             .wait_for_request_fulfillment(request_id, Duration::from_secs(interval), expires_at)
             .await
         {
-            Ok((journal, seal)) => {
+            Ok(fulfillment) => {
+                let journal = fulfillment
+                    .data()
+                    .context("Failed to decode request Fulfillment data.")?
+                    .journal()
+                    .cloned()
+                    .unwrap_or_default()
+                    .to_vec();
                 let Ok(risc0_ethereum_contracts::receipt::Receipt::Base(receipt)) =
-                    risc0_ethereum_contracts::receipt::decode_seal(seal, image_id, journal)
+                    risc0_ethereum_contracts::receipt::decode_seal(
+                        fulfillment.seal,
+                        image_id,
+                        journal,
+                    )
                 else {
                     return Err(ClientError::RequestError(RequestError::MissingRequirements));
                 };
@@ -634,7 +652,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             proving_args,
             &mut nonce_target,
         )
-        .await?
+            .await?
         {
             return Ok(proof);
         }
@@ -672,13 +690,13 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                         .upload_program(image.1)
                         .await
                         .context("R2Storage::upload_program"))
-                    .await
+                        .await
                 } else {
                     retry_res!(boundless_client
                         .upload_program(image.1)
                         .await
                         .context("Client::upload_program"))
-                    .await
+                        .await
                 };
                 if let Err(err) =
                     save_to_bincoded_file(&program_url.to_string(), &bin_file_name).await
@@ -691,6 +709,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         };
     };
 
+    info!("Kailua ELF URL: {program_url}");
     // Preflight execution to get cycle count
     let req_file_name = request_file_name(image.0, journal.clone());
     let cycle_count = match (
@@ -716,7 +735,8 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             let elf = image.1.to_vec();
             let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
                 .await
-                .map_err(ProvingError::OtherError);
+                .context("acquire_owned_permit")
+                .map_err(ProvingError::OtherError)?;
             let session_info = tokio::task::spawn_blocking(move || {
                 let mut builder = ExecutorEnv::builder();
                 // Set segment po2
@@ -731,16 +751,18 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 }
                 // Pass in proofs
                 for proof in &preflight_stitched_proofs {
-                    builder.write(proof)?;
+                    builder.write(proof).context("env::write")?;
                 }
-                let env = builder.build()?;
-                let session_info = default_executor().execute(env, &elf)?;
+                let env = builder.build().context("env::build")?;
+                let session_info = default_executor()
+                    .execute(env, &elf)
+                    .context("Executor::execute")?;
                 Ok::<_, anyhow::Error>(session_info)
             })
-            .await
-            .context("spawn_blocking")
-            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-            .map_err(|e| ProvingError::ExecutionError(anyhow!(e)))?;
+                .await
+                .context("spawn_blocking")
+                .map_err(ProvingError::OtherError)?
+                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
             drop(r0vm_permit);
             let cycle_count = session_info
                 .segments
@@ -754,6 +776,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             cycle_count
         }
     };
+    info!("Request cycle count: {cycle_count}.");
 
     // Pass in input frames
     let inp_file_name = input_file_name(image.0, journal.clone());
@@ -765,7 +788,6 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 .map(|s| Url::parse(&s)),
         ) {
             (true, Ok(Ok(url))) => {
-                info!("Using input data previously uploaded to {url}.");
                 break url;
             }
             _ => {
@@ -789,13 +811,13 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                     guest_env_builder = guest_env_builder
                         .write(proof)
                         .context("GuestEnvBuilder::write")
-                        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+                        .map_err(ProvingError::OtherError)?;
                 }
                 // Build input vector
                 let input = guest_env_builder
                     .build_vec()
                     .context("GuestEnvBuilder::build_vec")
-                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+                    .map_err(ProvingError::OtherError)?;
 
                 // Upload input
                 info!("Uploading {} input data.", human_bytes(input.len() as f64));
@@ -804,13 +826,13 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                         .upload_input(&input)
                         .await
                         .context("R2Storage::upload_input"))
-                    .await
+                        .await
                 } else {
                     retry_res!(boundless_client
                         .upload_input(&input)
                         .await
                         .context("Client::upload_input"))
-                    .await
+                        .await
                 };
                 drop(boundless_net_lock);
                 // avoid api rate limits
@@ -824,21 +846,25 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             }
         }
     };
+    info!("Input URL: {input_url}.");
 
     // Only one prover may submit a request at a time
     let boundless_req_lock = BOUNDLESS_REQ.lock().await;
     // Build final request
     let boundless_wallet_address = boundless_client.signer.as_ref().unwrap().address();
 
-    let boundless_rpc_time = retry_res_timeout!(boundless_client
-        .provider()
-        .get_block_by_number(BlockNumberOrTag::Latest)
+    let boundless_rpc_time = retry_res_timeout!(
+        15,
+        boundless_client
+            .provider()
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await
+            .context("get_block_by_number latest")?
+            .ok_or_else(|| anyhow!("Failed to fetch latest block from Boundless RPC"))
+    )
         .await
-        .context("get_block_by_number latest")?
-        .ok_or_else(|| anyhow!("Failed to fetch latest block from Boundless RPC")))
-    .await
-    .header
-    .timestamp;
+        .header
+        .timestamp;
 
     let segment_count = cycle_count.div_ceil(1_000_000) as f64;
     let cycles = U256::from(cycle_count);
@@ -855,23 +881,27 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         .with_cycles(cycle_count)
         .with_program_url(program_url)
         .context("RequestParams::with_program_url")
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+        .map_err(ProvingError::OtherError)?
         .with_input_url(input_url)
         .context("RequestParams::with_input_url")
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-        .with_requirements(requirements.clone())
+        .map_err(ProvingError::OtherError)?
+        .with_requirements(
+            RequirementParams::try_from(requirements.clone())
+                .context("Failed to convert Requirements")
+                .map_err(ProvingError::OtherError)?,
+        )
         .with_offer(
             OfferParams::builder()
                 .min_price(min_price)
                 .max_price(max_price)
                 .bidding_start(boundless_rpc_time + bid_delay_time)
-                .lock_stake(market.boundless_mega_cycle_stake * U256::from(segment_count))
+                .lock_collateral(market.boundless_mega_cycle_collateral * U256::from(segment_count))
                 .ramp_up_period((market.boundless_order_ramp_up_factor * segment_count) as u32)
                 .lock_timeout((corrected_lock_timeout_factor * segment_count) as u32)
                 .timeout((corrected_expiry_factor * segment_count) as u32)
                 .build()
                 .context("OfferParamsBuilder::build()")
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
+                .map_err(ProvingError::OtherError)?,
         )
         .with_request_id(RequestId::new(boundless_wallet_address, fresh_nonce));
 
@@ -882,14 +912,14 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             .submit_offchain(request.clone())
             .await
             .context("Client::submit_offchain()")
-            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+            .map_err(ProvingError::OtherError)?
     } else {
         info!("Submitting onchain request.");
         boundless_client
             .submit_onchain(request.clone())
             .await
             .context("Client::submit_onchain()")
-            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+            .map_err(ProvingError::OtherError)?
     };
     info!(
         "Boundless request 0x{request_id:x} submitted. ({} sec cooldown).",
@@ -898,7 +928,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     sleep(Duration::from_secs(
         market.boundless_order_submission_cooldown,
     ))
-    .await;
+        .await;
     drop(boundless_req_lock);
 
     if proving_args.skip_await_proof {
@@ -913,9 +943,9 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         market.boundless_order_check_interval,
         expires_at,
     )
-    .await
-    .context("retrieve_proof")
-    .map_err(|e| ProvingError::OtherError(anyhow!(e)))
+        .await
+        .context("retrieve_proof")
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))
 }
 
 pub fn request_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> String {
