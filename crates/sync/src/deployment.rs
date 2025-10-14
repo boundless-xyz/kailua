@@ -58,7 +58,7 @@ pub struct SyncDeployment {
 impl SyncDeployment {
     pub async fn load(
         provider: &SyncProvider,
-        config: &RollupConfig,
+        rollup_config: &RollupConfig,
         game_impl_address: Option<Address>,
     ) -> anyhow::Result<Self> {
         let tracer = tracer("kailua");
@@ -66,7 +66,7 @@ impl SyncDeployment {
 
         // load system config
         let system_config =
-            SystemConfig::new(config.l1_system_config_address, &provider.l1_provider);
+            SystemConfig::new(rollup_config.l1_system_config_address, &provider.l1_provider);
         let dgf_address = system_config
             .disputeGameFactory()
             .stall_with_context(context.clone(), "SystemConfig::disputeGameFactory")

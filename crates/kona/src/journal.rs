@@ -60,7 +60,9 @@ impl ProofJournal {
             agreed_l2_output_root: boot_info.agreed_l2_output_root,
             claimed_l2_output_root: boot_info.claimed_l2_output_root,
             claimed_l2_block_number: boot_info.claimed_l2_block_number,
-            config_hash: B256::from(crate::config::config_hash(&boot_info.rollup_config).unwrap()),
+            config_hash: B256::from(
+                crate::config::config_hash(&boot_info.rollup_config, &boot_info.l1_config).unwrap(),
+            ),
         }
     }
 
@@ -231,8 +233,13 @@ pub mod tests {
 
     #[test]
     fn test_proof_journal_constructor() {
-        let config_hash =
-            B256::from(crate::config::config_hash(&kona_genesis::RollupConfig::default()).unwrap());
+        let config_hash = B256::from(
+            crate::config::config_hash(
+                &kona_genesis::RollupConfig::default(),
+                &kona_genesis::L1ChainConfig::default(),
+            )
+            .unwrap(),
+        );
         let proof_journals = gen_proof_journals(512, 64, config_hash);
         // Test constructor
         for journal in proof_journals {

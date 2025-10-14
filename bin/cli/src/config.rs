@@ -28,7 +28,7 @@ use opentelemetry::trace::{FutureExt, Status, TraceContextExt, Tracer};
 use risc0_circuit_recursion::control_id::BN254_IDENTITY_CONTROL_ID;
 use risc0_zkvm::sha::Digest;
 use risc0_zkvm::{compute_image_id, ALLOWED_CONTROL_ROOT};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Inspect the configuration of a running rollup
 #[derive(clap::Args, Debug, Clone)]
@@ -54,7 +54,7 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("config"));
 
-    let config = await_tel!(
+    let rollup_config = await_tel!(
         context,
         fetch_rollup_config(
             &args.op_node_url,
@@ -64,13 +64,23 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
         )
     )
     .context("fetch_rollup_config")?;
-    debug!("{config:?}");
-    let rollup_config_hash = config_hash(&config).expect("Configuration hash derivation error");
+    debug!("{rollup_config:?}");
+    let l1_config = kona_registry::L1_CONFIGS
+        .get(&rollup_config.l1_chain_id)
+        .cloned()
+        .unwrap_or_else(|| {
+            warn!("Loading default L1ChainConfig.");
+            Default::default()
+        });
+    debug!("{l1_config:?}");
 
-    if let Some(registry_config) = load_registry_config(config.l2_chain_id.id()) {
+    let rollup_config_hash =
+        config_hash(&rollup_config, &l1_config).expect("Configuration hash derivation error");
+
+    if let Some(registry_config) = load_registry_config(rollup_config.l2_chain_id.id()) {
         debug!("{registry_config:?}");
-        let registry_config_hash =
-            config_hash(&registry_config).expect("Registry config hash derivation error");
+        let registry_config_hash = config_hash(&registry_config, &l1_config)
+            .expect("Registry config hash derivation error");
         if rollup_config_hash != registry_config_hash {
             eprintln!("LOADED ROLLUP CONFIG DOES NOT MATCH REGISTRY ROLLUP CONFIG.");
         }
@@ -106,7 +116,7 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
         ),
     );
     // report verifier address
-    let verifier_address = match config.l1_chain_id {
+    let verifier_address = match rollup_config.l1_chain_id {
         // eth
         1 => Some(address!("8EaB2D97Dfce405A1692a21b3ff3A172d593D319")),
         11155111 => Some(address!("925d8331ddc0a1F0d96E68CF073DFE1d92b69187")),
@@ -139,9 +149,9 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     );
 
     // report genesis time
-    println!("GENESIS_TIMESTAMP: {}", config.genesis.l2_time);
+    println!("GENESIS_TIMESTAMP: {}", rollup_config.genesis.l2_time);
     // report inter-block time
-    println!("BLOCK_TIME: {}", config.block_time);
+    println!("BLOCK_TIME: {}", rollup_config.block_time);
     // report rollup config hash
     println!(
         "ROLLUP_CONFIG_HASH: 0x{}",
@@ -150,7 +160,8 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     // load system config
     let eth_rpc_provider =
         ProviderBuilder::new().connect_http(args.eth_rpc_url.as_str().try_into()?);
-    let system_config = SystemConfig::new(config.l1_system_config_address, &eth_rpc_provider);
+    let system_config =
+        SystemConfig::new(rollup_config.l1_system_config_address, &eth_rpc_provider);
     debug!("{system_config:?}");
     let portal_address = system_config
         .optimismPortal()

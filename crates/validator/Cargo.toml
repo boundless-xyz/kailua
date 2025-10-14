@@ -31,6 +31,7 @@ kailua-sync.workspace = true
 
 kona-protocol.workspace = true
 kona-host.workspace = true
+kona-registry.workspace = true
 
 opentelemetry.workspace = true
 

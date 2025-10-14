@@ -341,7 +341,7 @@ pub fn stitch_executions(
     stitched_executions: &Vec<Vec<Arc<Execution>>>,
     #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
 ) {
-    let config_hash = crate::config::config_hash(&boot.rollup_config).unwrap();
+    let config_hash = crate::config::config_hash(&boot.rollup_config, &boot.l1_config).unwrap();
     // When running an execution-only proof, we may only have one batch validated by the kailua client
     if boot.l1_head.is_zero() {
         assert_eq!(1, stitched_executions.len());

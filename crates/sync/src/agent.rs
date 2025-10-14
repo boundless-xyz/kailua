@@ -93,7 +93,7 @@ impl SyncAgent {
 
         // fetch rollup config
         info!("Fetching rollup configuration from rpc endpoints.");
-        let config = await_tel_res!(
+        let rollup_config = await_tel_res!(
             context,
             fetch_rollup_config(
                 &provider_args.op_node_url,
@@ -103,13 +103,21 @@ impl SyncAgent {
             ),
             "fetch_rollup_config"
         )?;
-        let rollup_config_hash = config_hash(&config).expect("Configuration hash derivation error");
+        let l1_config = kona_registry::L1_CONFIGS
+            .get(&rollup_config.l1_chain_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                warn!("Loading default L1ChainConfig.");
+                Default::default()
+            });
+        let rollup_config_hash =
+            config_hash(&rollup_config, &l1_config).expect("Configuration hash derivation error");
         info!("RollupConfigHash({})", hex::encode(rollup_config_hash));
 
         // Load target deployment data
         let deployment = await_tel_res!(
             context,
-            SyncDeployment::load(&provider, &config, game_impl_address),
+            SyncDeployment::load(&provider, &rollup_config, game_impl_address),
             "Deployment::load"
         )?;
         #[cfg(not(feature = "devnet"))]
@@ -139,7 +147,7 @@ impl SyncAgent {
         Ok(Self {
             provider,
             telemetry,
-            config,
+            config: rollup_config,
             deployment,
             db,
             cursor,
