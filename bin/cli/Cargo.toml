@@ -41,6 +41,7 @@ bonsai-sdk.workspace = true
 boundless-market.workspace = true
 
 kona-cli.workspace = true
+kona-registry.workspace = true
 
 risc0-circuit-recursion.workspace = true
 risc0-zkvm.workspace = true
