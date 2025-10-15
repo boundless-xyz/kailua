@@ -19,8 +19,6 @@ use kailua_kona::{client::log, witness::Witness};
 use risc0_zkvm::guest::env;
 use rkyv::rancor::Error;
 
-const CANOE_IMAGE_ID: &str = env!("CANOE_IMAGE_ID");
-
 fn main() {
     // Load EigenDA blob witness
     let eigen_da: hokulea_proof::eigenda_witness::EigenDAWitness = {
@@ -57,10 +55,7 @@ fn main() {
     }
 
     // Run client using witness data
-    let proof_journal = run_stateless_client(
-        witness,
-        HokuleaStitchingClient::new(eigen_da, CANOE_IMAGE_ID.parse().unwrap()),
-    );
+    let proof_journal = run_stateless_client(witness, HokuleaStitchingClient::new(eigen_da));
 
     // Write the final stitched journal
     env::commit_slice(&proof_journal.encode_packed());

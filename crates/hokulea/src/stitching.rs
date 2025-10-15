@@ -35,20 +35,16 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct HokuleaStitchingClient {
     pub eigen_da_witness: EigenDAWitness,
-    pub canoe_image_id: B256,
 }
 
 impl HokuleaStitchingClient {
-    pub fn new(eigen_da_witness: EigenDAWitness, canoe_image_id: B256) -> Self {
-        Self {
-            eigen_da_witness,
-            canoe_image_id,
-        }
+    pub fn new(eigen_da_witness: EigenDAWitness) -> Self {
+        Self { eigen_da_witness }
     }
 }
 
 impl<
-        O: CommsClient + FlushableCache + Send + Sync + Debug,
+        O: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
         B: BlobProvider + Send + Sync + Debug + Clone,
     > StitchingClient<O, B> for HokuleaStitchingClient
 {
@@ -73,7 +69,7 @@ impl<
 
         let eigen_da = PreloadedEigenDAPreimageProvider::from_witness(
             self.eigen_da_witness,
-            KailuaCanoeVerifier(self.canoe_image_id.0),
+            KailuaCanoeVerifier::new(oracle.clone()),
         );
 
         let (boot, proof_journal, precondition) =

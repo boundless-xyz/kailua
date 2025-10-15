@@ -13,17 +13,18 @@ categories = ["cryptography", "cryptography::cryptocurrencies"]
 [dependencies]
 kailua-kona.workspace = true
 
-serde_json.workspace = true
-
 alloy-primitives.workspace = true
+bincode.workspace = true
 
 kona-derive.workspace = true
 kona-genesis.workspace = true
 kona-preimage.workspace = true
 kona-proof.workspace = true
 
-risc0-zkvm.workspace = true
+risc0-steel.workspace = true
 
+canoe-bindings.workspace = true
+canoe-provider.workspace = true
 canoe-verifier.workspace = true
 eigenda-cert.workspace = true
 hokulea-eigenda.workspace = true

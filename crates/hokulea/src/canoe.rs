@@ -12,43 +12,79 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use canoe_bindings::StatusCode;
+use canoe_provider::CertVerifierCall;
 use canoe_verifier::{CanoeVerifier, CertValidity, HokuleaCanoeVerificationError};
 use eigenda_cert::AltDACommitment;
-use risc0_zkvm::sha::Digestible;
-use risc0_zkvm::Receipt;
+use kona_preimage::CommsClient;
+use kona_proof::BootInfo;
+use risc0_steel::ethereum::{
+    EthChainSpec, EthEvmInput, ETH_HOLESKY_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC,
+    ETH_SEPOLIA_CHAIN_SPEC,
+};
+use risc0_steel::Contract;
+use std::iter::zip;
+use std::sync::Arc;
 
-#[derive(Copy, Clone, Debug)]
-pub struct KailuaCanoeVerifier(pub [u8; 32]);
+#[derive(Clone)]
+pub struct KailuaCanoeVerifier<T: CommsClient + Send + Sync + 'static> {
+    pub oracle: Arc<T>,
+}
 
-impl CanoeVerifier for KailuaCanoeVerifier {
+impl<T: CommsClient + Send + Sync + 'static> KailuaCanoeVerifier<T> {
+    pub fn new(oracle: Arc<T>) -> Self {
+        KailuaCanoeVerifier { oracle }
+    }
+}
+
+impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifier<T> {
     fn validate_cert_receipt(
         &self,
         cert_validity_pairs: Vec<(AltDACommitment, CertValidity)>,
         canoe_proof: Option<Vec<u8>>,
     ) -> Result<(), HokuleaCanoeVerificationError> {
-        let journal_bytes = self.to_journals_bytes(cert_validity_pairs);
-
+        // Require proof data
         let Some(proof) = canoe_proof else {
-            kailua_kona::client::log(&format!("ASSUME {} (EIGEN)", journal_bytes.digest()));
-            #[cfg(target_os = "zkvm")]
-            return risc0_zkvm::guest::env::verify(self.0, &journal_bytes)
-                .map_err(|e| HokuleaCanoeVerificationError::InvalidProofAndJournal(e.to_string()));
-            #[cfg(not(target_os = "zkvm"))]
             return Err(HokuleaCanoeVerificationError::MissingProof);
         };
-
-        // todo: avoid serde_json
-        // todo: load seal only
-        let receipt: Receipt = serde_json::from_slice(proof.as_ref()).map_err(|e| {
+        // Decode proof data into steel proofs
+        let steel_proofs: Vec<EthEvmInput> = bincode::deserialize(&proof).map_err(|e| {
             HokuleaCanoeVerificationError::UnableToDeserializeReceipt(e.to_string())
         })?;
-
-        receipt
-            .verify(self.0)
-            .map_err(|e| HokuleaCanoeVerificationError::InvalidProofAndJournal(e.to_string()))?;
-
-        if receipt.journal.bytes != journal_bytes {
-            return Err(HokuleaCanoeVerificationError::InconsistentPublicJournal);
+        assert_eq!(cert_validity_pairs.len(), steel_proofs.len());
+        // Load up boot information from oracle
+        let boot = kona_proof::block_on(BootInfo::load(self.oracle.as_ref()))
+            .expect("Failed to load boot info");
+        // Validate each steel proof
+        for ((altda_commitment, cert_validity), evm_input) in zip(cert_validity_pairs, steel_proofs)
+        {
+            // Verify L1 chain data
+            assert_eq!(boot.rollup_config.l1_chain_id, cert_validity.l1_chain_id);
+            assert_eq!(boot.l1_head, cert_validity.l1_head_block_hash);
+            // Verify certificate
+            let env = match boot.rollup_config.l1_chain_id {
+                1 => evm_input.into_env(&ETH_MAINNET_CHAIN_SPEC),
+                11155111 => evm_input.into_env(&ETH_SEPOLIA_CHAIN_SPEC),
+                17000 => evm_input.into_env(&ETH_HOLESKY_CHAIN_SPEC),
+                _ => evm_input.into_env(&EthChainSpec::new_single(
+                    boot.rollup_config.l1_chain_id,
+                    Default::default(),
+                )),
+            };
+            let is_valid = match CertVerifierCall::build(&altda_commitment) {
+                CertVerifierCall::LegacyV2Interface(call) => {
+                    Contract::new(cert_validity.verifier_address, &env)
+                        .call_builder(&call)
+                        .call()
+                }
+                CertVerifierCall::ABIEncodeInterface(call) => {
+                    let status = Contract::new(cert_validity.verifier_address, &env)
+                        .call_builder(&call)
+                        .call();
+                    status == StatusCode::SUCCESS as u8
+                }
+            };
+            assert_eq!(is_valid, cert_validity.claimed_validity);
         }
 
         Ok(())
