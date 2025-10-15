@@ -73,7 +73,7 @@ pub fn opt_byte_vec(data: Option<Vec<u8>>) -> Vec<u8> {
     let Some(data) = data else {
         return vec![0xFF];
     };
-    let mut res = data.len().to_be_bytes().to_vec();
+    let mut res = (data.len() as u64).to_be_bytes().to_vec();
     res.extend(data);
     res
 }
@@ -133,6 +133,7 @@ pub fn genesis_system_config_hash(system_config: &SystemConfig) -> [u8; 32] {
         opt_byte_arr(system_config.eip1559_elasticity.map(|v| v.to_be_bytes())).as_slice(),
         opt_byte_arr(system_config.operator_fee_scalar.map(|v| v.to_be_bytes())).as_slice(),
         opt_byte_arr(system_config.operator_fee_constant.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(system_config.min_base_fee.map(|v| v.to_be_bytes())).as_slice(),
     ]
     .concat();
     let digest = SHA2::hash_bytes(fields.as_slice());
@@ -294,6 +295,13 @@ pub fn rollup_config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
                 .map(|v| v.to_be_bytes()),
         )
         .as_slice(),
+        opt_byte_arr(
+            rollup_config
+                .hardforks
+                .jovian_time
+                .map(|v| v.to_be_bytes()),
+        )
+            .as_slice(),
         opt_byte_arr(
             rollup_config
                 .hardforks
