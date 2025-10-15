@@ -95,12 +95,6 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
             kailua_build::KAILUA_FPVM_HOKULEA_ELF,
             "KAILUA_FPVM_HOKULEA",
         ),
-        #[cfg(feature = "eigen")]
-        (
-            kailua_build::KAILUA_DA_HOKULEA_ID,
-            kailua_build::KAILUA_DA_HOKULEA_ELF,
-            "KAILUA_DA_HOKULEA",
-        ),
         #[cfg(feature = "celestia")]
         (
             kailua_build::KAILUA_FPVM_HANA_ID,

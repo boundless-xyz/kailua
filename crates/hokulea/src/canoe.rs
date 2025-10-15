@@ -23,7 +23,6 @@ use risc0_steel::ethereum::{
     ETH_SEPOLIA_CHAIN_SPEC,
 };
 use risc0_steel::Contract;
-use std::iter::zip;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -43,34 +42,36 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
         cert_validity_pairs: Vec<(AltDACommitment, CertValidity)>,
         canoe_proof: Option<Vec<u8>>,
     ) -> Result<(), HokuleaCanoeVerificationError> {
-        // Require proof data
+        // Early abort with nothing to validate
+        if cert_validity_pairs.is_empty() {
+            return Ok(());
+        }
+        // Otherwise require proof data
         let Some(proof) = canoe_proof else {
             return Err(HokuleaCanoeVerificationError::MissingProof);
         };
-        // Decode proof data into steel proofs
-        let steel_proofs: Vec<EthEvmInput> = bincode::deserialize(&proof).map_err(|e| {
+        // Decode proof data into STEEL proof
+        let evm_input: EthEvmInput = bincode::deserialize(&proof).map_err(|e| {
             HokuleaCanoeVerificationError::UnableToDeserializeReceipt(e.to_string())
         })?;
-        assert_eq!(cert_validity_pairs.len(), steel_proofs.len());
         // Load up boot information from oracle
         let boot = kona_proof::block_on(BootInfo::load(self.oracle.as_ref()))
             .expect("Failed to load boot info");
+        let env = match boot.rollup_config.l1_chain_id {
+            1 => evm_input.into_env(&ETH_MAINNET_CHAIN_SPEC),
+            11155111 => evm_input.into_env(&ETH_SEPOLIA_CHAIN_SPEC),
+            17000 => evm_input.into_env(&ETH_HOLESKY_CHAIN_SPEC),
+            _ => evm_input.into_env(&EthChainSpec::new_single(
+                boot.rollup_config.l1_chain_id,
+                Default::default(),
+            )),
+        };
         // Validate each steel proof
-        for ((altda_commitment, cert_validity), evm_input) in zip(cert_validity_pairs, steel_proofs)
-        {
+        for (altda_commitment, cert_validity) in cert_validity_pairs {
             // Verify L1 chain data
             assert_eq!(boot.rollup_config.l1_chain_id, cert_validity.l1_chain_id);
             assert_eq!(boot.l1_head, cert_validity.l1_head_block_hash);
             // Verify certificate
-            let env = match boot.rollup_config.l1_chain_id {
-                1 => evm_input.into_env(&ETH_MAINNET_CHAIN_SPEC),
-                11155111 => evm_input.into_env(&ETH_SEPOLIA_CHAIN_SPEC),
-                17000 => evm_input.into_env(&ETH_HOLESKY_CHAIN_SPEC),
-                _ => evm_input.into_env(&EthChainSpec::new_single(
-                    boot.rollup_config.l1_chain_id,
-                    Default::default(),
-                )),
-            };
             let is_valid = match CertVerifierCall::build(&altda_commitment) {
                 CertVerifierCall::LegacyV2Interface(call) => {
                     Contract::new(cert_validity.verifier_address, &env)

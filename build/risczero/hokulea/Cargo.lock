@@ -2731,8 +2731,6 @@ dependencies = [
  "kona-preimage",
  "kona-proof",
  "risc0-steel",
- "risc0-zkvm",
- "serde_json",
 ]
 
 [[package]]

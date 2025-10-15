@@ -3162,7 +3162,6 @@ name = "kailua-hana"
 version = "1.1.2"
 dependencies = [
  "alloy-primitives",
- "anyhow",
  "async-trait",
  "bincode",
  "celestia-types",

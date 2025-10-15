@@ -37,8 +37,6 @@ pub async fn export(data_dir: PathBuf) -> anyhow::Result<()> {
             kailua_build::KAILUA_FPVM_HOKULEA_ELF,
             "kailua-fpvm-hokulea.bin",
         ),
-        #[cfg(feature = "eigen")]
-        (kailua_build::KAILUA_DA_HOKULEA_ELF, "kailua-da-hokulea.bin"),
         #[cfg(feature = "celestia")]
         (kailua_build::KAILUA_FPVM_HANA_ELF, "kailua-fpvm-hana.bin"),
     ];
