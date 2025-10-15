@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use canoe_verifier::{CanoeVerifier, CertValidity, HokuleaCanoeVerificationError};
 use eigenda_cert::AltDACommitment;
-use hokulea_proof::canoe_verifier::errors::HokuleaCanoeVerificationError;
-use hokulea_proof::canoe_verifier::{to_journals_bytes, CanoeVerifier};
-use hokulea_proof::cert_validity::CertValidity;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Receipt;
 
@@ -28,7 +26,7 @@ impl CanoeVerifier for KailuaCanoeVerifier {
         cert_validity_pairs: Vec<(AltDACommitment, CertValidity)>,
         canoe_proof: Option<Vec<u8>>,
     ) -> Result<(), HokuleaCanoeVerificationError> {
-        let journal_bytes = to_journals_bytes(cert_validity_pairs);
+        let journal_bytes = self.to_journals_bytes(cert_validity_pairs);
 
         let Some(proof) = canoe_proof else {
             kailua_kona::client::log(&format!("ASSUME {} (EIGEN)", journal_bytes.digest()));

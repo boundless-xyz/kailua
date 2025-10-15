@@ -1213,9 +1213,22 @@ dependencies = [
 [[package]]
 name = "canoe-bindings"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=4fd1f3735f0343345008481aab46698158b6e4a8#4fd1f3735f0343345008481aab46698158b6e4a8"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=5c8d8dd859afbf278a7841138b66e2217498d764#5c8d8dd859afbf278a7841138b66e2217498d764"
 dependencies = [
  "alloy-sol-types",
+]
+
+[[package]]
+name = "canoe-verifier"
+version = "0.1.0"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=5c8d8dd859afbf278a7841138b66e2217498d764#5c8d8dd859afbf278a7841138b66e2217498d764"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "canoe-bindings",
+ "eigenda-cert",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
@@ -1720,7 +1733,7 @@ dependencies = [
 [[package]]
 name = "eigenda-cert"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=4fd1f3735f0343345008481aab46698158b6e4a8#4fd1f3735f0343345008481aab46698158b6e4a8"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=5c8d8dd859afbf278a7841138b66e2217498d764#5c8d8dd859afbf278a7841138b66e2217498d764"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -2165,7 +2178,7 @@ dependencies = [
 [[package]]
 name = "hokulea-eigenda"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=4fd1f3735f0343345008481aab46698158b6e4a8#4fd1f3735f0343345008481aab46698158b6e4a8"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=5c8d8dd859afbf278a7841138b66e2217498d764#5c8d8dd859afbf278a7841138b66e2217498d764"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -2181,15 +2194,13 @@ dependencies = [
 [[package]]
 name = "hokulea-proof"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=4fd1f3735f0343345008481aab46698158b6e4a8#4fd1f3735f0343345008481aab46698158b6e4a8"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=5c8d8dd859afbf278a7841138b66e2217498d764#5c8d8dd859afbf278a7841138b66e2217498d764"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
  "ark-bn254",
  "ark-ff 0.5.0",
  "async-trait",
- "canoe-bindings",
- "cfg-if",
+ "canoe-verifier",
  "eigenda-cert",
  "hokulea-eigenda",
  "kona-preimage",
@@ -2197,9 +2208,7 @@ dependencies = [
  "rust-kzg-bn254-primitives",
  "rust-kzg-bn254-verifier",
  "serde",
- "serde_json",
  "thiserror",
- "tracing",
 ]
 
 [[package]]
@@ -2591,6 +2600,7 @@ name = "kailua-hokulea"
 version = "1.1.0"
 dependencies = [
  "alloy-primitives",
+ "canoe-verifier",
  "eigenda-cert",
  "hokulea-eigenda",
  "hokulea-proof",

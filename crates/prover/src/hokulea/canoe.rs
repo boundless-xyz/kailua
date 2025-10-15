@@ -22,8 +22,6 @@ use anyhow::{anyhow, bail, Context};
 use async_trait::async_trait;
 use canoe_bindings::StatusCode;
 use canoe_provider::{CanoeInput, CanoeProvider, CertVerifierCall};
-use hokulea_proof::canoe_verifier::to_journals_bytes;
-use hokulea_proof::cert_validity::CertValidity;
 use kailua_sync::retry_res_timeout;
 use risc0_steel::alloy::providers::ProviderBuilder;
 use risc0_steel::ethereum::{
@@ -122,7 +120,6 @@ impl KailuaCanoeSteelProvider {
         // Construct output
         let journal = Journal::new(to_journals_bytes(cert_validity_pairs));
 
-        // todo: dynamic lookup of KAILUA_DA_HOKULEA_ID corresponding to KAILUA_FPVM_HOKULEA_ID
         let file_name = proof_file_name(kailua_build::KAILUA_DA_HOKULEA_ID, journal.clone());
 
         seek_proof(
