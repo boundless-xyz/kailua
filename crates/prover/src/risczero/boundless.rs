@@ -376,7 +376,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             .await
             .context("ClientBuilder::build()")
     )
-        .await;
+    .await;
 
     // Report boundless deployment info
     info!(
@@ -405,7 +405,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             proving_args,
             &requirements,
         )
-            .await
+        .await
         {
             Err(ProvingError::OtherError(e)) => {
                 error!("(Retrying) Boundless request failed: {e:?}");
@@ -430,7 +430,7 @@ pub fn next_nonce(requirements: &Requirements, previous_nonce: Option<u32>) -> u
         prev_nonce.as_slice(),
         requirements.predicate.data.as_ref(),
     ]
-        .concat();
+    .concat();
     let digest = data.digest().as_bytes().to_vec();
     u32::from_be_bytes(digest[..4].try_into().unwrap())
 }
@@ -538,7 +538,7 @@ pub async fn look_back(
                 .await
                 .context("get_status")
         )
-            .await;
+        .await;
 
         if matches!(request_status, RequestStatus::Expired) {
             // We found a duplicate but it was expired
@@ -566,7 +566,7 @@ pub async fn look_back(
             market.boundless_order_check_interval,
             request.expires_at(),
         )
-            .await
+        .await
         {
             Ok(proof) => {
                 break Ok(Some(proof));
@@ -652,7 +652,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             proving_args,
             &mut nonce_target,
         )
-            .await?
+        .await?
         {
             return Ok(proof);
         }
@@ -690,13 +690,13 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                         .upload_program(image.1)
                         .await
                         .context("R2Storage::upload_program"))
-                        .await
+                    .await
                 } else {
                     retry_res!(boundless_client
                         .upload_program(image.1)
                         .await
                         .context("Client::upload_program"))
-                        .await
+                    .await
                 };
                 if let Err(err) =
                     save_to_bincoded_file(&program_url.to_string(), &bin_file_name).await
@@ -759,10 +759,10 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                     .context("Executor::execute")?;
                 Ok::<_, anyhow::Error>(session_info)
             })
-                .await
-                .context("spawn_blocking")
-                .map_err(ProvingError::OtherError)?
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+            .await
+            .context("spawn_blocking")
+            .map_err(ProvingError::OtherError)?
+            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
             drop(r0vm_permit);
             let cycle_count = session_info
                 .segments
@@ -826,13 +826,13 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                         .upload_input(&input)
                         .await
                         .context("R2Storage::upload_input"))
-                        .await
+                    .await
                 } else {
                     retry_res!(boundless_client
                         .upload_input(&input)
                         .await
                         .context("Client::upload_input"))
-                        .await
+                    .await
                 };
                 drop(boundless_net_lock);
                 // avoid api rate limits
@@ -862,9 +862,9 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             .context("get_block_by_number latest")?
             .ok_or_else(|| anyhow!("Failed to fetch latest block from Boundless RPC"))
     )
-        .await
-        .header
-        .timestamp;
+    .await
+    .header
+    .timestamp;
 
     let segment_count = cycle_count.div_ceil(1_000_000) as f64;
     let cycles = U256::from(cycle_count);
@@ -928,7 +928,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     sleep(Duration::from_secs(
         market.boundless_order_submission_cooldown,
     ))
-        .await;
+    .await;
     drop(boundless_req_lock);
 
     if proving_args.skip_await_proof {
@@ -943,9 +943,9 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         market.boundless_order_check_interval,
         expires_at,
     )
-        .await
-        .context("retrieve_proof")
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))
+    .await
+    .context("retrieve_proof")
+    .map_err(|e| ProvingError::OtherError(anyhow!(e)))
 }
 
 pub fn request_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> String {

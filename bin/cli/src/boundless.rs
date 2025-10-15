@@ -16,6 +16,7 @@ use alloy::primitives::U256;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::transports::http::reqwest::Url;
 use anyhow::Context;
+use boundless_market::request_builder::RequirementParams;
 use boundless_market::{Client, StandardStorageProvider, StorageProviderConfig};
 use kailua_kona::journal::ProofJournal;
 use kailua_prover::proof::{proof_file_name, read_bincoded_file, save_to_bincoded_file};
@@ -25,7 +26,6 @@ use kailua_sync::telemetry::TelemetryArgs;
 use kailua_validator::proposals::dispatch::current_time;
 use risc0_zkvm::Receipt;
 use std::str::FromStr;
-use boundless_market::request_builder::RequirementParams;
 use tracing::{error, info};
 
 #[derive(clap::Args, Debug, Clone)]

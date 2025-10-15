@@ -65,8 +65,10 @@ impl SyncDeployment {
         let context = Context::current_with_span(tracer.start("SyncDeployment::load"));
 
         // load system config
-        let system_config =
-            SystemConfig::new(rollup_config.l1_system_config_address, &provider.l1_provider);
+        let system_config = SystemConfig::new(
+            rollup_config.l1_system_config_address,
+            &provider.l1_provider,
+        );
         let dgf_address = system_config
             .disputeGameFactory()
             .stall_with_context(context.clone(), "SystemConfig::disputeGameFactory")

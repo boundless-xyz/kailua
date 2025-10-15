@@ -138,6 +138,10 @@ pub fn genesis_system_config_hash(system_config: &SystemConfig) -> anyhow::Resul
             .context("operator_fee_constant")?
             .to_be_bytes()
             .as_slice(),
+        safe_default(system_config.min_base_fee, u64::MAX)
+            .context("min_base_fee")?
+            .to_be_bytes()
+            .as_slice(),
     ]
     .concat();
     let digest = SHA2::hash_bytes(fields.as_slice());
@@ -303,6 +307,10 @@ pub fn rollup_config_hash(rollup_config: &RollupConfig) -> anyhow::Result<[u8; 3
             .as_slice(),
         safe_default(rollup_config.hardforks.isthmus_time, u64::MAX)
             .context("isthmus_time")?
+            .to_be_bytes()
+            .as_slice(),
+        safe_default(rollup_config.hardforks.jovian_time, u64::MAX)
+            .context("jovian_time")?
             .to_be_bytes()
             .as_slice(),
         safe_default(rollup_config.hardforks.interop_time, u64::MAX)
@@ -582,6 +590,13 @@ mod tests {
             .unwrap()
             .operator_fee_constant = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config).unwrap()));
+        rollup_config
+            .genesis
+            .system_config
+            .as_mut()
+            .unwrap()
+            .min_base_fee = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config).unwrap()));
         rollup_config.block_time = 1;
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config).unwrap()));
         rollup_config.max_sequencer_drift = 1;
@@ -617,6 +632,8 @@ mod tests {
         rollup_config.hardforks.holocene_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config).unwrap()));
         rollup_config.hardforks.isthmus_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config).unwrap()));
+        rollup_config.hardforks.jovian_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config).unwrap()));
         rollup_config.hardforks.interop_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config).unwrap()));
@@ -794,6 +811,10 @@ mod tests {
         });
 
         test_safe_default_err(&rollup_config, &l1_config, |r, _| {
+            r.genesis.system_config.as_mut().unwrap().min_base_fee = Some(u64::MAX)
+        });
+
+        test_safe_default_err(&rollup_config, &l1_config, |r, _| {
             r.hardforks.regolith_time = Some(u64::MAX)
         });
 
@@ -823,6 +844,10 @@ mod tests {
 
         test_safe_default_err(&rollup_config, &l1_config, |r, _| {
             r.hardforks.isthmus_time = Some(u64::MAX)
+        });
+
+        test_safe_default_err(&rollup_config, &l1_config, |r, _| {
+            r.hardforks.jovian_time = Some(u64::MAX)
         });
 
         test_safe_default_err(&rollup_config, &l1_config, |r, _| {
