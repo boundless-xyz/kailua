@@ -24,7 +24,7 @@ clippy:
   RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -F eigen -- -D warnings
 
   cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
-  CANOE_IMAGE_ID=0x cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
+  cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
   cargo clippy --manifest-path build/risczero/hana/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
 
 coverage:

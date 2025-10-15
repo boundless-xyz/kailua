@@ -34,7 +34,7 @@ use opentelemetry::trace::{FutureExt, Status, TraceContextExt, Tracer};
 use risc0_circuit_recursion::control_id::BN254_IDENTITY_CONTROL_ID;
 use risc0_zkvm::ALLOWED_CONTROL_ROOT;
 use std::str::FromStr;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Fast-track migrate a rollup to use Kailua
 #[derive(clap::Args, Debug, Clone)]
@@ -115,7 +115,7 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
 
     info!("Fetching rollup configuration from rpc endpoints.");
     // fetch rollup config
-    let config = await_tel!(
+    let rollup_config = await_tel!(
         context,
         fetch_rollup_config(
             &args.op_node_url,
@@ -125,11 +125,19 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         )
     )
     .context("fetch_rollup_config")?;
-    let rollup_config_hash = config_hash(&config);
+    let l1_config = kona_registry::L1_CONFIGS
+        .get(&rollup_config.l1_chain_id)
+        .cloned()
+        .unwrap_or_else(|| {
+            warn!("Loading default L1ChainConfig.");
+            Default::default()
+        });
+    let rollup_config_hash = config_hash(&rollup_config, &l1_config);
     info!("RollupConfigHash({})", hex::encode(rollup_config_hash));
 
     // load system config
-    let system_config = SystemConfig::new(config.l1_system_config_address, &eth_rpc_provider);
+    let system_config =
+        SystemConfig::new(rollup_config.l1_system_config_address, &eth_rpc_provider);
     let portal_address = system_config
         .optimismPortal()
         .stall_with_context(
@@ -153,7 +161,7 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         context,
         tracer,
         "OwnerSignerArgs::wallet",
-        args.owner_signer.wallet(Some(config.l1_chain_id))
+        args.owner_signer.wallet(Some(rollup_config.l1_chain_id))
     )?;
     let owner_provider = args
         .txn_args
@@ -206,7 +214,7 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         context,
         tracer,
         "DeployerSignerArgs::wallet",
-        args.deployer_signer.wallet(Some(config.l1_chain_id))
+        args.deployer_signer.wallet(Some(rollup_config.l1_chain_id))
     )?;
     let deployer_provider = args
         .txn_args
@@ -416,8 +424,8 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
     let receipt = KailuaGame::deploy_builder(
         &deployer_provider,
         *kailua_treasury_implementation.address(),
-        U256::from(config.genesis.l2_time),
-        U256::from(config.block_time),
+        U256::from(rollup_config.genesis.l2_time),
+        U256::from(rollup_config.block_time),
         args.challenge_timeout,
     )
     .transact_with_context(context.clone(), "KailuaGame::deploy")
@@ -474,7 +482,7 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
             "GuardianSignerArgs::wallet",
             args.guardian_signer
                 .ok_or_else(|| anyhow!("Guardian signer not provided"))?
-                .wallet(Some(config.l1_chain_id))
+                .wallet(Some(rollup_config.l1_chain_id))
         )?;
         let guardian_address = guardian_wallet.default_signer().address();
         let guardian_provider = args

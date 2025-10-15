@@ -14,7 +14,7 @@
 
 use crate::args::ProveArgs;
 use crate::channel::AsyncChannel;
-use crate::config::generate_rollup_config_file;
+use crate::config::{generate_l1_config_file, generate_rollup_config_file};
 use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::create_disk_kv_store;
 use crate::preflight::{concurrent_execution_preflight, fetch_precondition_data};
@@ -78,14 +78,11 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
         .context("generate_rollup_config")
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
-    // fetch chain config (todo: load manually)
-    let l1_config = kona_registry::L1_CONFIGS
-        .get(&rollup_config.l1_chain_id)
-        .cloned()
-        .unwrap_or_else(|| {
-            warn!("L1 Config not found. Loading default.");
-            Default::default()
-        });
+    // fetch l1 config
+    let l1_config = generate_l1_config_file(&mut args, &tmp_dir, rollup_config.l1_chain_id)
+        .await
+        .context("generate_l1_config")
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
     // preload precondition data into KV store
     let (proposal_precondition_hash, proposal_data_hash) = match fetch_precondition_data(&args)
