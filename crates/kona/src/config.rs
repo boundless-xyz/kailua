@@ -295,13 +295,7 @@ pub fn rollup_config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
                 .map(|v| v.to_be_bytes()),
         )
         .as_slice(),
-        opt_byte_arr(
-            rollup_config
-                .hardforks
-                .jovian_time
-                .map(|v| v.to_be_bytes()),
-        )
-            .as_slice(),
+        opt_byte_arr(rollup_config.hardforks.jovian_time.map(|v| v.to_be_bytes())).as_slice(),
         opt_byte_arr(
             rollup_config
                 .hardforks

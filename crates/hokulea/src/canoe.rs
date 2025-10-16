@@ -31,8 +31,10 @@ pub struct KailuaCanoeVerifier<T: CommsClient + Send + Sync + 'static> {
 }
 
 impl<T: CommsClient + Send + Sync + 'static> KailuaCanoeVerifier<T> {
-    pub fn new(oracle: Arc<T>) -> Self {
-        KailuaCanoeVerifier { oracle }
+    pub fn new(oracle: Arc<T>) -> (Self, BootInfo) {
+        let boot = kona_proof::block_on(BootInfo::load(oracle.as_ref()))
+            .expect("Failed to load boot info");
+        (KailuaCanoeVerifier { oracle }, boot)
     }
 }
 

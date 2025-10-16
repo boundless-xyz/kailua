@@ -114,6 +114,7 @@ hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8d
 hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764", default-features = false }
 hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764", default-features = false }
 hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764", default-features = false }
+hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764" }
 
 # Hana git = "https://github.com/celestiaorg/hana", rev = "40f18eb59ccd1602f8788e64c735cbd5624c801d"
 celestia-rpc = "0.14.0"

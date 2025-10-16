@@ -1314,6 +1314,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "canoe-verifier-address-fetcher"
+version = "0.1.0"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=5c8d8dd859afbf278a7841138b66e2217498d764#5c8d8dd859afbf278a7841138b66e2217498d764"
+dependencies = [
+ "alloy-primitives",
+ "eigenda-cert",
+ "thiserror",
+]
+
+[[package]]
 name = "cargo-platform"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2315,6 +2325,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hokulea-zkvm-verification"
+version = "0.1.0"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=5c8d8dd859afbf278a7841138b66e2217498d764#5c8d8dd859afbf278a7841138b66e2217498d764"
+dependencies = [
+ "canoe-verifier",
+ "canoe-verifier-address-fetcher",
+ "hokulea-proof",
+ "kona-preimage",
+ "kona-proof",
+]
+
+[[package]]
 name = "http"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2722,9 +2744,11 @@ dependencies = [
  "canoe-bindings",
  "canoe-provider",
  "canoe-verifier",
+ "canoe-verifier-address-fetcher",
  "eigenda-cert",
  "hokulea-eigenda",
  "hokulea-proof",
+ "hokulea-zkvm-verification",
  "kailua-kona",
  "kona-derive",
  "kona-genesis",

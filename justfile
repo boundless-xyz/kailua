@@ -19,9 +19,7 @@ fmt:
 
 clippy:
   RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -- -D warnings
-  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -- -D warnings
-  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F eigen -- -D warnings
-  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -F eigen -- -D warnings
+  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -F eigen -F celestia -- -D warnings
 
   cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
   cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
