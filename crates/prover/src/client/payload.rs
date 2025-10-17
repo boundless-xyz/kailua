@@ -66,7 +66,7 @@ pub async fn run_payload_client(
         }
         drop(kv_lock);
 
-        let mut retries = 5;
+        let mut retries = 25;
         let Ok(execution_witness) = (loop {
             let attempt = l2_provider
                 .client()

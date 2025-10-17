@@ -174,7 +174,7 @@ pub async fn run_native_client(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn start_server<
-    C,
+    C: Channel + Send + Sync + 'static,
     B: OnlineHostBackendCfg + Send + Sync + 'static,
     H: HintHandler<Cfg = B> + Send + Sync + 'static,
 >(
@@ -186,10 +186,7 @@ pub async fn start_server<
     providers: B::Providers,
     is_offline: bool,
     proactive_hint: B::HintType,
-) -> anyhow::Result<JoinHandle<Result<(), PreimageServerError>>>
-where
-    C: Channel + Send + Sync + 'static,
-{
+) -> anyhow::Result<JoinHandle<Result<(), PreimageServerError>>> {
     let task_handle = if is_offline {
         task::spawn(
             PreimageServer::new(
