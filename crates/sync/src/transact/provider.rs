@@ -123,7 +123,7 @@ where
             tx.set_max_fee_per_gas((max_fee_per_gas as f64 * fee_factor) as u128);
 
             // Sign transaction
-            let envelope = self.inner.fill(tx).await?.as_envelope().cloned().unwrap();
+            let envelope = self.inner.fill(tx).await?.try_into_envelope().unwrap();
 
             // EIP-7594 Patch (todo: remove once alloy-rs is fixed)
             let has_sidecar = envelope
@@ -131,7 +131,7 @@ where
                 .map(|tx| tx.tx().sidecar().is_some())
                 .unwrap_or_default();
             let encoded_tx = if self.eip_7594 && has_sidecar {
-                info!("Converting from EIP-4844 to EIP-7594.");
+                info!("Applying EIP-7594 to EIP-4844 transaction.");
                 EthereumTxEnvelope::Eip4844(Signed::new_unhashed(
                     TxEip4844Variant::TxEip4844WithSidecar(
                         TxEip4844WithSidecar::from_tx_and_sidecar(

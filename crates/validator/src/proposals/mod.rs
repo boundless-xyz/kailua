@@ -86,7 +86,7 @@ pub async fn handle_proposals(
             .premium_provider::<Ethereum>()
             .wallet(validator_wallet)
             .connect_http(args.sync.provider.eth_rpc_url.as_str().try_into()?),
-        false, // we do not publish any blobs in the validator
+        args.txn_args.eip_7594,
     );
     info!("Validator address: {validator_address}");
 

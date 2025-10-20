@@ -81,7 +81,7 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
             .premium_provider::<Ethereum>()
             .wallet(&proposer_wallet)
             .connect_http(args.sync.provider.eth_rpc_url.as_str().try_into()?),
-        args.eip_7594,
+        args.txn_args.eip_7594,
     );
     info!("Proposer address: {proposer_address}");
 

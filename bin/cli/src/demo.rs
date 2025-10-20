@@ -112,6 +112,7 @@ pub async fn demo(args: DemoArgs, verbosity: u8, data_dir: PathBuf) -> anyhow::R
             txn_timeout: 0,
             exec_gas_premium: 0,
             blob_gas_premium: 0,
+            eip_7594: false,
         },
         proving: args.proving,
         boundless: args.boundless,

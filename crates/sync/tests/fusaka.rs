@@ -39,10 +39,6 @@ pub struct TestArgs {
     #[clap(flatten)]
     pub txn_args: TransactArgs,
 
-    /// Whether to use cell proofs
-    #[clap(long, env, default_value_t = false)]
-    pub eip_7594: bool,
-
     /// Capture unused cargo test args
     #[clap(trailing_var_arg = true)]
     pub extra_args: Vec<OsString>,
@@ -81,7 +77,7 @@ async fn publish_cell_proofs_txn() {
                     .try_into()
                     .expect("incorrect eth_rpc_url"),
             ),
-        args.eip_7594,
+        args.txn_args.eip_7594,
     );
     info!("Proposer address: {proposer_address}");
 
