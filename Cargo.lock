@@ -5499,7 +5499,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-build"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "alloy-primitives 1.4.0",
  "bytemuck",
@@ -5508,7 +5508,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-cli"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "alloy",
  "anyhow",
@@ -5543,7 +5543,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-contracts"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "alloy",
  "foundry-compilers",
@@ -5595,7 +5595,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-proposer"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "alloy",
  "anyhow",
@@ -5611,7 +5611,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-prover"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "alloy",
  "alloy-primitives 1.4.0",
@@ -5657,7 +5657,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-rpc"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "alloy",
  "anyhow",
@@ -5674,7 +5674,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-sync"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "alloy",
  "alloy-rpc-types-beacon",
@@ -5709,7 +5709,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-validator"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "alloy",
  "anyhow",
