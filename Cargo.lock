@@ -6588,6 +6588,7 @@ dependencies = [
  "kailua-build",
  "kailua-contracts",
  "kailua-kona",
+ "kona-cli",
  "kona-genesis",
  "kona-registry",
  "opentelemetry",

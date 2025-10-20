@@ -11,6 +11,7 @@ out
 *.txt
 *.log
 optimism/
+op/
 *.out
 *.pb
 profiling/*

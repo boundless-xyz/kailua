@@ -45,6 +45,9 @@ kailua-contracts.workspace = true
 kona-genesis.workspace = true
 kona-registry.workspace = true
 
+[dev-dependencies]
+kona-cli.workspace = true
+
 [features]
 devnet = []
 rebuild-fpvm = [

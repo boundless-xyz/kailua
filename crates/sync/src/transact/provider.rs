@@ -131,6 +131,7 @@ where
                 .map(|tx| tx.tx().sidecar().is_some())
                 .unwrap_or_default();
             let encoded_tx = if self.eip_7594 && has_sidecar {
+                info!("Converting from EIP-4844 to EIP-7594.");
                 EthereumTxEnvelope::Eip4844(Signed::new_unhashed(
                     TxEip4844Variant::TxEip4844WithSidecar(
                         TxEip4844WithSidecar::from_tx_and_sidecar(
@@ -146,7 +147,7 @@ where
                             ),
                         ),
                     ),
-                    envelope.signature().clone(),
+                    *envelope.signature(),
                 ))
                 .encoded_2718()
             } else {
