@@ -25,6 +25,9 @@ pub struct ProposeArgs {
     /// Whether to bypass loading rollup chain configurations from the kona registry
     #[clap(long, env, default_value_t = false)]
     pub bypass_chain_registry: bool,
+    /// Whether to use cell proofs
+    #[clap(long, env, default_value_t = false)]
+    pub eip_7594: bool,
 
     /// L1 wallet to use for proposing outputs
     #[clap(flatten)]
