@@ -27,7 +27,7 @@ use alloy::primitives::B256;
 use anyhow::{bail, Context};
 use kailua_sync::agent::{SyncAgent, FINAL_L2_BLOCK_RESOLVED};
 use kailua_sync::proposal::Proposal;
-use kailua_sync::transact::provider::SafeProvider;
+use kailua_sync::transact::provider::KailuaProvider;
 use kailua_sync::{await_tel, await_tel_res};
 use opentelemetry::global::{meter, tracer};
 use opentelemetry::trace::FutureExt;
@@ -81,11 +81,12 @@ pub async fn handle_proposals(
         args.validator_signer.wallet(Some(agent.config.l1_chain_id))
     )?;
     let validator_address = validator_wallet.default_signer().address();
-    let validator_provider = SafeProvider::new(
+    let validator_provider = KailuaProvider::new(
         args.txn_args
             .premium_provider::<Ethereum>()
             .wallet(validator_wallet)
             .connect_http(args.sync.provider.eth_rpc_url.as_str().try_into()?),
+        args.txn_args.eip_7594,
     );
     info!("Validator address: {validator_address}");
 

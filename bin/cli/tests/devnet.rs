@@ -69,6 +69,7 @@ async fn deploy_kailua_contracts(challenge_timeout: u64) -> anyhow::Result<()> {
             txn_timeout: 12,
             exec_gas_premium: 0,
             blob_gas_premium: 0,
+            eip_7594: false,
         },
         starting_block_number: 0,
         proposal_output_count: 5,
@@ -177,6 +178,7 @@ async fn proposer_validator() {
         txn_timeout: 30,
         exec_gas_premium: 25,
         blob_gas_premium: 25,
+        eip_7594: false,
     };
 
     // Instantiate proposer wallet
