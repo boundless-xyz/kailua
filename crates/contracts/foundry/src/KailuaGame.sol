@@ -15,16 +15,16 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.24;
 
-import "./vendor/FlatOPImportV1.4.0.sol";
-import "./vendor/FlatR0ImportV2.0.2.sol";
 import "./KailuaLib.sol";
 import "./KailuaTournament.sol";
 import "./KailuaTreasury.sol";
+import "./KailuaVerifier.sol";
+import "./vendor/FlatOPImportV1.4.0.sol";
 
 contract KailuaGame is KailuaTournament {
     /// @notice Semantic version.
-    /// @custom:semver 0.1.0
-    string public constant version = "0.1.0";
+    /// @custom:semver 1.0.0
+    string public constant version = "1.0.0";
 
     // ------------------------------
     // Immutable configuration
@@ -47,9 +47,7 @@ contract KailuaGame is KailuaTournament {
     )
         KailuaTournament(
             IKailuaTreasury(address(_kailuaTreasury)),
-            _kailuaTreasury.RISC_ZERO_VERIFIER(),
-            _kailuaTreasury.FPVM_IMAGE_ID(),
-            _kailuaTreasury.ROLLUP_CONFIG_HASH(),
+            _kailuaTreasury.KAILUA_VERIFIER(),
             _kailuaTreasury.PROPOSAL_OUTPUT_COUNT(),
             _kailuaTreasury.OUTPUT_BLOCK_SPAN(),
             _kailuaTreasury.GAME_TYPE(),

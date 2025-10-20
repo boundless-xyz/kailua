@@ -31,7 +31,7 @@ pub struct SyncDeployment {
     pub treasury: Address,
     /// Address of the KailuaGame contract
     pub game: Address,
-    /// Address of the RISC Zero verifier contract
+    /// Address of the KailuaVerifier contract
     pub verifier: Address,
     /// Image ID of the FPVM program
     pub image_id: B256,
@@ -109,16 +109,22 @@ impl SyncDeployment {
             .await;
         let game = *kailua_game_implementation.address();
         let verifier = kailua_game_implementation
-            .RISC_ZERO_VERIFIER()
-            .stall_with_context(context.clone(), "KailuaGame::RISC_ZERO_VERIFIER", timeout)
+            .KAILUA_VERIFIER()
+            .stall_with_context(context.clone(), "KailuaGame::KAILUA_VERIFIER", timeout)
             .await;
-        let image_id = kailua_game_implementation
+        let kailua_verifier = KailuaVerifier::new(verifier, &provider.l1_provider);
+
+        let image_id = kailua_verifier
             .FPVM_IMAGE_ID()
-            .stall_with_context(context.clone(), "KailuaGame::FPVM_IMAGE_ID", timeout)
+            .stall_with_context(context.clone(), "KailuaVerifier::FPVM_IMAGE_ID", timeout)
             .await;
-        let cfg_hash = kailua_game_implementation
+        let cfg_hash = kailua_verifier
             .ROLLUP_CONFIG_HASH()
-            .stall_with_context(context.clone(), "KailuaGame::ROLLUP_CONFIG_HASH", timeout)
+            .stall_with_context(
+                context.clone(),
+                "KailuaVerifier::ROLLUP_CONFIG_HASH",
+                timeout,
+            )
             .await;
         let proposal_output_count = kailua_game_implementation
             .PROPOSAL_OUTPUT_COUNT()

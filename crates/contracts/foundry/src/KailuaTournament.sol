@@ -16,8 +16,8 @@
 pragma solidity ^0.8.24;
 
 import "./KailuaLib.sol";
+import "./KailuaVerifier.sol";
 import "./vendor/FlatOPImportV1.4.0.sol";
-import "./vendor/FlatR0ImportV2.0.2.sol";
 
 abstract contract KailuaTournament is Clone, IDisputeGame {
     // ------------------------------
@@ -27,14 +27,8 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
     /// @notice The Kailua Treasury Implementation contract address
     IKailuaTreasury public immutable KAILUA_TREASURY;
 
-    /// @notice The RISC Zero verifier contract
-    IRiscZeroVerifier public immutable RISC_ZERO_VERIFIER;
-
-    /// @notice The RISC Zero image id of the fault proof program
-    bytes32 public immutable FPVM_IMAGE_ID;
-
-    /// @notice The hash of the game configuration
-    bytes32 public immutable ROLLUP_CONFIG_HASH;
+    /// @notice The Kailua Verifier contract
+    KailuaVerifier public immutable KAILUA_VERIFIER;
 
     /// @notice The number of outputs a proposal must publish
     uint64 public immutable PROPOSAL_OUTPUT_COUNT;
@@ -56,18 +50,14 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
 
     constructor(
         IKailuaTreasury _kailuaTreasury,
-        IRiscZeroVerifier _verifierContract,
-        bytes32 _imageId,
-        bytes32 _configHash,
+        KailuaVerifier _kailuaVerifier,
         uint64 _proposalOutputCount,
         uint64 _outputBlockSpan,
         GameType _gameType,
         OptimismPortal2 _optimismPortal
     ) {
         KAILUA_TREASURY = _kailuaTreasury;
-        RISC_ZERO_VERIFIER = _verifierContract;
-        FPVM_IMAGE_ID = _imageId;
-        ROLLUP_CONFIG_HASH = _configHash;
+        KAILUA_VERIFIER = _kailuaVerifier;
         PROPOSAL_OUTPUT_COUNT = _proposalOutputCount;
         OUTPUT_BLOCK_SPAN = _outputBlockSpan;
         // discard published root commitment in calldata
@@ -627,8 +617,8 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
             revert UnknownGame();
         }
 
-        // Construct the expected journal
-        bytes memory journal = abi.encodePacked(
+        // Revert on proof verification failure
+        KAILUA_VERIFIER.verify(
             // The address of the recipient of the payout for this proof
             payoutRecipient,
             // The blob equivalence precondition hash
@@ -641,14 +631,9 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
             computedOutputHash,
             // The claim block number
             uint64(l2BlockNumber() + outputCount * OUTPUT_BLOCK_SPAN),
-            // The rollup configuration hash
-            ROLLUP_CONFIG_HASH,
-            // The FPVM Image ID
-            FPVM_IMAGE_ID
+            // The cryptographic proof
+            encodedSeal
         );
-
-        // Revert on proof verification failure
-        RISC_ZERO_VERIFIER.verify(encodedSeal, FPVM_IMAGE_ID, sha256(journal));
 
         // Mark the child as proven
         updateProofStatus(payoutRecipient, childSignature, outcome);
