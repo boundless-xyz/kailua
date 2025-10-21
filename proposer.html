@@ -280,11 +280,12 @@ You must keep your proposer's wallet well funded to guarantee the safety and liv
 </div>
 </div>
 <h3 id="transactions"><a class="header" href="#transactions">Transactions</a></h3>
-<p>You can control transaction publication through the three following parameters:</p>
+<p>You can control transaction publication through the following parameters:</p>
 <ul>
-<li><code>txn-timeout</code>: A timeout in seconds for transaction broadcast (default 120)</li>
+<li><code>txn-timeout</code>: A timeout in seconds for transaction broadcast (Default 120)</li>
 <li><code>exec-gas-premium</code>: An added premium percentage to estimated execution gas fees (Default 25)</li>
 <li><code>blob-gas-premium</code>: An added premium percentage to estimated blob gas fees (Default 25).</li>
+<li><code>eip-7594</code>: Whether to apply EIP-7594 to EIP-4844 blob publications (i.e. Fusaka) (Default false).</li>
 </ul>
 <p>The premium parameters increase the internally estimated fees by the specified percentage.</p>
 <h3 id="upgrades"><a class="header" href="#upgrades">Upgrades</a></h3>
