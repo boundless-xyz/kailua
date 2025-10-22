@@ -50,6 +50,7 @@ contract KailuaVerifier {
     /// @custom:field recipient             Address of the permit recipient
     /// @custom:field aggregateCollateral   Total collateral locked as of permit
     /// @custom:field timestamp             Timestamp of permit issuance
+    /// @custom:field released              Flag for whether the collateral locked for this permit
     struct FaultProofPermit {
         uint256 aggregateCollateral;
         address recipient;
@@ -66,15 +67,20 @@ contract KailuaVerifier {
         return sha256(abi.encodePacked(address(proposalParent), proposalSignature));
     }
 
-    /// @notice Returns the earliest timestamp at which a permit can be released
+    /// @notice Returns the earliest timestamp at which a fault proof permit can be released
     function faultProofPermitProvenAt(IKailuaTournament proposalParent, bytes32 proposalSignature)
         public
         view
         returns (uint64)
     {
+        // INVARIANT: A validity proof for the same signature does not satisfy a fault proof permit.
+        bytes32 validChildSignature = proposalParent.validChildSignature();
+        if (proposalSignature == validChildSignature) {
+            return 0;
+        }
         // Fetch both fault and validity proof timestamps
         uint64 faultProofTimestamp = proposalParent.provenAt(proposalSignature).raw();
-        uint64 validityProofTimestamp = proposalParent.provenAt(proposalParent.validChildSignature()).raw();
+        uint64 validityProofTimestamp = proposalParent.provenAt(validChildSignature).raw();
         // Return the smaller timestamp if both proofs are present
         if (faultProofTimestamp > 0 && validityProofTimestamp > 0) {
             return faultProofTimestamp < validityProofTimestamp ? faultProofTimestamp : validityProofTimestamp;
@@ -99,9 +105,9 @@ contract KailuaVerifier {
         if (proposalPermits.length != 1) {
             return address(0x0);
         }
-        // If the permit was expired as of proof submission, disqualify the beneficiary
+        // If there was no proof or the permit was expired as of proof submission, disqualify the beneficiary
         uint64 provingTime = faultProofPermitProvenAt(proposalParent, proposalSignature);
-        if (proposalPermits[0].timestamp + PERMIT_DURATION.raw() < provingTime) {
+        if (provingTime == 0 || proposalPermits[0].timestamp + PERMIT_DURATION.raw() < provingTime) {
             return address(0x0);
         }
         // Return the successful sool beneficiary of the locked fault proof reward
@@ -117,12 +123,14 @@ contract KailuaVerifier {
         FaultProofPermit[] storage proposalPermits = faultProofPermits[proposalKey];
         uint256 expiredCollateral = 0;
         uint64 totalPermits = uint64(proposalPermits.length);
-        while (0 < numExpiredPermits && numExpiredPermits <= totalPermits) {
-            // Increment numExpiredPermits if possible
-            if (proposalPermits[numExpiredPermits].timestamp + PERMIT_DURATION.raw() < timestamp) {
-                numExpiredPermits++;
-                continue;
+        // Increment numExpiredPermits if possible
+        for (; numExpiredPermits < totalPermits; numExpiredPermits++) {
+            if (proposalPermits[numExpiredPermits].timestamp + PERMIT_DURATION.raw() >= timestamp) {
+                break;
             }
+        }
+        // Validate expiry
+        if (numExpiredPermits > 0) {
             // If numExpiredPermits is invalid, revert
             if (proposalPermits[numExpiredPermits - 1].timestamp + PERMIT_DURATION.raw() >= timestamp) {
                 revert BadTarget();
@@ -134,13 +142,14 @@ contract KailuaVerifier {
     }
 
     /// @notice Locks the right to submit a fault proof for a given proposal signature
+    /// @dev Do not call this function to acquire locks for faults that will not lead to elimination.
     function acquireFaultProofPermit(
         IKailuaTournament proposalParent,
         bytes32 proposalSignature,
         uint64 numExpiredPermits,
         address payoutRecipient
     ) external payable {
-        // INVARIANT: The child signature is still viable
+        // INVARIANT: The child signature is still viable so no proof is submitted for/against it
         if (!proposalParent.isViableSignature(proposalSignature)) {
             revert ProvenFaulty();
         }
@@ -155,15 +164,17 @@ contract KailuaVerifier {
         }
         // INVARIANT: There are exactly numExpiredPermits expired permits as of block.timestamp
         bytes32 proposalKey = faultProofPermitKey(proposalParent, proposalSignature);
-        (numExpiredPermits,,) = countExpiredPermits(proposalKey, numExpiredPermits, uint64(block.timestamp));
+        uint64 numActivePermits;
+        (numExpiredPermits,, numActivePermits) =
+            countExpiredPermits(proposalKey, numExpiredPermits, uint64(block.timestamp));
         // INVARIANT: There is at least one permit available
         FaultProofPermit[] storage proposalPermits = faultProofPermits[proposalKey];
-        uint256 totalPermitsIssued = proposalPermits.length;
-        if (totalPermitsIssued > 2 * numExpiredPermits) {
+        if (numActivePermits > 2 * numExpiredPermits) {
             revert ClockNotExpired();
         }
         // Calculate the aggregate collateral value
         uint256 aggregateCollateral = msg.value;
+        uint256 totalPermitsIssued = proposalPermits.length;
         if (totalPermitsIssued > 0) {
             aggregateCollateral += proposalPermits[totalPermitsIssued - 1].aggregateCollateral;
         }
