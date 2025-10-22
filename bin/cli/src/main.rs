@@ -21,12 +21,19 @@ use opentelemetry::global::{shutdown_tracer_provider, tracer};
 use opentelemetry::trace::{FutureExt, Status, TraceContextExt, Tracer};
 use tempfile::tempdir;
 use tracing::error;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let cli = KailuaCli::parse();
-    kona_cli::init_tracing_subscriber(cli.verbosity(), None::<EnvFilter>)?;
+    kona_cli::LogConfig::new(kona_cli::LogArgs {
+        level: cli.verbosity(),
+        stdout_quiet: false,
+        stdout_format: Default::default(),
+        file_directory: None,
+        file_format: Default::default(),
+        file_rotation: Default::default(),
+    })
+    .init_tracing_subscriber(None)?;
     init_tracer_provider(cli.telemetry_args())?;
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("cli"));

@@ -70,10 +70,11 @@ You must keep your proposer's wallet well funded to guarantee the safety and liv
 ```
 
 ### Transactions
-You can control transaction publication through the three following parameters:
-* `txn-timeout`: A timeout in seconds for transaction broadcast (default 120)
+You can control transaction publication through the following parameters:
+* `txn-timeout`: A timeout in seconds for transaction broadcast (Default 120)
 * `exec-gas-premium`: An added premium percentage to estimated execution gas fees (Default 25)
 * `blob-gas-premium`: An added premium percentage to estimated blob gas fees (Default 25).
+* `eip-7594`: Whether to apply EIP-7594 to EIP-4844 blob publications (i.e. Fusaka) (Default false).
 
 The premium parameters increase the internally estimated fees by the specified percentage.
 

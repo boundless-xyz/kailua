@@ -143,7 +143,7 @@ pub async fn fetch_rollup_config(
             .await
             .context("debug_chainConfig")?;
 
-    debug!("ChainConfig: {:?}", chain_config);
+    debug!("ChainConfig: {chain_config:?}");
 
     // fork times
     for fork in &[
@@ -155,6 +155,7 @@ pub async fn fetch_rollup_config(
         "graniteTime",
         "holoceneTime",
         "isthmusTime",
+        "jovianTime",
         "interopTime",
         "pectraBlobScheduleTime",
     ] {
@@ -162,6 +163,8 @@ pub async fn fetch_rollup_config(
             rollup_config[fork] = json!(value);
         }
     }
+
+    debug!("RollupConfig: {rollup_config:?}");
 
     Ok(serde_json::from_value(rollup_config)?)
 }

@@ -25,6 +25,7 @@ hex.workspace = true
 human_bytes.workspace = true
 itertools.workspace = true
 lazy_static.workspace = true
+opentelemetry.workspace = true
 rkyv.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -34,18 +35,18 @@ tracing.workspace = true
 tokio.workspace = true
 tokio-retry.workspace = true
 
+# Alloy
 alloy = { workspace = true, features = ["full", "kzg", "contract", "rlp", "sol-types"] }
 alloy-primitives = { workspace = true, features = ["map-hashbrown"] }
-
 op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
 
+# Kailua
 kailua-build.workspace = true
-kailua-kona.workspace = true
-kailua-hokulea.workspace = true
-kailua-hana.workspace = true
 kailua-sync.workspace = true
 
+# Kona
+kailua-kona.workspace = true
 kona-derive.workspace = true
 kona-genesis.workspace = true
 kona-host.workspace = true
@@ -56,26 +57,31 @@ kona-protocol.workspace = true
 kona-providers-alloy.workspace = true
 kona-std-fpvm.workspace = true
 
-canoe-bindings.workspace = true
-canoe-provider.workspace = true
-hokulea-host-bin.workspace = true
-hokulea-proof.workspace = true
-hokulea-witgen.workspace = true
+# Hokulea
+kailua-hokulea = { workspace = true, optional = true }
+canoe-bindings = { workspace = true, optional = true }
+canoe-provider = { workspace = true, optional = true }
+canoe-verifier = { workspace = true, optional = true }
+canoe-verifier-address-fetcher = { workspace = true, optional = true }
+hokulea-host-bin = { workspace = true, optional = true }
+hokulea-proof = { workspace = true, optional = true }
+hokulea-witgen = { workspace = true, optional = true }
 
-celestia-rpc.workspace = true
-celestia-types.workspace = true
-hana-blobstream.workspace = true
-hana-host.workspace = true
-hana-oracle.workspace = true
+# Hana
+kailua-hana = { workspace = true, optional = true }
+celestia-rpc = { workspace = true, optional = true }
+celestia-types = { workspace = true, optional = true }
+hana-blobstream = { workspace = true, optional = true }
+hana-host = { workspace = true, optional = true }
+hana-oracle = { workspace = true, optional = true }
 
+# Bonsai
 bonsai-sdk.workspace = true
 boundless-market.workspace = true
 
-opentelemetry.workspace = true
-
+# RISC Zero
 risc0-ethereum-contracts.workspace = true
 risc0-zkvm.workspace = true
-
 risc0-steel = { workspace = true, features = ["host"] }
 
 [features]
@@ -98,4 +104,26 @@ disable-dev-mode = [
 rebuild-fpvm = [
     "kailua-build/rebuild-fpvm",
     "kailua-sync/rebuild-fpvm"
+]
+eigen = [
+    "kailua-build/eigen",
+    "kailua-sync/eigen",
+    "dep:kailua-hokulea",
+    "dep:canoe-bindings",
+    "dep:canoe-provider",
+    "dep:canoe-verifier",
+    "dep:canoe-verifier-address-fetcher",
+    "dep:hokulea-host-bin",
+    "dep:hokulea-proof",
+    "dep:hokulea-witgen",
+]
+celestia = [
+    "kailua-build/celestia",
+    "kailua-sync/eigen",
+    "dep:kailua-hana",
+    "dep:celestia-rpc",
+    "dep:celestia-types",
+    "dep:hana-blobstream",
+    "dep:hana-host",
+    "dep:hana-oracle",
 ]

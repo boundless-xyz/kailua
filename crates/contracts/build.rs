@@ -12,28 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use foundry_compilers::{
-    artifacts::EvmVersion, multi::MultiCompilerSettings, Project, ProjectPathsConfig,
-};
-
 fn main() {
-    let mut settings = MultiCompilerSettings::default();
-    settings.solc.optimizer.enabled = Some(true);
-    settings.solc.optimizer.runs = Some(10_000);
-    settings.solc.evm_version = Some(EvmVersion::Cancun);
-    let project = Project::builder()
-        .settings(settings)
-        .paths(ProjectPathsConfig::builder().build_with_root("foundry"))
-        .build(Default::default())
-        .expect("failed to build project");
+    #[cfg(not(feature = "skip-solc"))]
+    {
+        let mut settings = foundry_compilers::multi::MultiCompilerSettings::default();
+        settings.solc.optimizer.enabled = Some(true);
+        settings.solc.optimizer.runs = Some(10_000);
+        settings.solc.evm_version = Some(foundry_compilers::artifacts::EvmVersion::Cancun);
+        let project = foundry_compilers::Project::builder()
+            .settings(settings)
+            .paths(foundry_compilers::ProjectPathsConfig::builder().build_with_root("foundry"))
+            .build(Default::default())
+            .expect("failed to build project");
 
-    let output = project.compile().expect("failed to compile project");
+        let output = project.compile().expect("failed to compile project");
 
-    if output.has_compiler_errors() {
-        panic!("{}", format!("{:?}", output.output().errors));
+        if output.has_compiler_errors() {
+            panic!("{}", format!("{:?}", output.output().errors));
+        }
+
+        // Tell Cargo that if a source file changes, to rerun this build script.
+        project.rerun_if_sources_changed();
+        println!("cargo:rerun-if-changed=src");
     }
-
-    // Tell Cargo that if a source file changes, to rerun this build script.
-    project.rerun_if_sources_changed();
-    println!("cargo:rerun-if-changed=src");
 }

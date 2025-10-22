@@ -30,7 +30,7 @@ use kailua_sync::transact::Transact;
 use kailua_sync::{await_tel, await_tel_res, retry_res_ctx_timeout, KAILUA_GAME_TYPE};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Publish a faulty sequencing proposal to test fault proofs
 #[derive(clap::Args, Debug, Clone)]
@@ -70,7 +70,7 @@ pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
 
     info!("Fetching rollup configuration from rpc endpoints.");
     // fetch rollup config
-    let config = await_tel!(
+    let rollup_config = await_tel!(
         context,
         fetch_rollup_config(
             &args.propose_args.sync.provider.op_node_url,
@@ -80,11 +80,19 @@ pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
         )
     )
     .context("fetch_rollup_config")?;
-    let rollup_config_hash = config_hash(&config);
+    let l1_config = kona_registry::L1_CONFIGS
+        .get(&rollup_config.l1_chain_id)
+        .cloned()
+        .unwrap_or_else(|| {
+            warn!("Loading default L1ChainConfig.");
+            Default::default()
+        });
+    let rollup_config_hash = config_hash(&rollup_config, &l1_config);
     info!("RollupConfigHash({})", hex::encode(rollup_config_hash));
 
     // load system config
-    let system_config = SystemConfig::new(config.l1_system_config_address, &eth_rpc_provider);
+    let system_config =
+        SystemConfig::new(rollup_config.l1_system_config_address, &eth_rpc_provider);
     let dgf_address = system_config
         .disputeGameFactory()
         .stall_with_context(
@@ -101,7 +109,7 @@ pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
         "ProposerSignerArgs::wallet",
         args.propose_args
             .proposer_signer
-            .wallet(Some(config.l1_chain_id))
+            .wallet(Some(rollup_config.l1_chain_id))
     )?;
     let tester_address = tester_wallet.default_signer().address();
     let tester_provider = args

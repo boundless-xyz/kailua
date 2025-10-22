@@ -22,7 +22,9 @@ pub mod channel;
 pub mod client;
 pub mod config;
 pub mod driver;
+#[cfg(feature = "celestia")]
 pub mod hana;
+#[cfg(feature = "eigen")]
 pub mod hokulea;
 pub mod kv;
 pub mod preflight;

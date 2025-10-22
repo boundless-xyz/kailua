@@ -7,7 +7,7 @@ use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
-use kona_derive::prelude::BlobProvider;
+use kona_derive::BlobProvider;
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
 use std::fmt::Debug;
@@ -32,7 +32,7 @@ pub async fn run_hokulea_witgen_client<P, B, O>(
     Precondition,
     Option<CachedDriver>,
     Witness<O>,
-    hokulea_proof::eigenda_blob_witness::EigenDABlobWitnessData,
+    hokulea_proof::eigenda_witness::EigenDAWitness,
 )>
 where
     P: CommsClient + FlushableCache + Send + Sync + Debug + Clone,
@@ -45,7 +45,7 @@ where
     // Create provider around witness
     let eigen = kailua_hokulea::da::EigenDADataSourceProvider(
         hokulea_witgen::witness_provider::OracleEigenDAWitnessProvider {
-            provider: hokulea_proof::eigenda_provider::OracleEigenDAProvider::new(
+            provider: hokulea_proof::eigenda_provider::OracleEigenDAPreimageProvider::new(
                 preimage_oracle.clone(),
             ),
             witness: eigen_witness.clone(),
@@ -71,11 +71,11 @@ where
     .await?;
     // Set expected values
     let mut eigen_witness = core::mem::take(eigen_witness.lock().unwrap().deref_mut());
-    for (_, validity) in &mut eigen_witness.validity {
+    for (_, validity) in &mut eigen_witness.validities {
         validity.l1_head_block_hash = boot.l1_head;
         validity.l1_chain_id = boot.rollup_config.l1_chain_id;
     }
-    for (_, recency) in &mut eigen_witness.recency {
+    for (_, recency) in &mut eigen_witness.recencies {
         *recency = boot.rollup_config.seq_window_size;
     }
     // Return extended result

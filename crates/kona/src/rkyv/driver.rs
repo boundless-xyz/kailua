@@ -114,6 +114,7 @@ pub type RkyvedSystemConfig = (
     Option<u32>,
     Option<u32>,
     Option<u64>,
+    Option<u64>,
 );
 
 pub struct SystemConfigRkyv;
@@ -131,6 +132,7 @@ impl SystemConfigRkyv {
             value.eip1559_elasticity,
             value.operator_fee_scalar,
             value.operator_fee_constant,
+            value.min_base_fee,
         )
     }
 
@@ -146,6 +148,7 @@ impl SystemConfigRkyv {
             eip1559_elasticity: rkyved.7,
             operator_fee_scalar: rkyved.8,
             operator_fee_constant: rkyved.9,
+            min_base_fee: rkyved.10,
         }
     }
 }
@@ -328,7 +331,7 @@ where
     }
 }
 
-pub type RkyvedBatchReader = (Option<Vec<u8>>, Vec<u8>, usize, usize);
+pub type RkyvedBatchReader = (Option<Vec<u8>>, Vec<u8>, usize, usize, bool);
 
 pub struct BatchReaderRkyv;
 
@@ -339,6 +342,7 @@ impl BatchReaderRkyv {
             value.decompressed.clone(),
             value.cursor,
             value.max_rlp_bytes_per_channel,
+            value.brotli_used,
         )
     }
 
@@ -348,6 +352,7 @@ impl BatchReaderRkyv {
             decompressed: rkyved.1,
             cursor: rkyved.2,
             max_rlp_bytes_per_channel: rkyved.3,
+            brotli_used: rkyved.4,
         }
     }
 }
@@ -503,7 +508,7 @@ impl SpanBatchRkyv {
                 value.txs.tx_nonces.clone(),
                 value.txs.tx_gases.clone(),
                 value.txs.tx_tos.iter().map(|v| *v.0).collect(),
-                value.txs.tx_datas.clone(),
+                value.txs.tx_data.clone(),
                 value.txs.protected_bits.0.clone(),
                 value.txs.tx_types.iter().map(|v| v.ty()).collect(),
                 value.txs.legacy_tx_count,
@@ -540,7 +545,7 @@ impl SpanBatchRkyv {
                 tx_nonces: rkyved.7 .3,
                 tx_gases: rkyved.7 .4,
                 tx_tos: rkyved.7 .5.into_iter().map(|a| a.into()).collect(),
-                tx_datas: rkyved.7 .6,
+                tx_data: rkyved.7 .6,
                 protected_bits: SpanBatchBits(rkyved.7 .7),
                 tx_types: rkyved
                     .7
@@ -755,6 +760,7 @@ pub type RkyvedOpPayloadAttributes = (
     Option<bool>,
     Option<u64>,
     Option<[u8; 8]>,
+    Option<u64>,
 );
 
 pub struct OpPayloadAttributesRkyv;
@@ -770,6 +776,7 @@ impl OpPayloadAttributesRkyv {
             value.no_tx_pool,
             value.gas_limit,
             value.eip_1559_params.map(|v| v.0),
+            value.min_base_fee,
         )
     }
 
@@ -780,6 +787,7 @@ impl OpPayloadAttributesRkyv {
             no_tx_pool: rkyved.2,
             gas_limit: rkyved.3,
             eip_1559_params: rkyved.4.map(|v| v.into()),
+            min_base_fee: rkyved.5,
         }
     }
 }
@@ -787,7 +795,7 @@ impl OpPayloadAttributesRkyv {
 pub type RkyvedOpAttributesWithParent = (
     RkyvedOpPayloadAttributes,
     RkyvedL2BlockInfo,
-    RkyvedBlockInfo,
+    Option<RkyvedBlockInfo>,
     bool,
 );
 
@@ -798,7 +806,7 @@ impl OpAttributesWithParentRkyv {
         (
             OpPayloadAttributesRkyv::rkyv(&value.inner),
             L2BlockInfoRkyv::rkyv(&value.parent),
-            BlockInfoRkyv::rkyv(&value.l1_origin),
+            value.derived_from.as_ref().map(BlockInfoRkyv::rkyv),
             value.is_last_in_span,
         )
     }
@@ -807,7 +815,7 @@ impl OpAttributesWithParentRkyv {
         OpAttributesWithParent {
             inner: OpPayloadAttributesRkyv::raw(rkyved.0),
             parent: L2BlockInfoRkyv::raw(rkyved.1),
-            l1_origin: BlockInfoRkyv::raw(rkyved.2),
+            derived_from: rkyved.2.map(BlockInfoRkyv::raw),
             is_last_in_span: rkyved.3,
         }
     }

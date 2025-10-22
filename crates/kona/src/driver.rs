@@ -18,18 +18,15 @@ use crate::rkyv::driver::{
     SingleBatchRkyv, SpanBatchRkyv, SystemConfigRkyv,
 };
 use alloy_primitives::Bytes;
-use kona_derive::attributes::StatefulAttributesBuilder;
-use kona_derive::pipeline::{
-    AttributesQueueStage, BatchProviderStage, BatchStreamStage, ChannelProviderStage,
-    ChannelReaderStage, DerivationPipeline, FrameQueueStage, L1RetrievalStage,
-};
-use kona_derive::prelude::{
-    BatchQueue, BatchValidator, ChainProvider, ChannelAssembler, ChannelBank,
-    DataAvailabilityProvider, L1Traversal, L2ChainProvider,
+use kona_derive::{
+    AttributesQueueStage, BatchProviderStage, BatchQueue, BatchStreamStage, BatchValidator,
+    ChainProvider, ChannelAssembler, ChannelBank, ChannelProviderStage, ChannelReaderStage,
+    DataAvailabilityProvider, DerivationPipeline, FrameQueueStage, L1RetrievalStage,
+    L2ChainProvider, PollingTraversal, StatefulAttributesBuilder,
 };
 use kona_driver::{Driver, Executor, PipelineCursor};
 use kona_executor::BlockBuildingOutcome;
-use kona_genesis::{RollupConfig, SystemConfig};
+use kona_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use kona_preimage::CommsClient;
 use kona_proof::l1::{OraclePipeline, ProviderDerivationPipeline};
 use kona_proof::FlushableCache;
@@ -61,7 +58,8 @@ impl CachedDriver {
     pub fn uncache<E, O, L1, L2, DA>(
         self,
         executor: E,
-        cfg: Arc<RollupConfig>,
+        rcfg: Arc<RollupConfig>,
+        l1_cfg: Arc<L1ChainConfig>,
         sync_start: Arc<RwLock<PipelineCursor>>,
         caching_oracle: Arc<O>,
         da_provider: DA,
@@ -80,7 +78,8 @@ impl CachedDriver {
         // uncache oracle pipeline
         let pipeline = OraclePipeline {
             pipeline: self.pipeline.uncache(
-                cfg.clone(),
+                rcfg.clone(),
+                l1_cfg,
                 da_provider,
                 l1_chain_provider,
                 l2_chain_provider,
@@ -126,7 +125,8 @@ pub struct CachedDerivationPipeline {
 impl CachedDerivationPipeline {
     pub fn uncache<L1, L2, DA>(
         self,
-        cfg: Arc<RollupConfig>,
+        rcfg: Arc<RollupConfig>,
+        l1_cfg: Arc<L1ChainConfig>,
         da_provider: DA,
         l1_chain_provider: L1,
         l2_chain_provider: L2,
@@ -138,13 +138,14 @@ impl CachedDerivationPipeline {
     {
         DerivationPipeline {
             attributes: self.attributes.uncache(
-                cfg.clone(),
+                rcfg.clone(),
+                l1_cfg,
                 da_provider,
                 l1_chain_provider,
                 l2_chain_provider.clone(),
             ),
             prepared: self.prepared.into(),
-            rollup_config: cfg,
+            rollup_config: rcfg,
             l2_chain_provider,
         }
     }
@@ -178,39 +179,53 @@ pub struct CachedAttributesQueueStage {
 impl CachedAttributesQueueStage {
     pub fn uncache<L1, L2, DA>(
         self,
-        cfg: Arc<RollupConfig>,
+        rcfg: Arc<RollupConfig>,
+        l1_cfg: Arc<L1ChainConfig>,
         da_provider: DA,
         l1_chain_provider: L1,
         l2_chain_provider: L2,
-    ) -> AttributesQueueStage<DA, L1, L2, StatefulAttributesBuilder<L1, L2>>
+    ) -> AttributesQueueStage<DA, PollingTraversal<L1>, L2, StatefulAttributesBuilder<L1, L2>>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
         L2: L2ChainProvider + Send + Sync + Debug + Clone,
         DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
     {
         AttributesQueueStage {
-            cfg: cfg.clone(),
+            cfg: rcfg.clone(),
             prev: self.prev.uncache(
-                cfg.clone(),
+                rcfg.clone(),
                 da_provider,
                 l1_chain_provider.clone(),
                 l2_chain_provider.clone(),
             ),
             is_last_in_span: self.is_last_in_span,
             batch: self.batch,
-            builder: StatefulAttributesBuilder::new(cfg, l2_chain_provider, l1_chain_provider),
+            builder: StatefulAttributesBuilder::new(
+                rcfg,
+                l1_cfg,
+                l2_chain_provider,
+                l1_chain_provider,
+            ),
         }
     }
 }
 
-impl<DA, L1, L2> From<AttributesQueueStage<DA, L1, L2, StatefulAttributesBuilder<L1, L2>>>
+impl<DA, L1, L2>
+    From<AttributesQueueStage<DA, PollingTraversal<L1>, L2, StatefulAttributesBuilder<L1, L2>>>
     for CachedAttributesQueueStage
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: AttributesQueueStage<DA, L1, L2, StatefulAttributesBuilder<L1, L2>>) -> Self {
+    fn from(
+        value: AttributesQueueStage<
+            DA,
+            PollingTraversal<L1>,
+            L2,
+            StatefulAttributesBuilder<L1, L2>,
+        >,
+    ) -> Self {
         Self {
             is_last_in_span: value.is_last_in_span,
             batch: value.batch,
@@ -234,7 +249,7 @@ impl CachedBatchProvider {
         da_provider: DA,
         l1_chain_provider: L1,
         l2_chain_provider: L2,
-    ) -> BatchProviderStage<DA, L1, L2>
+    ) -> BatchProviderStage<DA, PollingTraversal<L1>, L2>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
         L2: L2ChainProvider + Send + Sync + Debug + Clone,
@@ -288,13 +303,13 @@ impl CachedBatchProvider {
     }
 }
 
-impl<DA, L1, L2> From<BatchProviderStage<DA, L1, L2>> for CachedBatchProvider
+impl<DA, L1, L2> From<BatchProviderStage<DA, PollingTraversal<L1>, L2>> for CachedBatchProvider
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: BatchProviderStage<DA, L1, L2>) -> Self {
+    fn from(value: BatchProviderStage<DA, PollingTraversal<L1>, L2>) -> Self {
         match (value.prev, value.batch_queue, value.batch_validator) {
             (None, None, None) => CachedBatchProvider::None,
             (Some(batch_stream), None, None) => {
@@ -341,7 +356,7 @@ impl CachedBatchQueue {
         da_provider: DA,
         l1_chain_provider: L1,
         l2_chain_provider: L2,
-    ) -> BatchQueue<BatchStreamStage<DA, L1, L2>, L2>
+    ) -> BatchQueue<BatchStreamStage<DA, PollingTraversal<L1>, L2>, L2>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
         L2: L2ChainProvider + Send + Sync + Debug + Clone,
@@ -364,13 +379,14 @@ impl CachedBatchQueue {
     }
 }
 
-impl<DA, L1, L2> From<BatchQueue<BatchStreamStage<DA, L1, L2>, L2>> for CachedBatchQueue
+impl<DA, L1, L2> From<BatchQueue<BatchStreamStage<DA, PollingTraversal<L1>, L2>, L2>>
+    for CachedBatchQueue
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: BatchQueue<BatchStreamStage<DA, L1, L2>, L2>) -> Self {
+    fn from(value: BatchQueue<BatchStreamStage<DA, PollingTraversal<L1>, L2>, L2>) -> Self {
         Self {
             origin: value.origin,
             l1_blocks: value.l1_blocks,
@@ -405,7 +421,7 @@ impl CachedBatchValidator {
         da_provider: DA,
         l1_chain_provider: L1,
         l2_chain_provider: L2,
-    ) -> BatchValidator<BatchStreamStage<DA, L1, L2>>
+    ) -> BatchValidator<BatchStreamStage<DA, PollingTraversal<L1>, L2>>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
         L2: L2ChainProvider + Send + Sync + Debug + Clone,
@@ -422,13 +438,14 @@ impl CachedBatchValidator {
     }
 }
 
-impl<DA, L1, L2> From<BatchValidator<BatchStreamStage<DA, L1, L2>>> for CachedBatchValidator
+impl<DA, L1, L2> From<BatchValidator<BatchStreamStage<DA, PollingTraversal<L1>, L2>>>
+    for CachedBatchValidator
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: BatchValidator<BatchStreamStage<DA, L1, L2>>) -> Self {
+    fn from(value: BatchValidator<BatchStreamStage<DA, PollingTraversal<L1>, L2>>) -> Self {
         Self {
             origin: value.origin,
             l1_blocks: value.l1_blocks,
@@ -456,7 +473,7 @@ impl CachedBatchStream {
         da_provider: DA,
         l1_chain_provider: L1,
         l2_chain_provider: L2,
-    ) -> BatchStreamStage<DA, L1, L2>
+    ) -> BatchStreamStage<DA, PollingTraversal<L1>, L2>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
         L2: L2ChainProvider + Send + Sync + Debug + Clone,
@@ -474,13 +491,13 @@ impl CachedBatchStream {
     }
 }
 
-impl<DA, L1, L2> From<BatchStreamStage<DA, L1, L2>> for CachedBatchStream
+impl<DA, L1, L2> From<BatchStreamStage<DA, PollingTraversal<L1>, L2>> for CachedBatchStream
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: BatchStreamStage<DA, L1, L2>) -> Self {
+    fn from(value: BatchStreamStage<DA, PollingTraversal<L1>, L2>) -> Self {
         Self {
             span: value.span,
             buffer: value.buffer.into(),
@@ -506,6 +523,7 @@ impl Clone for CachedChannelReader {
                 decompressed: v.decompressed.clone(),
                 cursor: v.cursor,
                 max_rlp_bytes_per_channel: v.max_rlp_bytes_per_channel,
+                brotli_used: v.brotli_used,
             }),
             prev: self.prev.clone(),
         }
@@ -518,7 +536,7 @@ impl CachedChannelReader {
         cfg: Arc<RollupConfig>,
         da_provider: DA,
         l1_chain_provider: L1,
-    ) -> ChannelReaderStage<DA, L1>
+    ) -> ChannelReaderStage<DA, PollingTraversal<L1>>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
         DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
@@ -533,12 +551,12 @@ impl CachedChannelReader {
     }
 }
 
-impl<DA, L1> From<ChannelReaderStage<DA, L1>> for CachedChannelReader
+impl<DA, L1> From<ChannelReaderStage<DA, PollingTraversal<L1>>> for CachedChannelReader
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: ChannelReaderStage<DA, L1>) -> Self {
+    fn from(value: ChannelReaderStage<DA, PollingTraversal<L1>>) -> Self {
         Self {
             next_batch: value.next_batch,
             prev: CachedChannelProvider::from(value.prev),
@@ -560,7 +578,7 @@ impl CachedChannelProvider {
         cfg: Arc<RollupConfig>,
         da_provider: DA,
         l1_chain_provider: L1,
-    ) -> ChannelProviderStage<DA, L1>
+    ) -> ChannelProviderStage<DA, PollingTraversal<L1>>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
         DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
@@ -598,12 +616,12 @@ impl CachedChannelProvider {
     }
 }
 
-impl<DA, L1> From<ChannelProviderStage<DA, L1>> for CachedChannelProvider
+impl<DA, L1> From<ChannelProviderStage<DA, PollingTraversal<L1>>> for CachedChannelProvider
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: ChannelProviderStage<DA, L1>) -> Self {
+    fn from(value: ChannelProviderStage<DA, PollingTraversal<L1>>) -> Self {
         match (value.prev, value.channel_bank, value.channel_assembler) {
             (None, None, None) => CachedChannelProvider::None,
             (Some(frame_queue), None, None) => {
@@ -637,7 +655,7 @@ impl CachedChannelBank {
         cfg: Arc<RollupConfig>,
         da_provider: DA,
         l1_chain_provider: L1,
-    ) -> ChannelBank<FrameQueueStage<DA, L1>>
+    ) -> ChannelBank<FrameQueueStage<DA, PollingTraversal<L1>>>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
         DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
@@ -651,12 +669,12 @@ impl CachedChannelBank {
     }
 }
 
-impl<DA, L1> From<ChannelBank<FrameQueueStage<DA, L1>>> for CachedChannelBank
+impl<DA, L1> From<ChannelBank<FrameQueueStage<DA, PollingTraversal<L1>>>> for CachedChannelBank
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: ChannelBank<FrameQueueStage<DA, L1>>) -> Self {
+    fn from(value: ChannelBank<FrameQueueStage<DA, PollingTraversal<L1>>>) -> Self {
         Self {
             channels: sorted_by_key(value.channels.into_iter().collect()),
             channel_queue: value.channel_queue.into(),
@@ -680,7 +698,7 @@ impl CachedChannelAssembler {
         cfg: Arc<RollupConfig>,
         da_provider: DA,
         l1_chain_provider: L1,
-    ) -> ChannelAssembler<FrameQueueStage<DA, L1>>
+    ) -> ChannelAssembler<FrameQueueStage<DA, PollingTraversal<L1>>>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
         DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
@@ -693,12 +711,13 @@ impl CachedChannelAssembler {
     }
 }
 
-impl<DA, L1> From<ChannelAssembler<FrameQueueStage<DA, L1>>> for CachedChannelAssembler
+impl<DA, L1> From<ChannelAssembler<FrameQueueStage<DA, PollingTraversal<L1>>>>
+    for CachedChannelAssembler
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: ChannelAssembler<FrameQueueStage<DA, L1>>) -> Self {
+    fn from(value: ChannelAssembler<FrameQueueStage<DA, PollingTraversal<L1>>>) -> Self {
         Self {
             channel: value.channel,
             prev: CachedFrameQueue::from(value.prev),
@@ -721,7 +740,7 @@ impl CachedFrameQueue {
         cfg: Arc<RollupConfig>,
         da_provider: DA,
         l1_chain_provider: L1,
-    ) -> FrameQueueStage<DA, L1>
+    ) -> FrameQueueStage<DA, PollingTraversal<L1>>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
         DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
@@ -736,12 +755,12 @@ impl CachedFrameQueue {
     }
 }
 
-impl<DA, L1> From<FrameQueueStage<DA, L1>> for CachedFrameQueue
+impl<DA, L1> From<FrameQueueStage<DA, PollingTraversal<L1>>> for CachedFrameQueue
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: FrameQueueStage<DA, L1>) -> Self {
+    fn from(value: FrameQueueStage<DA, PollingTraversal<L1>>) -> Self {
         Self {
             queue: value.queue.into(),
             prev: CachedL1Retrieval::from(value.prev),
@@ -755,7 +774,7 @@ pub struct CachedL1Retrieval {
     #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
     pub next: Option<BlockInfo>,
     /// The previous stage in the pipeline.
-    pub prev: CachedL1Traversal,
+    pub prev: CachedPollingTraversal,
 }
 
 impl CachedL1Retrieval {
@@ -764,7 +783,7 @@ impl CachedL1Retrieval {
         cfg: Arc<RollupConfig>,
         da_provider: DA,
         l1_chain_provider: L1,
-    ) -> L1RetrievalStage<DA, L1>
+    ) -> L1RetrievalStage<DA, PollingTraversal<L1>>
     where
         DA: DataAvailabilityProvider,
         L1: ChainProvider + Send + Sync + Debug + Clone,
@@ -777,21 +796,21 @@ impl CachedL1Retrieval {
     }
 }
 
-impl<DA, L1> From<L1RetrievalStage<DA, L1>> for CachedL1Retrieval
+impl<DA, L1> From<L1RetrievalStage<DA, PollingTraversal<L1>>> for CachedL1Retrieval
 where
     DA: DataAvailabilityProvider,
     L1: ChainProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: L1RetrievalStage<DA, L1>) -> Self {
+    fn from(value: L1RetrievalStage<DA, PollingTraversal<L1>>) -> Self {
         Self {
             next: value.next,
-            prev: CachedL1Traversal::from(value.prev),
+            prev: CachedPollingTraversal::from(value.prev),
         }
     }
 }
 
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub struct CachedL1Traversal {
+pub struct CachedPollingTraversal {
     /// The current block in the traversal stage.
     #[rkyv(with = rkyv::with::Map<BlockInfoRkyv>)]
     pub block: Option<BlockInfo>,
@@ -802,12 +821,12 @@ pub struct CachedL1Traversal {
     pub system_config: SystemConfig,
 }
 
-impl CachedL1Traversal {
-    pub fn uncache<L1>(self, cfg: Arc<RollupConfig>, l1_chain_provider: L1) -> L1Traversal<L1>
+impl CachedPollingTraversal {
+    pub fn uncache<L1>(self, cfg: Arc<RollupConfig>, l1_chain_provider: L1) -> PollingTraversal<L1>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,
     {
-        L1Traversal {
+        PollingTraversal {
             block: self.block,
             data_source: l1_chain_provider,
             done: self.done,
@@ -817,11 +836,11 @@ impl CachedL1Traversal {
     }
 }
 
-impl<L1> From<L1Traversal<L1>> for CachedL1Traversal
+impl<L1> From<PollingTraversal<L1>> for CachedPollingTraversal
 where
     L1: ChainProvider + Send + Sync + Debug + Clone,
 {
-    fn from(value: L1Traversal<L1>) -> Self {
+    fn from(value: PollingTraversal<L1>) -> Self {
         Self {
             block: value.block,
             done: value.done,
@@ -888,11 +907,13 @@ pub mod tests {
             claimed_l2_block_number: 0,
             chain_id: 0,
             rollup_config: Default::default(),
+            l1_config: Default::default(),
         };
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let l1_provider = OracleL1ChainProvider::new(B256::ZERO, oracle.clone())
             .await
             .unwrap();
+        let l1_config = Arc::new(boot_info.l1_config.clone());
         let rollup_config = Arc::new(boot_info.rollup_config.clone());
         let l2_provider =
             OracleL2ChainProvider::new(B256::ZERO, rollup_config.clone(), oracle.clone());
@@ -910,6 +931,7 @@ pub mod tests {
                 None,
             ),
             rollup_config.clone(),
+            l1_config,
             Arc::new(RwLock::new(gen_pipeline_cursor())),
             oracle.clone(),
             da_provider,
@@ -935,6 +957,7 @@ pub mod tests {
             claimed_l2_block_number: 0,
             chain_id: 60808,
             rollup_config: Default::default(),
+            l1_config: Default::default(),
         }));
         let rollup_config = Arc::new(
             BootInfo::load(oracle.as_ref())
@@ -1009,6 +1032,7 @@ pub mod tests {
                     claimed_l2_block_number: *claimed_l2_block_number,
                     chain_id: 60808,
                     rollup_config: Default::default(), // Config for BOB mainnet is in registry
+                    l1_config: Default::default(),
                 },
                 None,
                 cached_bail_driver.clone(),
@@ -1066,6 +1090,7 @@ pub mod tests {
                     claimed_l2_block_number: *claimed_l2_block_number,
                     chain_id: 60808,
                     rollup_config: Default::default(), // Config for BOB mainnet is in registry
+                    l1_config: Default::default(),
                 },
                 None,
                 cached_safe_driver.clone(),
@@ -1119,6 +1144,7 @@ pub mod tests {
                 claimed_l2_block_number: 11795900,
                 chain_id: 60808,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
             vec![],
@@ -1247,7 +1273,7 @@ pub mod tests {
                 tx_nonces: vec![gen_u64()],
                 tx_gases: vec![gen_u64()],
                 tx_tos: vec![gen_addr()],
-                tx_datas: vec![[*gen_b256()].concat()],
+                tx_data: vec![[*gen_b256()].concat()],
                 protected_bits: SpanBatchBits([*gen_addr()].concat()),
                 tx_types: vec![TxType::Eip1559],
                 legacy_tx_count: gen_u64(),
@@ -1273,7 +1299,7 @@ pub mod tests {
             queue: vec![gen_frame(), gen_frame(), gen_frame()],
             prev: CachedL1Retrieval {
                 next: Some(gen_block_info()),
-                prev: CachedL1Traversal {
+                prev: CachedPollingTraversal {
                     block: Some(gen_block_info()),
                     done: true,
                     system_config: SystemConfig {
@@ -1287,6 +1313,7 @@ pub mod tests {
                         eip1559_elasticity: Some(gen_u64() as u32),
                         operator_fee_scalar: Some(gen_u64() as u32),
                         operator_fee_constant: Some(gen_u64()),
+                        min_base_fee: Some(gen_u64()),
                     },
                 },
             },
@@ -1355,10 +1382,11 @@ pub mod tests {
                         no_tx_pool: Some(true),
                         gas_limit: Some(gen_u64()),
                         eip_1559_params: Some(B64::from_slice(&gen_b256().0[..8])),
+                        min_base_fee: Some(gen_u64()),
                     },
                     parent: gen_l2_block_info(),
-                    l1_origin: gen_block_info(),
                     is_last_in_span: true,
+                    derived_from: Some(gen_block_info()),
                 }],
                 attributes: CachedAttributesQueueStage {
                     is_last_in_span: true,
@@ -1422,6 +1450,7 @@ pub mod tests {
                     decompressed: [*gen_b256(), *gen_b256(), *gen_b256()].concat(),
                     cursor: gen_usize(),
                     max_rlp_bytes_per_channel: gen_usize(),
+                    brotli_used: gen_u64() % 2 == 0,
                 }),
                 prev: channel_provider,
             },

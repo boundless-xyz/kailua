@@ -14,7 +14,7 @@
 
 use crate::args::ProveArgs;
 use crate::channel::AsyncChannel;
-use crate::config::generate_rollup_config_file;
+use crate::config::{generate_l1_config_file, generate_rollup_config_file};
 use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::create_disk_kv_store;
 use crate::preflight::{concurrent_execution_preflight, fetch_precondition_data};
@@ -78,6 +78,12 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
         .context("generate_rollup_config")
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
+    // fetch l1 config
+    let l1_config = generate_l1_config_file(&mut args, &tmp_dir, rollup_config.l1_chain_id)
+        .await
+        .context("generate_l1_config")
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+
     // preload precondition data into KV store
     let (proposal_precondition_hash, proposal_data_hash) = match fetch_precondition_data(&args)
         .await
@@ -109,6 +115,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     if !concurrent_execution_preflight(
         &args,
         rollup_config.clone(),
+        l1_config.clone(),
         op_node_provider.as_ref().expect("Missing op_node_provider"),
         disk_kv_store.clone(),
     )
@@ -268,6 +275,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
 
             // spawn an async task that computes the proof using one of the instantiated handlers and sends back the result to result_channel
             let rollup_config = rollup_config.clone();
+            let l1_config = l1_config.clone();
             let disk_kv_store = disk_kv_store.clone();
             let task_channel = task_channel.clone();
             let result_channel = result_channel.clone();
@@ -275,6 +283,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 let result = crate::tasks::compute_fpvm_proof(
                     job_args.clone(),
                     rollup_config,
+                    l1_config,
                     disk_kv_store,
                     Precondition::default().proposal(proposal_precondition_hash),
                     proposal_data_hash,
@@ -313,6 +322,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     args: job_args.clone(),
                     // all unused
                     rollup_config: rollup_config.clone(),
+                    l1_config: l1_config.clone(),
                     disk_kv_store: disk_kv_store.clone(),
                     precondition: result.as_ref().map(|(_, p)| *p).unwrap_or_else(|| {
                         Precondition::default().proposal(proposal_precondition_hash)
@@ -530,8 +540,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                             agreed_l2_output_root: last_initial_args.agreed_l2_output_root,
                             claimed_l2_output_root: last_initial_args.claimed_l2_output_root,
                             claimed_l2_block_number: last_initial_args.claimed_l2_block_number,
-                            chain_id: rollup_config.l2_chain_id,
+                            chain_id: rollup_config.l2_chain_id.id(),
                             rollup_config: rollup_config.clone(),
+                            l1_config: l1_config.clone(),
                         };
                         let driver_file = driver_file_name(
                             *last_stitched_journal.fpvm_image_id,
@@ -560,6 +571,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 // spawn an async task that computes the proof using one of the instantiated handlers and sends back the result to result_receiver
                 let (result_sender, result_receiver) = async_channel::unbounded();
                 let rollup_config = rollup_config.clone();
+                let l1_config = l1_config.clone();
                 let disk_kv_store = disk_kv_store.clone();
                 let task_channel = task_channel.clone();
                 tokio::spawn(async move {
@@ -569,6 +581,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     let result = crate::tasks::compute_fpvm_proof(
                         stitch_job_args.clone(),
                         rollup_config,
+                        l1_config,
                         disk_kv_store,
                         precondition,
                         proposal_data_hash,
@@ -602,6 +615,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     cached_task: CachedTask {
                         args: stitch_job_args,
                         rollup_config: rollup_config.clone(),
+                        l1_config: l1_config.clone(),
                         disk_kv_store: disk_kv_store.clone(),
                         precondition,
                         proposal_data_hash,

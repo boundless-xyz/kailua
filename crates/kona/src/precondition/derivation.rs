@@ -17,7 +17,7 @@ use crate::driver::{
     CachedAttributesQueueStage, CachedBatchProvider, CachedBatchQueue, CachedBatchStream,
     CachedBatchValidator, CachedChannelAssembler, CachedChannelBank, CachedChannelProvider,
     CachedChannelReader, CachedDerivationPipeline, CachedDriver, CachedFrameQueue,
-    CachedL1Retrieval, CachedL1Traversal,
+    CachedL1Retrieval, CachedPollingTraversal,
 };
 use crate::rkyv::driver::sorted_by_key;
 use alloy_eips::eip4895::Withdrawal;
@@ -196,7 +196,13 @@ pub fn flatten_op_attrib_with_parent(op_attrib_with_parent: &OpAttributesWithPar
         .as_slice(),
         config::opt_byte_arr(op_attrib_with_parent.inner.eip_1559_params.map(|v| v.0)).as_slice(),
         flatten_l2_block_info(&op_attrib_with_parent.parent).as_slice(),
-        flatten_block_info(&op_attrib_with_parent.l1_origin).as_slice(),
+        config::opt_byte_vec(
+            op_attrib_with_parent
+                .derived_from
+                .as_ref()
+                .map(flatten_block_info),
+        )
+        .as_slice(),
         &[op_attrib_with_parent.is_last_in_span as u8],
     ]
     .concat()
@@ -318,11 +324,11 @@ pub fn flatten_span_batch_transactions(span_batch_transactions: &SpanBatchTransa
             .collect::<Vec<_>>()
             .concat()
             .as_slice(),
-        (span_batch_transactions.tx_datas.len() as u64)
+        (span_batch_transactions.tx_data.len() as u64)
             .to_be_bytes()
             .as_slice(),
         span_batch_transactions
-            .tx_datas
+            .tx_data
             .iter()
             .map(flatten_bytes)
             .collect::<Vec<_>>()
@@ -672,7 +678,7 @@ impl Digestible for CachedL1Retrieval {
     }
 }
 
-impl Digestible for CachedL1Traversal {
+impl Digestible for CachedPollingTraversal {
     fn digest(&self) -> Digest {
         let block_bytes = self
             .block

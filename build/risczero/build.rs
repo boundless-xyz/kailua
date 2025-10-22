@@ -17,27 +17,9 @@ fn main() {
     {
         risc0_build::embed_methods_with_options({
             let guest_options = {
-                #[cfg(feature = "rebuild-da")]
-                let canoe_image_id = std::env::var("CANOE_IMAGE_ID").unwrap_or_else(|_| {
-                    // Warn about unstable build
-                    if std::env::var("RISC0_USE_DOCKER").is_err() {
-                        println!("cargo:warning=Building without RISC0_USE_DOCKER=1 will yield an irreproducible build for kailua-fpvm-hokulea.");
-                    }
-                    let canoe_image_id = alloy_primitives::B256::from(bytemuck::cast::<_, [u8; 32]>(
-                        canoe_steel_methods::CERT_VERIFICATION_ID,
-                    ))
-                        .to_string();
-                    canoe_image_id
-                });
-                #[cfg(not(feature = "rebuild-da"))]
-                let canoe_image_id = std::env::var("CANOE_IMAGE_ID").unwrap_or(String::from(
-                    "e6ae1f0ee0fee9e253db02250fad8c0c8dc65141a0042a879fbacbdae50ea2cb",
-                ));
-
-                println!("cargo:rustc-env=CANOE_IMAGE_ID={canoe_image_id}");
-                std::env::set_var("CANOE_IMAGE_ID", &canoe_image_id);
                 // Start with default build options
                 let opts = risc0_build::GuestOptions::default();
+
                 // Build a reproducible ELF file using docker under the release profile
                 #[cfg(not(any(feature = "debug-guest-build", debug_assertions)))]
                 let opts = {
@@ -53,15 +35,12 @@ fn main() {
                                     .map(|d| d.to_path_buf())
                                     .unwrap()
                             })
-                            .env(vec![(
-                                String::from("CANOE_IMAGE_ID"),
-                                canoe_image_id.to_string(),
-                            )])
                             .build()
                             .unwrap(),
                     );
                     opts
                 };
+
                 // Disable dev-mode receipts from being validated inside the guest
                 #[cfg(any(
                     feature = "disable-dev-mode",
@@ -74,6 +53,7 @@ fn main() {
                 };
                 opts
             };
+
             std::collections::HashMap::from([
                 ("kailua-fpvm-kona", guest_options.clone()),
                 ("kailua-fpvm-hokulea", guest_options.clone()),
@@ -84,5 +64,8 @@ fn main() {
 
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=kona/src");
+    #[cfg(feature = "eigen")]
     println!("cargo:rerun-if-changed=hokulea/src");
+    #[cfg(feature = "celestia")]
+    println!("cargo:rerun-if-changed=hana/src");
 }

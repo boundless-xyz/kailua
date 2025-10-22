@@ -94,7 +94,7 @@ impl SyncAgent {
 
         // fetch rollup config
         info!("Fetching rollup configuration from rpc endpoints.");
-        let config = await_tel_res!(
+        let rollup_config = await_tel_res!(
             context,
             fetch_rollup_config(
                 &provider_args.op_node_url,
@@ -104,7 +104,14 @@ impl SyncAgent {
             ),
             "fetch_rollup_config"
         )?;
-        let rollup_config_hash = config_hash(&config);
+        let l1_config = kona_registry::L1_CONFIGS
+            .get(&rollup_config.l1_chain_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                warn!("Loading default L1ChainConfig.");
+                Default::default()
+            });
+        let rollup_config_hash = config_hash(&rollup_config, &l1_config);
         info!("RollupConfigHash({})", hex::encode(rollup_config_hash));
 
         // Load target deployment data
@@ -112,7 +119,7 @@ impl SyncAgent {
             context,
             SyncDeployment::load(
                 &provider,
-                &config,
+                &rollup_config,
                 game_impl_address,
                 provider_args.timeouts.eth_rpc_timeout
             ),
@@ -124,9 +131,11 @@ impl SyncAgent {
                 B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
                     kailua_build::KAILUA_FPVM_KONA_ID,
                 )),
+                #[cfg(feature = "eigen")]
                 B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
                     kailua_build::KAILUA_FPVM_HOKULEA_ID,
                 )),
+                #[cfg(feature = "celestia")]
                 B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(
                     kailua_build::KAILUA_FPVM_HANA_ID,
                 )),
@@ -158,7 +167,7 @@ impl SyncAgent {
         Ok(Self {
             provider,
             telemetry,
-            config,
+            config: rollup_config,
             deployment,
             db,
             cursor,

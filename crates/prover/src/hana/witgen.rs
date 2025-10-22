@@ -25,7 +25,7 @@ use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
-use kona_derive::prelude::BlobProvider;
+use kona_derive::BlobProvider;
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
 use std::fmt::Debug;

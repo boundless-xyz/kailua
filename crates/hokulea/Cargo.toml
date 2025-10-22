@@ -1,6 +1,6 @@
 [package]
 name = "kailua-hokulea"
-version = "1.1.0"
+version = "1.1.2"
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.86"
@@ -13,17 +13,21 @@ categories = ["cryptography", "cryptography::cryptocurrencies"]
 [dependencies]
 kailua-kona.workspace = true
 
-serde_json.workspace = true
-
 alloy-primitives.workspace = true
+bincode.workspace = true
 
 kona-derive.workspace = true
 kona-genesis.workspace = true
 kona-preimage.workspace = true
 kona-proof.workspace = true
 
-risc0-zkvm.workspace = true
+risc0-steel.workspace = true
 
+canoe-bindings.workspace = true
+canoe-provider.workspace = true
+canoe-verifier.workspace = true
+canoe-verifier-address-fetcher.workspace = true
 eigenda-cert.workspace = true
 hokulea-eigenda.workspace = true
 hokulea-proof.workspace = true
+hokulea-zkvm-verification.workspace = true

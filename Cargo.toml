@@ -1,5 +1,5 @@
 [workspace.package]
-version = "1.1.1"
+version = "1.1.2"
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.86"
@@ -43,7 +43,7 @@ rand = "0.9.2"
 rayon = "1.10.0"
 reqwest = { version = "0.12.12", features = ["json"] }
 rkyv = { version = "0.8.9", features = ["hashbrown-0_15", "std"] }
-rocksdb = "0.23.0"
+rocksdb = "0.24.0"
 serde = { version = "1.0", features = ["derive", "alloc", "std"] }
 serde_json = "1.0.127"
 spin = { version = "0.10.0", features = ["mutex"] }
@@ -60,21 +60,21 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Alloy
-alloy = { version = "1.0.9", default-features = false, features = ["json"] }
-alloy-consensus = { version = "1.0.9", default-features = false, features = ["serde"] }
-alloy-eips = { version = "1.0.9", default-features = false, features = ["kzg"] }
-alloy-evm = { version = "0.10.0", default-features = false, features = ["op"] }
-alloy-op-evm = { version = "0.10.0", default-features = false }
+alloy = { version = "1.0.38", default-features = false, features = ["json"] }
+alloy-consensus = { version = "1.0.38", default-features = false, features = ["serde"] }
+alloy-eips = { version = "1.0.38", default-features = false, features = ["kzg"] }
+alloy-evm = { version = "0.21.0", default-features = false, features = ["op"] }
+alloy-op-evm = { version = "0.21.0", default-features = false }
 alloy-rlp = "0.3.12"
 alloy-primitives = { version = "1.3.1", default-features = false, features = ["map-hashbrown"] }
-alloy-rpc-types-beacon = "1.0.9"
-alloy-rpc-types-engine = { version = "1.0.9", default-features = false }
-alloy-trie = { version = "0.8.1", default-features = false, features = ["std", "ethereum"] }
+alloy-rpc-types-beacon = "1.0.38"
+alloy-rpc-types-engine = { version = "1.0.38", default-features = false }
+alloy-trie = { version = "0.9.1", default-features = false, features = ["std", "ethereum"] }
 
 # OP Alloy
-op-alloy-consensus = { version = "0.17.2", default-features = false, features = ["serde"] }
-op-alloy-rpc-types-engine = { version = "0.17.2", default-features = false, features = ["serde"] }
-op-alloy-network = { version = "0.17.2", default-features = false, features = ["serde"] }
+op-alloy-consensus = { version = "0.20.0", default-features = false, features = ["serde"] }
+op-alloy-rpc-types-engine = { version = "0.20.0", default-features = false, features = ["serde"] }
+op-alloy-network = { version = "0.20.0", default-features = false, features = ["serde"] }
 
 # Kailua
 kailua-build = { path = "build/risczero" }
@@ -88,39 +88,41 @@ kailua-rpc = { path = "crates/rpc" }
 kailua-sync = { path = "crates/sync" }
 kailua-validator = { path = "crates/validator" }
 
-# Kona git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2"
-kona-cli = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", default-features = false }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", default-features = false, features = ["serde"] }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
-kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", default-features = false, features = ["single"] }
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", features = ["serde"] }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", features = ["serde", "rkyv", "std"] }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
-kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
-kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
-kona-std-fpvm = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
+# Kona git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3"
+kona-cli = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", default-features = false }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", default-features = false, features = ["serde"] }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", default-features = false, features = ["single"] }
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", features = ["serde"] }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", features = ["serde", "rkyv", "std"] }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+kona-std-fpvm = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
 
-# Hokulea git = "https://github.com/Layr-Labs/hokulea", rev = "ed038f498a942f53f2d5218e26125aed7980f9cc"
-canoe-bindings = { git = "https://github.com/Layr-Labs/hokulea", rev = "ed038f498a942f53f2d5218e26125aed7980f9cc" }
-canoe-provider = { git = "https://github.com/Layr-Labs/hokulea", rev = "ed038f498a942f53f2d5218e26125aed7980f9cc" }
-canoe-steel-methods = { git = "https://github.com/Layr-Labs/hokulea", rev = "ed038f498a942f53f2d5218e26125aed7980f9cc" }
-eigenda-cert = { git = "https://github.com/Layr-Labs/hokulea", rev = "ed038f498a942f53f2d5218e26125aed7980f9cc" }
-hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", rev = "ed038f498a942f53f2d5218e26125aed7980f9cc", default-features = false }
-hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "ed038f498a942f53f2d5218e26125aed7980f9cc", default-features = false }
-hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "ed038f498a942f53f2d5218e26125aed7980f9cc", default-features = false }
-hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "ed038f498a942f53f2d5218e26125aed7980f9cc", default-features = false }
+# Hokulea git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764"
+canoe-bindings = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764" }
+canoe-provider = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764" }
+canoe-steel-methods = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764" }
+canoe-verifier = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764" }
+canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764" }
+eigenda-cert = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764" }
+hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764", default-features = false }
+hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764", default-features = false }
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764", default-features = false }
+hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764", default-features = false }
+hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764" }
 
-# Hana git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17"
-celestia-rpc = "0.11.3"
-celestia-types = "0.13.0"
-hana-blobstream = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17", default-features = false }
-hana-celestia = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17", default-features = false }
-hana-host = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17", default-features = false }
-hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17", default-features = false }
-
+# Hana git = "https://github.com/celestiaorg/hana", rev = "40f18eb59ccd1602f8788e64c735cbd5624c801d"
+celestia-rpc = "0.14.0"
+celestia-types = "0.16.0"
+hana-blobstream = { git = "https://github.com/theochap/hana", rev = "40f18eb59ccd1602f8788e64c735cbd5624c801d", default-features = false }
+hana-celestia = { git = "https://github.com/theochap/hana", rev = "40f18eb59ccd1602f8788e64c735cbd5624c801d", default-features = false }
+hana-host = { git = "https://github.com/theochap/hana", rev = "40f18eb59ccd1602f8788e64c735cbd5624c801d", default-features = false }
+hana-oracle = { git = "https://github.com/theochap/hana", rev = "40f18eb59ccd1602f8788e64c735cbd5624c801d", default-features = false }
 
 # Bonsai
 bonsai-sdk = { version = "1.4.0", features = ["non_blocking"] }
@@ -149,21 +151,3 @@ overflow-checks = true
 [profile.release.build-override]
 codegen-units = 1
 opt-level = 3
-
-[patch."https://github.com/op-rs/kona"]
-kona-cli = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-client = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-derive = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-driver = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-executor = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-genesis = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-host = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-interop = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-mpt = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-preimage = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-proof = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-protocol = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-providers-alloy = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-registry = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-std-fpvm = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }
-kona-std-fpvm-proc = { git = "https://github.com/boundless-xyz/kona", branch = "derive" }

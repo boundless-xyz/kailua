@@ -33,3 +33,5 @@ rebuild-fpvm = [
 rebuild-da = [
     "dep:canoe-steel-methods",
 ]
+eigen = []
+celestia = []

@@ -77,19 +77,7 @@ pub async fn run_native_client(
     let use_hokulea = args.proving.use_hokulea();
     let use_hana = args.proving.use_hana();
     let server_task = match (use_hokulea, use_hana) {
-        (false, false) => start_server(
-            args.kona.clone(),
-            create_split_kv_store(&args.kona, disk_kv_store)
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
-            hint.host,
-            preimage.host,
-            kona_host::single::SingleChainHintHandler,
-            retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await).await,
-            args.kona.is_offline(),
-            HintType::L2PayloadWitness,
-        )
-        .await
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
+        #[cfg(feature = "eigen")]
         (true, _) => {
             let cfg = hokulea_host_bin::cfg::SingleChainHostWithEigenDA {
                 kona_cfg: args.kona.clone(),
@@ -115,6 +103,7 @@ pub async fn run_native_client(
             .await
             .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
         }
+        #[cfg(feature = "celestia")]
         (_, true) => {
             let cfg = hana_host::celestia::CelestiaChainHost {
                 single_host: args.kona.clone(),
@@ -139,6 +128,19 @@ pub async fn run_native_client(
             .await
             .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
         }
+        _ => start_server(
+            args.kona.clone(),
+            create_split_kv_store(&args.kona, disk_kv_store)
+                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
+            hint.host,
+            preimage.host,
+            kona_host::single::SingleChainHintHandler,
+            retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await).await,
+            args.kona.is_offline(),
+            HintType::L2PayloadWitness,
+        )
+        .await
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
     };
 
     // Start the client program in a separate thread
@@ -172,7 +174,7 @@ pub async fn run_native_client(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn start_server<
-    C,
+    C: Channel + Send + Sync + 'static,
     B: OnlineHostBackendCfg + Send + Sync + 'static,
     H: HintHandler<Cfg = B> + Send + Sync + 'static,
 >(
@@ -184,10 +186,7 @@ pub async fn start_server<
     providers: B::Providers,
     is_offline: bool,
     proactive_hint: B::HintType,
-) -> anyhow::Result<JoinHandle<Result<(), PreimageServerError>>>
-where
-    C: Channel + Send + Sync + 'static,
-{
+) -> anyhow::Result<JoinHandle<Result<(), PreimageServerError>>> {
     let task_handle = if is_offline {
         task::spawn(
             PreimageServer::new(

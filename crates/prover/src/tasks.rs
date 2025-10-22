@@ -32,7 +32,7 @@ use kailua_kona::precondition::execution::exec_precondition_hash;
 use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::retry_res_ctx_timeout;
-use kona_genesis::RollupConfig;
+use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_proof::BootInfo;
 use kona_protocol::L2BlockInfo;
 use opentelemetry::trace::{TraceContextExt, Tracer};
@@ -49,6 +49,7 @@ use tracing::{error, info, warn};
 pub struct CachedTask {
     pub args: ProveArgs,
     pub rollup_config: RollupConfig,
+    pub l1_config: L1ChainConfig,
     pub disk_kv_store: Option<RWLKeyValueStore>,
     pub precondition: Precondition,
     pub proposal_data_hash: B256,
@@ -134,6 +135,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
                 result: compute_cached_proof(
                     cached_task.args,
                     cached_task.rollup_config,
+                    cached_task.l1_config,
                     cached_task.disk_kv_store,
                     cached_task.precondition,
                     cached_task.proposal_data_hash,
@@ -161,6 +163,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
 pub async fn compute_oneshot_task(
     args: ProveArgs,
     rollup_config: RollupConfig,
+    l1_config: L1ChainConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     precondition: Precondition,
     proposal_data_hash: B256,
@@ -179,6 +182,7 @@ pub async fn compute_oneshot_task(
     let cached_task = CachedTask {
         args,
         rollup_config,
+        l1_config,
         disk_kv_store,
         precondition,
         proposal_data_hash,
@@ -216,6 +220,7 @@ pub async fn compute_oneshot_task(
 pub async fn compute_fpvm_proof(
     mut args: ProveArgs,
     rollup_config: RollupConfig,
+    l1_config: L1ChainConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     mut precondition: Precondition,
     proposal_data_hash: B256,
@@ -282,6 +287,7 @@ pub async fn compute_fpvm_proof(
     let complete_proof_result = compute_oneshot_task(
         args.clone(),
         rollup_config.clone(),
+        l1_config.clone(),
         disk_kv_store.clone(),
         precondition,
         proposal_data_hash,
@@ -430,6 +436,7 @@ pub async fn compute_fpvm_proof(
                 let derivation_only_result = compute_oneshot_task(
                     args.clone(),
                     rollup_config.clone(),
+                    l1_config.clone(),
                     disk_kv_store.clone(),
                     Precondition {
                         derivation_cache: tail_derivation_cache
@@ -544,6 +551,7 @@ pub async fn compute_fpvm_proof(
         let provability_result = compute_oneshot_task(
             args.clone(),
             rollup_config.clone(),
+            l1_config.clone(),
             disk_kv_store.clone(),
             precondition,
             proposal_data_hash,
@@ -600,6 +608,7 @@ pub async fn compute_fpvm_proof(
                     cached_task: create_cached_execution_task(
                         job_args,
                         rollup_config.clone(),
+                        l1_config.clone(),
                         disk_kv_store.clone(),
                         &execution_cache,
                     ),
@@ -627,6 +636,7 @@ pub async fn compute_fpvm_proof(
                 cached_task: CachedTask {
                     args,
                     rollup_config: rollup_config.clone(),
+                    l1_config: l1_config.clone(),
                     disk_kv_store: disk_kv_store.clone(),
                     precondition: Precondition {
                         proposal_blobs: precondition.proposal_blobs,
@@ -735,6 +745,7 @@ pub async fn compute_fpvm_proof(
                 cached_task: create_cached_execution_task(
                     lower_job_args,
                     rollup_config.clone(),
+                    l1_config.clone(),
                     disk_kv_store.clone(),
                     &execution_cache,
                 ),
@@ -752,6 +763,7 @@ pub async fn compute_fpvm_proof(
                 cached_task: create_cached_execution_task(
                     upper_job_args,
                     rollup_config.clone(),
+                    l1_config.clone(),
                     disk_kv_store.clone(),
                     &execution_cache,
                 ),
@@ -831,6 +843,7 @@ pub async fn compute_fpvm_proof(
         compute_oneshot_task(
             args,
             rollup_config,
+            l1_config,
             disk_kv_store,
             precondition,
             proposal_data_hash,
@@ -852,6 +865,7 @@ pub async fn compute_fpvm_proof(
 pub fn create_cached_execution_task(
     args: ProveArgs,
     rollup_config: RollupConfig,
+    l1_config: L1ChainConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     execution_cache: &[Arc<Execution>],
 ) -> CachedTask {
@@ -892,6 +906,7 @@ pub fn create_cached_execution_task(
     CachedTask {
         args,
         rollup_config,
+        l1_config,
         disk_kv_store,
         precondition,
         proposal_data_hash: B256::ZERO,
@@ -912,6 +927,7 @@ pub fn create_cached_execution_task(
 pub async fn compute_cached_proof(
     mut args: ProveArgs,
     rollup_config: RollupConfig,
+    l1_config: L1ChainConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     precondition: Precondition,
     proposal_data_hash: B256,
@@ -931,8 +947,9 @@ pub async fn compute_cached_proof(
         agreed_l2_output_root: args.kona.agreed_l2_output_root,
         claimed_l2_output_root: args.kona.claimed_l2_output_root,
         claimed_l2_block_number: args.kona.claimed_l2_block_number,
-        chain_id: rollup_config.l2_chain_id,
+        chain_id: rollup_config.l2_chain_id.id(),
         rollup_config,
+        l1_config,
     };
     // Choose image id
     let image_id = args.proving.image_id();

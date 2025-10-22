@@ -41,6 +41,7 @@ bonsai-sdk.workspace = true
 boundless-market.workspace = true
 
 kona-cli.workspace = true
+kona-registry.workspace = true
 
 risc0-circuit-recursion.workspace = true
 risc0-zkvm.workspace = true
@@ -76,4 +77,18 @@ rebuild-fpvm = [
     "kailua-proposer/rebuild-fpvm",
     "kailua-prover/rebuild-fpvm",
     "kailua-sync/rebuild-fpvm",
+]
+eigen = [
+    "kailua-build/eigen",
+    "kailua-prover/eigen",
+    "kailua-rpc/eigen",
+    "kailua-sync/eigen",
+    "kailua-validator/eigen",
+]
+celestia = [
+    "kailua-build/celestia",
+    "kailua-prover/celestia",
+    "kailua-rpc/celestia",
+    "kailua-sync/celestia",
+    "kailua-validator/celestia",
 ]

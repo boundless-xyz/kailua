@@ -34,3 +34,9 @@ devnet = [
 rebuild-fpvm = [
     "kailua-sync/rebuild-fpvm"
 ]
+eigen = [
+    "kailua-sync/eigen"
+]
+celestia = [
+    "kailua-sync/celestia"
+]

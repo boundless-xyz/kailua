@@ -39,7 +39,7 @@ pub fn driver_file_name<A: NoUninit>(
             boot_info.agreed_l2_output_root.as_slice(),
             boot_info.claimed_l2_output_root.as_slice(),
             boot_info.claimed_l2_block_number.to_be_bytes().as_slice(),
-            config_hash(&boot_info.rollup_config).as_slice(),
+            config_hash(&boot_info.rollup_config, &boot_info.l1_config).as_slice(),
             precondition.proposal_blobs.as_slice(),
             precondition.derivation_cache.as_slice(),
             precondition.execution_trace.as_slice(),

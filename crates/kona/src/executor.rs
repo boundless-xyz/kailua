@@ -328,6 +328,7 @@ pub mod tests {
             no_tx_pool: None,
             gas_limit: None,
             eip_1559_params: None,
+            min_base_fee: None,
         };
 
         test_safe_default_err(&attributes, |a| {
@@ -372,6 +373,7 @@ pub mod tests {
                         no_tx_pool: Some(true),
                         gas_limit: Some(u64::MAX / 2),
                         eip_1559_params: Some(B64::new([0xb0; 8])),
+                        min_base_fee: Some(u64::MAX - 1),
                     },
                     artifacts,
                     claimed_output: keccak256(format!("output {}", i + 1)),

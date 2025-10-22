@@ -15,4 +15,3 @@
 pub mod canoe;
 pub mod da;
 pub mod stitching;
-pub mod witness;

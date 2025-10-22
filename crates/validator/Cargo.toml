@@ -29,8 +29,9 @@ kailua-contracts.workspace = true
 kailua-prover.workspace = true
 kailua-sync.workspace = true
 
-kona-protocol.workspace = true
 kona-host.workspace = true
+kona-protocol.workspace = true
+kona-registry.workspace = true
 
 opentelemetry.workspace = true
 
@@ -62,4 +63,14 @@ rebuild-fpvm = [
     "kailua-build/rebuild-fpvm",
     "kailua-prover/rebuild-fpvm",
     "kailua-sync/rebuild-fpvm"
+]
+eigen = [
+    "kailua-build/eigen",
+    "kailua-prover/eigen",
+    "kailua-sync/eigen"
+]
+celestia = [
+    "kailua-build/celestia",
+    "kailua-prover/celestia",
+    "kailua-sync/eigen"
 ]

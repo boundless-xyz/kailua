@@ -15,3 +15,6 @@ alloy = { workspace = true, features = ["contract", "rlp", "json", "sol-types"]}
 
 [build-dependencies]
 foundry-compilers.workspace = true
+
+[features]
+skip-solc = []

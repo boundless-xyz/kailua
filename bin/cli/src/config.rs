@@ -16,10 +16,6 @@ use alloy::primitives::address;
 use alloy::providers::ProviderBuilder;
 use anyhow::Context;
 use human_bytes::human_bytes;
-use kailua_build::{
-    KAILUA_DA_HOKULEA_ELF, KAILUA_DA_HOKULEA_ID, KAILUA_FPVM_HANA_ELF, KAILUA_FPVM_HANA_ID,
-    KAILUA_FPVM_HOKULEA_ELF, KAILUA_FPVM_HOKULEA_ID, KAILUA_FPVM_KONA_ELF, KAILUA_FPVM_KONA_ID,
-};
 use kailua_contracts::SystemConfig;
 use kailua_kona::config::config_hash;
 use kailua_sync::provider::optimism::fetch_rollup_config;
@@ -33,7 +29,7 @@ use opentelemetry::trace::{FutureExt, Status, TraceContextExt, Tracer};
 use risc0_circuit_recursion::control_id::BN254_IDENTITY_CONTROL_ID;
 use risc0_zkvm::sha::Digest;
 use risc0_zkvm::{compute_image_id, ALLOWED_CONTROL_ROOT};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Inspect the configuration of a running rollup
 #[derive(clap::Args, Debug, Clone)]
@@ -61,7 +57,7 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("config"));
 
-    let config = await_tel!(
+    let rollup_config = await_tel!(
         context,
         fetch_rollup_config(
             &args.op_node_url,
@@ -71,12 +67,21 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
         )
     )
     .context("fetch_rollup_config")?;
-    debug!("{config:?}");
-    let rollup_config_hash = config_hash(&config);
+    debug!("{rollup_config:?}");
+    let l1_config = kona_registry::L1_CONFIGS
+        .get(&rollup_config.l1_chain_id)
+        .cloned()
+        .unwrap_or_else(|| {
+            warn!("Loading default L1ChainConfig.");
+            Default::default()
+        });
+    debug!("{l1_config:?}");
 
-    if let Some(registry_config) = load_registry_config(config.l2_chain_id) {
+    let rollup_config_hash = config_hash(&rollup_config, &l1_config);
+
+    if let Some(registry_config) = load_registry_config(rollup_config.l2_chain_id.id()) {
         debug!("{registry_config:?}");
-        let registry_config_hash = config_hash(&registry_config);
+        let registry_config_hash = config_hash(&registry_config, &l1_config);
         if rollup_config_hash != registry_config_hash {
             eprintln!("LOADED ROLLUP CONFIG DOES NOT MATCH REGISTRY ROLLUP CONFIG.");
         }
@@ -86,25 +91,23 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     println!("RISC0_VERSION: {}", risc0_zkvm::get_version()?);
 
     // report image ids
+    #[allow(clippy::single_element_loop)]
     for (image_id, elf, label) in [
         (
-            KAILUA_FPVM_KONA_ID,
-            KAILUA_FPVM_KONA_ELF,
+            kailua_build::KAILUA_FPVM_KONA_ID,
+            kailua_build::KAILUA_FPVM_KONA_ELF,
             "KAILUA_FPVM_KONA",
         ),
+        #[cfg(feature = "eigen")]
         (
-            KAILUA_FPVM_HOKULEA_ID,
-            KAILUA_FPVM_HOKULEA_ELF,
+            kailua_build::KAILUA_FPVM_HOKULEA_ID,
+            kailua_build::KAILUA_FPVM_HOKULEA_ELF,
             "KAILUA_FPVM_HOKULEA",
         ),
+        #[cfg(feature = "celestia")]
         (
-            KAILUA_DA_HOKULEA_ID,
-            KAILUA_DA_HOKULEA_ELF,
-            "KAILUA_DA_HOKULEA",
-        ),
-        (
-            KAILUA_FPVM_HANA_ID,
-            KAILUA_FPVM_HANA_ELF,
+            kailua_build::KAILUA_FPVM_HANA_ID,
+            kailua_build::KAILUA_FPVM_HANA_ELF,
             "KAILUA_FPVM_HANA",
         ),
     ] {
@@ -128,7 +131,7 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
         ),
     );
     // report verifier address
-    let verifier_address = match config.l1_chain_id {
+    let verifier_address = match rollup_config.l1_chain_id {
         // eth
         1 => Some(address!("8EaB2D97Dfce405A1692a21b3ff3A172d593D319")),
         11155111 => Some(address!("925d8331ddc0a1F0d96E68CF073DFE1d92b69187")),
@@ -161,9 +164,9 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     );
 
     // report genesis time
-    println!("GENESIS_TIMESTAMP: {}", config.genesis.l2_time);
+    println!("GENESIS_TIMESTAMP: {}", rollup_config.genesis.l2_time);
     // report inter-block time
-    println!("BLOCK_TIME: {}", config.block_time);
+    println!("BLOCK_TIME: {}", rollup_config.block_time);
     // report rollup config hash
     println!(
         "ROLLUP_CONFIG_HASH: 0x{}",
@@ -172,7 +175,8 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     // load system config
     let eth_rpc_provider =
         ProviderBuilder::new().connect_http(args.eth_rpc_url.as_str().try_into()?);
-    let system_config = SystemConfig::new(config.l1_system_config_address, &eth_rpc_provider);
+    let system_config =
+        SystemConfig::new(rollup_config.l1_system_config_address, &eth_rpc_provider);
     debug!("{system_config:?}");
     let portal_address = system_config
         .optimismPortal()

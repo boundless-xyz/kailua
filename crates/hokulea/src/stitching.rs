@@ -14,18 +14,19 @@
 
 use crate::canoe::KailuaCanoeVerifier;
 use crate::da::EigenDADataSourceProvider;
-use crate::witness::{da_witness_postcondition, da_witness_precondition};
 use alloy_primitives::aliases::B256;
 use alloy_primitives::Address;
-use hokulea_proof::eigenda_blob_witness::EigenDABlobWitnessData;
-use hokulea_proof::preloaded_eigenda_provider::PreloadedEigenDABlobProvider;
+use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
+use hokulea_proof::eigenda_witness::EigenDAWitness;
+use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
+use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::precondition::Precondition;
-use kona_derive::prelude::BlobProvider;
+use kona_derive::BlobProvider;
 use kona_preimage::CommsClient;
 use kona_proof::boot::BootInfo;
 use kona_proof::FlushableCache;
@@ -34,21 +35,17 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct HokuleaStitchingClient {
-    pub eigen_da_witness: EigenDABlobWitnessData,
-    pub canoe_image_id: B256,
+    pub eigen_da_witness: EigenDAWitness,
 }
 
 impl HokuleaStitchingClient {
-    pub fn new(eigen_da_witness: EigenDABlobWitnessData, canoe_image_id: B256) -> Self {
-        Self {
-            eigen_da_witness,
-            canoe_image_id,
-        }
+    pub fn new(eigen_da_witness: EigenDAWitness) -> Self {
+        Self { eigen_da_witness }
     }
 }
 
 impl<
-        O: CommsClient + FlushableCache + Send + Sync + Debug,
+        O: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
         B: BlobProvider + Send + Sync + Debug + Clone,
     > StitchingClient<O, B> for HokuleaStitchingClient
 {
@@ -69,15 +66,22 @@ impl<
     where
         <B as BlobProvider>::Error: Debug,
     {
-        let eigen_da_precondition = da_witness_precondition(&self.eigen_da_witness);
+        // Boot up eigenda verifier
+        let eigen_oracle = Arc::new(LocalOnceOracle::new(oracle.clone()));
+        let (eigen_verifier, boot) = KailuaCanoeVerifier::new(eigen_oracle.clone());
 
-        let eigen_da = PreloadedEigenDABlobProvider::from_witness(
-            self.eigen_da_witness,
-            KailuaCanoeVerifier(self.canoe_image_id.0),
-        );
-
-        let (boot, proof_journal, precondition) =
-            KonaStitchingClient(EigenDADataSourceProvider(eigen_da)).run_stitching_client(
+        // Run the stitching client with the EigenDA DASProvider
+        let eigen_stitching_client = KonaStitchingClient(EigenDADataSourceProvider(
+            kona_proof::block_on(eigenda_witness_to_preloaded_provider(
+                eigen_oracle,
+                eigen_verifier,
+                CanoeVerifierAddressFetcherDeployedByEigenLabs {},
+                self.eigen_da_witness,
+            ))
+            .expect("Failed to validate EigenDA Witness."),
+        ));
+        let (kona_boot_info, proof_journal, precondition) = eigen_stitching_client
+            .run_stitching_client(
                 precondition_validation_data_hash,
                 oracle,
                 stream,
@@ -90,9 +94,9 @@ impl<
                 stitched_preconditions,
                 stitched_boot_info,
             );
+        // Ensure boot record is the same for both oracles
+        assert_eq!(boot, kona_boot_info);
 
-        da_witness_postcondition(eigen_da_precondition, &boot);
-
-        (boot, proof_journal, precondition)
+        (kona_boot_info, proof_journal, precondition)
     }
 }

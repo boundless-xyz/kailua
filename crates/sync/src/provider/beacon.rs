@@ -16,7 +16,7 @@ use crate::{await_tel, retry_res_timeout};
 use alloy::consensus::{Blob, BlobTransactionSidecar};
 use alloy::eips::eip4844::kzg_to_versioned_hash;
 use alloy::primitives::B256;
-use alloy_rpc_types_beacon::sidecar::{BeaconBlobBundle, BlobData};
+use alloy_rpc_types_beacon::sidecar::{BeaconBlobBundle, BlobData, GetBlobsResponse};
 use anyhow::{bail, Context};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
@@ -124,9 +124,7 @@ impl BlobProvider {
             "BlobProvider::get",
             retry_res_timeout!(
                 self.timeout,
-                self.get::<BeaconBlobBundle>(&format!("eth/v1/beacon/blob_sidecars/{slot}"))
-                    .with_context(context.clone())
-                    .await
+                self.get_blobs(slot).with_context(context.clone()).await
             )
         );
 
@@ -139,6 +137,50 @@ impl BlobProvider {
         }
 
         bail!("Blob {blob_hash} @ {timestamp} not found in slot ({blob_count} blobs found)!");
+    }
+
+    pub async fn get_blobs(&self, slot: u64) -> anyhow::Result<Vec<BlobData>> {
+        let tracer = tracer("kailua");
+        let context =
+            opentelemetry::Context::current_with_span(tracer.start("BlobProvider::get_blobs"));
+
+        // Try the fusaka endpoint
+        if let Ok(result) = self
+            .get::<GetBlobsResponse>(&format!("eth/v1/beacon/blobs/{slot}"))
+            .with_context(context.clone())
+            .await
+        {
+            return Ok(result
+                .data
+                .into_iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    let c_kzg_blob = c_kzg::Blob::from_bytes(b.as_slice())
+                        .expect("c_kzg::Blob::from_bytes failed");
+                    let kzg_commitment = (*alloy::consensus::EnvKzgSettings::default()
+                        .get()
+                        .blob_to_kzg_commitment(&c_kzg_blob)
+                        .expect("blob_to_kzg_commitment failed")
+                        .to_bytes())
+                    .into();
+                    BlobData {
+                        index: i as u64,
+                        blob: Box::new(b),
+                        kzg_commitment,
+                        // the rest is unused
+                        kzg_proof: Default::default(),
+                        signed_block_header: Default::default(),
+                        kzg_commitment_inclusion_proof: vec![],
+                    }
+                })
+                .collect());
+        }
+
+        // Fallback to old endpoint
+        self.get::<BeaconBlobBundle>(&format!("eth/v1/beacon/blob_sidecars/{slot}"))
+            .with_context(context.clone())
+            .await
+            .map(|r| r.data)
     }
 }
 

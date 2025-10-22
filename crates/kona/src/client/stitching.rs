@@ -22,7 +22,7 @@ use crate::kona::OracleL1ChainProvider;
 use crate::precondition::Precondition;
 use alloy_primitives::{Address, B256};
 use anyhow::Context;
-use kona_derive::prelude::{BlobProvider, ChainProvider};
+use kona_derive::{BlobProvider, ChainProvider};
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
 use risc0_zkvm::sha::Digestible;
@@ -351,7 +351,7 @@ pub fn stitch_executions(
     stitched_executions: &Vec<Vec<Arc<Execution>>>,
     #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
 ) {
-    let config_hash = crate::config::config_hash(&boot.rollup_config);
+    let config_hash = crate::config::config_hash(&boot.rollup_config, &boot.l1_config);
     // When running an execution-only proof, we may only have one batch validated by the kailua client
     if boot.l1_head.is_zero() {
         assert_eq!(1, stitched_executions.len());
@@ -566,14 +566,29 @@ pub mod tests {
     use kona_proof::l1::OracleBlobProvider;
     use rayon::prelude::{IntoParallelIterator, ParallelIterator};
     use std::iter::repeat_n;
-    use tracing_subscriber::EnvFilter;
 
     fn setup() {
-        let _ = kona_cli::init_tracing_subscriber(1, None::<EnvFilter>);
+        let _ = kona_cli::LogConfig::new(kona_cli::LogArgs {
+            level: 1,
+            stdout_quiet: false,
+            stdout_format: Default::default(),
+            file_directory: None,
+            file_format: Default::default(),
+            file_rotation: Default::default(),
+        })
+        .init_tracing_subscriber(None);
     }
 
     fn teardown() {
-        let _ = kona_cli::init_tracing_subscriber(0, None::<EnvFilter>);
+        let _ = kona_cli::LogConfig::new(kona_cli::LogArgs {
+            level: 0,
+            stdout_quiet: false,
+            stdout_format: Default::default(),
+            file_directory: None,
+            file_format: Default::default(),
+            file_rotation: Default::default(),
+        })
+        .init_tracing_subscriber(None);
     }
 
     fn validate_proof_journal(
@@ -700,6 +715,7 @@ pub mod tests {
                 claimed_l2_block_number: ending_block_number,
                 chain_id: boot_info.chain_id,
                 rollup_config: boot_info.rollup_config.clone(),
+                l1_config: boot_info.l1_config.clone(),
             },
             precondition_validation_data.clone(),
             vec![],
@@ -726,6 +742,7 @@ pub mod tests {
                             claimed_l2_block_number: ending_block_number,
                             chain_id: boot_info.chain_id,
                             rollup_config: boot_info.rollup_config.clone(),
+                            l1_config: boot_info.l1_config.clone(),
                         },
                         precondition_validation_data.clone(),
                         vec![],
@@ -843,6 +860,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491250,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
             vec![],
@@ -873,6 +891,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491250,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
         )
@@ -899,6 +918,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
@@ -934,6 +954,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
@@ -965,6 +986,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             None,
             vec![],
@@ -993,6 +1015,7 @@ pub mod tests {
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
+                l1_config: Default::default(),
             },
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,

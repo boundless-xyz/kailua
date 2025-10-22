@@ -21,7 +21,6 @@ use crate::ProvingError;
 use alloy_primitives::B256;
 use anyhow::{anyhow, Context};
 use async_channel::Sender;
-use canoe_provider::CanoeProvider;
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::core::EthereumDataSourceProvider;
@@ -31,7 +30,6 @@ use kailua_kona::executor::Execution;
 use kailua_kona::oracle::vec::{PreimageVecEntry, VecOracle};
 use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
-use kona_derive::prelude::ChainProvider;
 use kona_preimage::{HintWriterClient, PreimageOracleClient};
 use kona_proof::l1::OracleBlobProvider;
 use kona_proof::{BootInfo, CachingOracle};
@@ -56,7 +54,7 @@ pub const ORACLE_LRU_SIZE: usize = 1024;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_proving_client<P, H>(
-    l1_node_address: Option<String>,
+    _l1_node_address: Option<String>,
     proving: ProvingArgs,
     boundless: BoundlessArgs,
     oracle_client: P,
@@ -97,40 +95,22 @@ where
         .await
         .map_err(ProvingError::OtherError)?;
     // Run witgen client to get correct BootInfo and Precondition
-    let (
-        _boot_info,
-        proof_journal,
-        updated_precondition,
-        traced_driver,
-        witness,
-        extra_frames,
-        extra_proofs,
-    ) = match (proving.use_hokulea(), proving.use_hana()) {
-        (false, false) => {
-            witgen::run_witgen_client(
-                B256::from(bytemuck::cast::<_, [u8; 32]>(
-                    kailua_build::KAILUA_FPVM_KONA_ID,
-                )),
-                preimage_oracle.clone(),
-                10 * 1024 * 1024, // default to 10MB chunks
-                blob_provider,
-                EthereumDataSourceProvider,
-                proving.payout_recipient_address.unwrap_or_default(),
-                proposal_data_hash,
-                execution_cache.clone(),
-                derivation_cache.clone(),
-                trace_derivation,
-                stitched_preconditions.clone(),
-                stitched_boot_info.clone(),
-            )
-            .await
-            .context("Failed to run kona vec witgen client.")
-            .map_err(ProvingError::OtherError)
-            .map(|(b, j, p, d, w)| (b, j, p, d, w, vec![], vec![]))?
-        }
-        (true, _) => {
-            let (boot_info, proof_journal, precondition, cached_driver, witness, mut da_witness) =
-                crate::hokulea::witgen::run_hokulea_witgen_client(
+    let (_boot_info, proof_journal, updated_precondition, traced_driver, witness, extra_frames) =
+        match (proving.use_hokulea(), proving.use_hana()) {
+            #[cfg(feature = "eigen")]
+            (true, _) => {
+                use canoe_provider::CanoeProvider;
+                use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcher;
+                use kona_derive::ChainProvider;
+
+                let (
+                    boot_info,
+                    proof_journal,
+                    precondition,
+                    cached_driver,
+                    witness,
+                    mut da_witness,
+                ) = crate::hokulea::witgen::run_hokulea_witgen_client(
                     preimage_oracle.clone(),
                     10 * 1024 * 1024, // default to 10MB chunks
                     blob_provider,
@@ -145,67 +125,102 @@ where
                 .await
                 .context("Failed to run hokulea vec witgen client.")
                 .map_err(ProvingError::OtherError)?;
-            // Generate Hokulea DA proofs
-            let canoe_provider = crate::hokulea::canoe::KailuaCanoeSteelProvider {
-                eth_rpc_url: l1_node_address.expect("Missing Hokulea L1 Node Provider"),
-                proving_args: proving.clone(),
-                boundless_args: boundless.clone(),
-            };
+                // Generate Hokulea DA proofs
+                let canoe_provider = crate::hokulea::canoe::KailuaCanoeSteelProvider {
+                    eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
+                    proving_args: proving.clone(),
+                    boundless_args: boundless.clone(),
+                };
 
-            // todo: concurrency via generic prover pool
-            let mut canoe_proofs = Vec::new();
-            for (commitment, validity) in &mut da_witness.validity {
-                if validity.canoe_proof.is_some() {
-                    continue;
-                }
-                let mut provider = kona_proof::l1::OracleL1ChainProvider::new(
-                    validity.l1_head_block_hash,
-                    preimage_oracle.clone(),
-                );
-                let l1_head_block = provider
-                    .header_by_hash(validity.l1_head_block_hash)
-                    .await
-                    .expect("Failed to get l1 head block for canoe");
-                // Call local/bonsai/boundless prover w/ receipt caching
-                let receipt = canoe_provider
-                    .create_cert_validity_proof(canoe_provider::CanoeInput {
-                        altda_commitment: commitment.clone(),
-                        claimed_validity: validity.claimed_validity,
-                        l1_head_block_hash: validity.l1_head_block_hash,
-                        l1_head_block_number: l1_head_block.number,
-                        l1_chain_id: validity.l1_chain_id,
-                    })
-                    .await
-                    .expect("Canoe proof creation failed");
-                // use manual recursion only when necessary
-                if matches!(receipt.inner, risc0_zkvm::InnerReceipt::Groth16(_)) {
-                    validity.canoe_proof = Some(
-                        serde_json::to_vec(&receipt).expect("Canoe proof serialization failed"),
+                let mut canoe_inputs = Vec::new();
+                for (commitment, validity) in &mut da_witness.validities {
+                    let mut provider = kona_proof::l1::OracleL1ChainProvider::new(
+                        validity.l1_head_block_hash,
+                        preimage_oracle.clone(),
                     );
-                } else {
-                    canoe_proofs.push(receipt);
+                    let l1_head_block = provider
+                        .header_by_hash(validity.l1_head_block_hash)
+                        .await
+                        .expect("Failed to get l1 head block for canoe");
+                    canoe_inputs.push(canoe_provider::CanoeInput {
+                    altda_commitment: commitment.clone(),
+                    claimed_validity: validity.claimed_validity,
+                    l1_head_block_hash: validity.l1_head_block_hash,
+                    l1_head_block_number: l1_head_block.number,
+                    l1_chain_id: validity.l1_chain_id,
+                    verifier_address: canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs {}.fetch_address(
+                        validity.l1_chain_id,
+                        &commitment.versioned_cert,
+                    )
+                        .map_err(|e| anyhow!(e))
+                        .map_err(ProvingError::OtherError)?,
+                });
                 }
-            }
-            // todo: sharding into separate frames
-            let eigen_da_frame = bincode::serialize(&da_witness)
-                .expect("Failed to serialize EigenDABlobWitnessData");
+                // Embed proof into witness
+                if let Some(proof) = canoe_provider
+                    .create_certs_validity_proof(canoe_inputs)
+                    .await
+                {
+                    let steel_proof = proof.map_err(ProvingError::OtherError)?;
+                    da_witness.canoe_proof_bytes = Some(
+                        bincode::serialize(&steel_proof).expect("Canoe proof serialization failed"),
+                    );
+                }
+                // encode witness
+                // todo: sharding into separate frames
+                let eigen_da_frame =
+                    bincode::serialize(&da_witness).expect("Failed to serialize EigenDAWitness");
 
-            (
-                boot_info,
-                proof_journal,
-                precondition,
-                cached_driver,
-                witness,
-                vec![eigen_da_frame],
-                canoe_proofs,
-            )
-        }
-        (_, true) => {
-            let (boot_info, proof_journal, precondition, cached_driver, witness, da_witness) =
-                crate::hana::witgen::run_hana_witgen_client::<_, _, VecOracle>(
+                (
+                    boot_info,
+                    proof_journal,
+                    precondition,
+                    cached_driver,
+                    witness,
+                    vec![eigen_da_frame],
+                )
+            }
+            #[cfg(feature = "celestia")]
+            (_, true) => {
+                let (boot_info, proof_journal, precondition, cached_driver, witness, da_witness) =
+                    crate::hana::witgen::run_hana_witgen_client::<_, _, VecOracle>(
+                        preimage_oracle.clone(),
+                        10 * 1024 * 1024, // default to 10MB chunks
+                        blob_provider,
+                        proving.payout_recipient_address.unwrap_or_default(),
+                        proposal_data_hash,
+                        execution_cache.clone(),
+                        derivation_cache.clone(),
+                        trace_derivation,
+                        stitched_preconditions.clone(),
+                        stitched_boot_info.clone(),
+                    )
+                    .await
+                    .context("Failed to run hana vec witgen client.")
+                    .map_err(ProvingError::OtherError)?;
+                // serialize celestia frame (todo: sharding)
+                let celestia_da_frame = rkyv::to_bytes::<rkyv::rancor::Error>(&da_witness)
+                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+                    .to_vec();
+
+                (
+                    boot_info,
+                    proof_journal,
+                    precondition,
+                    cached_driver,
+                    witness,
+                    vec![celestia_da_frame],
+                )
+            }
+            _ => {
+                witgen::run_witgen_client(
+                    B256::from(bytemuck::cast::<_, [u8; 32]>(
+                        kailua_build::KAILUA_FPVM_KONA_ID,
+                    )),
                     preimage_oracle.clone(),
                     10 * 1024 * 1024, // default to 10MB chunks
                     blob_provider,
+                    EthereumDataSourceProvider,
                     proving.payout_recipient_address.unwrap_or_default(),
                     proposal_data_hash,
                     execution_cache.clone(),
@@ -215,24 +230,11 @@ where
                     stitched_boot_info.clone(),
                 )
                 .await
-                .context("Failed to run hana vec witgen client.")
-                .map_err(ProvingError::OtherError)?;
-            // serialize celestia frame (todo: sharding)
-            let celestia_da_frame = rkyv::to_bytes::<rkyv::rancor::Error>(&da_witness)
-                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-                .to_vec();
-
-            (
-                boot_info,
-                proof_journal,
-                precondition,
-                cached_driver,
-                witness,
-                vec![celestia_da_frame],
-                vec![],
-            )
-        }
-    };
+                .context("Failed to run kona vec witgen client.")
+                .map_err(ProvingError::OtherError)
+                .map(|(b, j, p, d, w)| (b, j, p, d, w, vec![]))?
+            }
+        };
     drop(witgen_permit);
 
     // Commit derivation trace to driver file
@@ -324,7 +326,7 @@ where
         Journal::from(&proof_journal),
         vec![],
         witness_frames,
-        [stitched_proofs, extra_proofs].concat(),
+        stitched_proofs,
         prove_snark,
     )
     .await?;

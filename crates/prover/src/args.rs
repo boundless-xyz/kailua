@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::hana::args::HanaArgs;
-use crate::hokulea::args::HokuleaArgs;
 use crate::risczero::boundless::BoundlessArgs;
 use alloy_primitives::{Address, B256};
 use clap::Parser;
@@ -75,9 +73,11 @@ pub struct ProvingArgs {
     pub clear_cache_data: bool,
 
     #[clap(flatten)]
-    pub hokulea: HokuleaArgs,
+    #[cfg(feature = "eigen")]
+    pub hokulea: crate::hokulea::args::HokuleaArgs,
     #[clap(flatten)]
-    pub hana: HanaArgs,
+    #[cfg(feature = "celestia")]
+    pub hana: crate::hana::args::HanaArgs,
 }
 
 impl ProvingArgs {
@@ -114,8 +114,10 @@ impl ProvingArgs {
             ]);
         }
         // Hokulea
+        #[cfg(feature = "eigen")]
         proving_args.extend(self.hokulea.to_arg_vec());
         // Hana
+        #[cfg(feature = "celestia")]
         proving_args.extend(self.hana.to_arg_vec());
         // Return
         proving_args
@@ -126,31 +128,49 @@ impl ProvingArgs {
     }
 
     pub fn use_hokulea(&self) -> bool {
-        self.hokulea.is_set()
+        #[cfg(feature = "eigen")]
+        {
+            self.hokulea.is_set()
+        }
+        #[cfg(not(feature = "eigen"))]
+        false
     }
 
     pub fn use_hana(&self) -> bool {
-        !self.hokulea.is_set() && self.hana.is_set()
+        #[cfg(feature = "celestia")]
+        {
+            !self.use_hokulea() && self.hana.is_set()
+        }
+        #[cfg(not(feature = "celestia"))]
+        false
     }
 
     pub fn image_id(&self) -> [u32; 8] {
+        #[cfg(feature = "eigen")]
         if self.use_hokulea() {
-            kailua_build::KAILUA_FPVM_HOKULEA_ID
-        } else if self.use_hana() {
-            kailua_build::KAILUA_FPVM_HANA_ID
-        } else {
-            kailua_build::KAILUA_FPVM_KONA_ID
+            return kailua_build::KAILUA_FPVM_HOKULEA_ID;
         }
+
+        #[cfg(feature = "celestia")]
+        if self.use_hana() {
+            return kailua_build::KAILUA_FPVM_HANA_ID;
+        }
+
+        kailua_build::KAILUA_FPVM_KONA_ID
     }
 
     pub fn elf(&self) -> &'static [u8] {
+        #[cfg(feature = "eigen")]
         if self.use_hokulea() {
-            kailua_build::KAILUA_FPVM_HOKULEA_ELF
-        } else if self.use_hana() {
-            kailua_build::KAILUA_FPVM_HANA_ELF
-        } else {
-            kailua_build::KAILUA_FPVM_KONA_ELF
+            return kailua_build::KAILUA_FPVM_HOKULEA_ELF;
         }
+
+        #[cfg(feature = "celestia")]
+        if self.use_hana() {
+            return kailua_build::KAILUA_FPVM_HANA_ELF;
+        }
+
+        kailua_build::KAILUA_FPVM_KONA_ELF
     }
 
     pub fn image(&self) -> ([u32; 8], &'static [u8]) {

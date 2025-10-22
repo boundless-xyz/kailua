@@ -29,7 +29,7 @@ use kailua_kona::blobs::hash_to_fe;
 use kailua_sync::agent::{SyncAgent, FINAL_L2_BLOCK_RESOLVED};
 use kailua_sync::proposal::Proposal;
 use kailua_sync::stall::Stall;
-use kailua_sync::transact::provider::SafeProvider;
+use kailua_sync::transact::provider::KailuaProvider;
 use kailua_sync::transact::rpc::get_block;
 use kailua_sync::transact::Transact;
 use kailua_sync::{await_tel, await_tel_res, retry_res_ctx_timeout, KAILUA_GAME_TYPE};
@@ -76,11 +76,12 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
         args.proposer_signer.wallet(Some(agent.config.l1_chain_id))
     )?;
     let proposer_address = proposer_wallet.default_signer().address();
-    let proposer_provider = SafeProvider::new(
+    let proposer_provider = KailuaProvider::new(
         args.txn_args
             .premium_provider::<Ethereum>()
             .wallet(&proposer_wallet)
             .connect_http(args.sync.provider.eth_rpc_url.as_str().try_into()?),
+        args.txn_args.eip_7594,
     );
     info!("Proposer address: {proposer_address}");
 

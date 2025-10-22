@@ -43,6 +43,9 @@ pub struct TransactArgs {
     /// Blob Gas Fee Premium
     #[clap(long, env, required = false, default_value_t = 25)]
     pub blob_gas_premium: u128,
+    /// Whether to EIP-7594 to EIP-4844 transactions
+    #[clap(long, env, required = false, default_value_t = false)]
+    pub eip_7594: bool,
 }
 
 impl TransactArgs {
