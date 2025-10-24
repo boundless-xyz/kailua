@@ -110,7 +110,7 @@ contract KailuaVerifier {
         if (provingTime == 0 || proposalPermits[0].timestamp + PERMIT_DURATION.raw() < provingTime) {
             return address(0x0);
         }
-        // Return the successful sool beneficiary of the locked fault proof reward
+        // Return the successful sole beneficiary of the locked fault proof reward
         return proposalPermits[0].recipient;
     }
 
@@ -141,6 +141,12 @@ contract KailuaVerifier {
         return (numExpiredPermits, expiredCollateral, totalPermits - numExpiredPermits);
     }
 
+    /// @notice Returns the collateral required to acquire a fault proof permit
+    function faultProofPermitBond(IKailuaTreasury treasury) public view returns (uint256 bond) {
+        bond = (treasury.participationBond() * 2 * treasury.ELIMINATION_SPLIT_PROVER_NUM())
+            / treasury.ELIMINATION_SPLIT_DENOM();
+    }
+
     /// @notice Locks the right to submit a fault proof for a given proposal signature
     /// @dev Do not call this function to acquire locks for faults that will not lead to elimination.
     function acquireFaultProofPermit(
@@ -155,11 +161,7 @@ contract KailuaVerifier {
         }
         // INVARIANT: The collateral submitted for the permit covers two times the proving reward
         IKailuaTreasury treasury = proposalParent.KAILUA_TREASURY();
-        if (
-            msg.value
-                < (treasury.participationBond() * 2 * treasury.ELIMINATION_SPLIT_PROVER_NUM())
-                    / treasury.ELIMINATION_SPLIT_DENOM()
-        ) {
+        if (msg.value < faultProofPermitBond(treasury)) {
             revert IncorrectBondAmount();
         }
         // INVARIANT: There are exactly numExpiredPermits expired permits as of block.timestamp
@@ -209,9 +211,11 @@ contract KailuaVerifier {
         }
         // Calculate total payout
         uint256 payout = expiredCollateral / numActivePermits;
+        // Add in recipient's own deposited collateral
         if (permitIndex > 0) {
-            // Add in recipient's own deposited collateral
             payout += permit.aggregateCollateral - faultProofPermits[permitKey][permitIndex - 1].aggregateCollateral;
+        } else {
+            payout += permit.aggregateCollateral;
         }
         // Pay out recipient
         permit.released = true;
