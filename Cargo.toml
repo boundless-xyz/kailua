@@ -1,5 +1,5 @@
 [workspace.package]
-version = "1.0.6"
+version = "1.0.7"
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.86"
@@ -86,20 +86,20 @@ kailua-rpc = { path = "crates/rpc" }
 kailua-sync = { path = "crates/sync" }
 kailua-validator = { path = "crates/validator" }
 
-# Kona git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3"
-kona-cli = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", default-features = false }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", default-features = false, features = ["serde"] }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
-kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", default-features = false, features = ["single"] }
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", features = ["serde"] }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3", features = ["serde", "rkyv", "std"] }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
-kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
-kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
-kona-std-fpvm = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.3" }
+# Kona git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6"
+kona-cli = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6", default-features = false }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6", default-features = false, features = ["serde"] }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6" }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6" }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6", default-features = false, features = ["single"] }
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6", features = ["serde"] }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6", features = ["serde", "rkyv", "std"] }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6" }
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6" }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6" }
+kona-std-fpvm = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.1.6" }
 
 # Bonsai
 bonsai-sdk = { version = "1.4.0", features = ["non_blocking"] }
