@@ -2735,7 +2735,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-fpvm-hokulea"
-version = "1.1.2"
+version = "1.1.3"
 dependencies = [
  "alloy-primitives",
  "bincode",
@@ -2751,7 +2751,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-hokulea"
-version = "1.1.2"
+version = "1.1.3"
 dependencies = [
  "alloy-primitives",
  "bincode",
@@ -2773,7 +2773,7 @@ dependencies = [
 
 [[package]]
 name = "kailua-kona"
-version = "1.1.2"
+version = "1.1.3"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
