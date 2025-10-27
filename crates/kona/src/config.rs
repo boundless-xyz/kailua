@@ -12,9 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use alloy_consensus::private::alloy_serde::OtherFields;
+use alloy_eips::eip7840::BlobParams;
 use kona_genesis::{AltDAConfig, L1ChainConfig, RollupConfig, SystemConfig};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
+use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::ops::Deref;
 
 /// Returns a value based on the provided `Option` and a default value, with safety checks.
 ///
@@ -363,12 +367,116 @@ pub fn rollup_config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
     digest.as_bytes().try_into().expect("infallible")
 }
 
+pub fn extra_fields_hash(extra_fields: &OtherFields) -> [u8; 32] {
+    let extra_fields_bytes = extra_fields
+        .deref()
+        .iter()
+        .map(|(k, v)| {
+            [
+                SHA2::hash_bytes(v.to_string().as_bytes()).as_bytes(),
+                k.to_lowercase().as_bytes(),
+            ]
+            .concat()
+        })
+        .collect::<Vec<_>>()
+        .concat();
+    let digest = SHA2::hash_bytes(extra_fields_bytes.as_slice());
+    digest.as_bytes().try_into().expect("infallible")
+}
+
+pub fn blob_params_hash(blob_params: &BlobParams) -> [u8; 32] {
+    let blob_params_bytes = [
+        blob_params.target_blob_count.to_be_bytes().as_slice(),
+        blob_params.max_blob_count.to_be_bytes().as_slice(),
+        blob_params.update_fraction.to_be_bytes().as_slice(),
+        blob_params.min_blob_fee.to_be_bytes().as_slice(),
+        blob_params.max_blobs_per_tx.to_be_bytes().as_slice(),
+        blob_params.blob_base_cost.to_be_bytes().as_slice(),
+    ]
+    .concat();
+    let digest = SHA2::hash_bytes(blob_params_bytes.as_slice());
+    digest.as_bytes().try_into().expect("infallible")
+}
+
+pub fn blob_schedule_hash(blob_schedule: &BTreeMap<String, BlobParams>) -> [u8; 32] {
+    let blob_schedule_bytes = blob_schedule
+        .iter()
+        .map(|(k, v)| [blob_params_hash(v).as_slice(), k.to_lowercase().as_bytes()].concat())
+        .collect::<Vec<_>>()
+        .concat();
+    let digest = SHA2::hash_bytes(blob_schedule_bytes.as_slice());
+    digest.as_bytes().try_into().expect("infallible")
+}
+
 pub fn l1_config_hash(l1_config: &L1ChainConfig) -> [u8; 32] {
     // these are the only fields relevant for kona execution flow
     let l1_config_bytes = [
         l1_config.chain_id.to_be_bytes().as_slice(),
+        opt_byte_arr(l1_config.homestead_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.dao_fork_block.map(|t| t.to_be_bytes())).as_slice(),
+        &[l1_config.dao_fork_support as u8],
+        opt_byte_arr(l1_config.eip150_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.eip155_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.eip158_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.byzantium_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.constantinople_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.petersburg_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.istanbul_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.muir_glacier_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.berlin_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.london_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.arrow_glacier_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.gray_glacier_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.merge_netsplit_block.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.shanghai_time.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.cancun_time.map(|t| t.to_be_bytes())).as_slice(),
         opt_byte_arr(l1_config.prague_time.map(|t| t.to_be_bytes())).as_slice(),
         opt_byte_arr(l1_config.osaka_time.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.bpo1_time.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.bpo2_time.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.bpo3_time.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.bpo4_time.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.bpo5_time.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(
+            l1_config
+                .terminal_total_difficulty
+                .map(|t| t.to_be_bytes::<32>()),
+        )
+        .as_slice(),
+        &[l1_config.terminal_total_difficulty_passed as u8],
+        // [EthashConfig] is empty so we just distinguish its existence for completeness
+        &[l1_config.ethash.is_some() as u8],
+        opt_byte_arr(
+            l1_config
+                .clique
+                .and_then(|c| c.period)
+                .map(|t| t.to_be_bytes()),
+        )
+        .as_slice(),
+        opt_byte_arr(
+            l1_config
+                .clique
+                .and_then(|c| c.epoch)
+                .map(|t| t.to_be_bytes()),
+        )
+        .as_slice(),
+        opt_byte_arr(
+            l1_config
+                .parlia
+                .and_then(|c| c.period)
+                .map(|t| t.to_be_bytes()),
+        )
+        .as_slice(),
+        opt_byte_arr(
+            l1_config
+                .parlia
+                .and_then(|c| c.epoch)
+                .map(|t| t.to_be_bytes()),
+        )
+        .as_slice(),
+        extra_fields_hash(&l1_config.extra_fields).as_slice(),
+        opt_byte_arr(l1_config.deposit_contract_address.map(|t| **t)).as_slice(),
+        blob_schedule_hash(&l1_config.blob_schedule).as_slice(),
     ]
     .concat();
     let digest = SHA2::hash_bytes(l1_config_bytes.as_slice());
