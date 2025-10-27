@@ -92,4 +92,9 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
 
         Ok(())
     }
+
+    fn to_journals_bytes(&self, _: Vec<(AltDACommitment, CertValidity)>) -> Vec<u8> {
+        // this method should not be used
+        unimplemented!()
+    }
 }

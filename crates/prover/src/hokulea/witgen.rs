@@ -8,8 +8,8 @@ use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
 use kona_derive::BlobProvider;
-use kona_preimage::CommsClient;
-use kona_proof::{BootInfo, FlushableCache};
+use kona_preimage::{CommsClient, PreimageKey};
+use kona_proof::{BootInfo, FlushableCache, HintType};
 use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
@@ -52,39 +52,44 @@ where
         },
     );
     // Run regular witgen client
-    let (boot, proof_journal, precondition, cached_driver, witness) = witgen::run_witgen_client(
-        B256::from(bytemuck::cast::<_, [u8; 32]>(
-            kailua_build::KAILUA_FPVM_HOKULEA_ID,
-        )),
-        preimage_oracle,
-        preimage_oracle_shard_size,
-        blob_provider,
-        eigen,
-        payout_recipient,
-        precondition_validation_data_hash,
-        execution_cache,
-        derivation_cache,
-        trace_derivation,
-        stitched_preconditions,
-        stitched_boot_info,
-    )
-    .await?;
-    // Set expected values
-    let mut eigen_witness = core::mem::take(eigen_witness.lock().unwrap().deref_mut());
-    for (_, validity) in &mut eigen_witness.validities {
-        validity.l1_head_block_hash = boot.l1_head;
-        validity.l1_chain_id = boot.rollup_config.l1_chain_id;
-    }
-    for (_, recency) in &mut eigen_witness.recencies {
-        *recency = boot.rollup_config.seq_window_size;
-    }
+    let (boot, proof_journal, precondition, cached_driver, mut witness) =
+        witgen::run_witgen_client::<P, B, O, _>(
+            B256::from(bytemuck::cast::<_, [u8; 32]>(
+                kailua_build::KAILUA_FPVM_HOKULEA_ID,
+            )),
+            preimage_oracle.clone(),
+            preimage_oracle_shard_size,
+            blob_provider,
+            eigen,
+            payout_recipient,
+            precondition_validation_data_hash,
+            execution_cache,
+            derivation_cache,
+            trace_derivation,
+            stitched_preconditions,
+            stitched_boot_info,
+        )
+        .await?;
+    // Amend oracle with data for `eigenda_witness_to_preloaded_provider` call
+    witness
+        .oracle_witness
+        .insert_preimage(PreimageKey::new_keccak256(*boot.l1_head), {
+            HintType::L1BlockHeader
+                .with_data(&[boot.l1_head.as_ref()])
+                .send(preimage_oracle.as_ref())
+                .await?;
+            preimage_oracle
+                .get(PreimageKey::new_keccak256(*boot.l1_head))
+                .await?
+        });
     // Return extended result
+    let mut eigen_witness = eigen_witness.lock().unwrap();
     Ok((
         boot,
         proof_journal,
         precondition,
         cached_driver,
         witness,
-        eigen_witness,
+        core::mem::take(eigen_witness.deref_mut()),
     ))
 }

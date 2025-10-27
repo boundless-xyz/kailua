@@ -13,5 +13,5 @@
 // limitations under the License.
 
 pub mod args;
-pub mod canoe;
+pub mod provider;
 pub mod witgen;

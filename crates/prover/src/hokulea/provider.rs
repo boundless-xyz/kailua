@@ -12,15 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::args::ProvingArgs;
 use crate::risczero::boundless::BoundlessArgs;
 use alloy::providers::Provider;
 use alloy::transports::http::reqwest::Url;
-use anyhow::{bail, Context};
+use alloy_primitives::B256;
+use anyhow::{anyhow, bail, Context};
 use async_trait::async_trait;
 use canoe_bindings::StatusCode;
 use canoe_provider::{CanoeInput, CanoeProvider, CertVerifierCall};
-use canoe_verifier::CertValidity;
 use kailua_sync::retry_res_timeout;
 use risc0_steel::alloy::providers::ProviderBuilder;
 use risc0_steel::ethereum::{
@@ -35,10 +34,10 @@ use tracing::info;
 /// A canoe provider implementation with steel
 #[derive(Debug, Clone)]
 pub struct KailuaCanoeSteelProvider {
+    /// hash of l1 head block
+    pub l1_head: B256,
     /// rpc to l1 geth node
     pub eth_rpc_url: String,
-    /// proving arguments
-    pub proving_args: ProvingArgs,
     /// Boundless arguments
     pub boundless_args: BoundlessArgs,
 }
@@ -79,24 +78,27 @@ impl KailuaCanoeSteelProvider {
         };
 
         // Take the furthest l1 head as reference
-        let l1_head_block = inputs
-            .iter()
-            .map(|i| i.l1_head_block_number)
-            .max()
-            .map(BlockNumberOrTag::Number)
-            .unwrap_or(BlockNumberOrTag::Safe);
+        let l1_head_block = retry_res_timeout!(
+            15,
+            l1_provider
+                .get_block_by_hash(self.l1_head)
+                .await
+                .context("get_block_by_hash")?
+                .ok_or_else(|| anyhow!("Failed to fetch l1 head block"))
+        )
+        .await
+        .number();
 
         info!("Begin to generate a Canoe proof using l1 block number {l1_head_block}");
 
         let mut env = EthEvmEnv::builder()
             .chain_spec(&chain_spec)
             .provider(l1_provider)
-            .block_number_or_tag(l1_head_block)
+            .block_number_or_tag(BlockNumberOrTag::Number(l1_head_block))
             .build()
             .await?;
 
         // Prepare the function calls
-        let mut cert_validity_pairs = Vec::with_capacity(inputs.len());
         for input in &inputs {
             // Preflight the call to prepare the input that is required to execute the function in
             // the guest without RPC access. It also returns the result of the call.
@@ -120,15 +122,6 @@ impl KailuaCanoeSteelProvider {
                     preflight_validity
                 );
             }
-            cert_validity_pairs.push((
-                input.altda_commitment.clone(),
-                CertValidity {
-                    claimed_validity: input.claimed_validity,
-                    l1_head_block_hash: input.l1_head_block_hash,
-                    l1_chain_id,
-                    verifier_address: input.verifier_address,
-                },
-            ));
         }
 
         // Construct the input from the environment.

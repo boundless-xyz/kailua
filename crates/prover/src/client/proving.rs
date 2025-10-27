@@ -100,8 +100,6 @@ where
             #[cfg(feature = "eigen")]
             (true, _) => {
                 use canoe_provider::CanoeProvider;
-                use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcher;
-                use kona_derive::ChainProvider;
 
                 let (
                     boot_info,
@@ -126,37 +124,23 @@ where
                 .context("Failed to run hokulea vec witgen client.")
                 .map_err(ProvingError::OtherError)?;
                 // Generate Hokulea DA proofs
-                let canoe_provider = crate::hokulea::canoe::KailuaCanoeSteelProvider {
-                    eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
-                    proving_args: proving.clone(),
-                    boundless_args: boundless.clone(),
-                };
-
                 let mut canoe_inputs = Vec::new();
                 for (commitment, validity) in &mut da_witness.validities {
-                    let mut provider = kona_proof::l1::OracleL1ChainProvider::new(
-                        validity.l1_head_block_hash,
-                        preimage_oracle.clone(),
-                    );
-                    let l1_head_block = provider
-                        .header_by_hash(validity.l1_head_block_hash)
-                        .await
-                        .expect("Failed to get l1 head block for canoe");
                     canoe_inputs.push(canoe_provider::CanoeInput {
-                    altda_commitment: commitment.clone(),
-                    claimed_validity: validity.claimed_validity,
-                    l1_head_block_hash: validity.l1_head_block_hash,
-                    l1_head_block_number: l1_head_block.number,
-                    l1_chain_id: validity.l1_chain_id,
-                    verifier_address: canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs {}.fetch_address(
-                        validity.l1_chain_id,
-                        &commitment.versioned_cert,
-                    )
-                        .map_err(|e| anyhow!(e))
-                        .map_err(ProvingError::OtherError)?,
-                });
+                        altda_commitment: commitment.clone(),
+                        claimed_validity: validity.claimed_validity,
+                        l1_head_block_hash: validity.l1_head_block_hash,
+                        l1_head_block_number: validity.l1_head_block_number,
+                        l1_chain_id: validity.l1_chain_id,
+                        verifier_address: validity.verifier_address,
+                    });
                 }
                 // Embed proof into witness
+                let canoe_provider = crate::hokulea::provider::KailuaCanoeSteelProvider {
+                    l1_head: boot_info.l1_head,
+                    eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
+                    boundless_args: boundless.clone(),
+                };
                 if let Some(proof) = canoe_provider
                     .create_certs_validity_proof(canoe_inputs)
                     .await

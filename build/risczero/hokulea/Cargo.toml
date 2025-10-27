@@ -33,7 +33,7 @@ kailua-kona = { path = "../../../crates/kona" }
 kailua-hokulea = { path = "../../../crates/hokulea" }
 
 risc0-zkvm = { version = "3.0.3", features = ["std", "heap-embedded-alloc", "unstable"] }
-hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "5c8d8dd859afbf278a7841138b66e2217498d764", default-features = false }
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "847d3ca3d4111415f0b0984c7fb68d93fa9dcb17", default-features = false }
 
 [features]
 disable-dev-mode = [
