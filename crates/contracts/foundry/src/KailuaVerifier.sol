@@ -86,7 +86,7 @@ contract KailuaVerifier {
             return faultProofTimestamp < validityProofTimestamp ? faultProofTimestamp : validityProofTimestamp;
         }
         // Return the larger timestamp otherwise
-        return faultProofTimestamp > 0 ? faultProofTimestamp : validityProofTimestamp;
+        return faultProofTimestamp > validityProofTimestamp ? faultProofTimestamp : validityProofTimestamp;
     }
 
     /// @notice Returns the exclusive beneficiary of a fault proof reward
@@ -166,17 +166,15 @@ contract KailuaVerifier {
         }
         // INVARIANT: There are exactly numExpiredPermits expired permits as of block.timestamp
         bytes32 proposalKey = faultProofPermitKey(proposalParent, proposalSignature);
-        uint64 numActivePermits;
-        (numExpiredPermits,, numActivePermits) =
-            countExpiredPermits(proposalKey, numExpiredPermits, uint64(block.timestamp));
+        (numExpiredPermits,,) = countExpiredPermits(proposalKey, numExpiredPermits, uint64(block.timestamp));
         // INVARIANT: There is at least one permit available
         FaultProofPermit[] storage proposalPermits = faultProofPermits[proposalKey];
-        if (numActivePermits > 2 * numExpiredPermits) {
+        uint256 totalPermitsIssued = proposalPermits.length;
+        if (totalPermitsIssued > 2 * numExpiredPermits) {
             revert ClockNotExpired();
         }
         // Calculate the aggregate collateral value
         uint256 aggregateCollateral = msg.value;
-        uint256 totalPermitsIssued = proposalPermits.length;
         if (totalPermitsIssued > 0) {
             aggregateCollateral += proposalPermits[totalPermitsIssued - 1].aggregateCollateral;
         }
