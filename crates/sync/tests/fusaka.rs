@@ -47,6 +47,8 @@ pub struct TestArgs {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn publish_cell_proofs_txn() {
+    let _ = unsafe { blst::blst_p1_sizeof() };
+
     let args = TestArgs::parse();
     kona_cli::LogConfig::new(kona_cli::LogArgs {
         level: 3,

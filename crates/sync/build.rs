@@ -13,5 +13,6 @@
 // limitations under the License.
 
 fn main() {
-    println!("cargo:rustc-link-lib=blst")
+    println!("cargo:rustc-link-lib=blst");
+    println!("cargo:rustc-link-lib=static=blst");
 }
