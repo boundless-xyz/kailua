@@ -15,6 +15,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 aws-config.workspace = true
 aws-sdk-kms.workspace = true
+blst.workspace = true
 bytemuck.workspace = true
 c-kzg.workspace = true
 clap.workspace = true
@@ -46,7 +47,6 @@ kona-genesis.workspace = true
 kona-registry.workspace = true
 
 [dev-dependencies]
-blst.workspace = true
 kona-cli.workspace = true
 
 [features]
