@@ -47,6 +47,7 @@ kona-protocol.workspace = true
 risc0-zkvm.workspace = true
 
 [dev-dependencies]
+alloy = { workspace = true, features = ["genesis"] }
 copy_dir.workspace = true
 futures.workspace = true
 kona-cli.workspace = true

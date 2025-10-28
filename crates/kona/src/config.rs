@@ -493,6 +493,7 @@ pub fn config_hash(rollup_config: &RollupConfig, l1_config: &L1ChainConfig) -> [
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use alloy::genesis::{CliqueConfig, EthashConfig, ParliaConfig};
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, B256, U256};
     use kona_genesis::{AltDAConfig, BaseFeeConfig, ChainGenesis, HardForkConfig, SystemConfig};
@@ -582,9 +583,96 @@ mod tests {
         // Test l1 config changes
         l1_config.chain_id = 2;
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.homestead_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.dao_fork_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.dao_fork_support = true;
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.eip150_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.eip155_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.eip158_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.byzantium_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.constantinople_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.petersburg_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.istanbul_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.muir_glacier_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.berlin_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.london_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.arrow_glacier_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.gray_glacier_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.merge_netsplit_block = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.shanghai_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.cancun_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         l1_config.prague_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         l1_config.osaka_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.bpo1_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.bpo2_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.bpo3_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.bpo4_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.bpo5_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.terminal_total_difficulty = Some(U256::MAX);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.terminal_total_difficulty_passed = true;
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.ethash = Some(EthashConfig {});
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.clique = Some(CliqueConfig {
+            period: None,
+            epoch: None,
+        });
+        l1_config.clique.as_mut().unwrap().period = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.clique.as_mut().unwrap().epoch = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.parlia = Some(ParliaConfig {
+            period: None,
+            epoch: None,
+        });
+        l1_config.parlia.as_mut().unwrap().period = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.parlia.as_mut().unwrap().epoch = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config
+            .extra_fields
+            .insert_value(String::new(), 0xffu128)
+            .unwrap();
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.deposit_contract_address = Some(Address::from([0x01; 20]));
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.blob_schedule.insert(
+            String::new(),
+            BlobParams {
+                target_blob_count: 0,
+                max_blob_count: 0,
+                update_fraction: 0,
+                min_blob_fee: 0,
+                max_blobs_per_tx: 0,
+                blob_base_cost: 0,
+            },
+        );
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
 
         // Test rollup config changes
