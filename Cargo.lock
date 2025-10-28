@@ -6584,6 +6584,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-kms",
+ "blst",
  "bytemuck",
  "c-kzg",
  "clap",

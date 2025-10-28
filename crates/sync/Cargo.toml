@@ -46,6 +46,7 @@ kona-genesis.workspace = true
 kona-registry.workspace = true
 
 [dev-dependencies]
+blst.workspace = true
 kona-cli.workspace = true
 
 [features]
