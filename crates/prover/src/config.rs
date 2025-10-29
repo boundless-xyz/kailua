@@ -74,7 +74,11 @@ pub async fn generate_l1_config_file(
 
             args.kona.l1_config_path = Some(tmp_cfg_file);
             debug!("{:?}", args.kona.l1_config_path);
-            args.kona.read_l1_config()?
+            let deserialized = args.kona.read_l1_config()?;
+            if l1_config != deserialized {
+                warn!("Kona read_l1_config() returned unexpected data!")
+            }
+            l1_config
         }
     })
 }
