@@ -698,6 +698,13 @@ mod tests {
             .unwrap()
             .min_base_fee = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        rollup_config
+            .genesis
+            .system_config
+            .as_mut()
+            .unwrap()
+            .da_footprint_gas_scalar = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.block_time = 1;
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.max_sequencer_drift = 1;

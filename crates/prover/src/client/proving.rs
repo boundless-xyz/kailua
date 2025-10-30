@@ -21,7 +21,6 @@ use crate::ProvingError;
 use alloy_primitives::B256;
 use anyhow::{anyhow, Context};
 use async_channel::Sender;
-use hokulea_proof::eigenda_witness::EigenDAWitness;
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::core::EthereumDataSourceProvider;
@@ -136,7 +135,7 @@ where
                     eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
                     boundless_args: boundless.clone(),
                 };
-                let mut da_witness = EigenDAWitness {
+                let mut da_witness = hokulea_proof::eigenda_witness::EigenDAWitness {
                     recencies: da_preimage.recencies,
                     validities: da_preimage.validities,
                     encoded_payloads: vec![], // todo: da_preimage.encoded_payloads,
