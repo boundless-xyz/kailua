@@ -14,7 +14,7 @@
 
 use alloy_consensus::private::alloy_serde::OtherFields;
 use alloy_eips::eip7840::BlobParams;
-use kona_genesis::{AltDAConfig, L1ChainConfig, RollupConfig, SystemConfig};
+use kona_genesis::{AltDAConfig, HardForkConfig, L1ChainConfig, RollupConfig, SystemConfig};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
@@ -138,6 +138,12 @@ pub fn genesis_system_config_hash(system_config: &SystemConfig) -> [u8; 32] {
         opt_byte_arr(system_config.operator_fee_scalar.map(|v| v.to_be_bytes())).as_slice(),
         opt_byte_arr(system_config.operator_fee_constant.map(|v| v.to_be_bytes())).as_slice(),
         opt_byte_arr(system_config.min_base_fee.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(
+            system_config
+                .da_footprint_gas_scalar
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
     ]
     .concat();
     let digest = SHA2::hash_bytes(fields.as_slice());
@@ -188,46 +194,30 @@ pub fn alt_da_config_hash(alt_da_config: &AltDAConfig) -> [u8; 32] {
     digest.as_bytes().try_into().expect("infallible")
 }
 
-/// Computes the hash of a RollupConfig, which summarizes various rollup configuration settings
-/// into a single 32-byte hash value. This function utilizes components from the RollupConfig
-/// struct, including genesis properties, system configuration details, and hardfork timings.
-///
-/// The hash is computed by serializing the relevant fields of RollupConfig and its sub-structures
-/// into a contiguous byte array, then hashing the result using the SHA-256 algorithm.
-///
-/// # Arguments
-///
-/// * `rollup_config` - A reference to the `RollupConfig` struct, containing all configuration
-///   parameters for a rollup.
-///
-/// # Returns
-///
-/// * `anyhow::Result<[u8; 32]>` - On success, returns a 32-byte array representing the hash of
-///   the rollup configuration. If errors are encountered during field processing or conversions,
-///   an error wrapped in `anyhow::Error` is returned.
-///
-/// # Errors
-///
-/// The function may return an error in the following scenarios:
-/// * Parsing errors from the `safe_default` utility while processing optional fields, such as
-///   `base_fee_scalar`, `blob_base_fee_scalar`, etc.
-/// * Conversion failures when converting slices or numbers to their byte representations.
-///
-/// # Behavior
-///
-/// 1. Computes a `system_config_hash` from the system configuration settings in `rollup_config.genesis`.
-///    If the system configuration is absent, a default zeroed 32-byte array is used.
-/// 2. Serializes various fields of `RollupConfig`, including genesis information, block time settings,
-///    protocol parameters, hardfork timings, and address-specific fields. These fields are concatenated
-///    into a single byte array.
-/// 3. The resulting byte array is hashed using SHA-256 to produce a 32-byte digest.
-/// 4. Returns the computed hash if all operations succeed.
-///
-/// # Notes
-///
-/// * `safe_default` is used extensively to provide fallback values for optional configuration
-///   fields, ensuring robust handling of missing or invalid data.
-/// * All numeric values are serialized in big-endian format for consistency.
+pub fn hard_fork_config_hash(hard_fork_config: &HardForkConfig) -> [u8; 32] {
+    let hard_fork_config_bytes = [
+        opt_byte_arr(hard_fork_config.regolith_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(hard_fork_config.canyon_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(hard_fork_config.delta_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(hard_fork_config.ecotone_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(hard_fork_config.fjord_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(hard_fork_config.granite_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(hard_fork_config.holocene_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(
+            hard_fork_config
+                .pectra_blob_schedule_time
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
+        opt_byte_arr(hard_fork_config.isthmus_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(hard_fork_config.jovian_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(hard_fork_config.interop_time.map(|v| v.to_be_bytes())).as_slice(),
+    ]
+    .concat();
+    let digest = SHA2::hash_bytes(hard_fork_config_bytes.as_slice());
+    digest.as_bytes().try_into().expect("infallible")
+}
+
 pub fn rollup_config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
     let rollup_config_bytes = [
         // genesis
@@ -261,59 +251,7 @@ pub fn rollup_config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
         // l2_chain_id
         rollup_config.l2_chain_id.id().to_be_bytes().as_slice(),
         // hardforks
-        opt_byte_arr(
-            rollup_config
-                .hardforks
-                .regolith_time
-                .map(|v| v.to_be_bytes()),
-        )
-        .as_slice(),
-        opt_byte_arr(rollup_config.hardforks.canyon_time.map(|v| v.to_be_bytes())).as_slice(),
-        opt_byte_arr(rollup_config.hardforks.delta_time.map(|v| v.to_be_bytes())).as_slice(),
-        opt_byte_arr(
-            rollup_config
-                .hardforks
-                .ecotone_time
-                .map(|v| v.to_be_bytes()),
-        )
-        .as_slice(),
-        opt_byte_arr(rollup_config.hardforks.fjord_time.map(|v| v.to_be_bytes())).as_slice(),
-        opt_byte_arr(
-            rollup_config
-                .hardforks
-                .granite_time
-                .map(|v| v.to_be_bytes()),
-        )
-        .as_slice(),
-        opt_byte_arr(
-            rollup_config
-                .hardforks
-                .holocene_time
-                .map(|v| v.to_be_bytes()),
-        )
-        .as_slice(),
-        opt_byte_arr(
-            rollup_config
-                .hardforks
-                .isthmus_time
-                .map(|v| v.to_be_bytes()),
-        )
-        .as_slice(),
-        opt_byte_arr(rollup_config.hardforks.jovian_time.map(|v| v.to_be_bytes())).as_slice(),
-        opt_byte_arr(
-            rollup_config
-                .hardforks
-                .interop_time
-                .map(|v| v.to_be_bytes()),
-        )
-        .as_slice(),
-        opt_byte_arr(
-            rollup_config
-                .hardforks
-                .pectra_blob_schedule_time
-                .map(|v| v.to_be_bytes()),
-        )
-        .as_slice(),
+        hard_fork_config_hash(&rollup_config.hardforks).as_slice(),
         // batch_inbox_address
         rollup_config.batch_inbox_address.0.as_slice(),
         // deposit_contract_address
@@ -531,6 +469,7 @@ mod tests {
                     operator_fee_scalar: Some(0),
                     operator_fee_constant: Some(0),
                     min_base_fee: Some(0),
+                    da_footprint_gas_scalar: Some(0),
                 }),
             },
             block_time: 0,
@@ -879,6 +818,7 @@ mod tests {
                     operator_fee_scalar: Some(0),
                     operator_fee_constant: Some(0),
                     min_base_fee: Some(0),
+                    da_footprint_gas_scalar: Some(0),
                 }),
             },
             block_time: 0,

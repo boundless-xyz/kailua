@@ -7,8 +7,17 @@ default:
 build +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F eigen -F celestia --locked":
   cargo build {{ARGS}}
 
+build-kona +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode --locked":
+  cargo build {{ARGS}}
+
 build-fpvm +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm -F eigen -F celestia --locked -vvv":
   RISC0_USE_DOCKER=1 cargo build {{ARGS}}
+
+build-fpvm-kona +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm --locked -vvv":
+  RISC0_USE_DOCKER=1 cargo build {{ARGS}}
+
+fpvm-kona:
+  cargo build --manifest-path build/risczero/kona/Cargo.toml --locked --release -F disable-dev-mode
 
 fmt:
   cargo fmt --all
@@ -25,6 +34,12 @@ clippy:
   cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
   cargo clippy --manifest-path build/risczero/hana/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
 
+clippy-kona:
+  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -- -D warnings
+  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -- -D warnings
+
+  cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
+
 coverage:
   cargo +nightly llvm-cov -p kailua-kona --branch
 
@@ -36,7 +51,11 @@ devnet-fetch:
 
 devnet-build +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia": (build ARGS)
 
+devnet-build-kona +ARGS="--bin kailua-cli -F devnet -F prove": (build ARGS)
+
 devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia": (build ARGS)
+
+devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm": (build ARGS)
 
 devnet-up:
   make -C optimism devnet-up > devnet.log

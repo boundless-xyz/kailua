@@ -1314,6 +1314,7 @@ pub mod tests {
                         operator_fee_scalar: Some(gen_u64() as u32),
                         operator_fee_constant: Some(gen_u64()),
                         min_base_fee: Some(gen_u64()),
+                        da_footprint_gas_scalar: Some(gen_u64() as u16),
                     },
                 },
             },

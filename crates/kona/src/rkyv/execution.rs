@@ -94,8 +94,8 @@ where
 pub struct BlockExecutionResultRkyv;
 
 impl ArchiveWith<BlockExecutionResult<OpReceiptEnvelope>> for BlockExecutionResultRkyv {
-    type Archived = Archived<(Vec<u8>, Vec<u8>, u64)>;
-    type Resolver = Resolver<(Vec<u8>, Vec<u8>, u64)>;
+    type Archived = Archived<(Vec<u8>, Vec<u8>, u64, u64)>;
+    type Resolver = Resolver<(Vec<u8>, Vec<u8>, u64, u64)>;
 
     fn resolve_with(
         field: &BlockExecutionResult<OpReceiptEnvelope>,
@@ -104,8 +104,8 @@ impl ArchiveWith<BlockExecutionResult<OpReceiptEnvelope>> for BlockExecutionResu
     ) {
         let receipts = alloy_rlp::encode(field.receipts.clone());
         let requests = alloy_rlp::encode(field.requests.clone().take());
-        let field = (receipts, requests, field.gas_used);
-        <(Vec<u8>, Vec<u8>, u64) as Archive>::resolve(&field, resolver, out);
+        let field = (receipts, requests, field.gas_used, field.blob_gas_used);
+        <(Vec<u8>, Vec<u8>, u64, u64) as Archive>::resolve(&field, resolver, out);
     }
 }
 
@@ -120,29 +120,34 @@ where
     ) -> Result<Self::Resolver, S::Error> {
         let receipts = alloy_rlp::encode(field.receipts.clone());
         let requests = alloy_rlp::encode(field.requests.clone().take());
-        let field = (receipts, requests, field.gas_used);
-        <(Vec<u8>, Vec<u8>, u64) as rkyv::Serialize<S>>::serialize(&field, serializer)
+        let field = (receipts, requests, field.gas_used, field.blob_gas_used);
+        <(Vec<u8>, Vec<u8>, u64, u64) as rkyv::Serialize<S>>::serialize(&field, serializer)
     }
 }
 
 impl<D: Fallible>
-    DeserializeWith<Archived<(Vec<u8>, Vec<u8>, u64)>, BlockExecutionResult<OpReceiptEnvelope>, D>
-    for BlockExecutionResultRkyv
+    DeserializeWith<
+        Archived<(Vec<u8>, Vec<u8>, u64, u64)>,
+        BlockExecutionResult<OpReceiptEnvelope>,
+        D,
+    > for BlockExecutionResultRkyv
 where
     D: Fallible + ?Sized,
     <D as Fallible>::Error: rkyv::rancor::Source,
 {
     fn deserialize_with(
-        field: &Archived<(Vec<u8>, Vec<u8>, u64)>,
+        field: &Archived<(Vec<u8>, Vec<u8>, u64, u64)>,
         deserializer: &mut D,
     ) -> Result<BlockExecutionResult<OpReceiptEnvelope>, D::Error> {
-        let field: (Vec<u8>, Vec<u8>, u64) = rkyv::Deserialize::deserialize(field, deserializer)?;
+        let field: (Vec<u8>, Vec<u8>, u64, u64) =
+            rkyv::Deserialize::deserialize(field, deserializer)?;
         let receipts = alloy_rlp::decode_exact(field.0.as_slice()).unwrap();
         let requests = alloy_rlp::decode_exact(field.1.as_slice()).unwrap();
         Ok(BlockExecutionResult {
             receipts,
             requests: Requests::new(requests),
             gas_used: field.2,
+            blob_gas_used: field.3,
         })
     }
 }
@@ -181,6 +186,11 @@ pub mod tests {
                 ),
                 gas_used: U256::from_be_bytes(
                     keccak256(format!("gen_execution_results gas_used {i}")).0,
+                )
+                .reduce_mod(U256::from(1u128 << 64))
+                .to(),
+                blob_gas_used: U256::from_be_bytes(
+                    keccak256(format!("gen_execution_results blob_gas_used {i}")).0,
                 )
                 .reduce_mod(U256::from(1u128 << 64))
                 .to(),
