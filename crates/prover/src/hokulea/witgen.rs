@@ -32,7 +32,7 @@ pub async fn run_hokulea_witgen_client<P, B, O>(
     Precondition,
     Option<CachedDriver>,
     Witness<O>,
-    hokulea_proof::eigenda_witness::EigenDAWitness,
+    hokulea_proof::eigenda_witness::EigenDAPreimage,
 )>
 where
     P: CommsClient + FlushableCache + Send + Sync + Debug + Clone,
@@ -44,11 +44,11 @@ where
     let eigen_witness = Arc::new(Mutex::new(Default::default()));
     // Create provider around witness
     let eigen = kailua_hokulea::da::EigenDADataSourceProvider(
-        hokulea_witgen::witness_provider::OracleEigenDAWitnessProvider {
+        hokulea_witgen::witness_provider::OracleEigenDAPreimageProviderWithPreimage {
             provider: hokulea_proof::eigenda_provider::OracleEigenDAPreimageProvider::new(
                 preimage_oracle.clone(),
             ),
-            witness: eigen_witness.clone(),
+            preimage: eigen_witness.clone(),
         },
     );
     // Run regular witgen client

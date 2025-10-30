@@ -21,6 +21,7 @@ use crate::ProvingError;
 use alloy_primitives::B256;
 use anyhow::{anyhow, Context};
 use async_channel::Sender;
+use hokulea_proof::eigenda_witness::EigenDAWitness;
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::core::EthereumDataSourceProvider;
@@ -101,38 +102,32 @@ where
             (true, _) => {
                 use canoe_provider::CanoeProvider;
 
-                let (
-                    boot_info,
-                    proof_journal,
-                    precondition,
-                    cached_driver,
-                    witness,
-                    mut da_witness,
-                ) = crate::hokulea::witgen::run_hokulea_witgen_client(
-                    preimage_oracle.clone(),
-                    10 * 1024 * 1024, // default to 10MB chunks
-                    blob_provider,
-                    proving.payout_recipient_address.unwrap_or_default(),
-                    proposal_data_hash,
-                    execution_cache.clone(),
-                    derivation_cache.clone(),
-                    trace_derivation,
-                    stitched_preconditions.clone(),
-                    stitched_boot_info.clone(),
-                )
-                .await
-                .context("Failed to run hokulea vec witgen client.")
-                .map_err(ProvingError::OtherError)?;
+                let (boot_info, proof_journal, precondition, cached_driver, witness, da_preimage) =
+                    crate::hokulea::witgen::run_hokulea_witgen_client(
+                        preimage_oracle.clone(),
+                        10 * 1024 * 1024, // default to 10MB chunks
+                        blob_provider,
+                        proving.payout_recipient_address.unwrap_or_default(),
+                        proposal_data_hash,
+                        execution_cache.clone(),
+                        derivation_cache.clone(),
+                        trace_derivation,
+                        stitched_preconditions.clone(),
+                        stitched_boot_info.clone(),
+                    )
+                    .await
+                    .context("Failed to run hokulea vec witgen client.")
+                    .map_err(ProvingError::OtherError)?;
                 // Generate Hokulea DA proofs
                 let mut canoe_inputs = Vec::new();
-                for (commitment, validity) in &mut da_witness.validities {
+                for (commitment, validity) in &da_preimage.validities {
                     canoe_inputs.push(canoe_provider::CanoeInput {
                         altda_commitment: commitment.clone(),
-                        claimed_validity: validity.claimed_validity,
-                        l1_head_block_hash: validity.l1_head_block_hash,
-                        l1_head_block_number: validity.l1_head_block_number,
-                        l1_chain_id: validity.l1_chain_id,
-                        verifier_address: validity.verifier_address,
+                        claimed_validity: *validity,
+                        l1_head_block_hash: boot_info.l1_head,
+                        l1_head_block_number: Default::default(), // validity.l1_head_block_number,
+                        l1_chain_id: boot_info.rollup_config.l1_chain_id,
+                        verifier_address: Default::default(), // validity.verifier_address,
                     });
                 }
                 // Embed proof into witness
@@ -140,6 +135,12 @@ where
                     l1_head: boot_info.l1_head,
                     eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
                     boundless_args: boundless.clone(),
+                };
+                let mut da_witness = EigenDAWitness {
+                    recencies: da_preimage.recencies,
+                    validities: da_preimage.validities,
+                    encoded_payloads: vec![], // todo: da_preimage.encoded_payloads,
+                    canoe_proof_bytes: None,
                 };
                 if let Some(proof) = canoe_provider
                     .create_certs_validity_proof(canoe_inputs)
