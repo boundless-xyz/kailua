@@ -402,6 +402,8 @@ pub fn stitch_executions(
 /// integrity and creating a coherent journal that reflects the intermediate states and outputs
 /// of the bootstrapping process.
 ///
+/// NOTE: This method does not support combining execution-only proofs.
+///
 /// # Arguments
 ///
 /// * `boot` - A reference to the base `BootInfo` structure used as the initial data point.
@@ -430,6 +432,7 @@ pub fn stitch_executions(
 ///    check.
 /// 4. **Non-contiguous Stitching**: If the claimed and agreed L2 output roots cannot be matched
 ///    in a forward or backward stitching configuration.
+/// 5. **Execution-only Records**: If the combination of execution-only boot infos is attempted.
 ///
 /// # Stitching Logic
 ///
@@ -486,10 +489,8 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
     };
     for (stitched_boot, stitched_precondition) in zip(stitched_boot_infos, stitched_preconditions) {
         // Check if stitched l1 head is in the same chain
-        if boot.l1_head.is_zero() {
-            // We can only stitch together other execution proofs in this case
-            assert!(stitched_boot.l1_head.is_zero());
-            // todo: verify and combine traces into bigger hash
+        if boot.l1_head.is_zero() || stitched_boot.l1_head.is_zero() {
+            unimplemented!("Stitching boot infos of execution-only proofs is not supported.");
         } else if let Some(l1_provider) = l1_provider.as_mut() {
             // Retrieve the full header, which must then be verified to be from the same chain
             let stitched_l1_header = l1_provider
