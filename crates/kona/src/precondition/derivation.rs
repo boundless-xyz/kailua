@@ -124,6 +124,11 @@ pub fn flatten_block_build_outcome(outcome: &BlockBuildingOutcome) -> Vec<u8> {
             .concat()
             .as_slice(),
         outcome.execution_result.gas_used.to_be_bytes().as_slice(),
+        outcome
+            .execution_result
+            .blob_gas_used
+            .to_be_bytes()
+            .as_slice(),
     ]
     .concat()
 }

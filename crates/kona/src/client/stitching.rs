@@ -357,6 +357,7 @@ pub fn stitch_executions(
         assert_eq!(1, stitched_executions.len());
         return;
     };
+    // Otherwise, we validate that all cached executions have corresponding exec-only proofs
     for execution_trace in stitched_executions {
         let precondition_hash =
             crate::precondition::execution::exec_precondition_hash(execution_trace.as_slice());
@@ -486,9 +487,11 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
     for (stitched_boot, stitched_precondition) in zip(stitched_boot_infos, stitched_preconditions) {
         // Check if stitched l1 head is in the same chain
         if boot.l1_head.is_zero() {
+            // We can only stitch together other execution proofs in this case
             assert!(stitched_boot.l1_head.is_zero());
+            // todo: verify and combine traces into bigger hash
         } else if let Some(l1_provider) = l1_provider.as_mut() {
-            // Retrieve the full header, which could be from another chain
+            // Retrieve the full header, which must then be verified to be from the same chain
             let stitched_l1_header = l1_provider
                 .header_by_hash(stitched_boot.l1_head)
                 .await
