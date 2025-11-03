@@ -66,50 +66,20 @@ impl<
 /// Runs the Kailua client to drive rollup state transition derivation using Kona.
 ///
 /// # Arguments
-/// * `precondition_validation_data_hash` - A 256-bit hash used for fetching precondition data.
-/// * `oracle` - The client for communicating with the host environment.
+/// * `proposal_data_hash` - The hash of the proposal blob precondition data.
+/// * `oracle` - The client for preloaded communication with the host.
 /// * `stream` - The client for streamed communication with the host.
 /// * `beacon` - The blob provider.
 /// * `da_source_provider` - The provider for a data availability source.
 /// * `execution_cache` - A vector of cached executions to reuse.
-/// * `collection_target` - An optional target to dump uncached executions.
+/// * `execution_trace` - An optional target to dump uncached executions.
+/// * `derivation_cache` - An initial snapshot of the derivation pipeline to resume from.
+/// * `derivation_trace` - An optional target for saving a final snapshot of the derivation pipeline.
 ///
 /// # Returns
-/// A result containing a tuple (`BootInfo`, `B256`) upon success, or an error of type `anyhow::Error`.
+/// A result containing a tuple (`BootInfo`, `Precondition`) upon success, or an error of type `anyhow::Error`.
 /// - `BootInfo` contains essential configuration information for bootstrapping the rollup client.
-/// - `B256` represents a 256-bit hash of the computed output state.
-///
-/// # Errors
-/// This function can return an error in any of the following cases:
-/// * Failure to load `BootInfo`.
-/// * Invalid `claimed_l2_block_number` value compared to the safe L2 head number.
-/// * Assertion failures during execution trace validation, block derivations, and outputs validation.
-/// * Insufficient L1 data to derive L2 output roots for the claimed block height.
-///
-/// # Workflow
-///
-/// ## 1. Bootstrapping & Safe Head Validation
-/// - Loads `BootInfo` from the oracle.
-/// - Fetches the safe head hash and constructs chain providers for both L1 and L2.
-/// - Validates that the claimed L2 block number is greater than or equal to the L2 safe head.
-///
-/// ## 2. Execution Caching
-/// - If the L1 head is a zero hash, the function operates in "execution only" mode:
-///     - Initializes the execution cursor and uses a `KonaExecutor` for execution validation.
-///     - Validates the consistency of execution traces against the expected results derived from `execution_cache`.
-///
-/// ## 3. Derivation and Execution
-/// - Loads precondition data based on the provided hash, if any.
-/// - Initializes the pipeline cursor and an `OraclePipeline`.
-/// - Combines execution caching with pipeline-driven iteration to derive L2 outputs incrementally until the claimed L2 height:
-///     - Validates outputs, ensuring sufficient L1 data exists for subsequent derivations.
-///     - Adjusts the executor state for consecutive computation and output production.
-///     - Logs the progress and appends derived output roots.
-///
-/// ## 4. Final Validation & Output
-/// - Verifies the computed outputs:
-///     - Ensures the final output hash matches the claimed L2 output root.
-///     - Handles insufficient data to derive output roots by returning a matching zero hash.
+/// - `Precondition` represents the full precondition for the validity of the boot record.
 #[allow(clippy::too_many_arguments)]
 pub fn run_core_client<
     O: CommsClient + FlushableCache + Send + Sync + Debug,
@@ -393,6 +363,10 @@ where
     })
 }
 
+/// This method is copied as is from the `single` module in the `kona-client` crate.
+///
+/// Original documentation below:
+///
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
 /// [BootInfo].
 pub async fn fetch_safe_head_hash<O>(
