@@ -1514,7 +1514,7 @@ dependencies = [
 [[package]]
 name = "c-kzg"
 version = "2.1.5"
-source = "git+https://github.com/risc0/c-kzg-4844?rev=0a978e5b8adbb6754c29442739a4cbd5085272ca#0a978e5b8adbb6754c29442739a4cbd5085272ca"
+source = "git+https://github.com/risc0/c-kzg-4844?tag=v2.1.5-risczero.0#f09162713bbf948e5ad766fd692b98e3d63236c9"
 dependencies = [
  "blst",
  "bytemuck",
@@ -2631,7 +2631,7 @@ dependencies = [
 [[package]]
 name = "hana-blobstream"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?rev=a027840b4c17462385816209a15ef206e1cd11c6#a027840b4c17462385816209a15ef206e1cd11c6"
+source = "git+https://github.com/celestiaorg/hana?rev=3e875de71d633edceb39d2f28cae8a779b470117#3e875de71d633edceb39d2f28cae8a779b470117"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -2649,7 +2649,7 @@ dependencies = [
 [[package]]
 name = "hana-celestia"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?rev=a027840b4c17462385816209a15ef206e1cd11c6#a027840b4c17462385816209a15ef206e1cd11c6"
+source = "git+https://github.com/celestiaorg/hana?rev=3e875de71d633edceb39d2f28cae8a779b470117#3e875de71d633edceb39d2f28cae8a779b470117"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -2662,7 +2662,7 @@ dependencies = [
 [[package]]
 name = "hana-oracle"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?rev=a027840b4c17462385816209a15ef206e1cd11c6#a027840b4c17462385816209a15ef206e1cd11c6"
+source = "git+https://github.com/celestiaorg/hana?rev=3e875de71d633edceb39d2f28cae8a779b470117#3e875de71d633edceb39d2f28cae8a779b470117"
 dependencies = [
  "alloy-primitives",
  "async-trait",

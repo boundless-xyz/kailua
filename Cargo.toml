@@ -117,13 +117,13 @@ hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad
 hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628", default-features = false }
 hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628" }
 
-# Hana git = "https://github.com/celestiaorg/hana", rev = "a027840b4c17462385816209a15ef206e1cd11c6"
+# Hana git = "https://github.com/celestiaorg/hana", rev = "3e875de71d633edceb39d2f28cae8a779b470117"
 celestia-rpc = "0.14.0"
 celestia-types = "0.16.0"
-hana-blobstream = { git = "https://github.com/celestiaorg/hana", rev = "a027840b4c17462385816209a15ef206e1cd11c6", default-features = false }
-hana-celestia = { git = "https://github.com/celestiaorg/hana", rev = "a027840b4c17462385816209a15ef206e1cd11c6", default-features = false }
-hana-host = { git = "https://github.com/celestiaorg/hana", rev = "a027840b4c17462385816209a15ef206e1cd11c6", default-features = false }
-hana-oracle = { git = "https://github.com/celestiaorg/hana", rev = "a027840b4c17462385816209a15ef206e1cd11c6", default-features = false }
+hana-blobstream = { git = "https://github.com/celestiaorg/hana", rev = "3e875de71d633edceb39d2f28cae8a779b470117", default-features = false }
+hana-celestia = { git = "https://github.com/celestiaorg/hana", rev = "3e875de71d633edceb39d2f28cae8a779b470117", default-features = false }
+hana-host = { git = "https://github.com/celestiaorg/hana", rev = "3e875de71d633edceb39d2f28cae8a779b470117", default-features = false }
+hana-oracle = { git = "https://github.com/celestiaorg/hana", rev = "3e875de71d633edceb39d2f28cae8a779b470117", default-features = false }
 
 # Bonsai
 bonsai-sdk = { version = "1.4.0", features = ["non_blocking"] }
