@@ -64,67 +64,33 @@ pub fn safe_default<V: Debug + Eq>(opt: Option<V>, default: V) -> anyhow::Result
     }
 }
 
+/// Returns a fixed-length byte vector that represents an optional fixed-length byte array.
+/// An extra byte is prepended to represent the presence of the array.
 pub fn opt_byte_arr<const N: usize>(data: Option<[u8; N]>) -> Vec<u8> {
+    // Return a vector of all 0xFF bytes with one additional byte if the value is missing
     let Some(data) = data else {
         return vec![0xFF; N + 1];
     };
+    // Otherwise prepend an extra byte 0x00 if the value is present and return the value
     let mut res = vec![0x00; N + 1];
     res[1..].copy_from_slice(&data);
     res
 }
 
+/// Returns a byte vector that represents an optional byte vector.
+/// An extra 8-bytes are prepended to denote the presence of the byte vector.
 pub fn opt_byte_vec(data: Option<Vec<u8>>) -> Vec<u8> {
+    // Return an 8-byte vector of all OxFF to denote that the data is not present
     let Some(data) = data else {
-        return vec![0xFF];
+        return u64::MAX.to_be_bytes().to_vec();
     };
+    // Otherwise prepend the big-endian u64 encoding of the length of the present vector
     let mut res = (data.len() as u64).to_be_bytes().to_vec();
     res.extend(data);
     res
 }
 
-/// Computes the hash of the genesis system configuration.
-///
-/// # Arguments
-///
-/// * `system_config` - A reference to a `SystemConfig` struct containing all the necessary
-///   configuration fields to generate the hash.
-///
-/// # Returns
-///
-/// This function returns a `Result` containing a 32-byte array representing the hash of the
-/// system configuration. In case of an error (e.g., unsafe defaults or conversion failures),
-/// it returns an error wrapped in `anyhow::Error`.
-///
-/// # Algorithm
-///
-/// This function computes the hash in the following steps:
-/// 1. Extracts individual fields from the `system_config` and converts them into byte slices:
-///    - `batcher_address`: Concatenates the address as a byte slice.
-///    - `overhead`, `scalar`, and `gas_limit`: Converts each to 32-byte big-endian representations.
-///    - Defaulted fields (`base_fee_scalar`, `blob_base_fee_scalar`, `eip1559_denominator`,
-///      `eip1559_elasticity`, `operator_fee_scalar`, and `operator_fee_constant`): Each field is
-///      converted to its big-endian byte representation, using safe defaults when necessary. If a
-///      default fails, the function propagates the error context.
-///
-/// 2. Concatenates all the byte slice representations of the fields into a single buffer.
-///
-/// 3. Computes a cryptographic hash of the concatenated buffer using the `SHA2` hashing
-///    algorithm.
-///
-/// 4. Converts the resulting hash into a fixed-size 32-byte array.
-///
-/// # Errors
-///
-/// This function may fail in the following scenarios:
-/// - If the `safe_default` function for any of the defaulted fields fails to produce a valid
-///   value, an error will be returned with additional context.
-///
-/// # Notes
-///
-/// - The hash is computed deterministically based on the input `SystemConfig`. Any changes to
-///   the configuration will result in a different hash.
-/// - It is important to ensure that the input fields adhere to the expected formats and ranges
-///   for proper hash computation.
+/// Computes the deterministic hash based on all fields of the input `SystemConfig`.
 pub fn genesis_system_config_hash(system_config: &SystemConfig) -> [u8; 32] {
     let fields = [
         system_config.batcher_address.0.as_slice(),
@@ -151,30 +117,7 @@ pub fn genesis_system_config_hash(system_config: &SystemConfig) -> [u8; 32] {
     digest.as_bytes().try_into().expect("infallible")
 }
 
-/// Generates a 32-byte configuration hash for an `AltDAConfig` instance.
-///
-/// # Arguments
-///
-/// - `alt_da_config` - A reference to `AltDAConfig` struct containing the configuration values.
-///
-/// # Returns
-///
-/// Returns a `Result` that contains:
-/// - `[u8; 32]`: A 32-byte array representing the hash of the provided `AltDAConfig`.
-/// - `anyhow::Error`: An error if any part of the hashing process fails.
-///
-/// # Details
-///
-/// This function processes fields of the provided `AltDAConfig` in the following way:
-/// 1. Safely retrieves or replaces default values for `da_challenge_address`, `da_challenge_window`, `da_resolve_window`, and `da_commitment_type`.
-/// 2. Converts these fields into binary formats (`as_slice`, `to_be_bytes`, or equivalent).
-/// 3. Concatenates all the fields into a single byte buffer.
-/// 4. Uses the `SHA2::hash_bytes` function to compute the hash of the combined buffer.
-/// 5. Converts the hash output into a 32-byte fixed-size array.
-///
-/// # Errors
-///
-/// - Returns an error if any of the fields of `AltDAConfig` fail to resolve to valid default or non-default values.
+/// Computes the deterministic hash based on all fields of the input `AltDAConfig`.
 pub fn alt_da_config_hash(alt_da_config: &AltDAConfig) -> [u8; 32] {
     let fields = [
         opt_byte_arr(alt_da_config.da_challenge_address.map(|v| *v.0)).as_slice(),
@@ -194,6 +137,7 @@ pub fn alt_da_config_hash(alt_da_config: &AltDAConfig) -> [u8; 32] {
     digest.as_bytes().try_into().expect("infallible")
 }
 
+/// Computes the deterministic hash based on all fields of the input `HardForkConfig`.
 pub fn hard_fork_config_hash(hard_fork_config: &HardForkConfig) -> [u8; 32] {
     let hard_fork_config_bytes = [
         opt_byte_arr(hard_fork_config.regolith_time.map(|v| v.to_be_bytes())).as_slice(),
@@ -218,6 +162,7 @@ pub fn hard_fork_config_hash(hard_fork_config: &HardForkConfig) -> [u8; 32] {
     digest.as_bytes().try_into().expect("infallible")
 }
 
+/// Computes the deterministic hash based on all fields of the input `RollupConfig`.
 pub fn rollup_config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
     let rollup_config_bytes = [
         // genesis
@@ -305,6 +250,7 @@ pub fn rollup_config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
     digest.as_bytes().try_into().expect("infallible")
 }
 
+/// Computes the deterministic hash based on all fields of the input `OtherFields`.
 pub fn extra_fields_hash(extra_fields: &OtherFields) -> [u8; 32] {
     let extra_fields_bytes = extra_fields
         .deref()
@@ -322,6 +268,7 @@ pub fn extra_fields_hash(extra_fields: &OtherFields) -> [u8; 32] {
     digest.as_bytes().try_into().expect("infallible")
 }
 
+/// Computes the deterministic hash based on all fields of the input `BlobParams`.
 pub fn blob_params_hash(blob_params: &BlobParams) -> [u8; 32] {
     let blob_params_bytes = [
         blob_params.target_blob_count.to_be_bytes().as_slice(),
@@ -336,6 +283,7 @@ pub fn blob_params_hash(blob_params: &BlobParams) -> [u8; 32] {
     digest.as_bytes().try_into().expect("infallible")
 }
 
+/// Computes the deterministic hash based on all entries of the input `BTreeMap`.
 pub fn blob_schedule_hash(blob_schedule: &BTreeMap<String, BlobParams>) -> [u8; 32] {
     let blob_schedule_bytes = blob_schedule
         .iter()
@@ -346,6 +294,7 @@ pub fn blob_schedule_hash(blob_schedule: &BTreeMap<String, BlobParams>) -> [u8; 
     digest.as_bytes().try_into().expect("infallible")
 }
 
+/// Computes the deterministic hash based on all fields of the input `L1ChainConfig`.
 pub fn l1_config_hash(l1_config: &L1ChainConfig) -> [u8; 32] {
     // these are the only fields relevant for kona execution flow
     let l1_config_bytes = [
@@ -421,6 +370,7 @@ pub fn l1_config_hash(l1_config: &L1ChainConfig) -> [u8; 32] {
     digest.as_bytes().try_into().expect("infallible")
 }
 
+/// Computes the deterministic hash based on all fields of the input `RollupConfig` and `L1ChainConfig`.
 pub fn config_hash(rollup_config: &RollupConfig, l1_config: &L1ChainConfig) -> [u8; 32] {
     let hash_bytes = [rollup_config_hash(rollup_config), l1_config_hash(l1_config)].concat();
     let digest = SHA2::hash_bytes(hash_bytes.as_slice());

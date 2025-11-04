@@ -41,52 +41,27 @@ pub trait StitchingClient<
     B: BlobProvider + Send + Sync + Debug + Clone,
 >
 {
-    /// Executes the primary operation of stitching together execution and boot information for a client,
-    /// while maintaining composable proofs for validation in a zero-knowledge environment.
+    /// Runs the Kailua client to transition the rollup state and combines the result with
+    /// other proven contiguous state transitions to yield a single overarching
+    /// `ProofJournal` and `Precondition`.
+    ///
+    /// The returned `BootInfo` instance is what was loaded by the Kona client.
     ///
     /// # Arguments
     ///
-    /// * `precondition_validation_data_hash` - A `B256` hash used for precondition validation.
-    /// * `oracle` - An `Arc` wrapped client that implements the `CommsClient` and `FlushableCache`
-    ///   traits. This serves as the provider for external data communication.
-    /// * `stream` - An `Arc` wrapped client, similar to `oracle`, used for additional communication
-    ///   and streaming purposes.
-    /// * `beacon` - A generic blob provider `B`, used as a shared dependency for validation
-    ///   operations.
+    /// * `proposal_data_hash` - The hash of the proposal blob precondition data.
+    /// * `oracle` - The client for preloaded communication with the host environment.
+    /// * `stream` - The client for streamed communication with the host.
+    /// * `beacon` - The blob provider.
     /// * `fpvm_image_id` - A `B256` identifier for the FPVM image to associate with the operations performed.
     /// * `payout_recipient_address` - The Ethereum address (`Address`) where payout rewards are allocated.
     /// * `stitched_executions` - A nested vector of `Execution` objects containing precomputed execution
     ///   proofs to be stitched.
-    /// * `stitched_boot_info` - A vector of `StitchedBootInfo` objects containing boot proofs
+    /// * `derivation_cache`: An initial snapshot to load for the derivation pipeline.
+    /// * `derivation_trace`: Whether to capture the final snapshot of the derivation pipeline in the precondition.
+    /// * `stitched_preconditions`: A vector of `Precondition` objects for the stitched proofs.
+    /// * `stitched_boot_info` - A vector of `StitchedBootInfo` objects describing proofs
     ///   to be stitched together.
-    ///
-    /// # Returns
-    ///
-    /// Returns a `ProofJournal` combining the stitched proofs.
-    ///
-    /// # Functionality
-    ///
-    /// - **Execution Queueing:** Precomputed executions are split into direct executables and cache components
-    ///   for intermediate processing.
-    /// - **Output Validation:** Computes the output hash of the target block using a helper method
-    ///   (`run_core_client`) and validates the precondition against the provided hash.
-    /// - **Proof Loading (Conditional):** For zero-knowledge validations (`zkvm`), loads previously
-    ///   proven FPVM journals to maintain composability and recursive proof validation.
-    /// - **Execution Stitching:** Merges the precomputed execution proofs into a single verifiable
-    ///   entity while associating it with a target address.
-    /// - **Boot Info Stitching:** Stitches together boot proofs based on the precondition hash and FPVM image ID.
-    ///
-    /// # Platform Specific Behavior
-    ///
-    /// This function behaves differently on platforms supporting `zkvm`:
-    /// - It loads proven FPVM journals (`load_stitching_journals`) to ensure recursive zero-knowledge proofs
-    ///   are intact.
-    /// - Passes the proven journals to the execution and boot info stitching processes for extended validation.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if:
-    /// - The output hash computation (`run_core_client`) fails.
     #[allow(clippy::too_many_arguments)]
     fn run_stitching_client(
         self,
