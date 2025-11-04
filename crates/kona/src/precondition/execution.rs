@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::safe_default;
+use crate::config::{opt_byte_arr, safe_default};
 use crate::executor::Execution;
 use crate::precondition::derivation::flatten_block_build_outcome;
 use alloy_eips::eip4895::Withdrawal;
@@ -105,6 +105,7 @@ pub fn attributes_hash(attributes: &OpPayloadAttributes) -> anyhow::Result<B256>
         safe_default(attributes.eip_1559_params, B64::new([0xff; 8]))
             .context("safe_default eip_1559_params")?
             .as_slice(),
+        opt_byte_arr(attributes.min_base_fee.map(|f| f.to_be_bytes())).as_slice(),
     ]
     .concat();
     let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
@@ -208,50 +209,29 @@ pub fn transactions_hash(transactions: &Vec<Bytes>) -> B256 {
     digest.into()
 }
 
-/// Computes a precondition hash from a list of `Execution` objects.
-///
-/// This function generates a cryptographic hash (of type `B256`) by aggregating
-/// and hashing a combination of key attributes from the provided `Execution`
-/// objects. The hash can be used for verifying consistency, detecting changes,
-/// or as an identifier for execution-related data.
-///
-/// # Parameters
-/// - `executions`: A slice of `Arc<Execution>` objects. Each `Execution`
-///   contains the data necessary to compute the hash.
-///
-/// # Returns
-/// - A `B256` hash value representing the precondition hash of the executions.
-///
-/// # Panics
-/// - The function will panic if the attributes of any `Execution` cannot be hashed
-///   (i.e., `attributes_hash(&e.attributes)` returns an error).
-/// - The function will also panic if the computed digest cannot be converted into
-///   a 32-byte array (`[u8; 32]`).
-///
-/// # Logic
-/// 1. Iterates through each `Execution` object in the slice.
-/// 2. For each execution:
-///    - Extracts its `agreed_output`, `attributes` (after hashing them),
-///      `artifacts.header.hash()`, and `claimed_output`.
-///    - Concatenates these components into a byte array.
-/// 3. Combines the resulting byte arrays from all `Execution` objects into
-///    a single byte array.
-/// 4. Hashes the resulting byte array using the SHA256 cryptographic hash algorithm.
-/// 5. Converts the resulting hash bytes into a fixed-size 32-byte array and returns it.
+/// Computes the SHA256 hash of an [Execution] instance.
+pub fn execution_hash(execution: &Execution) -> B256 {
+    let hashed_bytes = [
+        execution.agreed_output.as_slice(),
+        attributes_hash(&execution.attributes)
+            .expect("Unhashable attributes.")
+            .as_slice(),
+        flatten_block_build_outcome(&execution.artifacts).as_slice(),
+        execution.claimed_output.as_slice(),
+    ]
+    .concat();
+    let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
+        .as_bytes()
+        .try_into()
+        .unwrap();
+    digest.into()
+}
+
+/// Computes the execution-only precondition hash from a list of `Execution` objects.
 pub fn exec_precondition_hash(executions: &[Arc<Execution>]) -> B256 {
     let hashed_bytes = executions
         .iter()
-        .map(|e| {
-            [
-                e.agreed_output.as_slice(),
-                attributes_hash(&e.attributes)
-                    .expect("Unhashable attributes.")
-                    .as_slice(),
-                flatten_block_build_outcome(&e.artifacts).as_slice(),
-                e.claimed_output.as_slice(),
-            ]
-            .concat()
-        })
+        .map(|e| execution_hash(e.as_ref()))
         .collect::<Vec<_>>()
         .concat();
     let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
