@@ -39,10 +39,10 @@ Validity Mode turns OP chains into a ZK Rollup, eliminating disputes entirely si
 
 ## Audits
 Kailua has undergone the following audits throughout its development:
-* [18 FEB 2025](audits/veridise-20250217.pdf)
-* [22 MAY 2025](audits/veridise-20250522.pdf)
-* [16 JUN 2025](audits/veridise-20250616.pdf)
-* [23 OCT 2025](audits/veridise-20251023.pdf)
+* [18 FEB 2025](audits/veridise-250217.pdf)
+* [22 MAY 2025](audits/veridise-250522.pdf)
+* [16 JUN 2025](audits/veridise-250616.pdf)
+* [23 OCT 2025](audits/veridise-251023.pdf)
 
 ## Prerequisites
 1. [rust](https://www.rust-lang.org/tools/install)
