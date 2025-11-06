@@ -1,5 +1,5 @@
 [http]
-timeout = 5                 # timeout for each HTTP request, in seconds
+timeout = 10                # timeout for each HTTP request, in seconds
 
 [net]
-retry = 30                  # network retries
+retry = 50                  # network retries
