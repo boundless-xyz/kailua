@@ -104,18 +104,18 @@ kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-clie
 kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.0" }
 kona-std-fpvm = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.0" }
 
-# Hokulea git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628"
-canoe-bindings = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628" }
-canoe-provider = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628" }
-canoe-steel-methods = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628" }
-canoe-verifier = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628" }
-canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628" }
-eigenda-cert = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628" }
-hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628", default-features = false }
-hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628", default-features = false }
-hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628", default-features = false }
-hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628", default-features = false }
-hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", rev = "b386161ad949c6508e126b0f00d192dbcb8b6628" }
+# Hokulea git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551"
+canoe-bindings = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551" }
+canoe-provider = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551" }
+canoe-steel-methods = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551" }
+canoe-verifier = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551" }
+canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551" }
+eigenda-cert = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551" }
+hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551", default-features = false }
+hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551", default-features = false }
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551", default-features = false }
+hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551", default-features = false }
+hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", rev = "b27f54a68b56d99d4beee0b1f52d2245fe0f0551" }
 
 # Hana git = "https://github.com/celestiaorg/hana", rev = "3e875de71d633edceb39d2f28cae8a779b470117"
 celestia-rpc = "0.14.0"

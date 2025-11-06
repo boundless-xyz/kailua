@@ -184,9 +184,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-evm"
-version = "0.21.2"
+version = "0.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06a5f67ee74999aa4fe576a83be1996bdf74a30fce3d248bf2007d6fc7dae8aa"
+checksum = "2f1bfade4de9f464719b5aca30cf5bb02b9fda7036f0cf43addc3a0e66a0340c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -1313,7 +1313,7 @@ dependencies = [
 [[package]]
 name = "canoe-bindings"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=b386161ad949c6508e126b0f00d192dbcb8b6628#b386161ad949c6508e126b0f00d192dbcb8b6628"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=b27f54a68b56d99d4beee0b1f52d2245fe0f0551#b27f54a68b56d99d4beee0b1f52d2245fe0f0551"
 dependencies = [
  "alloy-sol-types",
  "serde",
@@ -1322,7 +1322,7 @@ dependencies = [
 [[package]]
 name = "canoe-provider"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=b386161ad949c6508e126b0f00d192dbcb8b6628#b386161ad949c6508e126b0f00d192dbcb8b6628"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=b27f54a68b56d99d4beee0b1f52d2245fe0f0551#b27f54a68b56d99d4beee0b1f52d2245fe0f0551"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -1336,7 +1336,7 @@ dependencies = [
 [[package]]
 name = "canoe-verifier"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=b386161ad949c6508e126b0f00d192dbcb8b6628#b386161ad949c6508e126b0f00d192dbcb8b6628"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=b27f54a68b56d99d4beee0b1f52d2245fe0f0551#b27f54a68b56d99d4beee0b1f52d2245fe0f0551"
 dependencies = [
  "alloy-genesis",
  "alloy-primitives",
@@ -1346,12 +1346,13 @@ dependencies = [
  "revm-primitives 20.2.1",
  "serde",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
 name = "canoe-verifier-address-fetcher"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=b386161ad949c6508e126b0f00d192dbcb8b6628#b386161ad949c6508e126b0f00d192dbcb8b6628"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=b27f54a68b56d99d4beee0b1f52d2245fe0f0551#b27f54a68b56d99d4beee0b1f52d2245fe0f0551"
 dependencies = [
  "alloy-primitives",
  "eigenda-cert",
@@ -1860,7 +1861,7 @@ dependencies = [
 [[package]]
 name = "eigenda-cert"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=b386161ad949c6508e126b0f00d192dbcb8b6628#b386161ad949c6508e126b0f00d192dbcb8b6628"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=b27f54a68b56d99d4beee0b1f52d2245fe0f0551#b27f54a68b56d99d4beee0b1f52d2245fe0f0551"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -2326,14 +2327,13 @@ dependencies = [
 [[package]]
 name = "hokulea-eigenda"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=b386161ad949c6508e126b0f00d192dbcb8b6628#b386161ad949c6508e126b0f00d192dbcb8b6628"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=b27f54a68b56d99d4beee0b1f52d2245fe0f0551#b27f54a68b56d99d4beee0b1f52d2245fe0f0551"
 dependencies = [
  "alloy-primitives",
  "async-trait",
  "eigenda-cert",
  "kona-derive",
  "kona-protocol",
- "rust-kzg-bn254-primitives",
  "serde",
  "thiserror",
  "tracing",
@@ -2342,7 +2342,7 @@ dependencies = [
 [[package]]
 name = "hokulea-proof"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=b386161ad949c6508e126b0f00d192dbcb8b6628#b386161ad949c6508e126b0f00d192dbcb8b6628"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=b27f54a68b56d99d4beee0b1f52d2245fe0f0551#b27f54a68b56d99d4beee0b1f52d2245fe0f0551"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -2358,12 +2358,13 @@ dependencies = [
  "rust-kzg-bn254-verifier",
  "serde",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
 name = "hokulea-zkvm-verification"
 version = "0.1.0"
-source = "git+https://github.com/Layr-Labs/hokulea?rev=b386161ad949c6508e126b0f00d192dbcb8b6628#b386161ad949c6508e126b0f00d192dbcb8b6628"
+source = "git+https://github.com/Layr-Labs/hokulea?rev=b27f54a68b56d99d4beee0b1f52d2245fe0f0551#b27f54a68b56d99d4beee0b1f52d2245fe0f0551"
 dependencies = [
  "canoe-verifier",
  "canoe-verifier-address-fetcher",
@@ -4261,13 +4262,13 @@ dependencies = [
 
 [[package]]
 name = "reth-chainspec"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm 0.21.2",
+ "alloy-evm 0.21.3",
  "alloy-genesis",
  "alloy-primitives",
  "alloy-trie 0.9.1",
@@ -4281,8 +4282,8 @@ dependencies = [
 
 [[package]]
 name = "reth-db-models"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -4291,8 +4292,8 @@ dependencies = [
 
 [[package]]
 name = "reth-ethereum-forks"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-eip2124",
  "alloy-hardforks 0.3.5",
@@ -4303,8 +4304,8 @@ dependencies = [
 
 [[package]]
 name = "reth-ethereum-primitives"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -4315,12 +4316,12 @@ dependencies = [
 
 [[package]]
 name = "reth-evm"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm 0.21.2",
+ "alloy-evm 0.21.3",
  "alloy-primitives",
  "auto_impl",
  "derive_more",
@@ -4336,10 +4337,10 @@ dependencies = [
 
 [[package]]
 name = "reth-execution-errors"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
- "alloy-evm 0.21.2",
+ "alloy-evm 0.21.3",
  "alloy-primitives",
  "alloy-rlp",
  "nybbles 0.4.5",
@@ -4349,12 +4350,12 @@ dependencies = [
 
 [[package]]
 name = "reth-execution-types"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm 0.21.2",
+ "alloy-evm 0.21.3",
  "alloy-primitives",
  "derive_more",
  "reth-ethereum-primitives",
@@ -4365,8 +4366,8 @@ dependencies = [
 
 [[package]]
 name = "reth-network-peers"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -4377,8 +4378,8 @@ dependencies = [
 
 [[package]]
 name = "reth-primitives-traits"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -4398,8 +4399,8 @@ dependencies = [
 
 [[package]]
 name = "reth-prune-types"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-primitives",
  "derive_more",
@@ -4408,8 +4409,8 @@ dependencies = [
 
 [[package]]
 name = "reth-stages-types"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-primitives",
  "reth-trie-common",
@@ -4417,8 +4418,8 @@ dependencies = [
 
 [[package]]
 name = "reth-static-file-types"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-primitives",
  "derive_more",
@@ -4428,8 +4429,8 @@ dependencies = [
 
 [[package]]
 name = "reth-storage-api"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -4450,8 +4451,8 @@ dependencies = [
 
 [[package]]
 name = "reth-storage-errors"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -4466,8 +4467,8 @@ dependencies = [
 
 [[package]]
 name = "reth-trie-common"
-version = "1.8.2"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.2#9c30bf7af5e0d45deaf5917375c9922c16654b28"
+version = "1.8.3"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.8.3#42197415102b7a20be42e4fe919f024b81ceb55b"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",

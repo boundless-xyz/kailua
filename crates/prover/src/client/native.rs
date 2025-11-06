@@ -82,6 +82,11 @@ pub async fn run_native_client(
             let cfg = hokulea_host_bin::cfg::SingleChainHostWithEigenDA {
                 kona_cfg: args.kona.clone(),
                 eigenda_proxy_address: args.proving.hokulea.eigenda_proxy_address.clone(),
+                recency_window: args
+                    .kona
+                    .read_rollup_config()
+                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+                    .seq_window_size,
                 verbose: 0,
             };
             let providers = cfg
