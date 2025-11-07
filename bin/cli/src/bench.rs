@@ -68,7 +68,7 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
 
     let l2_node_provider =
         ProviderBuilder::new().connect_http(args.sync.provider.op_geth_url.as_str().try_into()?);
-    let mut cache: HashMap<u64, u64> = HashMap::new();
+    let mut cache: HashMap<u64, u64> = Default::default();
     // Scan L2 blocks for highest transaction counts
     let bench_end = args.bench_start + args.bench_range;
     let mut block_heap = BinaryHeap::new();

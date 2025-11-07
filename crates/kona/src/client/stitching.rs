@@ -198,7 +198,7 @@ pub fn load_stitching_journals(fpvm_image_id: B256) -> HashSet<Digest> {
     log("VERIFY");
 
     let fpvm_image_id = Digest::from(fpvm_image_id.0);
-    let mut proven_fpvm_journals = HashSet::new();
+    let mut proven_fpvm_journals = HashSet::with_hasher(Default::default());
 
     loop {
         let Ok(receipt) =

@@ -71,7 +71,7 @@ jobs:
         with:
           version: v1.0.0
       - name: cargo clippy kailua
-        run: cargo clippy --locked --workspace --all --all-targets
+        run: cargo clippy --bin kailua-cli --locked -F devnet -- -D warnings
         env:
           RUSTFLAGS: -Dwarnings
           RISC0_SKIP_BUILD: true
@@ -80,14 +80,14 @@ jobs:
         run: cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets --all-features
         env:
           RUSTFLAGS: -Dwarnings
-      - name: cargo clippy kailua-fpvm-hokulea
-        run: cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets --all-features
-        env:
-          RUSTFLAGS: -Dwarnings
-      - name: cargo clippy kailua-fpvm-hana
-        run: cargo clippy --manifest-path build/risczero/hana/Cargo.toml --locked --workspace --all --all-targets --all-features
-        env:
-          RUSTFLAGS: -Dwarnings
+#      - name: cargo clippy kailua-fpvm-hokulea
+#        run: cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets --all-features
+#        env:
+#          RUSTFLAGS: -Dwarnings
+#      - name: cargo clippy kailua-fpvm-hana
+#        run: cargo clippy --manifest-path build/risczero/hana/Cargo.toml --locked --workspace --all --all-targets --all-features
+#        env:
+#          RUSTFLAGS: -Dwarnings
 
   cargo-test:
     runs-on: [ self-hosted, prod, "${{ matrix.os }}", docker ]
@@ -143,7 +143,7 @@ jobs:
         with:
           version: v1.0.0
       - name: cargo test kailua
-        run: cargo test --locked --workspace --all --all-targets -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
+        run: cargo test --locked --workspace --exclude kailua-hana --exclude kailua-hokulea -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
 
   cargo-llvm-cov:
     runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]

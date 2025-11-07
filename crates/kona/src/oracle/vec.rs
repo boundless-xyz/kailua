@@ -262,7 +262,7 @@ impl WitnessOracle for VecOracle {
             return;
         }
         let mut cache: HashMap<PreimageKey, (usize, usize)> =
-            HashMap::with_capacity(preimages.len());
+            HashMap::with_capacity_and_hasher(preimages.len(), Default::default());
         for (i, entry) in preimages.iter_mut().enumerate() {
             for (j, (key, _, pointer)) in entry.iter_mut().enumerate() {
                 if !needs_validation(&key.key_type()) {

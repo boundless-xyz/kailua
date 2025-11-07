@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::config;
+use crate::config::genesis_system_config_hash;
 use crate::driver::{
     CachedAttributesQueueStage, CachedBatchProvider, CachedBatchQueue, CachedBatchStream,
     CachedBatchValidator, CachedChannelAssembler, CachedChannelBank, CachedChannelProvider,
@@ -200,6 +201,13 @@ pub fn flatten_op_attrib_with_parent(op_attrib_with_parent: &OpAttributesWithPar
         )
         .as_slice(),
         config::opt_byte_arr(op_attrib_with_parent.inner.eip_1559_params.map(|v| v.0)).as_slice(),
+        config::opt_byte_arr(
+            op_attrib_with_parent
+                .inner
+                .min_base_fee
+                .map(|v| v.to_be_bytes()),
+        )
+        .as_slice(),
         flatten_l2_block_info(&op_attrib_with_parent.parent).as_slice(),
         config::opt_byte_vec(
             op_attrib_with_parent
@@ -596,6 +604,7 @@ impl Digestible for CachedChannelReader {
                         (v.max_rlp_bytes_per_channel as u64)
                             .to_be_bytes()
                             .as_slice(),
+                        &[v.brotli_used as u8],
                     ]
                     .concat()
                 })
@@ -628,7 +637,9 @@ impl Digestible for CachedChannelBank {
             .collect::<Vec<_>>();
         let fields = [
             &[0x05],
+            (channels.len() as u64).to_be_bytes().as_slice(),
             channels.concat().as_slice(),
+            (self.channel_queue.len() as u64).to_be_bytes().as_slice(),
             self.channel_queue.concat().as_slice(),
             self.prev.digest().as_bytes(),
         ]
@@ -658,6 +669,7 @@ impl Digestible for CachedFrameQueue {
         let queue_frames = self.queue.iter().map(flatten_frame).collect::<Vec<_>>();
         let fields = [
             &[0x03],
+            (queue_frames.len() as u64).to_be_bytes().as_slice(),
             queue_frames.digest().as_bytes(),
             self.prev.digest().as_bytes(),
         ]
@@ -690,45 +702,12 @@ impl Digestible for CachedPollingTraversal {
             .as_ref()
             .map(flatten_block_info)
             .unwrap_or(vec![0xFF; 80]);
-        let system_config_bytes = [
-            self.system_config.batcher_address.as_slice(),
-            self.system_config.overhead.to_be_bytes::<32>().as_slice(),
-            self.system_config.scalar.to_be_bytes::<32>().as_slice(),
-            self.system_config.gas_limit.to_be_bytes().as_slice(),
-            &config::opt_byte_arr(self.system_config.base_fee_scalar.map(|v| v.to_be_bytes())),
-            &config::opt_byte_arr(
-                self.system_config
-                    .blob_base_fee_scalar
-                    .map(|v| v.to_be_bytes()),
-            ),
-            &config::opt_byte_arr(
-                self.system_config
-                    .eip1559_denominator
-                    .map(|v| v.to_be_bytes()),
-            ),
-            &config::opt_byte_arr(
-                self.system_config
-                    .eip1559_elasticity
-                    .map(|v| v.to_be_bytes()),
-            ),
-            &config::opt_byte_arr(
-                self.system_config
-                    .operator_fee_scalar
-                    .map(|v| v.to_be_bytes()),
-            ),
-            &config::opt_byte_arr(
-                self.system_config
-                    .operator_fee_constant
-                    .map(|v| v.to_be_bytes()),
-            ),
-        ]
-        .concat();
 
         let fields = [
             &[0x01],
             block_bytes.as_slice(),
             &[self.done as u8],
-            system_config_bytes.as_slice(),
+            genesis_system_config_hash(&self.system_config).as_slice(),
         ]
         .concat();
 
