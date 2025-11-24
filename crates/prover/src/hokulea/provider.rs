@@ -105,9 +105,6 @@ impl KailuaCanoeSteelProvider {
             let mut contract = Contract::preflight(input.verifier_address, &mut env);
 
             let preflight_validity = match CertVerifierCall::build(&input.altda_commitment) {
-                CertVerifierCall::LegacyV2Interface(call) => {
-                    contract.call_builder(&call).call().await?
-                }
                 CertVerifierCall::ABIEncodeInterface(call) => {
                     let status = contract.call_builder(&call).call().await?;
                     status == StatusCode::SUCCESS as u8
