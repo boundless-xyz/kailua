@@ -1367,7 +1367,7 @@ pub mod tests {
             )),
             pipeline: CachedDerivationPipeline {
                 prepared: vec![OpAttributesWithParent {
-                    inner: OpPayloadAttributes {
+                    attributes: OpPayloadAttributes {
                         payload_attributes: PayloadAttributes {
                             timestamp: gen_u64(),
                             prev_randao: gen_b256(),
