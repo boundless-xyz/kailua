@@ -126,16 +126,16 @@ hana-host = { git = "https://github.com/celestiaorg/hana", rev = "748005ad397b4d
 hana-oracle = { git = "https://github.com/celestiaorg/hana", rev = "748005ad397b4db31a9f7ee5288115bedd447e8b", default-features = false }
 
 # Bonsai
-bonsai-sdk = { version = "1.4.0", features = ["non_blocking"] }
+bonsai-sdk = { version = "1.4.1", features = ["non_blocking"] }
 
 # RISC Zero
-risc0-build = { version = "3.0.3", features = ["unstable"] }
-risc0-circuit-recursion = "4.0.2"
+risc0-build = { version = "3.0.4", features = ["unstable"] }
+risc0-circuit-recursion = "4.0.3"
 risc0-ethereum-contracts = "3.0.1"
-risc0-zkvm = { version = "3.0.3", features = ["heap-embedded-alloc", "unstable"] }
+risc0-zkvm = { version = "3.0.4", features = ["heap-embedded-alloc", "unstable"] }
 
 # Boundless
-boundless-market = "1.0.0"
+boundless-market = "1.1.0"
 
 # STEEL
 risc0-steel = { git = "https://github.com/boundless-xyz/steel.git", tag = "v2.4.0" }

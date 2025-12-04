@@ -1,7 +1,7 @@
 
 pub const KAILUA_FPVM_KONA_ELF: &[u8] = include_bytes!("kailua-fpvm-kona.bin");
 pub const KAILUA_FPVM_KONA_PATH: &str = "./kailua-fpvm-kona.bin";
-pub const KAILUA_FPVM_KONA_ID: [u32; 8] = [0x4CD7C1D7, 0x7E896EE2, 0x9EAC78B, 0xDBDC6746, 0xBA05C404, 0xB9BD3618, 0x3F77ADB0, 0x5106FDC9];
+pub const KAILUA_FPVM_KONA_ID: [u32; 8] = [0x82EB76F1, 0x2D5DBBFB, 0xCE9C1A28, 0xBC629045, 0x935FE6DB, 0x296815D7, 0xE2FA74B1, 0x230C69B4];
 
 #[cfg(feature = "eigen")]
 pub const KAILUA_FPVM_HOKULEA_ELF: &[u8] = include_bytes!("kailua-fpvm-hokulea.bin");
