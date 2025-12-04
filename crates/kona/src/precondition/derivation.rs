@@ -24,12 +24,14 @@ use crate::rkyv::driver::sorted_by_key;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_eips::Typed2718;
 use alloy_primitives::Bytes;
+use alloy_rpc_types_engine::PayloadAttributes;
 use kona_driver::PipelineCursor;
 use kona_executor::BlockBuildingOutcome;
 use kona_protocol::{
     Batch, BatchWithInclusionBlock, BlockInfo, Channel, Frame, L2BlockInfo, OpAttributesWithParent,
     SingleBatch, SpanBatch, SpanBatchElement, SpanBatchTransactions,
 };
+use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use risc0_zkvm::sha::{Digestible, Impl as SHA2, Sha256};
 use risc0_zkvm::Digest;
 
@@ -134,80 +136,62 @@ pub fn flatten_block_build_outcome(outcome: &BlockBuildingOutcome) -> Vec<u8> {
     .concat()
 }
 
-pub fn flatten_op_attrib_with_parent(op_attrib_with_parent: &OpAttributesWithParent) -> Vec<u8> {
+pub fn flatten_payload_attributes(payload_attributes: &PayloadAttributes) -> Vec<u8> {
     [
-        op_attrib_with_parent
-            .inner
-            .payload_attributes
-            .timestamp
-            .to_be_bytes()
-            .as_slice(),
-        op_attrib_with_parent
-            .inner
-            .payload_attributes
-            .prev_randao
-            .as_slice(),
-        op_attrib_with_parent
-            .inner
-            .payload_attributes
-            .suggested_fee_recipient
-            .as_slice(),
-        op_attrib_with_parent
-            .inner
-            .payload_attributes
+        payload_attributes.timestamp.to_be_bytes().as_slice(),
+        payload_attributes.prev_randao.as_slice(),
+        payload_attributes.suggested_fee_recipient.as_slice(),
+        payload_attributes
             .withdrawals
             .as_ref()
             .map(|v| v.len() as u64)
             .unwrap_or_default()
             .to_be_bytes()
             .as_slice(),
-        op_attrib_with_parent
-            .inner
-            .payload_attributes
+        payload_attributes
             .withdrawals
             .as_ref()
             .map(|v| v.iter().map(flatten_withdrawal).collect::<Vec<_>>())
             .unwrap_or_default()
             .concat()
             .as_slice(),
-        op_attrib_with_parent
-            .inner
-            .payload_attributes
+        payload_attributes
             .parent_beacon_block_root
             .unwrap_or_default()
             .as_slice(),
-        op_attrib_with_parent
-            .inner
+    ]
+    .concat()
+}
+
+pub fn flatten_op_payload_attributes(op_payload_attributes: &OpPayloadAttributes) -> Vec<u8> {
+    [
+        flatten_payload_attributes(&op_payload_attributes.payload_attributes).as_slice(),
+        op_payload_attributes
             .transactions
             .as_ref()
             .map(|v| v.len() as u64)
             .unwrap_or_default()
             .to_be_bytes()
             .as_slice(),
-        op_attrib_with_parent
-            .inner
+        op_payload_attributes
             .transactions
             .as_ref()
             .map(|v| v.iter().map(flatten_bytes).collect::<Vec<_>>())
             .unwrap_or_default()
             .concat()
             .as_slice(),
-        config::opt_byte_arr(op_attrib_with_parent.inner.no_tx_pool.map(|v| [v as u8])).as_slice(),
-        config::opt_byte_arr(
-            op_attrib_with_parent
-                .inner
-                .gas_limit
-                .map(|v| v.to_be_bytes()),
-        )
-        .as_slice(),
-        config::opt_byte_arr(op_attrib_with_parent.inner.eip_1559_params.map(|v| v.0)).as_slice(),
-        config::opt_byte_arr(
-            op_attrib_with_parent
-                .inner
-                .min_base_fee
-                .map(|v| v.to_be_bytes()),
-        )
-        .as_slice(),
+        config::opt_byte_arr(op_payload_attributes.no_tx_pool.map(|v| [v as u8])).as_slice(),
+        config::opt_byte_arr(op_payload_attributes.gas_limit.map(|v| v.to_be_bytes())).as_slice(),
+        config::opt_byte_arr(op_payload_attributes.eip_1559_params.map(|v| v.0)).as_slice(),
+        config::opt_byte_arr(op_payload_attributes.min_base_fee.map(|v| v.to_be_bytes()))
+            .as_slice(),
+    ]
+    .concat()
+}
+
+pub fn flatten_op_attrib_with_parent(op_attrib_with_parent: &OpAttributesWithParent) -> Vec<u8> {
+    [
+        flatten_op_payload_attributes(&op_attrib_with_parent.attributes).as_slice(),
         flatten_l2_block_info(&op_attrib_with_parent.parent).as_slice(),
         config::opt_byte_vec(
             op_attrib_with_parent

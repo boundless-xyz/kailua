@@ -807,7 +807,7 @@ pub struct OpAttributesWithParentRkyv;
 impl OpAttributesWithParentRkyv {
     pub fn rkyv(value: &OpAttributesWithParent) -> RkyvedOpAttributesWithParent {
         (
-            OpPayloadAttributesRkyv::rkyv(&value.inner),
+            OpPayloadAttributesRkyv::rkyv(&value.attributes),
             L2BlockInfoRkyv::rkyv(&value.parent),
             value.derived_from.as_ref().map(BlockInfoRkyv::rkyv),
             value.is_last_in_span,
@@ -816,7 +816,7 @@ impl OpAttributesWithParentRkyv {
 
     pub fn raw(rkyved: RkyvedOpAttributesWithParent) -> OpAttributesWithParent {
         OpAttributesWithParent {
-            inner: OpPayloadAttributesRkyv::raw(rkyved.0),
+            attributes: OpPayloadAttributesRkyv::raw(rkyved.0),
             parent: L2BlockInfoRkyv::raw(rkyved.1),
             derived_from: rkyved.2.map(BlockInfoRkyv::raw),
             is_last_in_span: rkyved.3,

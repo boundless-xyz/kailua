@@ -1,5 +1,5 @@
 [workspace.package]
-version = "1.1.6"
+version = "1.1.7"
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.86"
@@ -89,20 +89,20 @@ kailua-rpc = { path = "crates/rpc" }
 kailua-sync = { path = "crates/sync" }
 kailua-validator = { path = "crates/validator" }
 
-# Kona git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4"
-kona-cli = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4", default-features = false }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4", default-features = false, features = ["serde"] }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4" }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4" }
-kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4", default-features = false, features = ["single"] }
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4", features = ["serde"] }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4", features = ["serde", "rkyv", "std"] }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4" }
-kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4" }
-kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4" }
-kona-std-fpvm = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.4" }
+# Kona git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5"
+kona-cli = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5", default-features = false }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5", default-features = false, features = ["serde"] }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5" }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5" }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5", default-features = false, features = ["single"] }
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5", features = ["serde"] }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5", features = ["serde", "rkyv", "std"] }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5" }
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5" }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5" }
+kona-std-fpvm = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.5" }
 
 # Hokulea git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.1"
 canoe-bindings = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.1" }
