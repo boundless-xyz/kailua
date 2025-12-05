@@ -125,6 +125,10 @@ contract FaultSemaphoreTest is KailuaTest {
         verifier.releaseFaultProofPermit(proposal_128_0_parent, proposal_128_0_signature, 0, 0);
         vm.assertEq(address(this).balance - balance, permitBond);
 
+        // Fail to double release
+        vm.expectRevert(NoCreditToClaim.selector);
+        verifier.releaseFaultProofPermit(proposal_128_0_parent, proposal_128_0_signature, 0, 0);
+
         // Prune proposal
         KailuaTournament(address(proposal_128_0_parent)).pruneChildren(2);
 
@@ -165,9 +169,10 @@ contract FaultSemaphoreTest is KailuaTest {
             vm.assertEq(numActivePermits, 0);
             // Acquire all available permits
             for (uint64 j = 0; j < (1 << i); j++) {
+                uint64 underCountExpired = numExpiredPermits == 0 ? 0 : numExpiredPermits - 1;
                 // Give all permits the same starting time
                 verifier.acquireFaultProofPermit{value: permitBond}(
-                    proposal_128_0_parent, proposal_128_0_signature, numExpiredPermits, address(this)
+                    proposal_128_0_parent, proposal_128_0_signature, underCountExpired, address(this)
                 );
                 // Fail to release
                 vm.expectRevert(NotProven.selector);
@@ -186,6 +191,12 @@ contract FaultSemaphoreTest is KailuaTest {
             vm.expectRevert(ClockNotExpired.selector);
             verifier.acquireFaultProofPermit{value: permitBond}(
                 proposal_128_0_parent, proposal_128_0_signature, numExpiredPermits, address(this)
+            );
+
+            // Fail to forge expired permits
+            vm.expectRevert(BadTarget.selector);
+            verifier.acquireFaultProofPermit{value: permitBond}(
+                proposal_128_0_parent, proposal_128_0_signature, numExpiredPermits + 1, address(this)
             );
 
             // Don't expire the last batch
@@ -248,6 +259,81 @@ contract FaultSemaphoreTest is KailuaTest {
         treasury.claimEliminationRewards();
         vm.assertEq(
             address(this).balance - initialProverBalance,
+            (treasury.participationBond() * treasury.ELIMINATION_SPLIT_PROVER_NUM())
+                / treasury.ELIMINATION_SPLIT_DENOM()
+        );
+    }
+
+    function test_lateProof() public {
+        vm.warp(
+            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
+        );
+
+        // Set proposal bond
+        treasury.setParticipationBond(24);
+        uint256 permitBond = verifier.faultProofPermitBond(treasury);
+
+        // Succeed to propose after min creation time
+        KailuaTournament proposal_128_0 = treasury.propose{value: treasury.participationBond()}(
+            Claim.wrap(0x0001010000010100000010100000101000001010000010100000010100000101),
+            abi.encodePacked(uint64(128), uint64(anchor.gameIndex()), uint64(0))
+        );
+
+        // Acquire fault proof permit
+        IKailuaTournament proposal_128_0_parent = IKailuaTournament(address(proposal_128_0.parentGame()));
+        bytes32 proposal_128_0_signature = proposal_128_0.signature();
+        verifier.acquireFaultProofPermit{value: permitBond}(
+            proposal_128_0_parent, proposal_128_0_signature, 0, address(this)
+        );
+
+        // Fail to release before proving
+        vm.expectRevert(NotProven.selector);
+        verifier.releaseFaultProofPermit(proposal_128_0_parent, proposal_128_0_signature, 0, 0);
+
+        // Generate mock proof
+        bytes32 goodClaim = bytes32(uint256(proposal_128_0.rootClaim().raw()) + KailuaKZGLib.BLS_MODULUS);
+        bytes memory proof = mockFaultProof(
+            address(this),
+            proposal_128_0.l1Head().raw(),
+            proposal_128_0.parentGame().rootClaim().raw(),
+            goodClaim,
+            uint64(proposal_128_0.l2BlockNumber())
+        );
+
+        // Fastforward to expiry
+        vm.warp(block.timestamp + verifier.PERMIT_DURATION().raw() + 1);
+
+        // Accept fault proof
+        proposal_128_0.parentGame().proveOutputFault(
+            [address(this), address(proposal_128_0)],
+            [uint64(0), uint64(0)],
+            proof,
+            [proposal_128_0.parentGame().rootClaim().raw(), goodClaim],
+            KailuaKZGLib.hashToFe(proposal_128_0.rootClaim().raw()),
+            [new bytes[](0), new bytes[](0)]
+        );
+
+        // Ensure signature is unviable
+        vm.assertFalse(proposal_128_0_parent.isViableSignature(proposal_128_0_signature));
+
+        // Ensure proof time is recorded
+        vm.assertEq(
+            proposal_128_0_parent.provenAt(proposal_128_0_signature).raw(),
+            verifier.faultProofPermitProvenAt(proposal_128_0_parent, proposal_128_0_signature)
+        );
+
+        // Fail to release after late proving
+        vm.expectRevert(AlreadyEliminated.selector);
+        verifier.releaseFaultProofPermit(proposal_128_0_parent, proposal_128_0_signature, 0, 0);
+
+        // Prune proposal
+        KailuaTournament(address(proposal_128_0_parent)).pruneChildren(2);
+
+        // Claim elimination bonds as prover
+        uint256 balance = address(this).balance;
+        treasury.claimEliminationRewards();
+        vm.assertEq(
+            address(this).balance - balance,
             (treasury.participationBond() * treasury.ELIMINATION_SPLIT_PROVER_NUM())
                 / treasury.ELIMINATION_SPLIT_DENOM()
         );
@@ -358,6 +444,94 @@ contract FaultSemaphoreTest is KailuaTest {
         vm.expectRevert(ProvenFaulty.selector);
         verifier.acquireFaultProofPermit{value: permitBond}(
             proposal_128_0_parent, arbitrary_signature, 0, address(this)
+        );
+    }
+
+    function test_twoProofs() public {
+        vm.warp(
+            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
+        );
+
+        // Set proposal bond
+        treasury.setParticipationBond(24);
+        uint256 permitBond = verifier.faultProofPermitBond(treasury);
+
+        // Succeed to propose after min creation time
+        KailuaTournament proposal_128_0 = treasury.propose{value: treasury.participationBond()}(
+            Claim.wrap(0x0001010000010100000010100000101000001010000010100000010100000101),
+            abi.encodePacked(uint64(128), uint64(anchor.gameIndex()), uint64(0))
+        );
+        vm.deal(address(0x007), 42);
+        vm.startPrank(address(0x007));
+        KailuaTournament proposal_128_1 = treasury.propose{value: treasury.participationBond()}(
+            Claim.wrap(0x000101000001010000001010000010100000101000001010000001010000010F),
+            abi.encodePacked(uint64(128), uint64(anchor.gameIndex()), uint64(0))
+        );
+        vm.stopPrank();
+
+        // Acquire fault proof permit
+        IKailuaTournament proposal_128_0_parent = IKailuaTournament(address(proposal_128_0.parentGame()));
+        bytes32 proposal_128_1_signature = proposal_128_1.signature();
+        verifier.acquireFaultProofPermit{value: permitBond}(
+            proposal_128_0_parent, proposal_128_1_signature, 0, address(this)
+        );
+
+        // Fail to release before proving
+        vm.expectRevert(NotProven.selector);
+        verifier.releaseFaultProofPermit(proposal_128_0_parent, proposal_128_1_signature, 0, 0);
+
+        // Generate mock proof
+        bytes memory proof = mockValidityProof(
+            address(this),
+            proposal_128_0.l1Head().raw(),
+            proposal_128_0.parentGame().rootClaim().raw(),
+            proposal_128_0.rootClaim().raw(),
+            uint64(proposal_128_0.l2BlockNumber()),
+            uint64(proposal_128_0.PROPOSAL_OUTPUT_COUNT()),
+            uint64(proposal_128_0.OUTPUT_BLOCK_SPAN()),
+            proposal_128_0.blobsHash()
+        );
+
+        // Accept validity proof
+        proposal_128_0.parentGame().proveValidity(address(this), address(proposal_128_0), uint64(0), proof);
+
+        // Jump past permit expiry
+        vm.warp(block.timestamp + verifier.PERMIT_DURATION().raw() + 1);
+
+        // Generate mock proof
+        proof = mockFaultProof(
+            address(this),
+            proposal_128_0.l1Head().raw(),
+            proposal_128_0.parentGame().rootClaim().raw(),
+            proposal_128_0.rootClaim().raw(),
+            uint64(proposal_128_0.l2BlockNumber())
+        );
+
+        // Accept fault proof
+        proposal_128_0.parentGame().proveOutputFault(
+            [address(this), address(proposal_128_0)],
+            [uint64(1), uint64(0)],
+            proof,
+            [proposal_128_0.parentGame().rootClaim().raw(), proposal_128_0.rootClaim().raw()],
+            KailuaKZGLib.hashToFe(proposal_128_1.rootClaim().raw()),
+            [new bytes[](0), new bytes[](0)]
+        );
+
+        // Ensure validity proof time is recorded
+        vm.assertEq(
+            proposal_128_0_parent.provenAt(proposal_128_0.signature()).raw(),
+            verifier.faultProofPermitProvenAt(proposal_128_0_parent, proposal_128_1_signature)
+        );
+
+        // Release after proving
+        uint256 balance = address(this).balance;
+        verifier.releaseFaultProofPermit(proposal_128_0_parent, proposal_128_1_signature, 0, 0);
+        vm.assertEq(address(this).balance - balance, permitBond);
+
+        // Fail to acquire another permit
+        vm.expectRevert(ProvenFaulty.selector);
+        verifier.acquireFaultProofPermit{value: permitBond}(
+            proposal_128_0_parent, proposal_128_1_signature, 0, address(this)
         );
     }
 }
