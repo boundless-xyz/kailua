@@ -37,7 +37,7 @@ tokio-retry.workspace = true
 
 # Alloy
 alloy = { workspace = true, features = ["full", "kzg", "contract", "rlp", "sol-types"] }
-alloy-primitives = { workspace = true, features = ["map-hashbrown"] }
+alloy-primitives.workspace = true
 op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
 

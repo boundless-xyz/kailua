@@ -1,6 +1,6 @@
 [package]
 name = "kailua-fpvm-kona"
-version = "1.1.2"
+version = "1.1.7"
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.86"
@@ -14,7 +14,7 @@ categories = ["cryptography", "cryptography::cryptocurrencies"]
 
 [profile.release]
 codegen-units = 1
-debug = 1
+debug = 0
 lto = "fat"
 
 [profile.release.build-override]
@@ -23,13 +23,13 @@ opt-level = 3
 
 [dependencies]
 blst = { version = "=0.3.15", features = ["no-threads"] }
-c-kzg = { version = "2.1.1", features = ["eip-7594"] }
+c-kzg = { version = "2.1.5", features = ["eip-7594"] }
 rkyv = "0.8.9"
 substrate-bn = "=0.6.0"
 
 kailua-kona = { path = "../../../crates/kona" }
 
-risc0-zkvm = { version = "3.0.3", features = ["std", "heap-embedded-alloc", "unstable"] }
+risc0-zkvm = { version = "3.0.4", features = ["std", "heap-embedded-alloc", "unstable"] }
 
 [features]
 disable-dev-mode = [
@@ -38,7 +38,7 @@ disable-dev-mode = [
 
 [patch.crates-io]
 blst = { git = "https://github.com/risc0/blst", tag = "v0.3.15-risczero.1"}
-c-kzg = { git = "https://github.com/risc0/c-kzg-4844", tag = "c-kzg/v2.1.1-risczero.2" }
+c-kzg = { git = "https://github.com/risc0/c-kzg-4844", tag = "v2.1.5-risczero.0" }
 crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.5-risczero.0" }
 k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.4-risczero.1" }
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.9-risczero.0" }

@@ -75,11 +75,6 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
             assert_eq!(boot.l1_head, cert_validity.l1_head_block_hash);
             // Verify certificate
             let is_valid = match CertVerifierCall::build(&altda_commitment) {
-                CertVerifierCall::LegacyV2Interface(call) => {
-                    Contract::new(cert_validity.verifier_address, &env)
-                        .call_builder(&call)
-                        .call()
-                }
                 CertVerifierCall::ABIEncodeInterface(call) => {
                     let status = Contract::new(cert_validity.verifier_address, &env)
                         .call_builder(&call)
@@ -91,5 +86,10 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
         }
 
         Ok(())
+    }
+
+    fn to_journals_bytes(&self, _: Vec<(AltDACommitment, CertValidity)>) -> Vec<u8> {
+        // this method should not be used
+        unimplemented!()
     }
 }

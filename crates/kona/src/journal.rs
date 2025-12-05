@@ -137,6 +137,7 @@ impl ProofJournal {
     /// - Bytes `[156..188]`: `config_hash` (32 bytes)
     /// - Bytes `[188..220]`: `fpvm_image_id` (32 bytes)
     pub fn decode_packed(encoded: &[u8]) -> Self {
+        assert_eq!(encoded.len(), 220);
         ProofJournal {
             payout_recipient: encoded[..20].try_into().unwrap(),
             precondition_hash: encoded[20..52].try_into().unwrap(),

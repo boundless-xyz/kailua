@@ -35,7 +35,7 @@ impl<O: CommsClient + FlushableCache + Send + Sync + Debug + Clone> LocalOnceOra
     pub fn new(oracle: Arc<O>) -> Self {
         Self {
             oracle,
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 }

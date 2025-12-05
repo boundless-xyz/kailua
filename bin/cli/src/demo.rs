@@ -164,11 +164,11 @@ pub async fn handle_blocks(
                 provider.op_provider.sync_status().await
             )
         );
-        let Some(safe_l2_number) = sync_status["safe_l2"]["number"]
+        let Some(finalized_l2_number) = sync_status["finalized_l2"]["number"]
             .as_u64()
             .map(|v| v.saturating_sub(args.provider.op_rpc_delay))
         else {
-            error!("Failed to parse safe_l2_number");
+            error!("Failed to parse finalized_l2_number");
             continue;
         };
         let l1_head = await_tel!(
@@ -188,12 +188,12 @@ pub async fn handle_blocks(
         // start from most recent block if unspecified
         if last_proven.is_none() {
             last_proven = Some(
-                safe_l2_number
+                finalized_l2_number
                     .saturating_sub(args.nth_proof_to_process * args.num_blocks_per_proof + 1),
             );
         }
         // queue required proofs
-        while last_proven.unwrap() + args.num_blocks_per_proof < safe_l2_number {
+        while last_proven.unwrap() + args.num_blocks_per_proof < finalized_l2_number {
             let agreed_l2_block_number = last_proven.unwrap();
             let agreed_l2_block = await_tel!(
                 context,
@@ -265,9 +265,9 @@ pub async fn handle_blocks(
         }
         let wait = args
             .num_blocks_per_proof
-            .saturating_sub(safe_l2_number.saturating_sub(last_proven.unwrap()));
+            .saturating_sub(finalized_l2_number.saturating_sub(last_proven.unwrap()));
         if wait != last_wait {
-            info!("Waiting for {wait} more safe L2 blocks to request a new proof.",);
+            info!("Waiting for {wait} more finalized L2 blocks to request a new proof.",);
             last_wait = wait;
         }
         // report completed proofs

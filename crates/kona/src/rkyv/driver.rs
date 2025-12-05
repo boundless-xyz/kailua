@@ -115,6 +115,7 @@ pub type RkyvedSystemConfig = (
     Option<u32>,
     Option<u64>,
     Option<u64>,
+    Option<u16>,
 );
 
 pub struct SystemConfigRkyv;
@@ -133,6 +134,7 @@ impl SystemConfigRkyv {
             value.operator_fee_scalar,
             value.operator_fee_constant,
             value.min_base_fee,
+            value.da_footprint_gas_scalar,
         )
     }
 
@@ -149,6 +151,7 @@ impl SystemConfigRkyv {
             operator_fee_scalar: rkyved.8,
             operator_fee_constant: rkyved.9,
             min_base_fee: rkyved.10,
+            da_footprint_gas_scalar: rkyved.11,
         }
     }
 }
@@ -804,7 +807,7 @@ pub struct OpAttributesWithParentRkyv;
 impl OpAttributesWithParentRkyv {
     pub fn rkyv(value: &OpAttributesWithParent) -> RkyvedOpAttributesWithParent {
         (
-            OpPayloadAttributesRkyv::rkyv(&value.inner),
+            OpPayloadAttributesRkyv::rkyv(&value.attributes),
             L2BlockInfoRkyv::rkyv(&value.parent),
             value.derived_from.as_ref().map(BlockInfoRkyv::rkyv),
             value.is_last_in_span,
@@ -813,7 +816,7 @@ impl OpAttributesWithParentRkyv {
 
     pub fn raw(rkyved: RkyvedOpAttributesWithParent) -> OpAttributesWithParent {
         OpAttributesWithParent {
-            inner: OpPayloadAttributesRkyv::raw(rkyved.0),
+            attributes: OpPayloadAttributesRkyv::raw(rkyved.0),
             parent: L2BlockInfoRkyv::raw(rkyved.1),
             derived_from: rkyved.2.map(BlockInfoRkyv::raw),
             is_last_in_span: rkyved.3,
@@ -952,7 +955,7 @@ impl HeaderRkyv {
 }
 
 pub type OPBlockExecutionResult = BlockExecutionResult<OpReceiptEnvelope>;
-pub type RkyvedOPBlockExecutionResult = (Vec<Vec<u8>>, Vec<Vec<u8>>, u64);
+pub type RkyvedOPBlockExecutionResult = (Vec<Vec<u8>>, Vec<Vec<u8>>, u64, u64);
 
 pub struct OPBlockExecutionResultRkyv;
 
@@ -968,6 +971,7 @@ impl OPBlockExecutionResultRkyv {
                 .map(|v| v.to_vec())
                 .collect(),
             value.gas_used,
+            value.blob_gas_used,
         )
     }
 
@@ -980,6 +984,7 @@ impl OPBlockExecutionResultRkyv {
                 .collect(),
             requests: Requests::new(rkyved.1.into_iter().map(|v| v.into()).collect()),
             gas_used: rkyved.2,
+            blob_gas_used: rkyved.3,
         }
     }
 }

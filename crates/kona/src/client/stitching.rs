@@ -41,52 +41,27 @@ pub trait StitchingClient<
     B: BlobProvider + Send + Sync + Debug + Clone,
 >
 {
-    /// Executes the primary operation of stitching together execution and boot information for a client,
-    /// while maintaining composable proofs for validation in a zero-knowledge environment.
+    /// Runs the Kailua client to transition the rollup state and combines the result with
+    /// other proven contiguous state transitions to yield a single overarching
+    /// `ProofJournal` and `Precondition`.
+    ///
+    /// The returned `BootInfo` instance is what was loaded by the Kona client.
     ///
     /// # Arguments
     ///
-    /// * `precondition_validation_data_hash` - A `B256` hash used for precondition validation.
-    /// * `oracle` - An `Arc` wrapped client that implements the `CommsClient` and `FlushableCache`
-    ///   traits. This serves as the provider for external data communication.
-    /// * `stream` - An `Arc` wrapped client, similar to `oracle`, used for additional communication
-    ///   and streaming purposes.
-    /// * `beacon` - A generic blob provider `B`, used as a shared dependency for validation
-    ///   operations.
+    /// * `proposal_data_hash` - The hash of the proposal blob precondition data.
+    /// * `oracle` - The client for preloaded communication with the host environment.
+    /// * `stream` - The client for streamed communication with the host.
+    /// * `beacon` - The blob provider.
     /// * `fpvm_image_id` - A `B256` identifier for the FPVM image to associate with the operations performed.
     /// * `payout_recipient_address` - The Ethereum address (`Address`) where payout rewards are allocated.
     /// * `stitched_executions` - A nested vector of `Execution` objects containing precomputed execution
     ///   proofs to be stitched.
-    /// * `stitched_boot_info` - A vector of `StitchedBootInfo` objects containing boot proofs
+    /// * `derivation_cache`: An initial snapshot to load for the derivation pipeline.
+    /// * `derivation_trace`: Whether to capture the final snapshot of the derivation pipeline in the precondition.
+    /// * `stitched_preconditions`: A vector of `Precondition` objects for the stitched proofs.
+    /// * `stitched_boot_info` - A vector of `StitchedBootInfo` objects describing proofs
     ///   to be stitched together.
-    ///
-    /// # Returns
-    ///
-    /// Returns a `ProofJournal` combining the stitched proofs.
-    ///
-    /// # Functionality
-    ///
-    /// - **Execution Queueing:** Precomputed executions are split into direct executables and cache components
-    ///   for intermediate processing.
-    /// - **Output Validation:** Computes the output hash of the target block using a helper method
-    ///   (`run_core_client`) and validates the precondition against the provided hash.
-    /// - **Proof Loading (Conditional):** For zero-knowledge validations (`zkvm`), loads previously
-    ///   proven FPVM journals to maintain composability and recursive proof validation.
-    /// - **Execution Stitching:** Merges the precomputed execution proofs into a single verifiable
-    ///   entity while associating it with a target address.
-    /// - **Boot Info Stitching:** Stitches together boot proofs based on the precondition hash and FPVM image ID.
-    ///
-    /// # Platform Specific Behavior
-    ///
-    /// This function behaves differently on platforms supporting `zkvm`:
-    /// - It loads proven FPVM journals (`load_stitching_journals`) to ensure recursive zero-knowledge proofs
-    ///   are intact.
-    /// - Passes the proven journals to the execution and boot info stitching processes for extended validation.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if:
-    /// - The output hash computation (`run_core_client`) fails.
     #[allow(clippy::too_many_arguments)]
     fn run_stitching_client(
         self,
@@ -223,7 +198,7 @@ pub fn load_stitching_journals(fpvm_image_id: B256) -> HashSet<Digest> {
     log("VERIFY");
 
     let fpvm_image_id = Digest::from(fpvm_image_id.0);
-    let mut proven_fpvm_journals = HashSet::new();
+    let mut proven_fpvm_journals = HashSet::with_hasher(Default::default());
 
     loop {
         let Ok(receipt) =
@@ -357,6 +332,7 @@ pub fn stitch_executions(
         assert_eq!(1, stitched_executions.len());
         return;
     };
+    // Otherwise, we validate that all cached executions have corresponding exec-only proofs
     for execution_trace in stitched_executions {
         let precondition_hash =
             crate::precondition::execution::exec_precondition_hash(execution_trace.as_slice());
@@ -401,6 +377,8 @@ pub fn stitch_executions(
 /// integrity and creating a coherent journal that reflects the intermediate states and outputs
 /// of the bootstrapping process.
 ///
+/// NOTE: This method does not support combining execution-only proofs.
+///
 /// # Arguments
 ///
 /// * `boot` - A reference to the base `BootInfo` structure used as the initial data point.
@@ -429,6 +407,7 @@ pub fn stitch_executions(
 ///    check.
 /// 4. **Non-contiguous Stitching**: If the claimed and agreed L2 output roots cannot be matched
 ///    in a forward or backward stitching configuration.
+/// 5. **Execution-only Records**: If the combination of execution-only boot infos is attempted.
 ///
 /// # Stitching Logic
 ///
@@ -485,10 +464,10 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
     };
     for (stitched_boot, stitched_precondition) in zip(stitched_boot_infos, stitched_preconditions) {
         // Check if stitched l1 head is in the same chain
-        if boot.l1_head.is_zero() {
-            assert!(stitched_boot.l1_head.is_zero());
+        if boot.l1_head.is_zero() || stitched_boot.l1_head.is_zero() {
+            unimplemented!("Stitching boot infos of execution-only proofs is not supported.");
         } else if let Some(l1_provider) = l1_provider.as_mut() {
-            // Retrieve the full header, which could be from another chain
+            // Retrieve the full header, which must then be verified to be from the same chain
             let stitched_l1_header = l1_provider
                 .header_by_hash(stitched_boot.l1_head)
                 .await

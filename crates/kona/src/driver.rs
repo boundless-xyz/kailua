@@ -1314,6 +1314,7 @@ pub mod tests {
                         operator_fee_scalar: Some(gen_u64() as u32),
                         operator_fee_constant: Some(gen_u64()),
                         min_base_fee: Some(gen_u64()),
+                        da_footprint_gas_scalar: Some(gen_u64() as u16),
                     },
                 },
             },
@@ -1366,7 +1367,7 @@ pub mod tests {
             )),
             pipeline: CachedDerivationPipeline {
                 prepared: vec![OpAttributesWithParent {
-                    inner: OpPayloadAttributes {
+                    attributes: OpPayloadAttributes {
                         payload_attributes: PayloadAttributes {
                             timestamp: gen_u64(),
                             prev_randao: gen_b256(),

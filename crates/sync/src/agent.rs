@@ -261,11 +261,11 @@ impl SyncAgent {
                 self.provider.op_provider.sync_status().await
             )
         );
-        let safe_l2_number = sync_status["safe_l2"]["number"]
+        let finalized_l2_number = sync_status["finalized_l2"]["number"]
             .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("failed to parse safe_l2"))?
+            .ok_or_else(|| anyhow::anyhow!("failed to parse finalized_l2"))?
             .saturating_sub(args.provider.op_rpc_delay);
-        let output_block_number = safe_l2_number
+        let output_block_number = finalized_l2_number
             .min(self.cursor.last_output_index + self.deployment.blocks_per_proposal());
         if self.cursor.last_output_index + self.deployment.output_block_span < output_block_number {
             info!(
@@ -321,7 +321,7 @@ impl SyncAgent {
                 }
                 Ok(ProposalSync::DELAYED(proposal_block)) => {
                     // sync more blocks and try again if available
-                    if proposal_block < safe_l2_number {
+                    if proposal_block < finalized_l2_number {
                         break;
                     }
                     // Queue delayed proposal for later reprocessing once more blocks are available
@@ -559,7 +559,7 @@ impl SyncAgent {
             < proposal.output_block_number
         {
             warn!(
-                "Delayed proposal {} processing until synced with op-node safe L2 block {}.",
+                "Delayed proposal {} processing until synced with op-node finalized L2 block {}.",
                 proposal.index, proposal.output_block_number
             );
             return Ok(proposal.as_delayed());

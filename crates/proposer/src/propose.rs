@@ -192,7 +192,7 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
             continue;
         } else if agent.cursor.last_output_index < proposal_block_number {
             info!(
-                "Waiting for op-node safe l2 head to reach block {proposal_block_number} before proposing ({} more blocks needed).",
+                "Waiting for op-node finalized l2 head to reach block {proposal_block_number} before proposing ({} more blocks needed).",
                 proposal_block_number - agent.cursor.last_output_index
             );
             continue;

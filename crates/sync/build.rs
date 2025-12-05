@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod args;
-pub mod provider;
-pub mod witgen;
+fn main() {
+    println!("cargo:rustc-link-lib=blst");
+    println!("cargo:rustc-link-lib=static=blst");
+}

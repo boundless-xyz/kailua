@@ -4,7 +4,7 @@
 Unlock faster finality and stronger security for your OP chain.
 
 > [!NOTE]
-> Documentation: https://risc0.github.io/kailua/
+> Documentation: https://boundless-xyz.github.io/kailua/
 
 
 ## Intro
@@ -37,13 +37,12 @@ Validity Mode turns OP chains into a ZK Rollup, eliminating disputes entirely si
 - Unlocks 1-hour finality
 - No challenges, no disputes—ZK Validity Proofs replace interactive fault proofs.
 
-
 ## Audits
-
 Kailua has undergone the following audits throughout its development:
-* [18 FEB 2025](https://github.com/risc0/rz-security/blob/main/audits/kailua/veridise-kailua-20250217.pdf)
-* [22 MAY 2025](https://github.com/risc0/rz-security/blob/main/audits/kailua/veridise-kailua-20250522.pdf)
-* [16 JUN 2025](https://github.com/risc0/rz-security/blob/main/audits/kailua/veridise-kailua-20250616.pdf)
+* [2025 FEB 18](audits/veridise-250218.pdf)
+* [2025 MAY 22](audits/veridise-250522.pdf)
+* [2025 JUN 16](audits/veridise-250616.pdf)
+* [2025 OCT 23](audits/veridise-251023.pdf)
 
 ## Prerequisites
 1. [rust](https://www.rust-lang.org/tools/install)
