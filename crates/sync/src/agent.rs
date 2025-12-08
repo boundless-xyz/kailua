@@ -899,6 +899,10 @@ impl SyncAgent {
         timeout: u64,
         expiry: u64,
     ) -> Option<u64> {
+        info!(
+            "Attempting to acquire new fault proof permit for {}.",
+            proposal.contract
+        );
         // Telemetry
         let tracer = tracer("kailua");
         let context =
@@ -919,7 +923,7 @@ impl SyncAgent {
 
         // Skip attempt if balance is insufficient
         let bond = kailua_verifier
-            .faultProofPermitBond(parent.contract)
+            .faultProofPermitBond(proposal.treasury)
             .stall_with_context(
                 context.clone(),
                 "KailuaVerifier::faultProofPermitBond",

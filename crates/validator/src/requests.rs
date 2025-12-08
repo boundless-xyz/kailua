@@ -49,6 +49,23 @@ lazy_static! {
     static ref NUM_ACTIVE_PROVERS: Arc<Mutex<u64>> = Default::default();
 }
 
+pub async fn num_active_provers() -> u64 {
+    let nap = NUM_ACTIVE_PROVERS.lock().await;
+    *nap
+}
+
+pub async fn increment_active_provers() {
+    // Increment active provers count
+    let mut nap = NUM_ACTIVE_PROVERS.lock().await;
+    *nap += 1;
+}
+
+pub async fn decrement_active_provers() {
+    // Increment active provers count
+    let mut nap = NUM_ACTIVE_PROVERS.lock().await;
+    *nap -= 1;
+}
+
 pub async fn handle_proof_requests(
     mut channel: DuplexChannel<Message>,
     args: ValidateArgs,
@@ -277,11 +294,9 @@ pub async fn request_fault_proof<P: Provider>(
         info!("Reusing acquired fault proof permit {permit}.")
     } else if !matches!(args.fault_proving_permit, PermitPolicy::SKIPPED) {
         // track number of active requests vs number of provers
-        let nap = NUM_ACTIVE_PROVERS.lock().await;
-        if *nap >= args.num_concurrent_provers {
+        if num_active_provers().await >= args.num_concurrent_provers {
             bail!("Waiting for active proofs to finish before acquiring a new proving permit.");
         }
-        drop(nap);
         // attempt to acquire permit
         let bond_wallet_address = args
             .validator_wallet(None)
@@ -321,8 +336,7 @@ pub async fn request_fault_proof<P: Provider>(
         })
         .await?;
     // Increment active provers count
-    let mut nap = NUM_ACTIVE_PROVERS.lock().await;
-    *nap += 1;
+    increment_active_provers().await;
     Ok(())
 }
 
@@ -399,5 +413,7 @@ pub async fn request_validity_proof(
             claimed_l2_output_root: proposal.output_root,
         })
         .await?;
+    // Increment active provers count
+    increment_active_provers().await;
     Ok(())
 }
