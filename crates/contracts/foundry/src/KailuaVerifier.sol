@@ -154,7 +154,7 @@ contract KailuaVerifier {
         bytes32 proposalSignature,
         uint64 numExpiredPermits,
         address payoutRecipient
-    ) external payable {
+    ) external payable returns (uint256 totalPermitsIssued_) {
         // INVARIANT: The child signature is still viable so no proof is submitted for/against it
         if (!proposalParent.isViableSignature(proposalSignature)) {
             revert ProvenFaulty();
@@ -169,14 +169,14 @@ contract KailuaVerifier {
         (numExpiredPermits,,) = countExpiredPermits(proposalKey, numExpiredPermits, uint64(block.timestamp));
         // INVARIANT: There is at least one permit available
         FaultProofPermit[] storage proposalPermits = faultProofPermits[proposalKey];
-        uint256 totalPermitsIssued = proposalPermits.length;
-        if (totalPermitsIssued > 2 * numExpiredPermits) {
+        totalPermitsIssued_ = proposalPermits.length;
+        if (totalPermitsIssued_ > 2 * numExpiredPermits) {
             revert ClockNotExpired();
         }
         // Calculate the aggregate collateral value
         uint256 aggregateCollateral = msg.value;
-        if (totalPermitsIssued > 0) {
-            aggregateCollateral += proposalPermits[totalPermitsIssued - 1].aggregateCollateral;
+        if (totalPermitsIssued_ > 0) {
+            aggregateCollateral += proposalPermits[totalPermitsIssued_ - 1].aggregateCollateral;
         }
         // Assign a new permit
         proposalPermits.push(FaultProofPermit(aggregateCollateral, payoutRecipient, uint64(block.timestamp), false));

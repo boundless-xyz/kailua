@@ -15,9 +15,9 @@
 use crate::channel::{DuplexChannel, Message};
 use crate::proposals::get_next_l1_head;
 use crate::requests::{request_fault_proof, request_validity_proof};
+use alloy::providers::Provider;
 use kailua_contracts::*;
 use kailua_sync::agent::SyncAgent;
-use kailua_sync::await_tel;
 use kailua_sync::stall::Stall;
 use opentelemetry::global::tracer;
 use opentelemetry::metrics::Counter;
@@ -30,7 +30,7 @@ use std::time::SystemTime;
 use tracing::{error, info, warn};
 
 #[allow(clippy::too_many_arguments)]
-pub async fn dispatch_proof_requests(
+pub async fn dispatch_proof_requests<P: Provider>(
     args: &crate::args::ValidateArgs,
     agent: &mut SyncAgent,
     buffer: &mut BinaryHeap<(Reverse<u64>, u64)>,
@@ -38,6 +38,7 @@ pub async fn dispatch_proof_requests(
     last_proof_l1_head: &mut BTreeMap<u64, u64>,
     channel: &mut DuplexChannel<Message>,
     is_fault: bool,
+    validator_provider: &P,
 ) {
     let tracer = tracer("kailua");
     let context =
@@ -87,21 +88,40 @@ pub async fn dispatch_proof_requests(
         };
 
         let parent_contract = KailuaTournament::new(parent.contract, &agent.provider.l1_provider);
-        // Check that a proof had not already been posted
-        let proof_status = parent_contract
-            .proofStatus(proposal.signature)
-            .stall_with_context(
-                context.clone(),
-                "KailuaTournament::proofStatus",
-                args.sync.provider.timeouts.eth_rpc_timeout,
-            )
-            .await;
-        if proof_status != 0 {
+
+        // (fp) check if signature is still viable
+        // (vp) Check that a proof had not already been posted
+        if is_fault
+            && !parent_contract
+                .isViableSignature(proposal.signature)
+                .stall_with_context(
+                    context.clone(),
+                    "KailuaTournament::proofStatus",
+                    args.sync.provider.timeouts.eth_rpc_timeout,
+                )
+                .await
+        {
             info!(
-                "Proposal {} signature {} already proven {proof_status}",
+                "Proposal {} signature {} no longer viable.",
                 proposal.index, proposal.signature
             );
             continue;
+        } else if !is_fault {
+            let proof_status = parent_contract
+                .proofStatus(proposal.signature)
+                .stall_with_context(
+                    context.clone(),
+                    "KailuaTournament::proofStatus",
+                    args.sync.provider.timeouts.eth_rpc_timeout,
+                )
+                .await;
+            if proof_status != 0 {
+                info!(
+                    "Proposal {} signature {} already proven {proof_status}",
+                    proposal.index, proposal.signature
+                );
+                continue;
+            }
         }
 
         let Some(l1_head) = get_next_l1_head(
@@ -116,29 +136,34 @@ pub async fn dispatch_proof_requests(
             continue;
         };
 
-        if let Err(err) = await_tel!(context, async {
+        let parent = parent.clone();
+        let proposal = proposal.clone();
+        if let Err(err) = {
             if is_fault {
                 request_fault_proof(
                     agent,
                     channel,
-                    parent,
-                    proposal,
+                    &parent,
+                    &proposal,
                     l1_head,
-                    &args.sync.provider.timeouts,
+                    args,
+                    validator_provider,
                 )
+                .with_context(context.clone())
                 .await
             } else {
                 request_validity_proof(
                     agent,
                     channel,
-                    parent,
-                    proposal,
+                    &parent,
+                    &proposal,
                     l1_head,
                     &args.sync.provider.timeouts,
                 )
+                .with_context(context.clone())
                 .await
             }
-        }) {
+        } {
             error!("Could not request (is_fault={is_fault}) proof for {proposal_index}: {err:?}");
             buffer.push((retry_time, proposal_index));
         } else {

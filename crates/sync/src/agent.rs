@@ -20,7 +20,9 @@ use crate::provider::optimism::fetch_rollup_config;
 use crate::provider::{ProviderArgs, SyncProvider};
 use crate::stall::Stall;
 use crate::telemetry::SyncTelemetry;
+use crate::transact::Transact;
 use crate::{await_tel, await_tel_res, retry_res_ctx_timeout, retry_res_timeout, KAILUA_GAME_TYPE};
+use alloy::eips::BlockNumberOrTag;
 use alloy::network::Network;
 use alloy::primitives::{Address, B256, U256};
 use alloy::providers::Provider;
@@ -818,6 +820,226 @@ impl SyncAgent {
 
             // jump forward
             start = end + step;
+        }
+    }
+
+    pub fn get_fp_permit(
+        &self,
+        proposal: &Proposal,
+        recipient: Address,
+        trial: u64,
+    ) -> Option<(u64, u64)> {
+        let key = [
+            proposal.contract.as_slice(),
+            recipient.as_slice(),
+            trial.to_be_bytes().as_slice(),
+        ]
+        .concat();
+        self.db.get(key).expect("DB read error").map(|v| {
+            let expiry = u64::from_be_bytes((&v[..8]).try_into().expect("DB read error"));
+            let index = u64::from_be_bytes((&v[8..16]).try_into().expect("DB read error"));
+            (expiry, index)
+        })
+    }
+
+    pub fn get_fp_permit_unexpired(
+        &self,
+        proposal: &Proposal,
+        recipient: Address,
+        timestamp: u64,
+        duration: u64,
+    ) -> Option<u64> {
+        for i in 0..u64::MAX {
+            let Some((expiry, index)) = self.get_fp_permit(proposal, recipient, i) else {
+                // there was no permit acquired
+                return None;
+            };
+            // return permit index in contract if unexpired
+            if expiry.saturating_sub(timestamp) >= duration {
+                return Some(index);
+            }
+            // next iter looks at next possible unexpired permit trial number
+        }
+        unreachable!()
+    }
+
+    pub fn store_fp_permit(
+        &mut self,
+        proposal: &Proposal,
+        recipient: Address,
+        expiry: u64,
+        index: u64,
+    ) {
+        for i in 0..u64::MAX {
+            // skip already known permits
+            if self.get_fp_permit(proposal, recipient, i).is_some() {
+                continue;
+            }
+            // store permit data and return
+            let data = [expiry.to_be_bytes(), index.to_be_bytes()].concat();
+            let key = [
+                proposal.contract.as_slice(),
+                recipient.as_slice(),
+                i.to_be_bytes().as_slice(),
+            ]
+            .concat();
+            self.db.put(&key, &data).expect("DB write error");
+            break;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn acquire_fp_permit<P: Provider>(
+        &mut self,
+        parent: &Proposal,
+        proposal: &Proposal,
+        bonding_wallet: Address,
+        payout_recipient: Address,
+        provider: &P,
+        timeout: u64,
+        expiry: u64,
+    ) -> Option<u64> {
+        // Telemetry
+        let tracer = tracer("kailua");
+        let context =
+            opentelemetry::Context::current_with_span(tracer.start("SyncAgent::acquire_fp_permit"));
+
+        // Instantiate verifier
+        let kailua_verifier = KailuaVerifier::new(self.deployment.verifier, provider);
+
+        // Skip attempt if permits are useless
+        let permit_duration = kailua_verifier
+            .PERMIT_DURATION()
+            .stall_with_context(context.clone(), "KailuaVerifier::PERMIT_DURATION", timeout)
+            .await;
+        if permit_duration < expiry {
+            error!("FP Permits do not live longer than the permit expiry parameter {expiry}");
+            return None;
+        }
+
+        // Skip attempt if balance is insufficient
+        let bond = kailua_verifier
+            .faultProofPermitBond(parent.contract)
+            .stall_with_context(
+                context.clone(),
+                "KailuaVerifier::faultProofPermitBond",
+                timeout,
+            )
+            .await;
+        let balance = await_tel!(
+            context,
+            tracer,
+            "get_balance",
+            retry_res_ctx_timeout!(timeout, provider.get_balance(bonding_wallet).await)
+        );
+        if balance < bond {
+            error!("Insufficient balance {balance} for fp permit bond {bond}.");
+            return None;
+        }
+
+        // Lookup proposal key
+        let proposal_key = kailua_verifier
+            .faultProofPermitKey(parent.contract, proposal.signature)
+            .stall_with_context(
+                context.clone(),
+                "KailuaVerifier::faultProofPermitKey",
+                timeout,
+            )
+            .await;
+
+        // Query latest block
+        let latest_block = await_tel!(
+            context,
+            tracer,
+            "l1_head",
+            retry_res_ctx_timeout!(
+                timeout,
+                provider
+                    .get_block_by_number(BlockNumberOrTag::Latest)
+                    .await
+                    .context("get_block_by_number")?
+                    .ok_or_else(|| anyhow!("Failed to fetch latest_block"))
+            )
+        );
+
+        // Query permit counts as of latest block
+        let permit_counts = kailua_verifier
+            .countExpiredPermits(proposal_key, 0, latest_block.header.timestamp)
+            .stall_with_context(
+                context.clone(),
+                "KailuaVerifier::faultProofPermitKey",
+                timeout,
+            )
+            .await;
+        let num_expired_permits = permit_counts._0;
+        let num_active_permits = permit_counts._2;
+        let mut num_issued_permits = num_expired_permits + num_active_permits;
+
+        // No permits available
+        if num_issued_permits > 2 * num_expired_permits {
+            error!(
+                "No FP permits available. {num_issued_permits}/{} issued.",
+                2 * num_expired_permits
+            );
+            return None;
+        }
+
+        // Attempt to acquire permit
+        match kailua_verifier
+            .acquireFaultProofPermit(
+                parent.contract,
+                proposal.signature,
+                num_expired_permits,
+                payout_recipient,
+            )
+            .value(bond)
+            .transact_with_context(context.clone(), "KailuaVerifier::acquireFaultProofPermit")
+            .await
+            .context("KailuaVerifier::acquireFaultProofPermit")
+        {
+            Err(err) => {
+                error!("Failed to acquire FP permit: {err:?}");
+                None
+            }
+            Ok(receipt) => {
+                // potentially correct permit index
+                let mut retries = 10;
+                let expiry = loop {
+                    match kailua_verifier
+                        .faultProofPermits(proposal_key, U256::from(num_issued_permits))
+                        .call()
+                        .await
+                    {
+                        Err(err) => {
+                            if retries == 0 {
+                                error!("Failed to query permit {num_issued_permits} for {proposal_key}: {err:?}");
+                                return None;
+                            } else {
+                                warn!("(Retrying) Failed to query permit {num_issued_permits} for {proposal_key}: {err:?}");
+                                retries -= 1;
+                            }
+                        }
+                        Ok(permit) => {
+                            // We found our new permit
+                            if permit.recipient == payout_recipient {
+                                break permit.timestamp + permit_duration;
+                            }
+                            num_issued_permits += 1;
+                            retries = 10;
+                        }
+                    }
+                };
+
+                // store permit in db
+                self.store_fp_permit(proposal, payout_recipient, expiry, num_issued_permits);
+
+                info!(
+                    "Acquired fault proof permit {num_issued_permits} for {proposal_key} with txn: {}",
+                    receipt.transaction_hash
+                );
+
+                Some(num_issued_permits)
+            }
         }
     }
 }

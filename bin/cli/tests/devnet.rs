@@ -31,7 +31,7 @@ use kailua_sync::transact::signer::{
     ValidatorSignerArgs,
 };
 use kailua_sync::transact::TransactArgs;
-use kailua_validator::args::ValidateArgs;
+use kailua_validator::args::{PermitPolicy, ValidateArgs};
 use kailua_validator::validate::validate;
 use lazy_static::lazy_static;
 use std::env::set_var;
@@ -284,6 +284,7 @@ async fn proposer_validator() {
             enable_experimental_witness_endpoint: true,
             max_fault_proving_delay: 0,
             max_validity_proving_delay: 0,
+            fault_proving_permit: PermitPolicy::MANDATORY,
             l1_head_jump_back: 0,
             validator_signer: ValidatorSignerArgs::from(
                 "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e".to_string(),
@@ -347,6 +348,7 @@ async fn proposer_validator() {
             enable_experimental_witness_endpoint: true,
             max_fault_proving_delay: 0,
             max_validity_proving_delay: 0,
+            fault_proving_permit: PermitPolicy::SKIPPED,
             l1_head_jump_back: 0,
             validator_signer: ValidatorSignerArgs::from(
                 "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e".to_string(),

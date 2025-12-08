@@ -12,11 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use alloy::network::EthereumWallet;
+use alloy::primitives::{Address, ChainId};
+use anyhow::Context;
 use kailua_prover::args::ProvingArgs;
 use kailua_prover::risczero::boundless::BoundlessArgs;
 use kailua_sync::args::SyncArgs;
+use kailua_sync::await_tel_res;
 use kailua_sync::transact::signer::ValidatorSignerArgs;
 use kailua_sync::transact::TransactArgs;
+use opentelemetry::global::tracer;
+use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 use std::path::PathBuf;
 
 /// Start the agent for resolving on-chain Kailua disputes
@@ -41,12 +47,19 @@ pub struct ValidateArgs {
     /// the execution layer.
     #[arg(long, env, default_value_t = false)]
     pub enable_experimental_witness_endpoint: bool,
-    /// The maximum amount of seconds to wait before starting to compute a fault proof. (Default 86400)
-    #[clap(long, env, default_value_t = 86400)]
+    /// The maximum amount of seconds to wait before starting to compute a fault proof. (Default 900)
+    #[clap(long, env, default_value_t = 900)]
     pub max_fault_proving_delay: u64,
     /// The maximum amount of seconds to wait before starting to compute a validity proof. (Default 0)
     #[clap(long, env, default_value_t = 0)]
     pub max_validity_proving_delay: u64,
+
+    /// Whether acquisition of permits before proving faults is skipped / optional / mandatory.
+    #[clap(long, env, default_value = "optional")]
+    pub fault_proving_permit: PermitPolicy,
+    /// Minimum amount of time left on a permit to consider it unexpired.
+    #[clap(long, env, default_value_t = 600)]
+    pub fault_proving_permit_expiry: u64,
 
     /// The number of l1 heads to jump back when initially proving
     #[cfg(feature = "devnet")]
@@ -64,4 +77,46 @@ pub struct ValidateArgs {
     pub proving: ProvingArgs,
     #[clap(flatten)]
     pub boundless: BoundlessArgs,
+}
+
+impl ValidateArgs {
+    pub async fn validator_wallet(
+        &self,
+        chain_id: Option<ChainId>,
+    ) -> anyhow::Result<EthereumWallet> {
+        // Telemetry
+        let tracer = tracer("kailua");
+        let context = opentelemetry::Context::current_with_span(
+            tracer.start("ValidateArgs::payout_recipient"),
+        );
+
+        // Set payout recipient
+        let validator_wallet = await_tel_res!(
+            context,
+            tracer,
+            "ValidatorSigner::wallet",
+            self.validator_signer.wallet(chain_id)
+        )?;
+
+        Ok(validator_wallet)
+    }
+
+    pub async fn payout_recipient(&self) -> anyhow::Result<Address> {
+        match self.proving.payout_recipient_address {
+            Some(address) => Ok(address),
+            None => Ok(self
+                .validator_wallet(None)
+                .await?
+                .default_signer()
+                .address()),
+        }
+    }
+}
+
+#[derive(clap::ValueEnum, Default, Debug, Clone)]
+pub enum PermitPolicy {
+    SKIPPED,
+    #[default]
+    OPTIONAL,
+    MANDATORY,
 }

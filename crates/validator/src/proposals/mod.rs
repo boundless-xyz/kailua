@@ -148,6 +148,7 @@ pub async fn handle_proposals(
             &mut last_proof_l1_head,
             &mut channel,
             true,
+            &validator_provider,
         )
         .await;
 
@@ -160,6 +161,7 @@ pub async fn handle_proposals(
             &mut last_proof_l1_head,
             &mut channel,
             false,
+            &validator_provider,
         )
         .await;
 
@@ -200,6 +202,7 @@ pub fn get_next_l1_head(
     proposal: &Proposal,
     #[cfg(feature = "devnet")] jump_back: u64,
 ) -> Option<B256> {
+    // todo: use optimism_safeHeadAtL1Block
     // fetch next l1 head to use
     let l1_head = match last_proof_l1_head.get(&proposal.index) {
         None => Some(proposal.l1_head),
