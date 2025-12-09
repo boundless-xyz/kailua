@@ -825,12 +825,12 @@ impl SyncAgent {
 
     pub fn get_fp_permit(
         &self,
-        proposal: &Proposal,
+        proposal_contract: Address,
         recipient: Address,
         trial: u64,
     ) -> Option<(u64, u64)> {
         let key = [
-            proposal.contract.as_slice(),
+            proposal_contract.as_slice(),
             recipient.as_slice(),
             trial.to_be_bytes().as_slice(),
         ]
@@ -844,13 +844,13 @@ impl SyncAgent {
 
     pub fn get_fp_permit_unexpired(
         &self,
-        proposal: &Proposal,
+        proposal_contract: Address,
         recipient: Address,
         timestamp: u64,
         duration: u64,
     ) -> Option<u64> {
         for i in 0..u64::MAX {
-            let Some((expiry, index)) = self.get_fp_permit(proposal, recipient, i) else {
+            let Some((expiry, index)) = self.get_fp_permit(proposal_contract, recipient, i) else {
                 // there was no permit acquired
                 return None;
             };
@@ -863,22 +863,40 @@ impl SyncAgent {
         unreachable!()
     }
 
+    pub fn get_fp_permits(
+        &self,
+        proposal_contract: Address,
+        recipient: Address,
+    ) -> Vec<(u64, u64)> {
+        let mut permits = vec![];
+        for i in 0..u64::MAX {
+            let Some((expiry, index)) = self.get_fp_permit(proposal_contract, recipient, i) else {
+                break;
+            };
+            permits.push((expiry, index));
+        }
+        permits
+    }
+
     pub fn store_fp_permit(
         &mut self,
-        proposal: &Proposal,
+        proposal_contract: Address,
         recipient: Address,
         expiry: u64,
         index: u64,
     ) {
         for i in 0..u64::MAX {
             // skip already known permits
-            if self.get_fp_permit(proposal, recipient, i).is_some() {
+            if self
+                .get_fp_permit(proposal_contract, recipient, i)
+                .is_some()
+            {
                 continue;
             }
             // store permit data and return
             let data = [expiry.to_be_bytes(), index.to_be_bytes()].concat();
             let key = [
-                proposal.contract.as_slice(),
+                proposal_contract.as_slice(),
                 recipient.as_slice(),
                 i.to_be_bytes().as_slice(),
             ]
@@ -971,7 +989,7 @@ impl SyncAgent {
             .countExpiredPermits(proposal_key, 0, latest_block.header.timestamp)
             .stall_with_context(
                 context.clone(),
-                "KailuaVerifier::faultProofPermitKey",
+                "KailuaVerifier::countExpiredPermits",
                 timeout,
             )
             .await;
@@ -1024,6 +1042,7 @@ impl SyncAgent {
                             }
                         }
                         Ok(permit) => {
+                            dbg!(&permit.timestamp);
                             // We found our new permit
                             if permit.recipient == payout_recipient {
                                 break permit.timestamp + permit_duration;
@@ -1035,14 +1054,141 @@ impl SyncAgent {
                 };
 
                 // store permit in db
-                self.store_fp_permit(proposal, payout_recipient, expiry, num_issued_permits);
+                self.store_fp_permit(
+                    proposal.contract,
+                    payout_recipient,
+                    expiry,
+                    num_issued_permits,
+                );
 
                 info!(
-                    "Acquired fault proof permit {num_issued_permits} for {proposal_key} with txn: {}",
-                    receipt.transaction_hash
+                    "Acquired proposal {} FP permit {num_issued_permits} until {expiry} (txn: {})",
+                    proposal.contract, receipt.transaction_hash
                 );
 
                 Some(num_issued_permits)
+            }
+        }
+    }
+
+    pub async fn release_fp_permit<P: Provider>(
+        &self,
+        parent: &Proposal,
+        proposal: &Proposal,
+        payout_recipient: Address,
+        validator_provider: &P,
+        eth_rpc_timeout: u64,
+    ) {
+        let tracer = tracer("kailua");
+        let context = opentelemetry::Context::current_with_span(tracer.start("release_fp_permit"));
+
+        let permits = self.get_fp_permits(proposal.contract, payout_recipient);
+
+        // Abort if no permits exist to release
+        if permits.is_empty() {
+            info!(
+                "No fault proof permits to release for proposal {}",
+                proposal.contract
+            );
+            return;
+        }
+
+        let kailua_verifier = KailuaVerifier::new(self.deployment.verifier, validator_provider);
+
+        let proof_time = kailua_verifier
+            .faultProofPermitProvenAt(parent.contract, proposal.signature)
+            .stall_with_context(
+                context.clone(),
+                "KailuaTournament::KAILUA_VERIFIER",
+                eth_rpc_timeout,
+            )
+            .await;
+
+        // Abort if no proof was yet recorded
+        if proof_time == 0 {
+            error!(
+                "Attempted to release fault proof permit(s) for unproven proposal {}.",
+                proposal.contract
+            );
+            return;
+        }
+
+        // Lookup proposal key
+        let proposal_key = kailua_verifier
+            .faultProofPermitKey(parent.contract, proposal.signature)
+            .stall_with_context(
+                context.clone(),
+                "KailuaVerifier::faultProofPermitKey",
+                eth_rpc_timeout,
+            )
+            .await;
+
+        // Count expired permits
+        let permit_counts = kailua_verifier
+            .countExpiredPermits(proposal_key, 0, proof_time)
+            .stall_with_context(
+                context.clone(),
+                "KailuaVerifier::countExpiredPermits",
+                eth_rpc_timeout,
+            )
+            .await;
+
+        // Calculate expected payout
+        let payout = permit_counts._1 / U256::from(permit_counts._2);
+
+        for (expiry, index) in permits.into_iter() {
+            // Skip if unreleasable
+            if expiry < proof_time {
+                warn!("Skipping release of permit {index} which expired at {expiry} while proof time is {proof_time}.");
+                continue;
+            }
+
+            // Skip if already released
+            if kailua_verifier
+                .faultProofPermits(proposal_key, U256::from(index))
+                .stall_with_context(
+                    context.clone(),
+                    "KailuaVerifier::countExpiredPermits",
+                    eth_rpc_timeout,
+                )
+                .await
+                .released
+            {
+                info!(
+                    "Skipping already released permit {index} for proposal {}.",
+                    proposal.contract
+                );
+                continue;
+            }
+
+            // Attempt release
+            match kailua_verifier
+                .releaseFaultProofPermit(
+                    parent.contract,
+                    proposal.signature,
+                    permit_counts._0,
+                    index,
+                )
+                .transact_with_context(context.clone(), "KailuaVerifier::releaseFaultProofPermit")
+                .await
+                .context("KailuaVerifier::releaseFaultProofPermit")
+            {
+                Ok(receipt) => {
+                    info!(
+                        "Released proposal {} FP permit {index} for {payout} to {payout_recipient} (txn: {}).",
+                        proposal.contract, receipt.transaction_hash
+                    );
+                    info!(
+                        "KailuaVerifier::releaseFaultProofPermit: {} gas",
+                        receipt.gas_used
+                    );
+                }
+                Err(err) => {
+                    error!(
+                        "Failed to release proposal {} FP permit {index}: {err:?}",
+                        proposal.contract
+                    );
+                }
             }
         }
     }

@@ -17,8 +17,7 @@ use crate::channel::{DuplexChannel, Message};
 use crate::proposals::dispatch::current_time;
 use crate::proposals::encode_seal;
 use crate::requests::decrement_active_provers;
-use alloy::primitives::Bytes;
-use alloy::primitives::B256;
+use alloy::primitives::{Bytes, B256};
 use alloy::providers::Provider;
 use anyhow::Context;
 use kailua_contracts::*;
@@ -326,6 +325,16 @@ pub async fn publish_receipt_proofs<P: Provider>(
                             ),
                         ],
                     );
+                    // Release any held permits
+                    agent
+                        .release_fp_permit(
+                            parent,
+                            proposal,
+                            proof_journal.payout_recipient,
+                            validator_provider,
+                            args.sync.provider.timeouts.eth_rpc_timeout,
+                        )
+                        .await;
                 }
                 Err(e) => {
                     error!("Failed to confirm validity proof txn: {e:?}");
@@ -432,6 +441,16 @@ pub async fn publish_receipt_proofs<P: Provider>(
                     KeyValue::new("reason", "proven"),
                 ],
             );
+            // Release any held permits
+            agent
+                .release_fp_permit(
+                    parent,
+                    proposal,
+                    proof_journal.payout_recipient,
+                    validator_provider,
+                    args.sync.provider.timeouts.eth_rpc_timeout,
+                )
+                .await;
             continue;
         } else {
             info!("Fault proof status: {fault_proof_status}");
@@ -646,6 +665,17 @@ pub async fn publish_receipt_proofs<P: Provider>(
                         ),
                     ],
                 );
+
+                // Release any held permits
+                agent
+                    .release_fp_permit(
+                        parent,
+                        proposal,
+                        proof_journal.payout_recipient,
+                        validator_provider,
+                        args.sync.provider.timeouts.eth_rpc_timeout,
+                    )
+                    .await;
             }
             Err(e) => {
                 error!("Failed to confirm fault proof txn: {e:?}");

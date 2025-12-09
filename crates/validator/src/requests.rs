@@ -286,7 +286,7 @@ pub async fn request_fault_proof<P: Provider>(
     // Acquire fault proof permit
     let payout_recipient = args.payout_recipient().await.context("payout_recipient")?;
     if let Some(permit) = agent.get_fp_permit_unexpired(
-        proposal,
+        proposal.contract,
         payout_recipient,
         current_time(),
         args.fault_proving_permit_expiry,
