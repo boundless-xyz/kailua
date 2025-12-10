@@ -1487,7 +1487,7 @@ contract Groth16Verifier {
     }
 }
 
-// /Users/ramikhalil/risczero/risc0-ethereum/lib/openzeppelin-contracts/contracts/utils/Context.sol
+// risc0-ethereum/lib/openzeppelin-contracts/contracts/utils/Context.sol
 
 // OpenZeppelin Contracts (last updated v5.0.1) (utils/Context.sol)
 
@@ -1726,7 +1726,7 @@ interface IRiscZeroVerifier {
     function verifyIntegrity(Receipt calldata receipt) external view;
 }
 
-// /Users/ramikhalil/risczero/risc0-ethereum/lib/openzeppelin-contracts/contracts/access/Ownable.sol
+// risc0-ethereum/lib/openzeppelin-contracts/contracts/access/Ownable.sol
 
 // OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
 
