@@ -73,3 +73,50 @@ pub enum ProvingError {
     #[error("OtherError error: {0:?}")]
     OtherError(anyhow::Error),
 }
+
+impl ProvingError {
+    pub fn with_driver_cache(self, driver_cache: Option<CachedDriver>) -> Self {
+        match self {
+            ProvingError::NotSeekingProof(
+                preloaded,
+                streamed,
+                executions,
+                _,
+                driver_trace,
+                derivation_trace_hash,
+            ) => ProvingError::NotSeekingProof(
+                preloaded,
+                streamed,
+                executions,
+                Box::new(driver_cache),
+                driver_trace,
+                derivation_trace_hash,
+            ),
+            ProvingError::BlockCountError(count, limit, executions, _, driver_trace) => {
+                ProvingError::BlockCountError(
+                    count,
+                    limit,
+                    executions,
+                    Box::new(driver_cache),
+                    driver_trace,
+                )
+            }
+            ProvingError::WitnessSizeError(
+                preloaded,
+                streamed,
+                limit,
+                executions,
+                _,
+                driver_trace,
+            ) => ProvingError::WitnessSizeError(
+                preloaded,
+                streamed,
+                limit,
+                executions,
+                Box::new(driver_cache),
+                driver_trace,
+            ),
+            err => err,
+        }
+    }
+}

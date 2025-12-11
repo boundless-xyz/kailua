@@ -273,6 +273,7 @@ pub async fn compute_fpvm_proof(
     } else {
         None
     };
+    let original_derivation_cache = derivation_cache.clone();
 
     // Check if we can do execution-only proofs
     let can_stitch_executions = args.proving.max_block_executions > 0;
@@ -571,7 +572,9 @@ pub async fn compute_fpvm_proof(
         let Err(ProvingError::NotSeekingProof(.., derivation_trace_hash)) = provability_result
         else {
             warn!("Could not decompose derivation proof into tail/execution proofs.");
-            return Ok(Some(provability_result?));
+            return Ok(Some(provability_result.map_err(|err| {
+                err.with_driver_cache(original_derivation_cache)
+            })?));
         };
         info!("Proceeding with execution/tail proof decomposition.");
         // update precondition
@@ -858,7 +861,8 @@ pub async fn compute_fpvm_proof(
             true,
             task_sender.clone(),
         )
-        .await?,
+        .await
+        .map_err(|err| err.with_driver_cache(original_derivation_cache))?,
     ))
 }
 

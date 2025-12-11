@@ -317,6 +317,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
 
         match result {
             Ok(result) => {
+                let precondition = result.as_ref().map(|(_, p)| *p).unwrap_or_else(|| {
+                    Precondition::default().proposal(proposal_precondition_hash)
+                });
                 let cached_task = CachedTask {
                     // used for sorting
                     args: job_args.clone(),
@@ -324,9 +327,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     rollup_config: rollup_config.clone(),
                     l1_config: l1_config.clone(),
                     disk_kv_store: disk_kv_store.clone(),
-                    precondition: result.as_ref().map(|(_, p)| *p).unwrap_or_else(|| {
-                        Precondition::default().proposal(proposal_precondition_hash)
-                    }),
+                    precondition,
                     proposal_data_hash,
                     stitched_executions: vec![],
                     derivation_cache: None,
@@ -340,7 +341,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 };
                 if result.is_some() {
                     info!(
-                        "Successfully proved {num_blocks} blocks ({starting_block}..{last_block})",
+                        "Successfully proved {num_blocks} blocks ({starting_block}..{last_block}) ({} -> {})", precondition.derivation_cache, precondition.derivation_trace,
                     );
                 } else {
                     error!(
@@ -462,6 +463,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
 
     // recursively combine expected proofs
     if !args.proving.skip_stitching() && result_pq.len() > 1 {
+        info!("Stitching {} complete proofs.", result_pq.len());
         // gather sorted proofs into vec
         let mut results = result_pq
             .into_sorted_vec()
