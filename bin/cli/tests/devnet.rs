@@ -283,6 +283,7 @@ async fn proposer_validator() {
             enable_experimental_witness_endpoint: true,
             max_fault_proving_delay: 0,
             max_validity_proving_delay: 0,
+            min_validity_proving_timestamp: 0,
             l1_head_jump_back: 0,
             validator_signer: ValidatorSignerArgs::from(
                 "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e".to_string(),
@@ -346,6 +347,7 @@ async fn proposer_validator() {
             enable_experimental_witness_endpoint: true,
             max_fault_proving_delay: 0,
             max_validity_proving_delay: 0,
+            min_validity_proving_timestamp: 0,
             l1_head_jump_back: 0,
             validator_signer: ValidatorSignerArgs::from(
                 "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e".to_string(),

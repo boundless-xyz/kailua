@@ -16,6 +16,7 @@ use crate::args::ValidateArgs;
 use crate::channel::DuplexChannel;
 use crate::{proposals, requests};
 use anyhow::Context;
+use chrono::TimeZone;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 use std::path::PathBuf;
@@ -38,6 +39,12 @@ pub async fn validate(
     if args.proving.skip_derivation_proof {
         warn!("Validator ignores the skip-derivation-proof flag.");
         args.proving.skip_derivation_proof = false;
+    }
+    if args.min_validity_proving_timestamp > 0 {
+        let submission_time = chrono::Local
+            .timestamp_opt(args.min_validity_proving_timestamp as i64, 0)
+            .unwrap();
+        warn!("Delaying all validity proof submissions until {submission_time}.");
     }
 
     // We run two concurrent tasks, one for the chain, and one for the prover.

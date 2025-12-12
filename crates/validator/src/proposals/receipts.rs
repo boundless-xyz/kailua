@@ -20,6 +20,7 @@ use alloy::primitives::Bytes;
 use alloy::primitives::B256;
 use alloy::providers::Provider;
 use anyhow::Context;
+use chrono::TimeZone;
 use kailua_contracts::*;
 use kailua_kona::blobs::hash_to_fe;
 use kailua_kona::journal::ProofJournal;
@@ -187,6 +188,19 @@ pub async fn publish_receipt_proofs<P: Provider>(
         if proof_journal.agreed_l2_output_root == parent.output_root
             && proof_journal.claimed_l2_output_root == proposal.output_root
         {
+            let now = current_time();
+            if now < args.min_validity_proving_timestamp {
+                let submission_delay = humantime::format_duration(Duration::from_secs(
+                    args.min_validity_proving_timestamp - now,
+                ));
+                let submission_time = chrono::Local
+                    .timestamp_opt(args.min_validity_proving_timestamp as i64, 0)
+                    .unwrap();
+                info!("Preventing validity proof submission for proposal {proposal_index} for {submission_delay} until {submission_time}.");
+                computed_proof_buffer.push_back(Message::Proof(proposal_index, Some(receipt)));
+                continue;
+            }
+
             info!(
                 "Submitting validity proof to tournament at index {} for child at index {child_index}.",
                 parent.index,

@@ -100,6 +100,7 @@ pub async fn demo(args: DemoArgs, verbosity: u8, data_dir: PathBuf) -> anyhow::R
         enable_experimental_witness_endpoint: args.enable_experimental_witness_endpoint,
         max_fault_proving_delay: 0,
         max_validity_proving_delay: 0,
+        min_validity_proving_timestamp: 0,
         #[cfg(feature = "devnet")]
         l1_head_jump_back: 0,
         validator_signer: ValidatorSignerArgs {
