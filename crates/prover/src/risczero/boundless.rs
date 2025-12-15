@@ -155,13 +155,13 @@ pub struct MarketProviderConfig {
     #[clap(long, env, required = false, default_value_t = 1.0)]
     pub boundless_order_ramp_up_factor: f64,
     /// Minimum number of seconds to set as ramp up time
-    #[clap(long, env, required = false, default_value_t = 300)]
+    #[clap(long, env, required = false, default_value_t = 600)]
     pub boundless_order_min_ramp_up: u32,
     /// Multiplier for order fulfillment timeout (seconds/segment) after locking
     #[clap(long, env, required = false, default_value_t = 3.0)]
     pub boundless_order_lock_timeout_factor: f64,
     /// Minimum number of seconds to set as lock timeout time
-    #[clap(long, env, required = false, default_value_t = 600)]
+    #[clap(long, env, required = false, default_value_t = 1200)]
     pub boundless_order_min_lock_timeout: u32,
     /// Multiplier for order expiry timeout (seconds/segment) after lock timeout
     #[clap(long, env, required = false, default_value_t = 1.0)]

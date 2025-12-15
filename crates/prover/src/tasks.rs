@@ -415,25 +415,40 @@ pub async fn compute_fpvm_proof(
             let mut args = args.clone();
             args.proving.max_block_executions = 0;
             let mut job_wit_size = 0;
-            let should_continue = loop {
+            let mut num_tail_blocks = args.proving.num_tail_blocks;
+            let mut is_prev_success = true;
+            // grow this tail proof iteratively
+            let should_schedule_more = loop {
+                // lower growth rate if we had hit a failure during this run
+                if num_tail_blocks < args.proving.num_tail_blocks || !is_prev_success {
+                    num_tail_blocks >>= 1;
+                }
+                if num_tail_blocks == 0 {
+                    break true;
+                }
                 // move l1 tail forward
-                l1_tail = retry_res_ctx_timeout!(
-                    args.timeouts.eth_rpc_timeout,
-                    chain_providers
-                        .l1
-                        .get_block_by_number(
-                            (l1_tail.header.number + args.proving.num_tail_blocks).into()
-                        )
-                        .await
-                        .context("get_block_by_number l1_tail + num_tail_blocks")?
-                        .ok_or_else(|| anyhow!("Failed to fetch l1 tail"))
-                )
-                .await;
+                let new_tail_block_number = l1_tail.header.number + num_tail_blocks;
+                let old_l1_tail = core::mem::replace(
+                    &mut l1_tail,
+                    retry_res_ctx_timeout!(
+                        args.timeouts.eth_rpc_timeout,
+                        chain_providers
+                            .l1
+                            .get_block_by_number(new_tail_block_number.into())
+                            .await
+                            .context("get_block_by_number l1_tail + num_tail_blocks")?
+                            .ok_or_else(|| anyhow!("Failed to fetch l1 tail"))
+                    )
+                    .await,
+                );
                 args.kona.l1_head = l1_tail.header.hash;
-                // Driver tracing
+                // instantiate resulting driver trace channel
                 let (derivation_trace, traced_driver) = async_channel::bounded(1);
-                // trim l1 tail
-                info!("Growing tail to l1 block {}.", l1_tail.header.number);
+                // grow l1 tail proof by num_tail_blocks L1 blocks
+                info!(
+                    "Computing tail subproof for l1 blocks {} to {}.",
+                    old_l1_tail.header.number, l1_tail.header.number
+                );
                 let derivation_only_result = compute_oneshot_task(
                     args.clone(),
                     rollup_config.clone(),
@@ -461,12 +476,18 @@ pub async fn compute_fpvm_proof(
                 .await;
                 // handle derivation result
                 match derivation_only_result.unwrap_err() {
+                    // successful l1 scanning only sub-proof
                     ProvingError::NotSeekingProof(preloaded, streamed, ..) => {
-                        job_wit_size += streamed + preloaded;
-                        // stop growing tail if witness size is above threshold
-                        if job_wit_size > args.proving.max_witness_size {
-                            break true;
+                        // don't grow proof beyond witness size limit to avoid later error
+                        let sub_proof_witness = streamed + preloaded;
+                        if job_wit_size + sub_proof_witness > args.proving.max_witness_size {
+                            // retry with a slower rate of growth
+                            is_prev_success = false;
+                            l1_tail = old_l1_tail;
+                            continue;
                         }
+                        // accumulate witness size
+                        job_wit_size += sub_proof_witness;
                         // capture derivation trace for next iteration of tail growth
                         tail_derivation_cache = Some(
                             traced_driver
@@ -474,11 +495,15 @@ pub async fn compute_fpvm_proof(
                                 .await
                                 .expect("Failed to receive tail derivation trace."),
                         );
-                        continue;
                     }
+                    // an l2 block was derived or the sub-proof witness is too large
                     ProvingError::BlockCountError(..) | ProvingError::WitnessSizeError(..) => {
-                        // stop growing tail if a block is derived
-                        break false;
+                        if num_tail_blocks == 1 {
+                            break false;
+                        }
+                        // retry with a slower rate of growth
+                        is_prev_success = false;
+                        l1_tail = old_l1_tail;
                     }
                     err => {
                         // propagate unexpected error up on failure to trigger higher-level division
@@ -497,11 +522,7 @@ pub async fn compute_fpvm_proof(
                     chain_providers
                         .l1
                         .get_block_by_number(
-                            l1_tail
-                                .header
-                                .number
-                                .saturating_sub(args.proving.num_tail_blocks)
-                                .into()
+                            l1_tail.header.number.saturating_sub(num_tail_blocks).into()
                         )
                         .await
                         .context("get_block_by_number l1_tail - tail_blocks")?
@@ -524,7 +545,7 @@ pub async fn compute_fpvm_proof(
                 derivation_cache = Some(derivation_trace);
             }
             // Terminate if a block was derived
-            if !should_continue {
+            if !should_schedule_more {
                 info!(
                     "Terminating tail proof scheduling with {} jobs.",
                     tail_proof_jobs.len()
