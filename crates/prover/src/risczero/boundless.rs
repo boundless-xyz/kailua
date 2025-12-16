@@ -910,16 +910,14 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     let ramp_up_period = market
         .boundless_order_min_ramp_up
         .max((market.boundless_order_ramp_up_factor * timed_mega_cycles) as u32);
-    let corrected_lock_timeout_factor =
-        market.boundless_order_ramp_up_factor + market.boundless_order_lock_timeout_factor;
-    let lock_timeout = market
-        .boundless_order_min_lock_timeout
-        .max((corrected_lock_timeout_factor * timed_mega_cycles) as u32);
-    let corrected_expiry_factor =
-        corrected_lock_timeout_factor + market.boundless_order_expiry_factor;
-    let expiry = market
-        .boundless_order_min_expiry
-        .max((corrected_expiry_factor * timed_mega_cycles) as u32);
+    let lock_timeout = ramp_up_period
+        + market
+            .boundless_order_min_lock_timeout
+            .max((market.boundless_order_lock_timeout_factor * timed_mega_cycles) as u32);
+    let expiry = lock_timeout
+        + market
+            .boundless_order_min_expiry
+            .max((market.boundless_order_expiry_factor * timed_mega_cycles) as u32);
     let lock_collateral = market
         .boundless_order_min_collateral
         .max(market.boundless_mega_cycle_collateral * U256::from(timed_mega_cycles));
