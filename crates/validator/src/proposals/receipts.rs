@@ -16,8 +16,8 @@ use crate::args::ValidateArgs;
 use crate::channel::{DuplexChannel, Message};
 use crate::proposals::dispatch::current_time;
 use crate::proposals::encode_seal;
-use alloy::primitives::Bytes;
-use alloy::primitives::B256;
+use crate::requests::decrement_active_provers;
+use alloy::primitives::{Bytes, B256};
 use alloy::providers::Provider;
 use anyhow::Context;
 use kailua_contracts::*;
@@ -289,6 +289,9 @@ pub async fn publish_receipt_proofs<P: Provider>(
                 .context("KailuaTournament::proveValidity")
             {
                 Ok(receipt) => {
+                    // Decrement active provers count
+                    decrement_active_provers().await;
+                    // Report proof submission
                     info!("Validity proof submitted: {:?}", receipt.transaction_hash);
                     let proof_status = parent_contract
                         .provenAt(proposal.signature)
@@ -322,6 +325,16 @@ pub async fn publish_receipt_proofs<P: Provider>(
                             ),
                         ],
                     );
+                    // Release any held permits
+                    agent
+                        .release_fp_permit(
+                            parent,
+                            proposal,
+                            proof_journal.payout_recipient,
+                            validator_provider,
+                            args.sync.provider.timeouts.eth_rpc_timeout,
+                        )
+                        .await;
                 }
                 Err(e) => {
                     error!("Failed to confirm validity proof txn: {e:?}");
@@ -417,6 +430,9 @@ pub async fn publish_receipt_proofs<P: Provider>(
             )
             .await;
         if fault_proof_status != 0 {
+            // Decrement active provers count
+            decrement_active_provers().await;
+            // Report proof skip
             warn!("Skipping proof submission for already proven game at local index {proposal_index}.");
             meter_proofs_discarded.add(
                 1,
@@ -425,6 +441,16 @@ pub async fn publish_receipt_proofs<P: Provider>(
                     KeyValue::new("reason", "proven"),
                 ],
             );
+            // Release any held permits
+            agent
+                .release_fp_permit(
+                    parent,
+                    proposal,
+                    proof_journal.payout_recipient,
+                    validator_provider,
+                    args.sync.provider.timeouts.eth_rpc_timeout,
+                )
+                .await;
             continue;
         } else {
             info!("Fault proof status: {fault_proof_status}");
@@ -600,6 +626,9 @@ pub async fn publish_receipt_proofs<P: Provider>(
 
         match transaction_dispatch {
             Ok(receipt) => {
+                // Decrement active provers count
+                decrement_active_provers().await;
+                // Report proof submission
                 info!("Output fault proof submitted: {receipt:?}");
                 let proof_status = parent_contract
                     .proofStatus(proposal.signature)
@@ -636,6 +665,17 @@ pub async fn publish_receipt_proofs<P: Provider>(
                         ),
                     ],
                 );
+
+                // Release any held permits
+                agent
+                    .release_fp_permit(
+                        parent,
+                        proposal,
+                        proof_journal.payout_recipient,
+                        validator_provider,
+                        args.sync.provider.timeouts.eth_rpc_timeout,
+                    )
+                    .await;
             }
             Err(e) => {
                 error!("Failed to confirm fault proof txn: {e:?}");

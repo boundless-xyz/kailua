@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::args::ValidateArgs;
+use crate::args::{PermitPolicy, ValidateArgs};
 use crate::channel::{DuplexChannel, Message};
+use crate::proposals::dispatch::current_time;
 use crate::tasks::{handle_proving_tasks, Task};
 use alloy::eips::eip4844::IndexedBlobHash;
 use alloy::network::primitives::HeaderResponse;
 use alloy::network::{BlockResponse, TxSigner};
 use alloy::primitives::B256;
+use alloy::providers::Provider;
 use anyhow::{bail, Context};
 use kailua_kona::blobs::BlobFetchRequest;
 use kailua_kona::config::config_hash;
@@ -28,17 +30,41 @@ use kailua_prover::args::{ProveArgs, ProvingArgs};
 use kailua_prover::channel::AsyncChannel;
 use kailua_prover::proof::proof_file_name;
 use kailua_sync::agent::SyncAgent;
+use kailua_sync::await_tel;
 use kailua_sync::proposal::Proposal;
 use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::transact::rpc::{get_block_by_number, get_next_block};
-use kailua_sync::{await_tel, await_tel_res};
 use kona_protocol::BlockInfo;
+use lazy_static::lazy_static;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::spawn;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
+
+lazy_static! {
+    static ref NUM_ACTIVE_PROVERS: Arc<Mutex<u64>> = Default::default();
+}
+
+pub async fn num_active_provers() -> u64 {
+    let nap = NUM_ACTIVE_PROVERS.lock().await;
+    *nap
+}
+
+pub async fn increment_active_provers() {
+    // Increment active provers count
+    let mut nap = NUM_ACTIVE_PROVERS.lock().await;
+    *nap += 1;
+}
+
+pub async fn decrement_active_provers() {
+    // Increment active provers count
+    let mut nap = NUM_ACTIVE_PROVERS.lock().await;
+    *nap -= 1;
+}
 
 pub async fn handle_proof_requests(
     mut channel: DuplexChannel<Message>,
@@ -72,17 +98,7 @@ pub async fn handle_proof_requests(
     let raw_image_id = args.proving.image_id();
     let fpvm_image_id = B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(raw_image_id));
     // Set payout recipient
-    let validator_wallet = await_tel_res!(
-        context,
-        tracer,
-        "ValidatorSigner::wallet",
-        args.validator_signer
-            .wallet(Some(rollup_config.l1_chain_id))
-    )?;
-    let payout_recipient = args
-        .proving
-        .payout_recipient_address
-        .unwrap_or_else(|| validator_wallet.default_signer().address());
+    let payout_recipient = args.payout_recipient().await.context("payout_recipient")?;
     info!("Proof payout recipient: {payout_recipient}");
 
     let task_channel: AsyncChannel<Task> = async_channel::unbounded();
@@ -215,13 +231,14 @@ pub async fn handle_proof_requests(
     Ok(())
 }
 
-pub async fn request_fault_proof(
-    agent: &SyncAgent,
+pub async fn request_fault_proof<P: Provider>(
+    agent: &mut SyncAgent,
     channel: &mut DuplexChannel<Message>,
     parent: &Proposal,
     proposal: &Proposal,
     l1_head: B256,
-    timeouts: &ProviderTimeoutArgs,
+    args: &ValidateArgs,
+    validator_provider: &P,
 ) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("request_fault_proof"));
@@ -248,7 +265,7 @@ pub async fn request_fault_proof(
         get_block_by_number(
             &agent.provider.l2_provider,
             agreed_l2_head_number,
-            timeouts.op_geth_timeout
+            args.sync.provider.timeouts.op_geth_timeout
         )
     )?
     .header()
@@ -266,6 +283,45 @@ pub async fn request_fault_proof(
         bail!("Output root for claimed block {claimed_l2_block_number} not in memory.");
     };
 
+    // Acquire fault proof permit
+    let payout_recipient = args.payout_recipient().await.context("payout_recipient")?;
+    if let Some(permit) = agent.get_fp_permit_unexpired(
+        proposal.contract,
+        payout_recipient,
+        current_time(),
+        args.fault_proving_permit_expiry,
+    ) {
+        info!("Reusing acquired fault proof permit {permit}.")
+    } else if !matches!(args.fault_proving_permit, PermitPolicy::SKIPPED) {
+        // track number of active requests vs number of provers
+        if num_active_provers().await >= args.num_concurrent_provers {
+            bail!("Waiting for active proofs to finish before acquiring a new proving permit.");
+        }
+        // attempt to acquire permit
+        let bond_wallet_address = args
+            .validator_wallet(None)
+            .await
+            .context("validator_wallet")?
+            .default_signer()
+            .address();
+        let fp_permit = agent
+            .acquire_fp_permit(
+                parent,
+                proposal,
+                bond_wallet_address,
+                payout_recipient,
+                validator_provider,
+                args.sync.provider.timeouts.eth_rpc_timeout,
+                args.fault_proving_permit_expiry,
+            )
+            .await;
+
+        // fail to request fault proof if permit is mandatory
+        if matches!(args.fault_proving_permit, PermitPolicy::MANDATORY) && fp_permit.is_none() {
+            bail!("Could not acquire mandatory fault proof permit.")
+        }
+    }
+
     // Message proving task
     channel
         .sender
@@ -279,6 +335,8 @@ pub async fn request_fault_proof(
             claimed_l2_output_root,
         })
         .await?;
+    // Increment active provers count
+    increment_active_provers().await;
     Ok(())
 }
 
@@ -355,5 +413,7 @@ pub async fn request_validity_proof(
             claimed_l2_output_root: proposal.output_root,
         })
         .await?;
+    // Increment active provers count
+    increment_active_provers().await;
     Ok(())
 }

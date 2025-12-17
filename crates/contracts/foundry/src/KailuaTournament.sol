@@ -19,7 +19,7 @@ import "./KailuaLib.sol";
 import "./KailuaVerifier.sol";
 import "./vendor/FlatOPImportV1.4.0.sol";
 
-abstract contract KailuaTournament is Clone, IDisputeGame {
+abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     // ------------------------------
     // Immutable configuration
     // ------------------------------
@@ -140,10 +140,17 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
 
     /// @notice Returns the address of the prover of the specified signature or the prover of the valid signature
     function getPayoutRecipient(bytes32 childSignature) internal view returns (address payoutRecipient) {
-        payoutRecipient = prover[childSignature];
+        // The successful exclusive permit owner receives the payout.
+        payoutRecipient = KAILUA_VERIFIER.faultProofPermitBeneficiary(IKailuaTournament(this), childSignature);
+        // If none exists, then the successful fault prover is the recipient.
+        if (payoutRecipient == address(0x0)) {
+            payoutRecipient = prover[childSignature];
+        }
+        // Otherwise, the successful validity prover receives the payout.
         if (payoutRecipient == address(0x0)) {
             payoutRecipient = prover[validChildSignature];
         }
+        // Otherwise the child signature is viable and there is no recipient.
     }
 
     /// @notice Returns true iff the child proposal was eliminated
@@ -205,6 +212,7 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         bytes calldata kzgProof
     ) external virtual returns (bool success);
 
+    /// @notice Updates the provability of a child signature if not already set
     function updateProofStatus(address payoutRecipient, bytes32 childSignature, ProofStatus outcome) internal {
         // INVARIANT: Proofs can only be submitted once
         if (proofStatus[childSignature] != ProofStatus.NONE) {

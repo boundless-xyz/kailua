@@ -208,7 +208,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         winnerSharesByParent[parent] += winnerShare;
         // Burn by sending it to the zero address.
         // The zero address has no code, so this external call cannot reenter.
-        pay(burnShare, address(0));
+        KailuaPayLib.pay(burnShare, address(0));
     }
 
     /// @inheritdoc IKailuaTreasury
@@ -238,9 +238,9 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     // ------------------------------
 
     /// @notice Fixed split of a slashed participation bond between prover, winner, and burn.
-    uint256 private constant ELIMINATION_SPLIT_DENOM = 3;
-    uint256 private constant ELIMINATION_SPLIT_PROVER_NUM = 1;
-    uint256 private constant ELIMINATION_SPLIT_WINNER_NUM = 1;
+    uint256 public constant ELIMINATION_SPLIT_DENOM = 3;
+    uint256 public constant ELIMINATION_SPLIT_PROVER_NUM = 1;
+    uint256 public constant ELIMINATION_SPLIT_WINNER_NUM = 1;
 
     /// @notice The locked collateral required for proposal submission
     uint256 public participationBond;
@@ -286,7 +286,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         eliminationRewards[msg.sender] = 0;
 
         if (payout > 0) {
-            pay(payout, msg.sender);
+            KailuaPayLib.pay(payout, msg.sender);
         }
     }
 
@@ -314,13 +314,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
 
         // Pay out and clear bond
         paidBonds[msg.sender] = 0;
-        pay(payout, msg.sender);
-    }
-
-    /// @notice Transfers ETH from the contract's balance to the recipient
-    function pay(uint256 amount, address recipient) internal {
-        (bool success,) = recipient.call{value: amount}(hex"");
-        if (!success) revert BondTransferFailed();
+        KailuaPayLib.pay(payout, msg.sender);
     }
 
     /// @notice Updates the required bond for new proposals

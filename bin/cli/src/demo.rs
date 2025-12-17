@@ -23,7 +23,7 @@ use kailua_sync::telemetry::TelemetryArgs;
 use kailua_sync::transact::signer::ValidatorSignerArgs;
 use kailua_sync::transact::TransactArgs;
 use kailua_sync::{await_tel, await_tel_res, retry_res_ctx_timeout};
-use kailua_validator::args::ValidateArgs;
+use kailua_validator::args::{PermitPolicy, ValidateArgs};
 use kailua_validator::channel::{DuplexChannel, Message};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
@@ -100,6 +100,8 @@ pub async fn demo(args: DemoArgs, verbosity: u8, data_dir: PathBuf) -> anyhow::R
         enable_experimental_witness_endpoint: args.enable_experimental_witness_endpoint,
         max_fault_proving_delay: 0,
         max_validity_proving_delay: 0,
+        fault_proving_permit: PermitPolicy::SKIPPED,
+        fault_proving_permit_expiry: 0,
         #[cfg(feature = "devnet")]
         l1_head_jump_back: 0,
         validator_signer: ValidatorSignerArgs {
