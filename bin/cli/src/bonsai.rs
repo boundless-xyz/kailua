@@ -98,7 +98,7 @@ pub async fn bonsai(args: BonsaiArgs) -> anyhow::Result<()> {
     );
 
     info!("Writing proof to {file_name}.");
-    if let Ok(prior_receipt) = read_bincoded_file::<Receipt>(&file_name).await {
+    if let Ok(prior_receipt) = read_bincoded_file::<Receipt>(None, &file_name).await {
         if prior_receipt.verify(KAILUA_FPVM_KONA_ID).is_ok() {
             info!("Skipping overwriting valid receipt file.");
             return Ok(());
@@ -106,7 +106,7 @@ pub async fn bonsai(args: BonsaiArgs) -> anyhow::Result<()> {
         info!("Overwriting invalid receipt file.");
     }
 
-    if let Err(err) = save_to_bincoded_file(&kailua_prove_info.receipt, &file_name).await {
+    if let Err(err) = save_to_bincoded_file(&kailua_prove_info.receipt, None, &file_name).await {
         error!("Failed to write proof to {file_name}: {err:?}");
     }
 

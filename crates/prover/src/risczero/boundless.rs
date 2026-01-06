@@ -46,6 +46,7 @@ use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::{default_executor, Digest, ExecutorEnv, Journal, Receipt};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -346,6 +347,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     witness_frames: Vec<Vec<u8>>,
     stitched_proofs: Vec<Receipt>,
     proving_args: &ProvingArgs,
+    data_dir: Option<&PathBuf>,
 ) -> Result<Receipt, ProvingError> {
     info!("Running boundless client.");
 
@@ -434,6 +436,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             &stitched_proofs,
             proving_args,
             &requirements,
+            data_dir,
         )
         .await
         {
@@ -672,6 +675,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     stitched_proofs: &Vec<Receipt>,
     proving_args: &ProvingArgs,
     requirements: &Requirements,
+    data_dir: Option<&PathBuf>,
 ) -> Result<Receipt, ProvingError> {
     // Check prior requests
     let fresh_nonce = if market.boundless_look_back {
@@ -698,7 +702,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     let program_url = loop {
         match (
             market.boundless_enable_upload_caching,
-            read_bincoded_file::<String>(&bin_file_name)
+            read_bincoded_file::<String>(data_dir, &bin_file_name)
                 .await
                 .map(|s| Url::parse(&s)),
         ) {
@@ -731,7 +735,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                     .await
                 };
                 if let Err(err) =
-                    save_to_bincoded_file(&program_url.to_string(), &bin_file_name).await
+                    save_to_bincoded_file(&program_url.to_string(), data_dir, &bin_file_name).await
                 {
                     warn!("Failed to cache Kailua program url: {err:?}");
                 }
@@ -746,7 +750,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     let req_file_name = request_file_name(image.0, journal.clone());
     let cycle_count = match (
         market.boundless_assume_cycle_count,
-        read_bincoded_file::<BoundlessRequest>(&req_file_name).await,
+        read_bincoded_file::<BoundlessRequest>(data_dir, &req_file_name).await,
     ) {
         (_, Ok(request)) => {
             // we sleep here so to avoid pinata api rate limits
@@ -802,7 +806,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 .map(|segment| 1 << segment.po2)
                 .sum::<u64>();
             let cached_data = BoundlessRequest { cycle_count };
-            if let Err(err) = save_to_bincoded_file(&cached_data, &req_file_name).await {
+            if let Err(err) = save_to_bincoded_file(&cached_data, data_dir, &req_file_name).await {
                 warn!("Failed to cache cycle count data: {err:?}");
             }
             cycle_count
@@ -815,7 +819,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     let input_url = loop {
         match (
             market.boundless_enable_upload_caching,
-            read_bincoded_file::<String>(&inp_file_name)
+            read_bincoded_file::<String>(data_dir, &inp_file_name)
                 .await
                 .map(|s| Url::parse(&s)),
         ) {
@@ -870,7 +874,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 // avoid api rate limits
                 sleep(Duration::from_secs(2)).await;
                 if let Err(err) =
-                    save_to_bincoded_file(&input_url.to_string(), &inp_file_name).await
+                    save_to_bincoded_file(&input_url.to_string(), data_dir, &inp_file_name).await
                 {
                     warn!("Failed to cache Kailua input url: {err:?}");
                 }

@@ -38,6 +38,7 @@ use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::{Journal, Receipt};
 use rkyv::rancor::Error;
 use std::fmt::Debug;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tracing::{error, info, warn};
@@ -71,6 +72,7 @@ pub async fn run_proving_client<P, H>(
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
+    data_dir: Option<PathBuf>,
 ) -> Result<(), ProvingError>
 where
     P: PreimageOracleClient + Send + Sync + Debug + Clone + 'static,
@@ -237,7 +239,9 @@ where
         }
         match rkyv::to_bytes::<Error>(traced_driver) {
             Ok(rkyved_driver) => {
-                if let Err(err) = save_to_bincoded_file(&rkyved_driver.to_vec(), &driver_file).await
+                if let Err(err) =
+                    save_to_bincoded_file(&rkyved_driver.to_vec(), data_dir.as_ref(), &driver_file)
+                        .await
                 {
                     error!(
                         "Failed to write CachedDriver {driver_digest} to {driver_file}: {err:?}"
@@ -312,6 +316,7 @@ where
         witness_frames,
         stitched_proofs,
         prove_snark,
+        data_dir.as_ref(),
     )
     .await?;
 

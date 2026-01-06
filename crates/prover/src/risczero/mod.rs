@@ -19,7 +19,7 @@ use crate::{proof, ProvingError};
 use anyhow::Context;
 use risc0_zkvm::{Journal, Receipt};
 use std::convert::identity;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::{error, info};
 
 pub mod bonsai;
@@ -53,6 +53,7 @@ pub async fn seek_proof(
     witness_frames: Vec<Vec<u8>>,
     stitched_proofs: Vec<Receipt>,
     prove_snark: bool,
+    data_dir: Option<&PathBuf>,
 ) -> Result<Receipt, ProvingError> {
     // Check proof cache
     let file_name = proof_file_name(proving.image_id(), journal.clone());
@@ -75,6 +76,7 @@ pub async fn seek_proof(
                 witness_frames,
                 stitched_proofs,
                 proving,
+                data_dir,
             )
             .await?
         }
@@ -112,7 +114,7 @@ pub async fn seek_proof(
         );
     }
     let file_name = proof_file_name(proving.image_id(), proof.journal.clone());
-    proof::save_to_bincoded_file(&proof, &file_name)
+    proof::save_to_bincoded_file(&proof, None, &file_name)
         .await
         .context("save_to_bincoded_file")
         .map_err(ProvingError::OtherError)?;

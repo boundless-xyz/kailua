@@ -77,7 +77,7 @@ pub async fn boundless(args: BoundlessArgs) -> anyhow::Result<()> {
     let file_name = proof_file_name(image_id, &proof_journal);
 
     info!("Writing proof to {file_name}.");
-    if let Ok(prior_receipt) = read_bincoded_file::<Receipt>(&file_name).await {
+    if let Ok(prior_receipt) = read_bincoded_file::<Receipt>(None, &file_name).await {
         if prior_receipt.verify(image_id).is_ok() {
             info!("Skipping overwriting valid receipt file.");
             return Ok(());
@@ -85,7 +85,7 @@ pub async fn boundless(args: BoundlessArgs) -> anyhow::Result<()> {
         info!("Overwriting invalid receipt file.");
     }
 
-    if let Err(err) = save_to_bincoded_file(&receipt, &file_name).await {
+    if let Err(err) = save_to_bincoded_file(&receipt, None, &file_name).await {
         error!("Failed to write proof to {file_name}: {err:?}");
     }
 

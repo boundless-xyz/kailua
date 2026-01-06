@@ -551,7 +551,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                             &boot,
                             last_initial_precondition,
                         );
-                        try_read_driver(&driver_file).await
+                        try_read_driver(args.kona.data_dir.as_ref(), &driver_file).await
                     }
                 };
                 let driver_cache_hash = driver_cache

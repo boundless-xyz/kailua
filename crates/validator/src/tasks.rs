@@ -125,7 +125,7 @@ pub async fn handle_proving_tasks(
 
         // wait for io then read computed proof from disk
         sleep(Duration::from_secs(1)).await;
-        match read_bincoded_file(&proof_file_name).await {
+        match read_bincoded_file(None, &proof_file_name).await {
             Ok(proof) => {
                 // Send proof via the channel
                 proof_sender

@@ -984,7 +984,8 @@ pub async fn compute_cached_proof(
     let trace_derivation = derivation_trace.is_some() || !precondition.derivation_trace.is_zero();
     // Update boot info and precondition if cached trace is available
     let mut cached_precondition = precondition;
-    if let Some(derivation_trace) = try_read_driver(&driver_file).await {
+    if let Some(derivation_trace) = try_read_driver(args.kona.data_dir.as_ref(), &driver_file).await
+    {
         // Update claim if l1 head insufficient
         let claimed_l2_output_root = *derivation_trace.cursor.l2_safe_head_output_root();
         if claimed_l2_output_root != boot.claimed_l2_output_root {
@@ -1045,7 +1046,7 @@ pub async fn compute_cached_proof(
         if trace_derivation
             && signal_derivation_trace(
                 derivation_trace.clone(),
-                try_read_driver(&driver_file).await,
+                try_read_driver(args.kona.data_dir.as_ref(), &driver_file).await,
             )
             .await
             .is_some()
@@ -1129,7 +1130,7 @@ pub async fn compute_cached_proof(
 
     // Load cached driver if tracing derivation is required
     let derivation_trace = if trace_derivation {
-        try_read_driver(&driver_file).await
+        try_read_driver(args.kona.data_dir.as_ref(), &driver_file).await
     } else {
         None
     };
@@ -1173,7 +1174,7 @@ pub async fn compute_cached_proof(
         }
     }
     // Load receipt
-    let receipt = read_bincoded_file(&proof_file)
+    let receipt = read_bincoded_file(None, &proof_file)
         .await
         .context(format!("Failed to read proof file {proof_file} contents."))
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
