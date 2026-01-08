@@ -553,7 +553,8 @@ pub async fn look_back(
     requirements: &Requirements,
     proving_args: &ProvingArgs,
     previous_nonce: &mut Option<u32>,
-) -> Result<Option<Receipt>, ProvingError> {
+    profile: &Profile,
+) -> Result<Option<ProfiledReceipt>, ProvingError> {
     let boundless_wallet_address = boundless_client.signer.as_ref().unwrap().address();
     loop {
         let nonce = next_nonce(requirements, *previous_nonce);
@@ -601,6 +602,7 @@ pub async fn look_back(
             req_params.image_id.unwrap_or_default().0,
             market.boundless_order_check_interval,
             request.expires_at(),
+            profile.clone(),
         )
         .await
         {
@@ -621,7 +623,8 @@ pub async fn retrieve_proof(
     image_id: impl Into<Digest>,
     interval: u64,
     expires_at: u64,
-) -> Result<Receipt, ClientError> {
+    mut profile: Profile,
+) -> Result<ProfiledReceipt, ClientError> {
     // Wait for the request to be fulfilled by the market, returning the journal and seal.
     info!("Waiting for 0x{request_id:x} to be fulfilled");
     // boundless_client.boundless_market.is_locked()
@@ -649,7 +652,69 @@ pub async fn retrieve_proof(
                     return Err(ClientError::RequestError(RequestError::MissingRequirements));
                 };
 
-                return Ok(*receipt);
+                // Find proving cost
+                let (proof_request, _) = retry_res_timeout!(
+                    15,
+                    boundless_client
+                        .fetch_proof_request(request_id, None, None)
+                        .await
+                        .context("fetch_proof_request")
+                )
+                .await;
+
+                let price_point = if retry_res_timeout!(
+                    15,
+                    boundless_client
+                        .boundless_market
+                        .is_locked(request_id)
+                        .await
+                )
+                .await
+                {
+                    retry_res_timeout!(
+                        15,
+                        boundless_client
+                            .boundless_market
+                            .query_request_locked_event(request_id, None, None)
+                            .await
+                    )
+                    .await
+                    .block_number
+                } else {
+                    retry_res_timeout!(
+                        15,
+                        boundless_client
+                            .boundless_market
+                            .query_request_fulfilled_event(request_id, None, None)
+                            .await
+                    )
+                    .await
+                    .block_number
+                };
+
+                let timestamp = retry_res_timeout!(
+                    15,
+                    boundless_client
+                        .provider()
+                        .get_block_by_number(BlockNumberOrTag::Number(price_point))
+                        .await
+                        .context("get_block_by_number")?
+                        .ok_or_else(|| anyhow!("Failed to fetch block"))
+                )
+                .await
+                .header
+                .timestamp;
+
+                match proof_request.offer.price_at(timestamp) {
+                    Ok(cost) => {
+                        profile = profile.with_boundless_cost(cost);
+                    }
+                    Err(err) => {
+                        error!("Could not calculate boundless request {request_id} price at {timestamp}: {err:?}");
+                    }
+                }
+
+                return Ok((*receipt, profile));
             }
             Err(e) => {
                 if matches!(
@@ -767,10 +832,11 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             requirements,
             proving_args,
             &mut nonce_target,
+            &profile,
         )
         .await?
         {
-            return Ok((proof, profile));
+            return Ok(proof);
         }
         nonce_target.unwrap()
     } else {
@@ -1006,11 +1072,11 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         image.0,
         market.boundless_order_check_interval,
         expires_at,
+        profile,
     )
     .await
     .context("retrieve_proof")
     .map_err(|e| ProvingError::OtherError(anyhow!(e)))
-    .map(|proof| (proof, profile))
 }
 
 pub fn request_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> String {

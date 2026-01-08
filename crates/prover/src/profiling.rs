@@ -1,5 +1,5 @@
 use crate::proof::proof_id;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use bytemuck::NoUninit;
 use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::witness::Witness;
@@ -31,6 +31,8 @@ pub struct Profile {
     pub cycles_user: Option<u64>,
     /// Number of system cycles proven
     pub cycles_system: Option<u64>,
+    /// Total proving market costs
+    pub boundless_cost: Option<U256>,
     /// Number of SNARK recursive verifications
     pub snarks: Option<u64>,
     /// Number of STARK recursive verifications
@@ -123,6 +125,9 @@ impl Profile {
             if let Some(cycles_system) = profile.cycles_system {
                 *self.cycles_system.get_or_insert_default() += cycles_system;
             }
+            if let Some(boundless_cost) = profile.boundless_cost {
+                *self.boundless_cost.get_or_insert_default() += boundless_cost;
+            }
             if let Some(snarks) = profile.snarks {
                 *self.snarks.get_or_insert_default() += snarks;
             }
@@ -130,6 +135,11 @@ impl Profile {
                 *self.starks.get_or_insert_default() += starks;
             }
         }
+        self
+    }
+
+    pub fn with_boundless_cost(mut self, boundless_cost: U256) -> Self {
+        self.boundless_cost = Some(boundless_cost);
         self
     }
 

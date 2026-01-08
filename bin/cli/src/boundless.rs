@@ -19,7 +19,7 @@ use anyhow::Context;
 use boundless_market::request_builder::RequirementParams;
 use boundless_market::{Client, StandardStorageProvider, StorageProviderConfig};
 use kailua_kona::journal::ProofJournal;
-use kailua_prover::profiling::ProfiledReceipt;
+use kailua_prover::profiling::{Profile, ProfiledReceipt};
 use kailua_prover::proof::{proof_file_name, read_bincoded_file, save_to_bincoded_file};
 use kailua_prover::risczero::boundless::retrieve_proof;
 use kailua_sync::retry_res_timeout;
@@ -70,10 +70,11 @@ pub async fn boundless(args: BoundlessArgs) -> anyhow::Result<()> {
         image_id,
         12,
         current_time(),
+        Profile::default(),
     )
     .await?;
 
-    let proof_journal = ProofJournal::decode_packed(receipt.journal.as_ref());
+    let proof_journal = ProofJournal::decode_packed(receipt.0.journal.as_ref());
     let file_name = proof_file_name(image_id, &proof_journal);
 
     info!("Writing proof to {file_name}.");
