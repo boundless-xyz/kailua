@@ -15,6 +15,7 @@
 use crate::args::ProveArgs;
 use crate::driver::{driver_file_name, signal_derivation_trace, try_read_driver};
 use crate::kv::RWLKeyValueStore;
+use crate::profiling::ProfiledReceipt;
 use crate::proof::{proof_file_name, read_bincoded_file};
 use crate::ProvingError;
 use alloy::providers::{Provider, RootProvider};
@@ -37,7 +38,6 @@ use kona_proof::BootInfo;
 use kona_protocol::L2BlockInfo;
 use opentelemetry::trace::{TraceContextExt, Tracer};
 use risc0_zkvm::sha::Digestible;
-use risc0_zkvm::Receipt;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::convert::identity;
@@ -58,7 +58,7 @@ pub struct CachedTask {
     pub derivation_trace_sender: Option<Sender<CachedDriver>>,
     pub stitched_preconditions: Vec<Precondition>,
     pub stitched_boot_info: Vec<StitchedBootInfo>,
-    pub stitched_proofs: Vec<Receipt>,
+    pub stitched_proofs: Vec<ProfiledReceipt>,
     pub prove_snark: bool,
     pub force_attempt: bool,
     pub seek_proof: bool,
@@ -84,7 +84,7 @@ impl Ord for CachedTask {
     }
 }
 
-pub type OneshotResultResponse = (Receipt, Precondition);
+pub type OneshotResultResponse = (ProfiledReceipt, Precondition);
 
 #[derive(Debug)]
 pub struct OneshotResult {
@@ -172,7 +172,7 @@ pub async fn compute_oneshot_task(
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
+    stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
@@ -228,7 +228,7 @@ pub async fn compute_fpvm_proof(
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
+    stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     task_sender: Sender<Oneshot>,
 ) -> Result<Option<OneshotResultResponse>, ProvingError> {
@@ -837,7 +837,7 @@ pub async fn compute_fpvm_proof(
             }
             Ok(result) => result,
         };
-        let stitched_boot = StitchedBootInfo::from(ProofJournal::from(&receipt));
+        let stitched_boot = StitchedBootInfo::from(ProofJournal::from(&receipt.0));
         tail_proofs.push(receipt);
         tail_preconditions.push(precondition);
         tail_boot_infos.push(stitched_boot);
@@ -961,7 +961,7 @@ pub async fn compute_cached_proof(
     mut derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
+    stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,

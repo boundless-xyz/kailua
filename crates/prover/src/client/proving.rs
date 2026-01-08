@@ -15,6 +15,7 @@
 use crate::args::ProvingArgs;
 use crate::client::witgen;
 use crate::driver::{driver_file_name, signal_derivation_trace};
+use crate::profiling::{Profile, ProfiledReceipt};
 use crate::proof::save_to_bincoded_file;
 use crate::risczero::boundless::BoundlessArgs;
 use crate::ProvingError;
@@ -35,7 +36,7 @@ use kona_proof::l1::OracleBlobProvider;
 use kona_proof::{BootInfo, CachingOracle};
 use lazy_static::lazy_static;
 use risc0_zkvm::sha::Digestible;
-use risc0_zkvm::{Journal, Receipt};
+use risc0_zkvm::Journal;
 use rkyv::rancor::Error;
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -68,7 +69,7 @@ pub async fn run_proving_client<P, H>(
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
+    stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
@@ -97,7 +98,7 @@ where
         .await
         .map_err(ProvingError::OtherError)?;
     // Run witgen client to get correct BootInfo and Precondition
-    let (_boot_info, proof_journal, updated_precondition, traced_driver, witness, extra_frames) =
+    let (boot_info, proof_journal, updated_precondition, traced_driver, witness, extra_frames) =
         match (proving.use_hokulea(), proving.use_hana()) {
             #[cfg(feature = "eigen")]
             (true, _) => {
@@ -273,6 +274,9 @@ where
         );
     }
 
+    // Create profile
+    let profile = Profile::new(&boot_info).with_witness(&witness);
+
     // Encode witness as frames
     let traced_driver_hash = traced_driver
         .as_ref()
@@ -316,6 +320,7 @@ where
         witness_frames,
         stitched_proofs,
         prove_snark,
+        profile,
         data_dir.as_ref(),
     )
     .await?;

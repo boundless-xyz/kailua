@@ -302,7 +302,7 @@ pub async fn concurrent_execution_preflight(
                 };
                 claimed_l2_block.artifacts.header.number
             }
-            Ok((receipt, _)) => ProofJournal::from(&receipt).claimed_l2_block_number,
+            Ok((receipt, _)) => ProofJournal::from(&receipt.0).claimed_l2_block_number,
         };
 
         if claimed_l2_block_number < target_l2_height {

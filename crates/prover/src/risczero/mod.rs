@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::args::ProvingArgs;
+use crate::profiling::{Profile, ProfiledReceipt};
 use crate::proof::proof_file_name;
 use crate::risczero::boundless::BoundlessArgs;
 use crate::{proof, ProvingError};
@@ -51,18 +52,27 @@ pub async fn seek_proof(
     journal: Journal,
     witness_slices: Vec<Vec<u32>>,
     witness_frames: Vec<Vec<u8>>,
-    stitched_proofs: Vec<Receipt>,
+    stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
+    mut profile: Profile,
     data_dir: Option<&PathBuf>,
-) -> Result<Receipt, ProvingError> {
+) -> Result<(), ProvingError> {
     // Check proof cache
     let file_name = proof_file_name(proving.image_id(), journal.clone());
     if Path::new(&file_name).try_exists().is_ok_and(identity) {
         info!("Proving skipped. Proof file {file_name} already exists.");
     }
 
+    // accrue input data
+    profile = profile.with_witness_frames(&witness_frames);
+    // separate sub-proof data
+    let stitched_receipts = stitched_proofs
+        .iter()
+        .map(|r| r.0.clone())
+        .collect::<Vec<_>>();
+
     // compute the zkvm proof
-    let proof = match (boundless.market, boundless.storage) {
+    let mut proof = match (boundless.market, boundless.storage) {
         (Some(marked_provider_config), Some(storage_provider_config))
             if !risc0_zkvm::is_dev_mode() =>
         {
@@ -74,8 +84,9 @@ pub async fn seek_proof(
                 journal.clone(),
                 witness_slices,
                 witness_frames,
-                stitched_proofs,
+                stitched_receipts,
                 proving,
+                profile,
                 data_dir,
             )
             .await?
@@ -86,9 +97,10 @@ pub async fn seek_proof(
                     proving.image(),
                     witness_slices,
                     witness_frames,
-                    stitched_proofs,
+                    stitched_receipts,
                     prove_snark,
                     proving,
+                    profile,
                 )
                 .await?
             } else {
@@ -96,29 +108,33 @@ pub async fn seek_proof(
                     proving.image(),
                     witness_slices,
                     witness_frames,
-                    stitched_proofs,
+                    stitched_receipts,
                     prove_snark,
                     proving,
+                    profile,
                 )
                 .await?
             }
         }
     };
 
+    // accumulate sub-proof data
+    proof.1 = proof.1.with_proofs(proving.image().0, &stitched_proofs);
+
     // Save proof file to disk
-    if journal != proof.journal {
+    if journal != proof.0.journal {
         error!(
             "Expected journal {} but found {}",
             hex::encode(&journal),
-            hex::encode(&proof.journal)
+            hex::encode(&proof.0.journal)
         );
     }
-    let file_name = proof_file_name(proving.image_id(), proof.journal.clone());
+    let file_name = proof_file_name(proving.image_id(), proof.0.journal.clone());
     proof::save_to_bincoded_file(&proof, None, &file_name)
         .await
         .context("save_to_bincoded_file")
         .map_err(ProvingError::OtherError)?;
     info!("Saved proof to file {file_name}");
 
-    Ok(proof)
+    Ok(())
 }

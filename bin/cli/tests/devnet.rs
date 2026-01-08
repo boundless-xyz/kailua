@@ -61,6 +61,7 @@ async fn make(recipe: &str) -> io::Result<ExitStatus> {
 async fn deploy_kailua_contracts(challenge_timeout: u64) -> anyhow::Result<()> {
     // fast-track upgrade w/ devmode proof support
     set_var("RISC0_DEV_MODE", "1");
+    set_var("RISC0_INFO", "1");
     fast_track(FastTrackArgs {
         eth_rpc_url: "http://127.0.0.1:8545".to_string(),
         op_geth_url: "http://127.0.0.1:9545".to_string(),

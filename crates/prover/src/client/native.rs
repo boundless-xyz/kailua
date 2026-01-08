@@ -14,6 +14,7 @@
 
 use crate::args::ProveArgs;
 use crate::kv::{create_disk_kv_store, create_split_kv_store, RWLKeyValueStore};
+use crate::profiling::ProfiledReceipt;
 use crate::ProvingError;
 use alloy_primitives::B256;
 use anyhow::anyhow;
@@ -32,7 +33,6 @@ use kona_preimage::{
 };
 use kona_proof::HintType;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use risc0_zkvm::Receipt;
 use std::sync::Arc;
 use tokio::task;
 use tokio::task::JoinHandle;
@@ -60,7 +60,7 @@ pub async fn run_native_client(
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
+    stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,

@@ -14,6 +14,7 @@
 
 use crate::args::ProvingArgs;
 use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
+use crate::profiling::{Profile, ProfiledReceipt};
 use crate::ProvingError;
 use anyhow::{anyhow, Context};
 use bonsai_sdk::non_blocking::{Client, SessionId, SnarkId};
@@ -36,7 +37,8 @@ pub async fn run_bonsai_client<A: NoUninit + Into<Digest>>(
     stitched_proofs: Vec<Receipt>,
     prove_snark: bool,
     proving_args: &ProvingArgs,
-) -> Result<Receipt, ProvingError> {
+    mut profile: Profile,
+) -> Result<ProfiledReceipt, ProvingError> {
     info!("Running Bonsai client.");
     // Instantiate client
     let client =
@@ -150,6 +152,9 @@ pub async fn run_bonsai_client<A: NoUninit + Into<Digest>>(
                     continue;
                 };
 
+                // set profiled cycle counts
+                profile =
+                    profile.with_cycle_counts(stats.total_cycles - stats.cycles, stats.cycles);
                 break receipt;
             }
             _ => {
@@ -171,7 +176,7 @@ pub async fn run_bonsai_client<A: NoUninit + Into<Digest>>(
 
     drop(r0vm_permit);
     if !prove_snark {
-        return Ok(stark_receipt);
+        return Ok((stark_receipt, profile));
     }
     info!("Wrapping STARK as SNARK on Bonsai.");
     let stark_receipt_bincoded =
@@ -225,7 +230,7 @@ pub async fn run_bonsai_client<A: NoUninit + Into<Digest>>(
         }
     };
 
-    Ok(groth16_receipt)
+    Ok((groth16_receipt, profile))
 }
 
 pub async fn create_snark_session(

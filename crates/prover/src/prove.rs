@@ -41,6 +41,7 @@ use risc0_zkvm::sha::Digestible;
 use std::collections::BinaryHeap;
 use std::env::set_var;
 use tempfile::tempdir;
+use thousands::Separable;
 use tokio::fs::remove_dir_all;
 use tracing::{error, info, warn};
 
@@ -462,8 +463,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     }
 
     // recursively combine expected proofs
-    if !args.proving.skip_stitching() && result_pq.len() > 1 {
-        info!("Stitching {} complete proofs.", result_pq.len());
+    if !args.proving.skip_stitching() {
         // gather sorted proofs into vec
         let mut results = result_pq
             .into_sorted_vec()
@@ -473,6 +473,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
 
         let l2_provider = l2_provider.as_ref().unwrap();
         // collapse results vector by stitching its proofs
+        if results.len() > 1 {
+            info!("Stitching {} complete proofs.", results.len());
+        }
         while results.len() > 1 {
             let num_stitch_proofs = results.len().div_ceil(args.proving.max_proof_stitches);
             let mut stitched_proof_receivers = Vec::with_capacity(num_stitch_proofs);
@@ -493,7 +496,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     .multiunzip();
                 let stitched_boot_info = stitched_proofs
                     .iter()
-                    .map(StitchedBootInfo::from)
+                    .map(|p| StitchedBootInfo::from(&p.0))
                     .collect::<Vec<_>>();
                 // stitch contiguous proofs together
                 info!("Composing {} proofs together.", stitched_proofs.len());
@@ -536,7 +539,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                         let last_initial_precondition = initial_preconditions.first().unwrap();
                         let last_initial_args = initial_args.first().unwrap();
                         let last_stitched_journal =
-                            ProofJournal::from(stitched_proofs.first().unwrap());
+                            ProofJournal::from(&stitched_proofs.first().unwrap().0);
                         let boot = BootInfo {
                             l1_head: last_initial_args.l1_head,
                             agreed_l2_output_root: last_initial_args.agreed_l2_output_root,
@@ -634,6 +637,33 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     result: result.map(|inner| inner.expect("Missing stitched proof.")),
                 });
             }
+        }
+
+        // report profile data summary
+        if let Ok(((_, profile), _)) = results.pop().unwrap().result {
+            info!(
+                "Proved: {} blocks with {} transactions totaling {} gas in {} cycles over {} proofs.",
+                profile.block_count().separate_with_commas(),
+                profile.transactions.unwrap_or_default().separate_with_commas(),
+                profile.gas.unwrap_or_default().separate_with_commas(),
+                profile.cycles().separate_with_commas(),
+                profile.proofs().separate_with_commas()
+            );
+        }
+    } else {
+        // Report all profiling data summary
+        for result in result_pq {
+            let Ok(((_, profile), _)) = result.result else {
+                continue;
+            };
+            info!(
+                "Proved: {} blocks with {} transactions totaling {} gas in {} cycles over {} proofs.",
+                profile.block_count().separate_with_commas(),
+                profile.transactions.unwrap_or_default().separate_with_commas(),
+                profile.gas.unwrap_or_default().separate_with_commas(),
+                profile.cycles().separate_with_commas(),
+                profile.proofs().separate_with_commas()
+            );
         }
     }
 

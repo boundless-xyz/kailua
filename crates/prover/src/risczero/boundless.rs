@@ -14,6 +14,7 @@
 
 use crate::args::ProvingArgs;
 use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
+use crate::profiling::{Profile, ProfiledReceipt};
 use crate::proof::save_to_bincoded_file;
 use crate::proof::{proof_id, read_bincoded_file};
 use crate::ProvingError;
@@ -347,8 +348,9 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     witness_frames: Vec<Vec<u8>>,
     stitched_proofs: Vec<Receipt>,
     proving_args: &ProvingArgs,
+    profile: Profile,
     data_dir: Option<&PathBuf>,
-) -> Result<Receipt, ProvingError> {
+) -> Result<ProfiledReceipt, ProvingError> {
     info!("Running boundless client.");
 
     // Create R2 storage if configured
@@ -436,6 +438,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             &stitched_proofs,
             proving_args,
             &requirements,
+            profile.clone(),
             data_dir,
         )
         .await
@@ -675,8 +678,85 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     stitched_proofs: &Vec<Receipt>,
     proving_args: &ProvingArgs,
     requirements: &Requirements,
+    profile: Profile,
     data_dir: Option<&PathBuf>,
-) -> Result<Receipt, ProvingError> {
+) -> Result<ProfiledReceipt, ProvingError> {
+    // Get cycle count
+    let req_file_name = request_file_name(image.0, journal.clone());
+    let request_cycles = match (
+        market.boundless_assume_cycle_count,
+        read_bincoded_file::<BoundlessRequest>(data_dir, &req_file_name).await,
+    ) {
+        (_, Ok(request)) => {
+            // we sleep here so to avoid pinata api rate limits
+            sleep(Duration::from_secs(2)).await;
+            request
+        }
+        (Some(cycle_count), _) => {
+            // we sleep here so to avoid pinata api rate limits
+            sleep(Duration::from_secs(2)).await;
+            BoundlessRequest {
+                total_cycle_count: cycle_count,
+                user_cycle_count: cycle_count,
+            }
+        }
+        (None, Err(err)) => {
+            warn!("Preflighting execution: {err:?}");
+            let preflight_witness_slices = witness_slices.clone();
+            let preflight_witness_frames = witness_frames.clone();
+            let preflight_stitched_proofs = stitched_proofs.clone();
+            let segment_limit = proving_args.segment_limit;
+            let elf = image.1.to_vec();
+            let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
+                .await
+                .context("acquire_owned_permit")
+                .map_err(ProvingError::OtherError)?;
+            let session_info = tokio::task::spawn_blocking(move || {
+                let mut builder = ExecutorEnv::builder();
+                // Set segment po2
+                builder.segment_limit_po2(segment_limit);
+                // Pass in witness data slices
+                for slice in &preflight_witness_slices {
+                    builder.write_slice(slice);
+                }
+                // Pass in witness data frames
+                for frame in &preflight_witness_frames {
+                    builder.write_frame(frame);
+                }
+                // Pass in proofs
+                for proof in &preflight_stitched_proofs {
+                    builder.write(proof).context("env::write")?;
+                }
+                let env = builder.build().context("env::build")?;
+                let session_info = default_executor()
+                    .execute(env, &elf)
+                    .context("Executor::execute")?;
+                Ok::<_, anyhow::Error>(session_info)
+            })
+            .await
+            .context("spawn_blocking")
+            .map_err(ProvingError::OtherError)?
+            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+            drop(r0vm_permit);
+            let total_cycle_count =
+                (1u64 << segment_limit as u64) * (session_info.segments.len() as u64);
+            let cached_data = BoundlessRequest {
+                total_cycle_count,
+                user_cycle_count: session_info.cycles(),
+            };
+            if let Err(err) = save_to_bincoded_file(&cached_data, data_dir, &req_file_name).await {
+                warn!("Failed to cache cycle count data: {err:?}");
+            }
+            cached_data
+        }
+    };
+    info!("Request cycle count: {}.", request_cycles.total_cycle_count);
+    // Set profiled cycle count data
+    let profile = profile.with_cycle_counts(
+        request_cycles.system_cycle_count(),
+        request_cycles.user_cycle_count,
+    );
+
     // Check prior requests
     let fresh_nonce = if market.boundless_look_back {
         let mut nonce_target = None;
@@ -690,7 +770,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         )
         .await?
         {
-            return Ok(proof);
+            return Ok((proof, profile));
         }
         nonce_target.unwrap()
     } else {
@@ -744,77 +824,9 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             }
         };
     };
-
     info!("Kailua ELF URL: {program_url}");
-    // Preflight execution to get cycle count
-    let req_file_name = request_file_name(image.0, journal.clone());
-    let cycle_count = match (
-        market.boundless_assume_cycle_count,
-        read_bincoded_file::<BoundlessRequest>(data_dir, &req_file_name).await,
-    ) {
-        (_, Ok(request)) => {
-            // we sleep here so to avoid pinata api rate limits
-            sleep(Duration::from_secs(2)).await;
-            request.cycle_count
-        }
-        (Some(cycle_count), _) => {
-            // we sleep here so to avoid pinata api rate limits
-            sleep(Duration::from_secs(2)).await;
-            cycle_count
-        }
-        (None, Err(err)) => {
-            warn!("Preflighting execution: {err:?}");
-            let preflight_witness_slices = witness_slices.clone();
-            let preflight_witness_frames = witness_frames.clone();
-            let preflight_stitched_proofs = stitched_proofs.clone();
-            let segment_limit = proving_args.segment_limit;
-            let elf = image.1.to_vec();
-            let r0vm_permit = acquire_owned_permit(SEMAPHORE_R0VM.clone())
-                .await
-                .context("acquire_owned_permit")
-                .map_err(ProvingError::OtherError)?;
-            let session_info = tokio::task::spawn_blocking(move || {
-                let mut builder = ExecutorEnv::builder();
-                // Set segment po2
-                builder.segment_limit_po2(segment_limit);
-                // Pass in witness data slices
-                for slice in &preflight_witness_slices {
-                    builder.write_slice(slice);
-                }
-                // Pass in witness data frames
-                for frame in &preflight_witness_frames {
-                    builder.write_frame(frame);
-                }
-                // Pass in proofs
-                for proof in &preflight_stitched_proofs {
-                    builder.write(proof).context("env::write")?;
-                }
-                let env = builder.build().context("env::build")?;
-                let session_info = default_executor()
-                    .execute(env, &elf)
-                    .context("Executor::execute")?;
-                Ok::<_, anyhow::Error>(session_info)
-            })
-            .await
-            .context("spawn_blocking")
-            .map_err(ProvingError::OtherError)?
-            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
-            drop(r0vm_permit);
-            let cycle_count = session_info
-                .segments
-                .iter()
-                .map(|segment| 1 << segment.po2)
-                .sum::<u64>();
-            let cached_data = BoundlessRequest { cycle_count };
-            if let Err(err) = save_to_bincoded_file(&cached_data, data_dir, &req_file_name).await {
-                warn!("Failed to cache cycle count data: {err:?}");
-            }
-            cycle_count
-        }
-    };
-    info!("Request cycle count: {cycle_count}.");
 
-    // Pass in input frames
+    // Upload input
     let inp_file_name = input_file_name(image.0, journal.clone());
     let input_url = loop {
         match (
@@ -902,12 +914,13 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     .header
     .timestamp;
 
-    let priced_cycles = U256::from((market.boundless_mega_cycle_min << 20).max(cycle_count));
+    let priced_cycles =
+        U256::from((market.boundless_mega_cycle_min << 20).max(request_cycles.total_cycle_count));
     let min_price = market.boundless_cycle_min_wei * priced_cycles;
     let max_price = market.boundless_cycle_max_wei * priced_cycles;
     let timed_mega_cycles = market
         .boundless_mega_cycle_min
-        .max(cycle_count.div_ceil(1 << 20)) as f64;
+        .max(request_cycles.total_cycle_count.div_ceil(1 << 20)) as f64;
     let bid_delay_time = market
         .boundless_order_min_bid_delay
         .max((market.boundless_order_bid_delay_factor * timed_mega_cycles) as u64);
@@ -928,7 +941,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     let request = boundless_client
         .new_request()
         .with_journal(journal)
-        .with_cycles(cycle_count)
+        .with_cycles(request_cycles.total_cycle_count)
         .with_program_url(program_url)
         .context("RequestParams::with_program_url")
         .map_err(ProvingError::OtherError)?
@@ -986,6 +999,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         return Err(ProvingError::NotAwaitingProof);
     }
 
+    // Wait for request fulfillment
     retrieve_proof(
         boundless_client,
         request_id,
@@ -996,6 +1010,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     .await
     .context("retrieve_proof")
     .map_err(|e| ProvingError::OtherError(anyhow!(e)))
+    .map(|proof| (proof, profile))
 }
 
 pub fn request_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> String {
@@ -1016,7 +1031,15 @@ pub fn input_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) ->
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BoundlessRequest {
     /// Number of cycles that require proving
-    pub cycle_count: u64,
+    pub total_cycle_count: u64,
+    /// Number of user cycles
+    pub user_cycle_count: u64,
+}
+
+impl BoundlessRequest {
+    pub fn system_cycle_count(&self) -> u64 {
+        self.total_cycle_count - self.user_cycle_count
+    }
 }
 
 /// R2 Storage implementation for manual uploads with custom prefix

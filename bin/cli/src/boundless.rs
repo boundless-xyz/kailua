@@ -19,12 +19,12 @@ use anyhow::Context;
 use boundless_market::request_builder::RequirementParams;
 use boundless_market::{Client, StandardStorageProvider, StorageProviderConfig};
 use kailua_kona::journal::ProofJournal;
+use kailua_prover::profiling::ProfiledReceipt;
 use kailua_prover::proof::{proof_file_name, read_bincoded_file, save_to_bincoded_file};
 use kailua_prover::risczero::boundless::retrieve_proof;
 use kailua_sync::retry_res_timeout;
 use kailua_sync::telemetry::TelemetryArgs;
 use kailua_validator::proposals::dispatch::current_time;
-use risc0_zkvm::Receipt;
 use std::str::FromStr;
 use tracing::{error, info};
 
@@ -77,8 +77,8 @@ pub async fn boundless(args: BoundlessArgs) -> anyhow::Result<()> {
     let file_name = proof_file_name(image_id, &proof_journal);
 
     info!("Writing proof to {file_name}.");
-    if let Ok(prior_receipt) = read_bincoded_file::<Receipt>(None, &file_name).await {
-        if prior_receipt.verify(image_id).is_ok() {
+    if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await {
+        if prior_receipt.0.verify(image_id).is_ok() {
             info!("Skipping overwriting valid receipt file.");
             return Ok(());
         }

@@ -28,6 +28,7 @@ pub mod hana;
 pub mod hokulea;
 pub mod kv;
 pub mod preflight;
+pub mod profiling;
 pub mod proof;
 pub mod prove;
 pub mod risczero;
