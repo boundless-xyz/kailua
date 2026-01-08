@@ -627,7 +627,6 @@ pub async fn retrieve_proof(
 ) -> Result<ProfiledReceipt, ClientError> {
     // Wait for the request to be fulfilled by the market, returning the journal and seal.
     info!("Waiting for 0x{request_id:x} to be fulfilled");
-    // boundless_client.boundless_market.is_locked()
 
     loop {
         match boundless_client
@@ -653,15 +652,6 @@ pub async fn retrieve_proof(
                 };
 
                 // Find proving cost
-                let (proof_request, _) = retry_res_timeout!(
-                    15,
-                    boundless_client
-                        .fetch_proof_request(request_id, None, None)
-                        .await
-                        .context("fetch_proof_request")
-                )
-                .await;
-
                 let price_point = if retry_res_timeout!(
                     15,
                     boundless_client
@@ -705,6 +695,14 @@ pub async fn retrieve_proof(
                 .header
                 .timestamp;
 
+                let (proof_request, _) = retry_res_timeout!(
+                    15,
+                    boundless_client
+                        .fetch_proof_request(request_id, None, None)
+                        .await
+                        .context("fetch_proof_request")
+                )
+                .await;
                 match proof_request.offer.price_at(timestamp) {
                     Ok(cost) => {
                         profile = profile.with_boundless_cost(cost);
