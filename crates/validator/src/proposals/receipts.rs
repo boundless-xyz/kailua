@@ -14,7 +14,6 @@
 
 use crate::args::ValidateArgs;
 use crate::channel::{DuplexChannel, Message};
-use crate::proposals::dispatch::current_time;
 use crate::proposals::encode_seal;
 use alloy::primitives::Bytes;
 use alloy::primitives::B256;
@@ -25,6 +24,7 @@ use kailua_contracts::*;
 use kailua_kona::blobs::hash_to_fe;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::proposal::proposal_precondition_hash;
+use kailua_prover::current_time;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::Transact;

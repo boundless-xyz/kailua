@@ -1,10 +1,13 @@
-use crate::proof::proof_id;
+use crate::current_time;
+use crate::proof::{proof_id, proof_id_file_name, read_bincoded_file, save_to_file};
 use alloy_primitives::{B256, U256};
 use bytemuck::NoUninit;
 use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::witness::Witness;
 use kona_proof::BootInfo;
 use risc0_zkvm::{InnerReceipt, Receipt};
+use thousands::Separable;
+use tracing::{error, info};
 
 /// Describes a [Receipt] instance paired with its [Profile] data.
 pub type ProfiledReceipt = (Receipt, Profile);
@@ -156,5 +159,109 @@ impl Profile {
     /// Total proofs captures by profile and its children
     pub fn proofs(&self) -> u64 {
         self.snarks.unwrap_or_default() + self.starks.unwrap_or_default() + 1
+    }
+
+    pub fn report_summary(&self) {
+        info!(
+            "Proved: {} blocks with {} transactions totaling {} gas in {} cycles over {} proofs.",
+            self.block_count().separate_with_commas(),
+            self.transactions.unwrap_or_default().separate_with_commas(),
+            self.gas.unwrap_or_default().separate_with_commas(),
+            self.cycles().separate_with_commas(),
+            self.proofs().separate_with_commas()
+        );
+    }
+
+    pub async fn to_csv(self) -> anyhow::Result<Vec<u8>> {
+        // Write CSV header row
+        let mut buffer = Vec::new();
+        let mut writer = csv::Writer::from_writer(&mut buffer);
+        writer.write_record([
+            "depth",
+            "block_start",
+            "block_end",
+            "derivation",
+            "transactions",
+            "gas",
+            "blobs",
+            "input_bytes",
+            "cycles",
+            "cycles_user",
+            "cycles_system",
+            "boundless_cost",
+            "proofs",
+            "snarks",
+            "starks",
+        ])?;
+        // write profile rows
+        let mut stack = vec![(self, 0u64)];
+        while let Some((profile, depth)) = stack.pop() {
+            writer.write_record([
+                depth.to_string(),
+                profile.block_start.to_string(),
+                profile.block_end.to_string(),
+                profile.derivation.to_string(),
+                profile
+                    .transactions
+                    .map(|t| t.to_string())
+                    .unwrap_or_default(),
+                profile.gas.map(|g| g.to_string()).unwrap_or_default(),
+                profile.blobs.map(|b| b.to_string()).unwrap_or_default(),
+                profile
+                    .input_bytes
+                    .map(|i| i.to_string())
+                    .unwrap_or_default(),
+                profile.cycles().to_string(),
+                profile
+                    .cycles_user
+                    .map(|c| c.to_string())
+                    .unwrap_or_default(),
+                profile
+                    .cycles_system
+                    .map(|c| c.to_string())
+                    .unwrap_or_default(),
+                profile
+                    .boundless_cost
+                    .map(|b| b.to_string())
+                    .unwrap_or_default(),
+                profile.proofs().to_string(),
+                profile.snarks.map(|s| s.to_string()).unwrap_or_default(),
+                profile.starks.map(|s| s.to_string()).unwrap_or_default(),
+            ])?;
+            // add new children
+            for proof_id in profile.children {
+                let file_name = proof_id_file_name(proof_id);
+                if let Ok(prior_receipt) =
+                    read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
+                {
+                    stack.push((prior_receipt.1, depth + 1));
+                }
+            }
+        }
+        writer.flush()?;
+        drop(writer);
+        Ok(buffer)
+    }
+
+    pub async fn save_csv_file(self) {
+        let file_name = format!(
+            "{}-{}.{}.{}.csv",
+            self.block_start,
+            self.block_end,
+            self.derivation,
+            current_time()
+        );
+        match self.to_csv().await {
+            Ok(data) => {
+                if let Err(err) = save_to_file(&data, None, &file_name).await {
+                    error!("Failed to save profile to file {file_name}: {err:?}");
+                } else {
+                    info!("Saved profile to {file_name}.");
+                }
+            }
+            Err(err) => {
+                error!("Failed to convert profile to csv: {err:?}");
+            }
+        }
     }
 }

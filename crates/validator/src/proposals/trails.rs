@@ -13,11 +13,11 @@
 // limitations under the License.
 
 use crate::args::ValidateArgs;
-use crate::proposals::dispatch::current_time;
 use alloy::primitives::Address;
 use alloy::providers::Provider;
 use anyhow::Context;
 use kailua_contracts::*;
+use kailua_prover::current_time;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::Transact;

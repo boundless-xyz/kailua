@@ -22,3 +22,4 @@ kailua-input
 .env
 .logs
 *.driver
+*.csv

@@ -41,7 +41,6 @@ use risc0_zkvm::sha::Digestible;
 use std::collections::BinaryHeap;
 use std::env::set_var;
 use tempfile::tempdir;
-use thousands::Separable;
 use tokio::fs::remove_dir_all;
 use tracing::{error, info, warn};
 
@@ -641,14 +640,10 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
 
         // report profile data summary
         if let Ok(((_, profile), _)) = results.pop().unwrap().result {
-            info!(
-                "Proved: {} blocks with {} transactions totaling {} gas in {} cycles over {} proofs.",
-                profile.block_count().separate_with_commas(),
-                profile.transactions.unwrap_or_default().separate_with_commas(),
-                profile.gas.unwrap_or_default().separate_with_commas(),
-                profile.cycles().separate_with_commas(),
-                profile.proofs().separate_with_commas()
-            );
+            profile.report_summary();
+            if args.proving.export_profile_csv {
+                profile.save_csv_file().await;
+            }
         }
     } else {
         // Report all profiling data summary
@@ -656,14 +651,10 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
             let Ok(((_, profile), _)) = result.result else {
                 continue;
             };
-            info!(
-                "Proved: {} blocks with {} transactions totaling {} gas in {} cycles over {} proofs.",
-                profile.block_count().separate_with_commas(),
-                profile.transactions.unwrap_or_default().separate_with_commas(),
-                profile.gas.unwrap_or_default().separate_with_commas(),
-                profile.cycles().separate_with_commas(),
-                profile.proofs().separate_with_commas()
-            );
+            profile.report_summary();
+            if args.proving.export_profile_csv {
+                profile.save_csv_file().await;
+            }
         }
     }
 

@@ -26,7 +26,6 @@ use opentelemetry::trace::{TraceContextExt, Tracer};
 use opentelemetry::KeyValue;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
-use std::time::SystemTime;
 use tracing::{error, info, warn};
 
 #[allow(clippy::too_many_arguments)]
@@ -44,7 +43,7 @@ pub async fn dispatch_proof_requests(
         opentelemetry::Context::current_with_span(tracer.start("dispatch_proof_requests"));
 
     // dispatch buffered validity proof requests
-    let current_timestamp = current_time();
+    let current_timestamp = kailua_prover::current_time();
     let request_count = buffer.len();
     for _ in 0..request_count {
         let Some((next_time, proposal_index)) = buffer.peek() else {
@@ -151,11 +150,4 @@ pub async fn dispatch_proof_requests(
             );
         }
     }
-}
-
-pub fn current_time() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
 }

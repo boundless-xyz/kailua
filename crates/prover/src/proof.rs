@@ -24,15 +24,21 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::log::warn;
 
 #[allow(deprecated)]
-/// Computes the expected proof file name based on the journal
+/// Computes the expected proof file name based on the image id and journal
 pub fn proof_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> String {
+    proof_id_file_name(proof_id(image_id, journal))
+}
+
+#[allow(deprecated)]
+/// Computes the expected proof file name based on the proof id
+pub fn proof_id_file_name(proof_id: B256) -> String {
     let version = risc0_zkvm::get_version().unwrap();
     let suffix = if risc0_zkvm::is_dev_mode() {
         "fake"
     } else {
         "zkp"
     };
-    format!("risc0-{version}-{}.{suffix}", proof_id(image_id, journal))
+    format!("risc0-{version}-{proof_id}.{suffix}")
 }
 
 pub fn proof_id<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> B256 {
@@ -69,21 +75,33 @@ pub async fn save_to_bincoded_file<T: Serialize>(
     data_dir: Option<&PathBuf>,
     file_name: &str,
 ) -> anyhow::Result<()> {
+    save_to_file(
+        &bincode::serialize(value).context("Could not serialize proving data.")?,
+        data_dir,
+        file_name,
+    )
+    .await
+}
+
+pub async fn save_to_file(
+    data: &[u8],
+    data_dir: Option<&PathBuf>,
+    file_name: &str,
+) -> anyhow::Result<()> {
     let file_path = data_dir
         .map(|d| d.join(file_name))
         .unwrap_or_else(|| PathBuf::from(file_name));
     if file_path.exists() {
         warn!("Overwriting {file_path:?}.");
     }
-    let mut file = File::create(file_path)
+    let mut file = File::create(&file_path)
         .await
-        .context("Failed to create output file.")?;
-    let data = bincode::serialize(value).context("Could not serialize proving data.")?;
-    file.write_all(data.as_slice())
+        .context(format!("Failed to create file {file_path:?}."))?;
+    file.write_all(data)
         .await
-        .context("Failed to write proof to file")?;
+        .context(format!("Failed to write data to file {file_path:?}."))?;
     file.flush()
         .await
-        .context("Failed to flush proof output file data.")?;
+        .context(format!("Failed to flush file {file_path:?} data."))?;
     Ok(())
 }

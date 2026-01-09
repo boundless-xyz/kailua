@@ -19,12 +19,12 @@ use anyhow::Context;
 use boundless_market::request_builder::RequirementParams;
 use boundless_market::{Client, StandardStorageProvider, StorageProviderConfig};
 use kailua_kona::journal::ProofJournal;
+use kailua_prover::current_time;
 use kailua_prover::profiling::{Profile, ProfiledReceipt};
 use kailua_prover::proof::{proof_file_name, read_bincoded_file, save_to_bincoded_file};
 use kailua_prover::risczero::boundless::retrieve_proof;
 use kailua_sync::retry_res_timeout;
 use kailua_sync::telemetry::TelemetryArgs;
-use kailua_validator::proposals::dispatch::current_time;
 use std::str::FromStr;
 use tracing::{error, info};
 
