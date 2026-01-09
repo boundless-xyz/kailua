@@ -310,6 +310,7 @@ async fn proposer_validator() {
                 hokulea: Default::default(),
                 #[cfg(feature = "celestia")]
                 hana: Default::default(),
+                export_profile_csv: false,
             },
             boundless: Default::default(),
         },
@@ -374,6 +375,7 @@ async fn proposer_validator() {
                 hokulea: Default::default(),
                 #[cfg(feature = "celestia")]
                 hana: Default::default(),
+                export_profile_csv: false,
             },
             boundless: Default::default(),
         },
@@ -525,6 +527,7 @@ async fn prover() {
             hokulea: Default::default(),
             #[cfg(feature = "celestia")]
             hana: Default::default(),
+            export_profile_csv: false,
         },
         boundless: Default::default(),
         precondition_params: vec![],
