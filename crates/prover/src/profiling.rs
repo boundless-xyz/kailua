@@ -188,7 +188,13 @@ impl Profile {
             "cycles",
             "cycles_user",
             "cycles_system",
-            "boundless_cost",
+            "cycles_per_block",
+            "cycles_per_tx",
+            "cycles_per_gas",
+            "cost",
+            "cost_per_block",
+            "cost_per_tx",
+            "cost_per_gas",
             "proofs",
             "snarks",
             "starks",
@@ -196,6 +202,22 @@ impl Profile {
         // write profile rows
         let mut stack = vec![(self, 0u64)];
         while let Some((profile, depth)) = stack.pop() {
+            let cycles_per_block = profile.cycles().checked_div(profile.block_count());
+            let cycles_per_tx = profile
+                .cycles()
+                .checked_div(profile.transactions.unwrap_or_default());
+            let cycles_per_gas = profile
+                .cycles()
+                .checked_div(profile.gas.unwrap_or_default());
+            let cost_per_block = profile
+                .boundless_cost
+                .and_then(|c| c.checked_div(U256::from(profile.block_count())));
+            let cost_per_tx = profile
+                .boundless_cost
+                .and_then(|c| c.checked_div(U256::from(profile.transactions.unwrap_or_default())));
+            let cost_per_gas = profile
+                .boundless_cost
+                .and_then(|c| c.checked_div(U256::from(profile.gas.unwrap_or_default())));
             writer.write_record([
                 depth.to_string(),
                 profile.block_start.to_string(),
@@ -220,10 +242,16 @@ impl Profile {
                     .cycles_system
                     .map(|c| c.to_string())
                     .unwrap_or_default(),
+                cycles_per_block.map(|c| c.to_string()).unwrap_or_default(),
+                cycles_per_tx.map(|c| c.to_string()).unwrap_or_default(),
+                cycles_per_gas.map(|c| c.to_string()).unwrap_or_default(),
                 profile
                     .boundless_cost
                     .map(|b| b.to_string())
                     .unwrap_or_default(),
+                cost_per_block.map(|c| c.to_string()).unwrap_or_default(),
+                cost_per_tx.map(|c| c.to_string()).unwrap_or_default(),
+                cost_per_gas.map(|c| c.to_string()).unwrap_or_default(),
                 profile.proofs().to_string(),
                 profile.snarks.map(|s| s.to_string()).unwrap_or_default(),
                 profile.starks.map(|s| s.to_string()).unwrap_or_default(),
