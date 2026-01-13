@@ -29,6 +29,10 @@ pub struct BenchArgs {
     #[clap(flatten)]
     pub sync: SyncArgs,
 
+    /// The sequence window size to use for proving
+    #[clap(long, env)]
+    pub seq_window: u64,
+
     /// The starting L2 block number to scan for blocks from
     #[clap(long, env)]
     pub bench_start: u64,
@@ -143,6 +147,7 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
             &args.sync.provider.op_node_url,
             data_dir.to_str().unwrap(),
             "debug",
+            &args.seq_window.to_string(),
             &verbosity_level,
         ]);
         println!("Executing: {cmd:?}");

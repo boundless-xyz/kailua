@@ -177,6 +177,7 @@ impl Profile {
         let mut buffer = Vec::new();
         let mut writer = csv::Writer::from_writer(&mut buffer);
         writer.write_record([
+            "chain_id",
             "depth",
             "block_start",
             "block_end",
@@ -219,6 +220,7 @@ impl Profile {
                 .boundless_cost
                 .and_then(|c| c.checked_div(U256::from(profile.gas.unwrap_or_default())));
             writer.write_record([
+                profile.chain_id.to_string(),
                 depth.to_string(),
                 profile.block_start.to_string(),
                 profile.block_end.to_string(),
@@ -273,7 +275,8 @@ impl Profile {
 
     pub async fn save_csv_file(self) {
         let file_name = format!(
-            "{}-{}.{}.{}.csv",
+            "{}.{}-{}.{}.{}.csv",
+            self.chain_id,
             self.block_start,
             self.block_end,
             self.derivation,
