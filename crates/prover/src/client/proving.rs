@@ -275,7 +275,9 @@ where
     }
 
     // Create profile
-    let profile = Profile::new(&boot_info).with_witness(&witness);
+    let profile = Profile::new(&boot_info)
+        .with_witness(&witness)
+        .with_executions(&stitched_executions);
 
     // Encode witness as frames
     let traced_driver_hash = traced_driver

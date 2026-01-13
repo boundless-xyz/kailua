@@ -2,6 +2,7 @@ use crate::current_time;
 use crate::proof::{proof_id, proof_id_file_name, read_bincoded_file, save_to_file};
 use alloy_primitives::{B256, U256};
 use bytemuck::NoUninit;
+use kailua_kona::executor::Execution;
 use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::witness::Witness;
 use kona_proof::BootInfo;
@@ -60,12 +61,14 @@ impl Profile {
         self.block_start = self.block_start.min(
             witness
                 .stitched_executions
-                .first()
+                .iter()
                 .map(|e| {
-                    e.first()
-                        .map(|e| e.artifacts.header.number)
+                    e.iter()
+                        .map(|e| e.artifacts.header.number.saturating_sub(1))
+                        .min()
                         .unwrap_or(u64::MAX)
                 })
+                .min()
                 .unwrap_or(u64::MAX),
         );
         // accrue execution stats
@@ -78,6 +81,33 @@ impl Profile {
         }
         // add validated blobs
         *self.blobs.get_or_insert_default() += witness.blobs_witness.blobs.len() as u64;
+        self
+    }
+
+    pub fn with_executions(mut self, traces: &[Vec<Execution>]) -> Self {
+        self.block_start = self.block_start.min(
+            traces
+                .iter()
+                .map(|t| {
+                    t.iter()
+                        .map(|e| e.artifacts.header.number.saturating_sub(1))
+                        .min()
+                        .unwrap_or(u64::MAX)
+                })
+                .min()
+                .unwrap_or(u64::MAX),
+        );
+        // we only factor in the traces for execution-only proofs
+        if !self.derivation {
+            for trace in traces {
+                for execution in trace {
+                    *self.transactions.get_or_insert_default() +=
+                        execution.artifacts.execution_result.receipts.len() as u64;
+                    *self.gas.get_or_insert_default() +=
+                        execution.artifacts.execution_result.gas_used;
+                }
+            }
+        }
         self
     }
 
@@ -153,7 +183,7 @@ impl Profile {
 
     /// Total blocks proven by profile and its children
     pub fn block_count(&self) -> u64 {
-        self.block_end.saturating_sub(self.block_start) + 1
+        self.block_end.saturating_sub(self.block_start)
     }
 
     /// Total proofs captures by profile and its children
