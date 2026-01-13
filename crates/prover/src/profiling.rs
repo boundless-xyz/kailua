@@ -277,12 +277,12 @@ impl Profile {
 
     pub async fn save_csv_file(self) {
         let file_name = format!(
-            "{}.{}-{}.{}.{}.csv",
+            "{}.{}.{}-{}.{}.csv",
             self.chain_id,
+            current_time(),
             self.block_start,
             self.block_end,
             self.derivation,
-            current_time()
         );
         match self.to_csv().await {
             Ok(data) => {
