@@ -181,6 +181,7 @@ impl Profile {
             "depth",
             "block_start",
             "block_end",
+            "blocks",
             "derivation",
             "transactions",
             "gas",
@@ -224,6 +225,7 @@ impl Profile {
                 depth.to_string(),
                 profile.block_start.to_string(),
                 profile.block_end.to_string(),
+                profile.block_count().to_string(),
                 profile.derivation.to_string(),
                 profile
                     .transactions
