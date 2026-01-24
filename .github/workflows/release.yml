@@ -1,0 +1,275 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "kailua-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., 1.1.8)"
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run (skip release creation)"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: write
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  RUST_VERSION: "1.88"
+  RISC0_TOOLCHAIN_VERSION: "1.88.0"
+  SOLC_VERSION: "0.8.24"
+  FOUNDRY_VERSION: "v1.0.0"
+  BINARY_NAME: "kailua-cli"
+
+jobs:
+  version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dry_run: ${{ steps.version.outputs.dry_run }}
+    steps:
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            echo "dry_run=${{ inputs.dry_run }}" >> $GITHUB_OUTPUT
+          else
+            # Extract version from tag (e.g., kailua-v1.1.8 -> 1.1.8)
+            VERSION="${GITHUB_REF_NAME#kailua-v}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "dry_run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Print version info
+        run: |
+          echo "Version: ${{ steps.version.outputs.version }}"
+          echo "Dry run: ${{ steps.version.outputs.dry_run }}"
+
+  build:
+    name: Build - ${{ matrix.artifact_name }}
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: [self-hosted, prod, Linux]
+            use_cross: false
+            artifact_name: linux-amd64
+
+          - target: aarch64-unknown-linux-gnu
+            runner: [self-hosted, prod, Linux]
+            use_cross: true
+            artifact_name: linux-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev pkg-config libclang-dev
+
+      - name: Setup Rust toolchain
+        uses: risc0/risc0/.github/actions/rustup@main
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Setup sccache
+        uses: boundless-xyz/boundless/.github/actions/sccache@main
+
+      - name: Install svm-rs
+        uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
+        with:
+          crate: svm-rs
+          version: "0.5.17"
+
+      - name: Install solc
+        run: |
+          svm install $SOLC_VERSION || true
+          svm use $SOLC_VERSION
+
+      - name: Install Foundry toolchain
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Install cross
+        if: matrix.use_cross
+        uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
+        with:
+          crate: cross
+          version: "0.2.5"
+
+      - name: Build (native)
+        if: ${{ !matrix.use_cross }}
+        run: |
+          cargo build --bin ${{ env.BINARY_NAME }} --release --locked \
+            -F prove -F disable-dev-mode -F eigen -F celestia \
+            --target ${{ matrix.target }}
+        env:
+          RISC0_SKIP_BUILD: true
+          RISC0_SKIP_BUILD_KERNEL: true
+
+      - name: Build (cross)
+        if: matrix.use_cross
+        run: |
+          cross build --bin ${{ env.BINARY_NAME }} --release --locked \
+            -F prove -F disable-dev-mode -F eigen -F celestia \
+            --target ${{ matrix.target }}
+        env:
+          RISC0_SKIP_BUILD: true
+          RISC0_SKIP_BUILD_KERNEL: true
+
+      - name: Strip binary
+        run: |
+          BINARY_PATH="target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}"
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            # For cross-compiled ARM64, use the appropriate strip
+            docker run --rm -v "$(pwd):/workspace" -w /workspace \
+              ghcr.io/cross-rs/${{ matrix.target }}:main \
+              aarch64-linux-gnu-strip "$BINARY_PATH" || true
+          else
+            strip "$BINARY_PATH" || true
+          fi
+
+      - name: Create tarball
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          ARTIFACT_NAME="${{ env.BINARY_NAME }}-${VERSION}-${{ matrix.artifact_name }}"
+
+          mkdir -p "dist/${ARTIFACT_NAME}"
+          cp "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" "dist/${ARTIFACT_NAME}/"
+          cp LICENSE "dist/${ARTIFACT_NAME}/"
+          cp README.md "dist/${ARTIFACT_NAME}/"
+
+          cd dist
+          tar -czvf "${ARTIFACT_NAME}.tar.gz" "${ARTIFACT_NAME}"
+
+          # Generate SHA256 checksum
+          sha256sum "${ARTIFACT_NAME}.tar.gz" > "${ARTIFACT_NAME}.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ needs.version.outputs.version }}-${{ matrix.artifact_name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          retention-days: 7
+
+  verify:
+    name: Verify Build
+    needs: [version, build]
+    runs-on: [self-hosted, prod, Linux]
+    steps:
+      - name: Download x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ needs.version.outputs.version }}-linux-amd64
+          path: dist
+
+      - name: Extract and verify
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          ARTIFACT_NAME="${{ env.BINARY_NAME }}-${VERSION}-linux-amd64"
+
+          cd dist
+          tar -xzvf "${ARTIFACT_NAME}.tar.gz"
+
+          # Verify checksum
+          sha256sum -c "${ARTIFACT_NAME}.tar.gz.sha256"
+
+          # Smoke test
+          chmod +x "${ARTIFACT_NAME}/${{ env.BINARY_NAME }}"
+          "./${ARTIFACT_NAME}/${{ env.BINARY_NAME }}" --version
+          "./${ARTIFACT_NAME}/${{ env.BINARY_NAME }}" --help
+
+  release:
+    name: Create Release
+    needs: [version, build, verify]
+    if: needs.version.outputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: ${{ env.BINARY_NAME }}-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          find artifacts -type f -name "*.tar.gz" -o -name "*.sha256" | sort
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+
+          cat << 'EOF' > release_notes.md
+          ## Downloads
+
+          | Platform | Architecture | Download |
+          |----------|--------------|----------|
+          | Linux | x86-64 | [kailua-cli-VERSION-linux-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/kailua-vVERSION/kailua-cli-VERSION-linux-amd64.tar.gz) |
+          | Linux | ARM64 | [kailua-cli-VERSION-linux-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/kailua-vVERSION/kailua-cli-VERSION-linux-arm64.tar.gz) |
+
+          ## Installation
+
+          ```bash
+          # Download (replace PLATFORM with linux-amd64 or linux-arm64)
+          curl -LO https://github.com/${{ github.repository }}/releases/download/kailua-vVERSION/kailua-cli-VERSION-PLATFORM.tar.gz
+
+          # Verify checksum
+          curl -LO https://github.com/${{ github.repository }}/releases/download/kailua-vVERSION/kailua-cli-VERSION-PLATFORM.tar.gz.sha256
+          sha256sum -c kailua-cli-VERSION-PLATFORM.tar.gz.sha256
+
+          # Extract
+          tar -xzvf kailua-cli-VERSION-PLATFORM.tar.gz
+
+          # Install (optional)
+          sudo mv kailua-cli-VERSION-PLATFORM/kailua-cli /usr/local/bin/
+          ```
+
+          ## Checksums
+
+          See the `.sha256` files for each download to verify integrity.
+          EOF
+
+          # Replace VERSION placeholder
+          sed -i "s/VERSION/${VERSION}/g" release_notes.md
+
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: kailua-v${{ needs.version.outputs.version }}
+          name: Kailua v${{ needs.version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
