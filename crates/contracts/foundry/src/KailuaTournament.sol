@@ -100,6 +100,15 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
     }
 
     // ------------------------------
+    // OP-CONTRACTS v5 TEMPORARY PATCH
+    // ------------------------------
+
+    /// @notice This is a workaround to allow withdrawals under op-contracts v5.0.0
+    function anchorStateRegistry() external view returns (address registry_) {
+        registry_ = msg.sender;
+    }
+
+    // ------------------------------
     // Game State
     // ------------------------------
 

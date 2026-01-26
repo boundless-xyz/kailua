@@ -38,6 +38,20 @@ contract ClaimDisputeTest is KailuaTest {
         );
     }
 
+    function test_tempPatch() public {
+        vm.warp(
+            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
+        );
+        // Succeed to propose after min creation time
+        KailuaTournament proposal_128_0 = treasury.propose(
+            Claim.wrap(0x0001010000010100000010100000101000001010000010100000010100000101),
+            abi.encodePacked(uint64(128), uint64(anchor.gameIndex()), uint64(0))
+        );
+        // Pass AnchorStateRegistry check
+        address asr = proposal_128_0.anchorStateRegistry();
+        vm.assertEq(asr, address(this));
+    }
+
     function test_getChallengerDuration() public {
         vm.warp(
             game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
