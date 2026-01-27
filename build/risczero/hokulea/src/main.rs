@@ -21,10 +21,11 @@ use rkyv::rancor::Error;
 
 fn main() {
     // Load EigenDA blob witness
-    let eigen_da: hokulea_proof::eigenda_witness::EigenDAWitness = {
+    let eigen_da = {
         let data = env::read_frame();
         log("DESERIALIZE EIGENDA");
-        bincode::deserialize(&data).expect("EigenDABlobWitnessData deserialization failed")
+        rkyv::from_bytes::<hokulea_proof::eigenda_witness::EigenDAWitness, Error>(&data)
+            .expect("Failed to deserialize EigenDABlobWitnessData")
     };
 
     // Load main witness

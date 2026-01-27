@@ -138,24 +138,28 @@ where
                     eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
                     boundless_args: boundless.clone(),
                 };
-                let mut da_witness = hokulea_proof::eigenda_witness::EigenDAWitness {
-                    validities: da_preimage.validities,
-                    encoded_payloads: vec![], // todo: da_preimage.encoded_payloads,
-                    canoe_proof_bytes: None,
-                };
-                if let Some(proof) = canoe_provider
-                    .create_certs_validity_proof(canoe_inputs)
-                    .await
-                {
-                    let steel_proof = proof.map_err(ProvingError::OtherError)?;
-                    da_witness.canoe_proof_bytes = Some(
-                        bincode::serialize(&steel_proof).expect("Canoe proof serialization failed"),
-                    );
-                }
+                let kzg_proofs =
+                    hokulea_compute_proof::create_kzg_proofs_for_eigenda_preimage(&da_preimage);
+                let da_witness = hokulea_proof::eigenda_witness::EigenDAWitness::from_preimage(
+                    da_preimage,
+                    kzg_proofs,
+                    match canoe_provider
+                        .create_certs_validity_proof(canoe_inputs)
+                        .await
+                    {
+                        None => None,
+                        Some(proof) => Some(
+                            bincode::serialize(&proof.map_err(ProvingError::OtherError)?)
+                                .expect("Canoe proof serialization failed"),
+                        ),
+                    },
+                )
+                .expect("Failed to create EigenDAWitness");
                 // encode witness
                 // todo: sharding into separate frames
-                let eigen_da_frame =
-                    bincode::serialize(&da_witness).expect("Failed to serialize EigenDAWitness");
+                let eigen_da_frame = rkyv::to_bytes::<Error>(&da_witness)
+                    .expect("Failed to serialize EigenDAWitness")
+                    .to_vec();
 
                 (
                     boot_info,
@@ -185,7 +189,7 @@ where
                     .context("Failed to run hana vec witgen client.")
                     .map_err(ProvingError::OtherError)?;
                 // serialize celestia frame (todo: sharding)
-                let celestia_da_frame = rkyv::to_bytes::<rkyv::rancor::Error>(&da_witness)
+                let celestia_da_frame = rkyv::to_bytes::<Error>(&da_witness)
                     .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
                     .to_vec();
 
@@ -455,7 +459,7 @@ pub fn encode_witness_frames(
     streamed_data.clear();
     drop(streamed_data);
     // serialize main witness object
-    let main_frame = rkyv::to_bytes::<rkyv::rancor::Error>(&witness_vec)
+    let main_frame = rkyv::to_bytes::<Error>(&witness_vec)
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
         .to_vec();
     let preloaded_data = [vec![main_frame], shards].concat();
@@ -468,7 +472,7 @@ pub fn shard_witness_data(data: &mut [PreimageVecEntry]) -> anyhow::Result<Vec<V
     for entry in data {
         let shard = core::mem::take(entry);
         shards.push(
-            rkyv::to_bytes::<rkyv::rancor::Error>(&shard)
+            rkyv::to_bytes::<Error>(&shard)
                 .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
                 .to_vec(),
         )

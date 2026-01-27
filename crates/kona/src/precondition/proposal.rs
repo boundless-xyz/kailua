@@ -327,15 +327,11 @@ pub fn validate_proposal_precondition(
     // Ensure local and global block ranges match
     if proof_l2_head_number < proposal_l2_head_number {
         bail!(
-            "Validity precondition proposal starting block #{} > proof agreed l2 head #{}",
-            proposal_l2_head_number,
-            proof_l2_head_number
+            "Validity precondition proposal starting block #{proposal_l2_head_number} > proof agreed l2 head #{proof_l2_head_number}"
         )
     } else if proposal_root_claim_block_number < proof_l2_head_number {
         bail!(
-            "Validity precondition proposal ending block #{} < proof agreed l2 head #{}",
-            proposal_l2_head_number,
-            proof_l2_head_number
+            "Validity precondition proposal ending block #{proposal_l2_head_number} < proof agreed l2 head #{proof_l2_head_number}"
         )
     } else if output_roots.is_empty() {
         // abort early if no validation is to take place

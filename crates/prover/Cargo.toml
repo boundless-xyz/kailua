@@ -65,6 +65,7 @@ canoe-bindings = { workspace = true, optional = true }
 canoe-provider = { workspace = true, optional = true }
 canoe-verifier = { workspace = true, optional = true }
 canoe-verifier-address-fetcher = { workspace = true, optional = true }
+hokulea-compute-proof = { workspace = true, optional = true }
 hokulea-host-bin = { workspace = true, optional = true }
 hokulea-proof = { workspace = true, optional = true }
 hokulea-witgen = { workspace = true, optional = true }
@@ -115,6 +116,7 @@ eigen = [
     "dep:canoe-provider",
     "dep:canoe-verifier",
     "dep:canoe-verifier-address-fetcher",
+    "dep:hokulea-compute-proof",
     "dep:hokulea-host-bin",
     "dep:hokulea-proof",
     "dep:hokulea-witgen",
