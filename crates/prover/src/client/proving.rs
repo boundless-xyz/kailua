@@ -139,7 +139,6 @@ where
                     boundless_args: boundless.clone(),
                 };
                 let mut da_witness = hokulea_proof::eigenda_witness::EigenDAWitness {
-                    recencies: da_preimage.recencies,
                     validities: da_preimage.validities,
                     encoded_payloads: vec![], // todo: da_preimage.encoded_payloads,
                     canoe_proof_bytes: None,

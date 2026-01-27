@@ -14,7 +14,7 @@
 
 use celestia_types::nmt::Namespace;
 use hana_host::celestia::{CelestiaChainHost, CelestiaChainProviders, OnlineCelestiaProvider};
-use kona_host::eth::http_provider;
+use kona_host::eth::rpc_provider;
 use kona_host::single::{SingleChainHostError, SingleChainProviders};
 use kona_providers_alloy::{OnlineBeaconClient, OnlineBlobProvider};
 use op_alloy_network::Optimism;
@@ -24,12 +24,13 @@ use op_alloy_network::Optimism;
 pub async fn create_providers(
     cfg: &CelestiaChainHost,
 ) -> anyhow::Result<CelestiaChainProviders, SingleChainHostError> {
-    let l1_provider = http_provider(
+    let l1_provider = rpc_provider(
         cfg.single_host
             .l1_node_address
             .as_ref()
             .ok_or(SingleChainHostError::Other("Provider must be set"))?,
-    );
+    )
+    .await;
     let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
         cfg.single_host
             .l1_beacon_address
@@ -37,12 +38,13 @@ pub async fn create_providers(
             .ok_or(SingleChainHostError::Other("Beacon API URL must be set"))?,
     ))
     .await;
-    let l2_provider = http_provider::<Optimism>(
+    let l2_provider = rpc_provider::<Optimism>(
         cfg.single_host
             .l2_node_address
             .as_ref()
             .ok_or(SingleChainHostError::Other("L2 node address must be set"))?,
-    );
+    )
+    .await;
 
     let celestia_client = celestia_rpc::Client::new(
         cfg.celestia_args
