@@ -18,7 +18,6 @@ use alloy_primitives::aliases::B256;
 use alloy_primitives::Address;
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_proof::eigenda_witness::EigenDAWitness;
-use hokulea_proof::recency::ConstantRecencyWindowProvider;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
@@ -77,9 +76,6 @@ impl<
                 eigen_oracle,
                 eigen_verifier,
                 CanoeVerifierAddressFetcherDeployedByEigenLabs {},
-                ConstantRecencyWindowProvider {
-                    value: boot.rollup_config.seq_window_size,
-                },
                 self.eigen_da_witness,
             ))
             .expect("Failed to validate EigenDA Witness."),
