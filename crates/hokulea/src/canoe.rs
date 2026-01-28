@@ -82,7 +82,10 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
             assert_eq!(
                 cert_validity.verifier_address,
                 fetcher
-                    .fetch_address(boot.rollup_config.l1_chain_id, &altda_commitment.versioned_cert)
+                    .fetch_address(
+                        boot.rollup_config.l1_chain_id,
+                        &altda_commitment.versioned_cert
+                    )
                     .expect("Failed to fetch verifier address")
             );
             // Verify certificate

@@ -102,22 +102,29 @@ where
         match (proving.use_hokulea(), proving.use_hana()) {
             #[cfg(feature = "eigen")]
             (true, _) => {
-                let (boot_info, proof_journal, precondition, cached_driver, witness, da_preimage) =
-                    crate::hokulea::witgen::run_hokulea_witgen_client(
-                        preimage_oracle.clone(),
-                        10 * 1024 * 1024, // default to 10MB chunks
-                        blob_provider,
-                        proving.payout_recipient_address.unwrap_or_default(),
-                        proposal_data_hash,
-                        execution_cache.clone(),
-                        derivation_cache.clone(),
-                        trace_derivation,
-                        stitched_preconditions.clone(),
-                        stitched_boot_info.clone(),
-                    )
-                    .await
-                    .context("Failed to run hokulea vec witgen client.")
-                    .map_err(ProvingError::OtherError)?;
+                let (
+                    boot_info,
+                    proof_journal,
+                    precondition,
+                    cached_driver,
+                    witness,
+                    da_preimage,
+                    aux,
+                ) = crate::hokulea::witgen::run_hokulea_witgen_client(
+                    preimage_oracle.clone(),
+                    10 * 1024 * 1024, // default to 10MB chunks
+                    blob_provider,
+                    proving.payout_recipient_address.unwrap_or_default(),
+                    proposal_data_hash,
+                    execution_cache.clone(),
+                    derivation_cache.clone(),
+                    trace_derivation,
+                    stitched_preconditions.clone(),
+                    stitched_boot_info.clone(),
+                )
+                .await
+                .context("Failed to run hokulea vec witgen client.")
+                .map_err(ProvingError::OtherError)?;
                 let canoe_proof = hokulea_witgen::from_boot_info_to_canoe_proof(
                     &boot_info,
                     &da_preimage,
@@ -144,6 +151,9 @@ where
                 let eigen_da_frame = rkyv::to_bytes::<Error>(&da_witness)
                     .expect("Failed to serialize EigenDAWitness")
                     .to_vec();
+                let aux_frame = rkyv::to_bytes::<Error>(&aux)
+                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+                    .to_vec();
 
                 (
                     boot_info,
@@ -151,7 +161,7 @@ where
                     precondition,
                     cached_driver,
                     witness,
-                    vec![eigen_da_frame],
+                    vec![eigen_da_frame, aux_frame],
                 )
             }
             #[cfg(feature = "celestia")]

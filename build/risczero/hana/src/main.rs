@@ -15,6 +15,7 @@
 use kailua_hana::stitching::HanaStitchingClient;
 use kailua_kona::client::stateless::run_stateless_client;
 use kailua_kona::oracle::vec::VecOracle;
+use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::{client::log, witness::Witness};
 use risc0_zkvm::guest::env;
 use rkyv::rancor::Error;
@@ -25,16 +26,19 @@ fn main() {
     let celestia_da = {
         // Read serialized witness data
         let witness_data = env::read_frame();
-        log("DESERIALIZE CELESTIA");
+        log("DESERIALIZE CELESTIA ORACLE");
         rkyv::from_bytes::<VecOracle, Error>(&witness_data)
             .expect("Failed to deserialize celestia witness")
     };
+    celestia_da
+        .validate_preimages()
+        .expect("Failed to validate celestia preimages");
 
     // Load main witness
     let witness = {
         // Read serialized witness data
         let witness_data = env::read_frame();
-        log("DESERIALIZE");
+        log("DESERIALIZE WITNESS");
         rkyv::from_bytes::<Witness<VecOracle>, Error>(&witness_data)
             .expect("Failed to deserialize witness")
     };

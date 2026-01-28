@@ -69,6 +69,7 @@ hokulea-compute-proof = { workspace = true, optional = true }
 hokulea-host-bin = { workspace = true, optional = true }
 hokulea-proof = { workspace = true, optional = true }
 hokulea-witgen = { workspace = true, optional = true }
+hokulea-zkvm-verification = { workspace = true, optional = true }
 
 # Hana
 kailua-hana = { workspace = true, optional = true }
@@ -120,6 +121,7 @@ eigen = [
     "dep:hokulea-host-bin",
     "dep:hokulea-proof",
     "dep:hokulea-witgen",
+    "dep:hokulea-zkvm-verification",
 ]
 celestia = [
     "kailua-build/celestia",

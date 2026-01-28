@@ -25,10 +25,11 @@ fn main() {
     let witness = {
         // Read serialized witness data
         let witness_data = env::read_frame();
-        log("DESERIALIZE");
+        log("DESERIALIZE WITNESS");
         rkyv::from_bytes::<Witness<VecOracle>, Error>(&witness_data)
             .expect("Failed to deserialize witness")
     };
+
     // Load extension shards
     for (i, entry) in witness
         .oracle_witness

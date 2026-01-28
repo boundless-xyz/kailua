@@ -6650,6 +6650,7 @@ dependencies = [
  "hokulea-host-bin",
  "hokulea-proof",
  "hokulea-witgen",
+ "hokulea-zkvm-verification",
  "human_bytes",
  "itertools 0.14.0",
  "kailua-build",
