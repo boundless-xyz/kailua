@@ -164,7 +164,7 @@ bench l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data start length range count 
           --seq-window {{seq_window}} \
           {{verbosity}}
 
-export-fpvm target="release" data="./build/risczero/src" verbosity="":
+export-fpvm target="release" data="./build/risczero/src/bin" verbosity="":
   ./target/{{target}}/kailua-cli export {{verbosity}} --data-dir {{data}}
 
 # Run the client program natively with the host program attached.

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::risczero::boundless::BoundlessArgs;
 use alloy::providers::Provider;
 use alloy::transports::http::reqwest::Url;
 use alloy_primitives::B256;
@@ -38,8 +37,6 @@ pub struct KailuaCanoeSteelProvider {
     pub l1_head: B256,
     /// rpc to l1 geth node
     pub eth_rpc_url: String,
-    /// Boundless arguments
-    pub boundless_args: BoundlessArgs,
 }
 
 #[async_trait]
@@ -106,7 +103,11 @@ impl KailuaCanoeSteelProvider {
 
             let preflight_validity = match CertVerifierCall::build(&input.altda_commitment) {
                 CertVerifierCall::ABIEncodeInterface(call) => {
-                    let status = contract.call_builder(&call).call().await?;
+                    let status = contract
+                        .call_builder(&call)
+                        .call()
+                        .await
+                        .context(format!("Failed to preflight call for input: {input:?}"))?;
                     status == StatusCode::SUCCESS as u8
                 }
             };

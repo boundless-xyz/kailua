@@ -123,6 +123,12 @@ impl ProvingError {
     }
 }
 
+impl From<anyhow::Error> for ProvingError {
+    fn from(err: anyhow::Error) -> Self {
+        ProvingError::OtherError(err)
+    }
+}
+
 pub fn current_time() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

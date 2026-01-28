@@ -102,8 +102,6 @@ where
         match (proving.use_hokulea(), proving.use_hana()) {
             #[cfg(feature = "eigen")]
             (true, _) => {
-                use canoe_provider::CanoeProvider;
-
                 let (boot_info, proof_journal, precondition, cached_driver, witness, da_preimage) =
                     crate::hokulea::witgen::run_hokulea_witgen_client(
                         preimage_oracle.clone(),
@@ -120,39 +118,25 @@ where
                     .await
                     .context("Failed to run hokulea vec witgen client.")
                     .map_err(ProvingError::OtherError)?;
-                // Generate Hokulea DA proofs
-                let mut canoe_inputs = Vec::new();
-                for (commitment, validity) in &da_preimage.validities {
-                    canoe_inputs.push(canoe_provider::CanoeInput {
-                        altda_commitment: commitment.clone(),
-                        claimed_validity: *validity,
-                        l1_head_block_hash: boot_info.l1_head,
-                        l1_head_block_number: Default::default(), // validity.l1_head_block_number,
-                        l1_chain_id: boot_info.rollup_config.l1_chain_id,
-                        verifier_address: Default::default(), // validity.verifier_address,
-                    });
-                }
-                // Embed proof into witness
-                let canoe_provider = crate::hokulea::provider::KailuaCanoeSteelProvider {
-                    l1_head: boot_info.l1_head,
-                    eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
-                    boundless_args: boundless.clone(),
-                };
+                let canoe_proof = hokulea_witgen::from_boot_info_to_canoe_proof(
+                    &boot_info,
+                    &da_preimage,
+                    preimage_oracle.as_ref(),
+                    crate::hokulea::provider::KailuaCanoeSteelProvider {
+                        l1_head: boot_info.l1_head,
+                        eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
+                    },
+                    canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs {},
+                )
+                    .await
+                    .context("Failed to generate Hokulea DA proofs")?
+                    .map(|proof| bincode::serialize(&proof).expect("Canoe proof serialization failed"));
                 let kzg_proofs =
                     hokulea_compute_proof::create_kzg_proofs_for_eigenda_preimage(&da_preimage);
                 let da_witness = hokulea_proof::eigenda_witness::EigenDAWitness::from_preimage(
                     da_preimage,
                     kzg_proofs,
-                    match canoe_provider
-                        .create_certs_validity_proof(canoe_inputs)
-                        .await
-                    {
-                        None => None,
-                        Some(proof) => Some(
-                            bincode::serialize(&proof.map_err(ProvingError::OtherError)?)
-                                .expect("Canoe proof serialization failed"),
-                        ),
-                    },
+                    canoe_proof,
                 )
                 .expect("Failed to create EigenDAWitness");
                 // encode witness
