@@ -66,6 +66,7 @@ The validator proving behavior can be customized through the following arguments
 * `segment-limit`: ZKVM Proving Segment Limit (Default 21).
 * `max-witness-size`: Maximum input data byte size per single proof (Default 2.5 GB).
 * `max-proof-stitches`: Maximum number of derivation proofs to aggregate per stitching proof.
+* `max-derivation-length`: Maximum number of blocks in a continuous derivation proof sequence
 * `max-block-derivations`: Maximum number of blocks to derive per single proof.
 * `max-block-executions`: Maximum number of blocks to execute per single proof.
 * `num-tail-blocks`: Rate of growth of tail proofs in L1 blocks (Default 10).
