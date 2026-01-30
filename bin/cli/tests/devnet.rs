@@ -293,6 +293,7 @@ async fn proposer_validator() {
             proving: ProvingArgs {
                 payout_recipient_address: None,
                 segment_limit: 21,
+                max_derivation_length: u64::MAX,
                 max_block_derivations: u64::MAX,
                 max_block_executions: usize::MAX,
                 max_proof_stitches: usize::MAX,
@@ -358,6 +359,7 @@ async fn proposer_validator() {
             proving: ProvingArgs {
                 payout_recipient_address: None,
                 segment_limit: 21,
+                max_derivation_length: u64::MAX,
                 max_block_derivations: u64::MAX,
                 max_block_executions: usize::MAX,
                 max_proof_stitches: usize::MAX,
@@ -510,6 +512,7 @@ async fn prover() {
         proving: ProvingArgs {
             payout_recipient_address: None,
             segment_limit: 21,
+            max_derivation_length: u64::MAX,
             max_block_derivations: u64::MAX,
             max_block_executions: usize::MAX,
             max_proof_stitches: usize::MAX,
