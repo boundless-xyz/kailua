@@ -16,7 +16,7 @@ use crate::args::ProvingArgs;
 use crate::profiling::{Profile, ProfiledReceipt};
 use crate::proof::proof_file_name;
 use crate::risczero::boundless::BoundlessArgs;
-use crate::{proof, ProvingError};
+use crate::{current_time, proof, ProvingError};
 use anyhow::Context;
 use risc0_zkvm::{Journal, Receipt};
 use std::convert::identity;
@@ -64,7 +64,9 @@ pub async fn seek_proof(
     }
 
     // accrue input data
-    profile = profile.with_witness_frames(&witness_frames);
+    profile = profile
+        .with_start_time(current_time())
+        .with_witness_frames(&witness_frames);
     // separate sub-proof data
     let stitched_receipts = stitched_proofs
         .iter()
@@ -119,7 +121,10 @@ pub async fn seek_proof(
     };
 
     // accumulate sub-proof data
-    proof.1 = proof.1.with_proofs(proving.image().0, &stitched_proofs);
+    proof.1 = proof
+        .1
+        .with_finish_time(current_time())
+        .with_proofs(proving.image().0, &stitched_proofs);
 
     // Save proof file to disk
     if journal != proof.0.journal {

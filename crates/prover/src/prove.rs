@@ -19,7 +19,7 @@ use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::create_disk_kv_store;
 use crate::preflight::{concurrent_execution_preflight, fetch_precondition_data};
 use crate::tasks::{handle_oneshot_tasks, CachedTask, Oneshot, OneshotResult};
-use crate::ProvingError;
+use crate::{current_time, ProvingError};
 use alloy::eips::BlockNumberOrTag;
 use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::B256;
@@ -40,6 +40,7 @@ use opentelemetry::trace::{TraceContextExt, Tracer};
 use risc0_zkvm::sha::Digestible;
 use std::collections::BinaryHeap;
 use std::env::set_var;
+use std::time::Duration;
 use tempfile::tempdir;
 use tokio::fs::remove_dir_all;
 use tracing::{error, info, warn};
@@ -47,6 +48,7 @@ use tracing::{error, info, warn};
 pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("prove"));
+    let start_time = current_time();
 
     // fetch starting block number
     let l2_provider = if args.kona.is_offline() {
@@ -691,7 +693,11 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     drop(disk_kv_store);
     cleanup_cache_data(&args).await;
 
-    info!("Exiting prover program.");
+    let end_time = current_time();
+    info!(
+        "Exiting prover program after {}.",
+        humantime::format_duration(Duration::from_secs(end_time - start_time))
+    );
     Ok(true)
 }
 

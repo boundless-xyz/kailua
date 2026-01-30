@@ -6652,6 +6652,7 @@ dependencies = [
  "hokulea-witgen",
  "hokulea-zkvm-verification",
  "human_bytes",
+ "humantime",
  "itertools 0.14.0",
  "kailua-build",
  "kailua-hana",

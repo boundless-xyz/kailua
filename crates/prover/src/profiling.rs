@@ -7,6 +7,7 @@ use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::witness::Witness;
 use kona_proof::BootInfo;
 use risc0_zkvm::{InnerReceipt, Receipt};
+use std::time::Duration;
 use thousands::Separable;
 use tracing::{error, info};
 
@@ -41,6 +42,10 @@ pub struct Profile {
     pub snarks: Option<u64>,
     /// Number of STARK recursive verifications
     pub starks: Option<u64>,
+    /// Timestamp when proving started
+    pub time_started: Option<u64>,
+    /// Timestamp when proving finished
+    pub time_finished: Option<u64>,
     /// List of sub-proofs
     pub children: Vec<B256>,
 }
@@ -176,6 +181,16 @@ impl Profile {
         self
     }
 
+    pub fn with_start_time(mut self, time_started: u64) -> Self {
+        self.time_started = Some(time_started);
+        self
+    }
+
+    pub fn with_finish_time(mut self, time_finished: u64) -> Self {
+        self.time_finished = Some(time_finished);
+        self
+    }
+
     /// Total cycles consumed by profile and its children
     pub fn cycles(&self) -> u64 {
         self.cycles_user.unwrap_or_default() + self.cycles_system.unwrap_or_default()
@@ -193,12 +208,16 @@ impl Profile {
 
     pub fn report_summary(&self) {
         info!(
-            "Proved: {} blocks with {} transactions totaling {} gas in {} cycles over {} proofs.",
+            "Proved: {} blocks having {} transactions totaling {} gas with {} cycles over {} proofs in {}.",
             self.block_count().separate_with_commas(),
             self.transactions.unwrap_or_default().separate_with_commas(),
             self.gas.unwrap_or_default().separate_with_commas(),
             self.cycles().separate_with_commas(),
-            self.proofs().separate_with_commas()
+            self.proofs().separate_with_commas(),
+            self.time_finished.zip(self.time_started).map(|(f, s)|
+                humantime::format_duration(Duration::from_secs(f - s))
+                    .to_string())
+                    .unwrap_or_default()
         );
     }
 
@@ -230,6 +249,8 @@ impl Profile {
             "proofs",
             "snarks",
             "starks",
+            "time_started",
+            "time_finished",
         ])?;
         // write profile rows
         let mut stack = vec![(self, 0u64)];
@@ -289,6 +310,14 @@ impl Profile {
                 profile.proofs().to_string(),
                 profile.snarks.map(|s| s.to_string()).unwrap_or_default(),
                 profile.starks.map(|s| s.to_string()).unwrap_or_default(),
+                profile
+                    .time_started
+                    .map(|t| t.to_string())
+                    .unwrap_or_default(),
+                profile
+                    .time_finished
+                    .map(|t| t.to_string())
+                    .unwrap_or_default(),
             ])?;
             // add new children
             for proof_id in profile.children {
