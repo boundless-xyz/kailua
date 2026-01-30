@@ -84,6 +84,24 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
         .context("generate_l1_config")
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
 
+    // report erroneous rollup/chain configuration
+    if rollup_config.l1_chain_id != l1_config.chain_id {
+        error!(
+            "Configured rollup L1 chain id ({}) does not match L1 chain id ({})",
+            rollup_config.l1_chain_id, l1_config.chain_id
+        );
+    }
+
+    // warn about misconfiguration
+    if args.proving.max_block_derivations < args.proving.max_derivation_length
+        && args.proving.max_derivation_length % args.proving.max_block_derivations != 0
+    {
+        warn!(
+            "Max derivation length ({}) is not a multiple of max block derivations ({})",
+            args.proving.max_derivation_length, args.proving.max_block_derivations
+        );
+    }
+
     // preload precondition data into KV store
     let (proposal_precondition_hash, proposal_data_hash) = match fetch_precondition_data(&args)
         .await
@@ -164,10 +182,20 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
         .number;
         let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
         let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
+        let mut num_continuous_derives = 0u64;
         while agreed_l2_output_root != args.kona.claimed_l2_output_root {
             let claimed_l2_block_number = agreed_l2_block_number
-                .saturating_add(args.proving.max_block_derivations as u64)
+                .saturating_add(args.proving.max_block_derivations)
                 .min(args.kona.claimed_l2_block_number);
+            // decide whether to start the next derivation as a dependent on this task
+            num_continuous_derives +=
+                claimed_l2_block_number.saturating_sub(agreed_l2_block_number);
+            let should_continue_derivation =
+                num_continuous_derives < args.proving.max_derivation_length;
+            if !should_continue_derivation {
+                // reset the counter for the next iteration
+                num_continuous_derives = 0;
+            }
             // Create sub-proof job
             let mut job_args = args.clone();
             job_args.kona.agreed_l2_output_root = agreed_l2_output_root;
@@ -204,7 +232,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
             .hash;
             // instantiate cached driver relays
             let is_last_iteration = agreed_l2_output_root == args.kona.claimed_l2_output_root;
-            let (derivation_trace_sender, new_receiver) = (!is_last_iteration)
+            let (derivation_trace_sender, new_receiver) = (!is_last_iteration
+                && should_continue_derivation)
                 .then(|| async_channel::bounded::<CachedDriver>(1))
                 .unzip();
             // queue up job
