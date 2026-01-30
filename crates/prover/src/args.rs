@@ -33,7 +33,7 @@ pub struct ProvingArgs {
     #[clap(long, env, required = false, default_value_t = 21)]
     pub segment_limit: u32,
     /// The maximum number of blocks in a continuous derivation proof sequence
-    #[clap(long, env, default_value_t = 1)]
+    #[clap(long, env, default_value_t = u64::MAX)]
     pub max_derivation_length: u64,
     /// Maximum number of blocks to derive in a single proof
     #[clap(long, env, required = false, default_value_t = u64::MAX)]
