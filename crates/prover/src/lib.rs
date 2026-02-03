@@ -16,6 +16,7 @@ use alloy_primitives::B256;
 use async_channel::Sender;
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
+use std::time::SystemTime;
 
 pub mod args;
 pub mod channel;
@@ -28,6 +29,7 @@ pub mod hana;
 pub mod hokulea;
 pub mod kv;
 pub mod preflight;
+pub mod profiling;
 pub mod proof;
 pub mod prove;
 pub mod risczero;
@@ -72,4 +74,64 @@ pub enum ProvingError {
 
     #[error("OtherError error: {0:?}")]
     OtherError(anyhow::Error),
+}
+
+impl ProvingError {
+    pub fn with_driver_cache(self, driver_cache: Option<CachedDriver>) -> Self {
+        match self {
+            ProvingError::NotSeekingProof(
+                preloaded,
+                streamed,
+                executions,
+                _,
+                driver_trace,
+                derivation_trace_hash,
+            ) => ProvingError::NotSeekingProof(
+                preloaded,
+                streamed,
+                executions,
+                Box::new(driver_cache),
+                driver_trace,
+                derivation_trace_hash,
+            ),
+            ProvingError::BlockCountError(count, limit, executions, _, driver_trace) => {
+                ProvingError::BlockCountError(
+                    count,
+                    limit,
+                    executions,
+                    Box::new(driver_cache),
+                    driver_trace,
+                )
+            }
+            ProvingError::WitnessSizeError(
+                preloaded,
+                streamed,
+                limit,
+                executions,
+                _,
+                driver_trace,
+            ) => ProvingError::WitnessSizeError(
+                preloaded,
+                streamed,
+                limit,
+                executions,
+                Box::new(driver_cache),
+                driver_trace,
+            ),
+            err => err,
+        }
+    }
+}
+
+impl From<anyhow::Error> for ProvingError {
+    fn from(err: anyhow::Error) -> Self {
+        ProvingError::OtherError(err)
+    }
+}
+
+pub fn current_time() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }

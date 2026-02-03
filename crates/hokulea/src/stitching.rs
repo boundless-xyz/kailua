@@ -18,7 +18,6 @@ use alloy_primitives::aliases::B256;
 use alloy_primitives::Address;
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_proof::eigenda_witness::EigenDAWitness;
-use hokulea_proof::recency::ConstantRecencyWindowProvider;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
@@ -35,20 +34,25 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
-pub struct HokuleaStitchingClient {
+pub struct HokuleaStitchingClient<T: CommsClient + FlushableCache + Clone> {
     pub eigen_da_witness: EigenDAWitness,
+    pub eigen_da_oracle: Arc<T>,
 }
 
-impl HokuleaStitchingClient {
-    pub fn new(eigen_da_witness: EigenDAWitness) -> Self {
-        Self { eigen_da_witness }
+impl<T: CommsClient + FlushableCache + Clone> HokuleaStitchingClient<T> {
+    pub fn new(eigen_da_witness: EigenDAWitness, eigen_da_oracle: Arc<T>) -> Self {
+        Self {
+            eigen_da_witness,
+            eigen_da_oracle,
+        }
     }
 }
 
 impl<
         O: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
         B: BlobProvider + Send + Sync + Debug + Clone,
-    > StitchingClient<O, B> for HokuleaStitchingClient
+        T: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
+    > StitchingClient<O, B> for HokuleaStitchingClient<T>
 {
     fn run_stitching_client(
         self,
@@ -68,7 +72,7 @@ impl<
         <B as BlobProvider>::Error: Debug,
     {
         // Boot up eigenda verifier
-        let eigen_oracle = Arc::new(LocalOnceOracle::new(oracle.clone()));
+        let eigen_oracle = Arc::new(LocalOnceOracle::new(self.eigen_da_oracle.clone()));
         let (eigen_verifier, boot) = KailuaCanoeVerifier::new(eigen_oracle.clone());
 
         // Run the stitching client with the EigenDA DASProvider
@@ -77,9 +81,6 @@ impl<
                 eigen_oracle,
                 eigen_verifier,
                 CanoeVerifierAddressFetcherDeployedByEigenLabs {},
-                ConstantRecencyWindowProvider {
-                    value: boot.rollup_config.seq_window_size,
-                },
                 self.eigen_da_witness,
             ))
             .expect("Failed to validate EigenDA Witness."),

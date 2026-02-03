@@ -15,23 +15,38 @@
 use kailua_hokulea::stitching::HokuleaStitchingClient;
 use kailua_kona::client::stateless::run_stateless_client;
 use kailua_kona::oracle::vec::VecOracle;
+use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::{client::log, witness::Witness};
 use risc0_zkvm::guest::env;
 use rkyv::rancor::Error;
+use std::sync::Arc;
 
 fn main() {
     // Load EigenDA blob witness
-    let eigen_da: hokulea_proof::eigenda_witness::EigenDAWitness = {
+    let eigen_da = {
         let data = env::read_frame();
-        log("DESERIALIZE EIGENDA");
-        bincode::deserialize(&data).expect("EigenDABlobWitnessData deserialization failed")
+        log("DESERIALIZE EIGENDA CERTS");
+        rkyv::from_bytes::<hokulea_proof::eigenda_witness::EigenDAWitness, Error>(&data)
+            .expect("Failed to deserialize EigenDABlobWitnessData")
     };
+
+    // Load EigenDA DA witness
+    let eigen_da_aux = {
+        // Read serialized witness data
+        let witness_data = env::read_frame();
+        log("DESERIALIZE EIGENDA ORACLE");
+        rkyv::from_bytes::<VecOracle, Error>(&witness_data)
+            .expect("Failed to deserialize eigen oracle witness")
+    };
+    eigen_da_aux
+        .validate_preimages()
+        .expect("Failed to validate eigen oracle preimages");
 
     // Load main witness
     let witness = {
         // Read serialized witness data
         let witness_data = env::read_frame();
-        log("DESERIALIZE");
+        log("DESERIALIZE WITNESS");
         rkyv::from_bytes::<Witness<VecOracle>, Error>(&witness_data)
             .expect("Failed to deserialize witness")
     };
@@ -55,7 +70,10 @@ fn main() {
     }
 
     // Run client using witness data
-    let proof_journal = run_stateless_client(witness, HokuleaStitchingClient::new(eigen_da));
+    let proof_journal = run_stateless_client(
+        witness,
+        HokuleaStitchingClient::new(eigen_da, Arc::new(eigen_da_aux)),
+    );
 
     // Write the final stitched journal
     env::commit_slice(&proof_journal.encode_packed());

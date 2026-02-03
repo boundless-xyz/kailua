@@ -14,6 +14,7 @@
 
 use crate::args::ProveArgs;
 use crate::kv::{create_disk_kv_store, create_split_kv_store, RWLKeyValueStore};
+use crate::profiling::ProfiledReceipt;
 use crate::ProvingError;
 use alloy_primitives::B256;
 use anyhow::anyhow;
@@ -32,7 +33,6 @@ use kona_preimage::{
 };
 use kona_proof::HintType;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use risc0_zkvm::Receipt;
 use std::sync::Arc;
 use tokio::task;
 use tokio::task::JoinHandle;
@@ -60,7 +60,7 @@ pub async fn run_native_client(
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
+    stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
@@ -82,11 +82,6 @@ pub async fn run_native_client(
             let cfg = hokulea_host_bin::cfg::SingleChainHostWithEigenDA {
                 kona_cfg: args.kona.clone(),
                 eigenda_proxy_address: args.proving.hokulea.eigenda_proxy_address.clone(),
-                recency_window: args
-                    .kona
-                    .read_rollup_config()
-                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-                    .seq_window_size,
                 verbose: 0,
             };
             let providers = cfg
@@ -167,6 +162,7 @@ pub async fn run_native_client(
         prove_snark,
         force_attempt,
         seek_proof,
+        args.kona.data_dir.clone(),
     ));
     // Wait for both tasks to complete.
     info!("Starting preimage server and client program.");

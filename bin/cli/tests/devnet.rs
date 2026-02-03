@@ -61,6 +61,7 @@ async fn make(recipe: &str) -> io::Result<ExitStatus> {
 async fn deploy_kailua_contracts(challenge_timeout: u64) -> anyhow::Result<()> {
     // fast-track upgrade w/ devmode proof support
     set_var("RISC0_DEV_MODE", "1");
+    set_var("RISC0_INFO", "1");
     fast_track(FastTrackArgs {
         eth_rpc_url: "http://127.0.0.1:8545".to_string(),
         op_geth_url: "http://127.0.0.1:9545".to_string(),
@@ -286,6 +287,7 @@ async fn proposer_validator() {
             max_validity_proving_delay: 0,
             fault_proving_permit: PermitPolicy::MANDATORY,
             fault_proving_permit_expiry: 600,
+            min_validity_proving_timestamp: 0,
             l1_head_jump_back: 0,
             validator_signer: ValidatorSignerArgs::from(
                 "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e".to_string(),
@@ -294,7 +296,8 @@ async fn proposer_validator() {
             proving: ProvingArgs {
                 payout_recipient_address: None,
                 segment_limit: 21,
-                max_block_derivations: usize::MAX,
+                max_derivation_length: u64::MAX,
+                max_block_derivations: u64::MAX,
                 max_block_executions: usize::MAX,
                 max_proof_stitches: usize::MAX,
                 max_witness_size: 2_684_354_560,
@@ -311,6 +314,7 @@ async fn proposer_validator() {
                 hokulea: Default::default(),
                 #[cfg(feature = "celestia")]
                 hana: Default::default(),
+                export_profile_csv: false,
             },
             boundless: Default::default(),
         },
@@ -351,6 +355,7 @@ async fn proposer_validator() {
             max_validity_proving_delay: 0,
             fault_proving_permit: PermitPolicy::MANDATORY,
             fault_proving_permit_expiry: 600,
+            min_validity_proving_timestamp: 0,
             l1_head_jump_back: 0,
             validator_signer: ValidatorSignerArgs::from(
                 "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e".to_string(),
@@ -359,7 +364,8 @@ async fn proposer_validator() {
             proving: ProvingArgs {
                 payout_recipient_address: None,
                 segment_limit: 21,
-                max_block_derivations: usize::MAX,
+                max_derivation_length: u64::MAX,
+                max_block_derivations: u64::MAX,
                 max_block_executions: usize::MAX,
                 max_proof_stitches: usize::MAX,
                 max_witness_size: 2_684_354_560,
@@ -376,6 +382,7 @@ async fn proposer_validator() {
                 hokulea: Default::default(),
                 #[cfg(feature = "celestia")]
                 hana: Default::default(),
+                export_profile_csv: false,
             },
             boundless: Default::default(),
         },
@@ -510,7 +517,8 @@ async fn prover() {
         proving: ProvingArgs {
             payout_recipient_address: None,
             segment_limit: 21,
-            max_block_derivations: usize::MAX,
+            max_derivation_length: u64::MAX,
+            max_block_derivations: u64::MAX,
             max_block_executions: usize::MAX,
             max_proof_stitches: usize::MAX,
             max_witness_size: 5 * 1024 * 1024, // 5 MB witness maximum
@@ -527,6 +535,7 @@ async fn prover() {
             hokulea: Default::default(),
             #[cfg(feature = "celestia")]
             hana: Default::default(),
+            export_profile_csv: false,
         },
         boundless: Default::default(),
         precondition_params: vec![],

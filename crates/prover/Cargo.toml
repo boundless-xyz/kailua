@@ -20,9 +20,11 @@ bincode.workspace = true
 bytemuck.workspace = true
 c-kzg.workspace = true
 clap.workspace = true
+csv.workspace = true
 futures.workspace = true
 hex.workspace = true
 human_bytes.workspace = true
+humantime.workspace = true
 itertools.workspace = true
 lazy_static.workspace = true
 opentelemetry.workspace = true
@@ -31,6 +33,7 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+thousands.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 tokio-retry.workspace = true
@@ -63,9 +66,11 @@ canoe-bindings = { workspace = true, optional = true }
 canoe-provider = { workspace = true, optional = true }
 canoe-verifier = { workspace = true, optional = true }
 canoe-verifier-address-fetcher = { workspace = true, optional = true }
+hokulea-compute-proof = { workspace = true, optional = true }
 hokulea-host-bin = { workspace = true, optional = true }
 hokulea-proof = { workspace = true, optional = true }
 hokulea-witgen = { workspace = true, optional = true }
+hokulea-zkvm-verification = { workspace = true, optional = true }
 
 # Hana
 kailua-hana = { workspace = true, optional = true }
@@ -113,9 +118,11 @@ eigen = [
     "dep:canoe-provider",
     "dep:canoe-verifier",
     "dep:canoe-verifier-address-fetcher",
+    "dep:hokulea-compute-proof",
     "dep:hokulea-host-bin",
     "dep:hokulea-proof",
     "dep:hokulea-witgen",
+    "dep:hokulea-zkvm-verification",
 ]
 celestia = [
     "kailua-build/celestia",

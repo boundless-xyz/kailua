@@ -14,7 +14,6 @@
 
 use crate::args::{PermitPolicy, ValidateArgs};
 use crate::channel::{DuplexChannel, Message};
-use crate::proposals::dispatch::current_time;
 use crate::tasks::{handle_proving_tasks, Task};
 use alloy::eips::eip4844::IndexedBlobHash;
 use alloy::network::primitives::HeaderResponse;
@@ -28,6 +27,7 @@ use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::proposal::ProposalPrecondition;
 use kailua_prover::args::{ProveArgs, ProvingArgs};
 use kailua_prover::channel::AsyncChannel;
+use kailua_prover::current_time;
 use kailua_prover::proof::proof_file_name;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::await_tel;

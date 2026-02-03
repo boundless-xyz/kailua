@@ -14,6 +14,7 @@
 
 use crate::args::ValidateArgs;
 use kailua_contracts::*;
+use kailua_prover::current_time;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::await_tel;
 use kailua_sync::stall::Stall;
@@ -25,7 +26,6 @@ use opentelemetry::KeyValue;
 use rand::Rng;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 
 #[allow(clippy::too_many_arguments)]
@@ -323,9 +323,5 @@ pub async fn process_proposals(
 
 pub fn random_processing_time(max_seconds: u64) -> Reverse<u64> {
     let random_wait = rand::rng().random_range(0..=max_seconds);
-    let current_time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    Reverse(current_time + random_wait)
+    Reverse(current_time() + random_wait)
 }

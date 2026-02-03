@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use alloy::primitives::map::{Entry, HashMap};
+use alloy::primitives::{keccak256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use kailua_sync::args::SyncArgs;
 use opentelemetry::global::tracer;
@@ -29,6 +30,10 @@ pub struct BenchArgs {
     #[clap(flatten)]
     pub sync: SyncArgs,
 
+    /// The sequence window size to use for proving
+    #[clap(long, env)]
+    pub seq_window: u64,
+
     /// The starting L2 block number to scan for blocks from
     #[clap(long, env)]
     pub bench_start: u64,
@@ -41,6 +46,10 @@ pub struct BenchArgs {
     /// The number of top candidate L2 blocks to benchmark
     #[clap(long, env)]
     pub bench_count: u64,
+
+    /// Whether to select randomly instead of by highest txn count
+    #[clap(long, env)]
+    pub random_select: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -72,15 +81,43 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
     // Scan L2 blocks for highest transaction counts
     let bench_end = args.bench_start + args.bench_range;
     let mut block_heap = BinaryHeap::new();
-    info!("Scanning candidates.");
-    for block_number in args.bench_start..bench_end {
+    let mut scan_range = vec![];
+    if args.random_select {
+        info!("Benchmarking pseudorandom blocks.");
+        let bench_start = l2_node_provider
+            .get_block_by_number(args.bench_start.into())
+            .await?
+            .unwrap_or_else(|| panic!("Failed to fetch block {}", args.bench_start));
+        let seed = keccak256(
+            [
+                bench_start.header.hash.0.as_slice(),
+                args.bench_range.to_be_bytes().as_slice(),
+                args.bench_length.to_be_bytes().as_slice(),
+                args.bench_count.to_be_bytes().as_slice(),
+            ]
+            .concat(),
+        );
+        for i in 0..args.bench_count {
+            let prn = U256::from_be_bytes(*keccak256(
+                [seed.as_slice(), i.to_be_bytes().as_slice()].concat(),
+            ))
+            .reduce_mod(U256::from(args.bench_range + 1));
+            let block_number = args.bench_start + prn.to::<u64>();
+            scan_range.push(block_number);
+        }
+    } else {
+        info!("Scanning candidate blocks with most transactions.");
+        scan_range = (args.bench_start..bench_end).collect();
+    }
+
+    for block_number in scan_range {
         let mut txn_count = 0;
         for i in 0..args.bench_length {
             let block_number = block_number + i;
             txn_count += match cache.entry(block_number) {
                 Entry::Occupied(e) => *e.get(),
                 Entry::Vacant(e) => {
-                    let x =
+                    let block_txn_count =
                         l2_node_provider
                             .get_block_transaction_count_by_number(block_number.into())
                             .with_context(context.with_span(tracer.start_with_context(
@@ -91,7 +128,7 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
                             .unwrap_or_else(|| {
                                 panic!("Failed to fetch transaction count for block {block_number}")
                             });
-                    *e.insert(x)
+                    *e.insert(block_txn_count)
                 }
             }
         }
@@ -100,6 +137,7 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
             block_number,
         })
     }
+
     // Benchmark top candidates
     for _ in 0..args.bench_count {
         let Some(CandidateBlock {
@@ -143,6 +181,7 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
             &args.sync.provider.op_node_url,
             data_dir.to_str().unwrap(),
             "debug",
+            &args.seq_window.to_string(),
             &verbosity_level,
         ]);
         println!("Executing: {cmd:?}");

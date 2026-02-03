@@ -32,9 +32,12 @@ pub struct ProvingArgs {
     /// ZKVM Proving Segment Limit
     #[clap(long, env, required = false, default_value_t = 21)]
     pub segment_limit: u32,
-    /// Maximum number of blocks to derive per proof
-    #[clap(long, env, required = false, default_value_t = usize::MAX)]
-    pub max_block_derivations: usize,
+    /// The maximum number of blocks in a continuous derivation proof sequence
+    #[clap(long, env, default_value_t = u64::MAX)]
+    pub max_derivation_length: u64,
+    /// Maximum number of blocks to derive in a single proof
+    #[clap(long, env, required = false, default_value_t = u64::MAX)]
+    pub max_block_derivations: u64,
     /// Maximum number of blocks to execute per proof
     #[clap(long, env, required = false, default_value_t = usize::MAX)]
     pub max_block_executions: usize,
@@ -44,7 +47,7 @@ pub struct ProvingArgs {
     /// Maximum input data size per proof
     #[clap(long, env, required = false, default_value_t = 2_684_354_560)]
     pub max_witness_size: usize,
-    /// Rate of growth of tail proofs in L1 blocks
+    /// Maximum rate of growth of tail proofs in L1 blocks
     #[clap(long, env, required = false, default_value_t = 10)]
     pub num_tail_blocks: u64,
     /// How many threads to use for fetching preflight data
@@ -68,9 +71,12 @@ pub struct ProvingArgs {
     /// Whether to skip waiting for the proof generation process to complete
     #[clap(long, env, default_value_t = false)]
     pub skip_await_proof: bool,
-    /// Whether to keep cache data after successful completion
+    /// Whether to clear cache data after successful proof completion
     #[clap(long, env, default_value_t = false)]
     pub clear_cache_data: bool,
+    /// Whether to export profiling data to a CSV file
+    #[clap(long, env, default_value_t = false)]
+    pub export_profile_csv: bool,
 
     #[clap(flatten)]
     #[cfg(feature = "eigen")]

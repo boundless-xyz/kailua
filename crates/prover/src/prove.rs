@@ -19,7 +19,7 @@ use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::create_disk_kv_store;
 use crate::preflight::{concurrent_execution_preflight, fetch_precondition_data};
 use crate::tasks::{handle_oneshot_tasks, CachedTask, Oneshot, OneshotResult};
-use crate::ProvingError;
+use crate::{current_time, ProvingError};
 use alloy::eips::BlockNumberOrTag;
 use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::B256;
@@ -40,6 +40,7 @@ use opentelemetry::trace::{TraceContextExt, Tracer};
 use risc0_zkvm::sha::Digestible;
 use std::collections::BinaryHeap;
 use std::env::set_var;
+use std::time::Duration;
 use tempfile::tempdir;
 use tokio::fs::remove_dir_all;
 use tracing::{error, info, warn};
@@ -47,6 +48,7 @@ use tracing::{error, info, warn};
 pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("prove"));
+    let start_time = current_time();
 
     // fetch starting block number
     let l2_provider = if args.kona.is_offline() {
@@ -83,6 +85,24 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
         .await
         .context("generate_l1_config")
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+
+    // report erroneous rollup/chain configuration
+    if rollup_config.l1_chain_id != l1_config.chain_id {
+        error!(
+            "Configured rollup L1 chain id ({}) does not match L1 chain id ({})",
+            rollup_config.l1_chain_id, l1_config.chain_id
+        );
+    }
+
+    // warn about misconfiguration
+    if args.proving.max_block_derivations < args.proving.max_derivation_length
+        && args.proving.max_derivation_length % args.proving.max_block_derivations != 0
+    {
+        warn!(
+            "Max derivation length ({}) is not a multiple of max block derivations ({})",
+            args.proving.max_derivation_length, args.proving.max_block_derivations
+        );
+    }
 
     // preload precondition data into KV store
     let (proposal_precondition_hash, proposal_data_hash) = match fetch_precondition_data(&args)
@@ -164,10 +184,20 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
         .number;
         let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
         let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
+        let mut num_continuous_derives = 0u64;
         while agreed_l2_output_root != args.kona.claimed_l2_output_root {
             let claimed_l2_block_number = agreed_l2_block_number
-                .saturating_add(args.proving.max_block_derivations as u64)
+                .saturating_add(args.proving.max_block_derivations)
                 .min(args.kona.claimed_l2_block_number);
+            // decide whether to start the next derivation as a dependent on this task
+            num_continuous_derives +=
+                claimed_l2_block_number.saturating_sub(agreed_l2_block_number);
+            let should_continue_derivation =
+                num_continuous_derives < args.proving.max_derivation_length;
+            if !should_continue_derivation {
+                // reset the counter for the next iteration
+                num_continuous_derives = 0;
+            }
             // Create sub-proof job
             let mut job_args = args.clone();
             job_args.kona.agreed_l2_output_root = agreed_l2_output_root;
@@ -204,7 +234,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
             .hash;
             // instantiate cached driver relays
             let is_last_iteration = agreed_l2_output_root == args.kona.claimed_l2_output_root;
-            let (derivation_trace_sender, new_receiver) = (!is_last_iteration)
+            let (derivation_trace_sender, new_receiver) = (!is_last_iteration
+                && should_continue_derivation)
                 .then(|| async_channel::bounded::<CachedDriver>(1))
                 .unzip();
             // queue up job
@@ -317,6 +348,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
 
         match result {
             Ok(result) => {
+                let precondition = result.as_ref().map(|(_, p)| *p).unwrap_or_else(|| {
+                    Precondition::default().proposal(proposal_precondition_hash)
+                });
                 let cached_task = CachedTask {
                     // used for sorting
                     args: job_args.clone(),
@@ -324,9 +358,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     rollup_config: rollup_config.clone(),
                     l1_config: l1_config.clone(),
                     disk_kv_store: disk_kv_store.clone(),
-                    precondition: result.as_ref().map(|(_, p)| *p).unwrap_or_else(|| {
-                        Precondition::default().proposal(proposal_precondition_hash)
-                    }),
+                    precondition,
                     proposal_data_hash,
                     stitched_executions: vec![],
                     derivation_cache: None,
@@ -340,7 +372,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 };
                 if result.is_some() {
                     info!(
-                        "Successfully proved {num_blocks} blocks ({starting_block}..{last_block})",
+                        "Successfully proved {num_blocks} blocks ({starting_block}..{last_block}) ({} -> {})", precondition.derivation_cache, precondition.derivation_trace,
                     );
                 } else {
                     error!(
@@ -461,7 +493,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     }
 
     // recursively combine expected proofs
-    if !args.proving.skip_stitching() && result_pq.len() > 1 {
+    if !args.proving.skip_stitching() {
         // gather sorted proofs into vec
         let mut results = result_pq
             .into_sorted_vec()
@@ -471,6 +503,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
 
         let l2_provider = l2_provider.as_ref().unwrap();
         // collapse results vector by stitching its proofs
+        if results.len() > 1 {
+            info!("Stitching {} complete proofs.", results.len());
+        }
         while results.len() > 1 {
             let num_stitch_proofs = results.len().div_ceil(args.proving.max_proof_stitches);
             let mut stitched_proof_receivers = Vec::with_capacity(num_stitch_proofs);
@@ -491,7 +526,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                     .multiunzip();
                 let stitched_boot_info = stitched_proofs
                     .iter()
-                    .map(StitchedBootInfo::from)
+                    .map(|p| StitchedBootInfo::from(&p.0))
                     .collect::<Vec<_>>();
                 // stitch contiguous proofs together
                 info!("Composing {} proofs together.", stitched_proofs.len());
@@ -534,7 +569,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                         let last_initial_precondition = initial_preconditions.first().unwrap();
                         let last_initial_args = initial_args.first().unwrap();
                         let last_stitched_journal =
-                            ProofJournal::from(stitched_proofs.first().unwrap());
+                            ProofJournal::from(&stitched_proofs.first().unwrap().0);
                         let boot = BootInfo {
                             l1_head: last_initial_args.l1_head,
                             agreed_l2_output_root: last_initial_args.agreed_l2_output_root,
@@ -549,7 +584,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                             &boot,
                             last_initial_precondition,
                         );
-                        try_read_driver(&driver_file).await
+                        try_read_driver(args.kona.data_dir.as_ref(), &driver_file).await
                     }
                 };
                 let driver_cache_hash = driver_cache
@@ -633,13 +668,36 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 });
             }
         }
+
+        // report profile data summary
+        if let Ok(((_, profile), _)) = results.pop().unwrap().result {
+            profile.report_summary();
+            if args.proving.export_profile_csv {
+                profile.save_csv_file().await;
+            }
+        }
+    } else {
+        // Report all profiling data summary
+        for result in result_pq {
+            let Ok(((_, profile), _)) = result.result else {
+                continue;
+            };
+            profile.report_summary();
+            if args.proving.export_profile_csv {
+                profile.save_csv_file().await;
+            }
+        }
     }
 
     // Cleanup cached data
     drop(disk_kv_store);
     cleanup_cache_data(&args).await;
 
-    info!("Exiting prover program.");
+    let end_time = current_time();
+    info!(
+        "Exiting prover program after {}.",
+        humantime::format_duration(Duration::from_secs(end_time - start_time))
+    );
     Ok(true)
 }
 

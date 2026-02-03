@@ -15,6 +15,7 @@
 use crate::args::ProveArgs;
 use crate::driver::{driver_file_name, signal_derivation_trace, try_read_driver};
 use crate::kv::RWLKeyValueStore;
+use crate::profiling::ProfiledReceipt;
 use crate::proof::{proof_file_name, read_bincoded_file};
 use crate::ProvingError;
 use alloy::providers::{Provider, RootProvider};
@@ -37,7 +38,6 @@ use kona_proof::BootInfo;
 use kona_protocol::L2BlockInfo;
 use opentelemetry::trace::{TraceContextExt, Tracer};
 use risc0_zkvm::sha::Digestible;
-use risc0_zkvm::Receipt;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::convert::identity;
@@ -58,7 +58,7 @@ pub struct CachedTask {
     pub derivation_trace_sender: Option<Sender<CachedDriver>>,
     pub stitched_preconditions: Vec<Precondition>,
     pub stitched_boot_info: Vec<StitchedBootInfo>,
-    pub stitched_proofs: Vec<Receipt>,
+    pub stitched_proofs: Vec<ProfiledReceipt>,
     pub prove_snark: bool,
     pub force_attempt: bool,
     pub seek_proof: bool,
@@ -84,7 +84,7 @@ impl Ord for CachedTask {
     }
 }
 
-pub type OneshotResultResponse = (Receipt, Precondition);
+pub type OneshotResultResponse = (ProfiledReceipt, Precondition);
 
 #[derive(Debug)]
 pub struct OneshotResult {
@@ -172,7 +172,7 @@ pub async fn compute_oneshot_task(
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
+    stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
@@ -228,7 +228,7 @@ pub async fn compute_fpvm_proof(
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
+    stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     task_sender: Sender<Oneshot>,
 ) -> Result<Option<OneshotResultResponse>, ProvingError> {
@@ -273,6 +273,7 @@ pub async fn compute_fpvm_proof(
     } else {
         None
     };
+    let original_derivation_cache = derivation_cache.clone();
 
     // Check if we can do execution-only proofs
     let can_stitch_executions = args.proving.max_block_executions > 0;
@@ -414,25 +415,40 @@ pub async fn compute_fpvm_proof(
             let mut args = args.clone();
             args.proving.max_block_executions = 0;
             let mut job_wit_size = 0;
-            let should_continue = loop {
+            let mut num_tail_blocks = args.proving.num_tail_blocks;
+            let mut is_prev_success = true;
+            // grow this tail proof iteratively
+            let should_schedule_more = loop {
+                // lower growth rate if we had hit a failure during this run
+                if num_tail_blocks < args.proving.num_tail_blocks || !is_prev_success {
+                    num_tail_blocks >>= 1;
+                }
+                if num_tail_blocks == 0 {
+                    break true;
+                }
                 // move l1 tail forward
-                l1_tail = retry_res_ctx_timeout!(
-                    args.timeouts.eth_rpc_timeout,
-                    chain_providers
-                        .l1
-                        .get_block_by_number(
-                            (l1_tail.header.number + args.proving.num_tail_blocks).into()
-                        )
-                        .await
-                        .context("get_block_by_number l1_tail + num_tail_blocks")?
-                        .ok_or_else(|| anyhow!("Failed to fetch l1 tail"))
-                )
-                .await;
+                let new_tail_block_number = l1_tail.header.number + num_tail_blocks;
+                let old_l1_tail = core::mem::replace(
+                    &mut l1_tail,
+                    retry_res_ctx_timeout!(
+                        args.timeouts.eth_rpc_timeout,
+                        chain_providers
+                            .l1
+                            .get_block_by_number(new_tail_block_number.into())
+                            .await
+                            .context("get_block_by_number l1_tail + num_tail_blocks")?
+                            .ok_or_else(|| anyhow!("Failed to fetch l1 tail"))
+                    )
+                    .await,
+                );
                 args.kona.l1_head = l1_tail.header.hash;
-                // Driver tracing
+                // instantiate resulting driver trace channel
                 let (derivation_trace, traced_driver) = async_channel::bounded(1);
-                // trim l1 tail
-                info!("Growing tail to l1 block {}.", l1_tail.header.number);
+                // grow l1 tail proof by num_tail_blocks L1 blocks
+                info!(
+                    "Computing tail subproof for l1 blocks {} to {}.",
+                    old_l1_tail.header.number, l1_tail.header.number
+                );
                 let derivation_only_result = compute_oneshot_task(
                     args.clone(),
                     rollup_config.clone(),
@@ -460,12 +476,18 @@ pub async fn compute_fpvm_proof(
                 .await;
                 // handle derivation result
                 match derivation_only_result.unwrap_err() {
+                    // successful l1 scanning only sub-proof
                     ProvingError::NotSeekingProof(preloaded, streamed, ..) => {
-                        job_wit_size += streamed + preloaded;
-                        // stop growing tail if witness size is above threshold
-                        if job_wit_size > args.proving.max_witness_size {
-                            break true;
+                        // don't grow proof beyond witness size limit to avoid later error
+                        let sub_proof_witness = streamed + preloaded;
+                        if job_wit_size + sub_proof_witness > args.proving.max_witness_size {
+                            // retry with a slower rate of growth
+                            is_prev_success = false;
+                            l1_tail = old_l1_tail;
+                            continue;
                         }
+                        // accumulate witness size
+                        job_wit_size += sub_proof_witness;
                         // capture derivation trace for next iteration of tail growth
                         tail_derivation_cache = Some(
                             traced_driver
@@ -473,11 +495,15 @@ pub async fn compute_fpvm_proof(
                                 .await
                                 .expect("Failed to receive tail derivation trace."),
                         );
-                        continue;
                     }
+                    // an l2 block was derived or the sub-proof witness is too large
                     ProvingError::BlockCountError(..) | ProvingError::WitnessSizeError(..) => {
-                        // stop growing tail if a block is derived
-                        break false;
+                        if num_tail_blocks == 1 {
+                            break false;
+                        }
+                        // retry with a slower rate of growth
+                        is_prev_success = false;
+                        l1_tail = old_l1_tail;
                     }
                     err => {
                         // propagate unexpected error up on failure to trigger higher-level division
@@ -496,11 +522,7 @@ pub async fn compute_fpvm_proof(
                     chain_providers
                         .l1
                         .get_block_by_number(
-                            l1_tail
-                                .header
-                                .number
-                                .saturating_sub(args.proving.num_tail_blocks)
-                                .into()
+                            l1_tail.header.number.saturating_sub(num_tail_blocks).into()
                         )
                         .await
                         .context("get_block_by_number l1_tail - tail_blocks")?
@@ -523,7 +545,7 @@ pub async fn compute_fpvm_proof(
                 derivation_cache = Some(derivation_trace);
             }
             // Terminate if a block was derived
-            if !should_continue {
+            if !should_schedule_more {
                 info!(
                     "Terminating tail proof scheduling with {} jobs.",
                     tail_proof_jobs.len()
@@ -571,7 +593,9 @@ pub async fn compute_fpvm_proof(
         let Err(ProvingError::NotSeekingProof(.., derivation_trace_hash)) = provability_result
         else {
             warn!("Could not decompose derivation proof into tail/execution proofs.");
-            return Ok(Some(provability_result?));
+            return Ok(Some(provability_result.map_err(|err| {
+                err.with_driver_cache(original_derivation_cache)
+            })?));
         };
         info!("Proceeding with execution/tail proof decomposition.");
         // update precondition
@@ -813,7 +837,7 @@ pub async fn compute_fpvm_proof(
             }
             Ok(result) => result,
         };
-        let stitched_boot = StitchedBootInfo::from(ProofJournal::from(&receipt));
+        let stitched_boot = StitchedBootInfo::from(ProofJournal::from(&receipt.0));
         tail_proofs.push(receipt);
         tail_preconditions.push(precondition);
         tail_boot_infos.push(stitched_boot);
@@ -858,7 +882,8 @@ pub async fn compute_fpvm_proof(
             true,
             task_sender.clone(),
         )
-        .await?,
+        .await
+        .map_err(|err| err.with_driver_cache(original_derivation_cache))?,
     ))
 }
 
@@ -936,7 +961,7 @@ pub async fn compute_cached_proof(
     mut derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
+    stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
@@ -959,7 +984,8 @@ pub async fn compute_cached_proof(
     let trace_derivation = derivation_trace.is_some() || !precondition.derivation_trace.is_zero();
     // Update boot info and precondition if cached trace is available
     let mut cached_precondition = precondition;
-    if let Some(derivation_trace) = try_read_driver(&driver_file).await {
+    if let Some(derivation_trace) = try_read_driver(args.kona.data_dir.as_ref(), &driver_file).await
+    {
         // Update claim if l1 head insufficient
         let claimed_l2_output_root = *derivation_trace.cursor.l2_safe_head_output_root();
         if claimed_l2_output_root != boot.claimed_l2_output_root {
@@ -1020,7 +1046,7 @@ pub async fn compute_cached_proof(
         if trace_derivation
             && signal_derivation_trace(
                 derivation_trace.clone(),
-                try_read_driver(&driver_file).await,
+                try_read_driver(args.kona.data_dir.as_ref(), &driver_file).await,
             )
             .await
             .is_some()
@@ -1104,7 +1130,7 @@ pub async fn compute_cached_proof(
 
     // Load cached driver if tracing derivation is required
     let derivation_trace = if trace_derivation {
-        try_read_driver(&driver_file).await
+        try_read_driver(args.kona.data_dir.as_ref(), &driver_file).await
     } else {
         None
     };
@@ -1148,7 +1174,7 @@ pub async fn compute_cached_proof(
         }
     }
     // Load receipt
-    let receipt = read_bincoded_file(&proof_file)
+    let receipt = read_bincoded_file(None, &proof_file)
         .await
         .context(format!("Failed to read proof file {proof_file} contents."))
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;

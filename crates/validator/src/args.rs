@@ -47,12 +47,15 @@ pub struct ValidateArgs {
     /// the execution layer.
     #[arg(long, env, default_value_t = false)]
     pub enable_experimental_witness_endpoint: bool,
-    /// The maximum amount of seconds to wait before starting to compute a fault proof. (Default 900)
+    /// The maximum number of seconds to wait before starting to compute a fault proof. (Default 900)
     #[clap(long, env, default_value_t = 900)]
     pub max_fault_proving_delay: u64,
-    /// The maximum amount of seconds to wait before starting to compute a validity proof. (Default 0)
+    /// The maximum number of seconds to wait before starting to compute a validity proof. (Default 0)
     #[clap(long, env, default_value_t = 0)]
     pub max_validity_proving_delay: u64,
+    /// The minimum timestamp after which computed validity proofs can be submitted. (Default 0)
+    #[clap(long, env, default_value_t = 0)]
+    pub min_validity_proving_timestamp: u64,
 
     /// Whether acquisition of permits before proving faults is skipped / optional / mandatory.
     #[clap(long, env, default_value = "optional")]

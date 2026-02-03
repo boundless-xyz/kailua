@@ -24,7 +24,6 @@ use kailua_sync::provider::optimism::OpNodeProvider;
 use kona_host::KeyValueStore;
 use kona_preimage::{PreimageKey, PreimageKeyType};
 use kona_proof::BootInfo;
-use std::error::Error;
 use std::ops::DerefMut;
 use tracing::{error, info};
 
@@ -37,11 +36,6 @@ pub async fn run_payload_client(
 ) -> anyhow::Result<bool> {
     let kv = create_split_kv_store(&Default::default(), disk_kv_store)
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
-
-    /* todo:
-       1. Test endpoint success/failure automatically
-       2. abort any attempt to use executionWitness endpoint if failure confirmed
-    */
 
     while boot_info.claimed_l2_output_root != boot_info.agreed_l2_output_root {
         // Go back one block
@@ -66,9 +60,9 @@ pub async fn run_payload_client(
         }
         drop(kv_lock);
 
-        let mut retries = 25;
-        let Ok(execution_witness) = (loop {
-            let attempt = l2_provider
+        // retry endpoint indefinitely
+        let execution_witness = loop {
+            match l2_provider
                 .client()
                 .request::<(BlockNumberOrTag,), serde_json::Value>(
                     "debug_executionWitness",
@@ -76,25 +70,14 @@ pub async fn run_payload_client(
                         boot_info.claimed_l2_block_number + 1,
                     ),),
                 )
-                .await;
-            retries -= 1;
-            if attempt.is_ok() || retries == 0 {
-                break attempt;
-            }
-            let attempt = attempt.unwrap_err();
-            error!(
-                "Failed to fetch payload for {} (Retry)\n{:?}.",
-                boot_info.claimed_l2_block_number + 1,
-                attempt.source()
-            );
-        }) else {
-            // Allow this hint to fail silently, as not all execution clients support
-            // the `debug_executePayload` method.
-            error!(
-                "Failed to fetch payload for {} (Skip).",
-                boot_info.claimed_l2_block_number + 1
-            );
-            return Ok(false);
+                .await
+            {
+                Ok(witness) => break witness,
+                Err(err) => error!(
+                    "Failed to fetch payload for {} (Retry)\n{err:?}.",
+                    boot_info.claimed_l2_block_number + 1,
+                ),
+            };
         };
 
         // dump preimages into kv store

@@ -14,6 +14,7 @@
 
 use crate::args::ProvingArgs;
 use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
+use crate::profiling::{Profile, ProfiledReceipt};
 use crate::risczero::{KailuaProveInfo, KailuaSessionStats};
 use crate::ProvingError;
 use anyhow::{anyhow, Context};
@@ -29,7 +30,8 @@ pub async fn run_zkvm_client<A: NoUninit + Into<Digest>>(
     stitched_proofs: Vec<Receipt>,
     prove_snark: bool,
     proving_args: &ProvingArgs,
-) -> Result<Receipt, ProvingError> {
+    profile: Profile,
+) -> Result<ProfiledReceipt, ProvingError> {
     info!("Running zkvm client.");
     if proving_args.skip_await_proof {
         warn!("Skipping awaiting proof locally.");
@@ -78,8 +80,8 @@ pub async fn run_zkvm_client<A: NoUninit + Into<Digest>>(
     drop(r0vm_permit);
 
     info!(
-        "Proof of {} total cycles ({} user cycles) computed.",
-        prove_info.stats.total_cycles, prove_info.stats.user_cycles
+        "Proof of {} total cycles ({} user + {} paging) computed.",
+        prove_info.stats.total_cycles, prove_info.stats.user_cycles, prove_info.stats.paging_cycles
     );
     prove_info
         .receipt
@@ -88,7 +90,13 @@ pub async fn run_zkvm_client<A: NoUninit + Into<Digest>>(
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
     info!("Receipt verified.");
 
-    Ok(prove_info.receipt)
+    Ok((
+        prove_info.receipt,
+        profile.with_cycle_counts(
+            prove_info.stats.reserved_cycles + prove_info.stats.paging_cycles,
+            prove_info.stats.user_cycles,
+        ),
+    ))
 }
 
 #[allow(deprecated)]

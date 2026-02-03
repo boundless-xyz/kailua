@@ -161,7 +161,7 @@ jobs:
       - name: Install nightly toolchain
         uses: risc0/risc0/.github/actions/rustup@main
         with:
-          toolchain: nightly
+          toolchain: nightly-2025-09-13
       - name: Install svm-rs
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
@@ -180,7 +180,7 @@ jobs:
         with:
           crate: cargo-llvm-cov
       - name: kailua-kona coverage
-        run: cargo +nightly llvm-cov -p kailua-kona --branch --fail-uncovered-functions 0 --fail-uncovered-lines 10
+        run: cargo +nightly-2025-09-13 llvm-cov -p kailua-kona --branch --fail-uncovered-functions 0 --fail-uncovered-lines 10
 
   forge-fmt:
     runs-on: ubuntu-latest

@@ -23,7 +23,7 @@ use kona_proof::BootInfo;
 use risc0_zkvm::sha::Digestible;
 use rkyv::rancor::Error;
 use std::convert::identity;
-use std::path::Path;
+use std::path::PathBuf;
 use tracing::{error, info, warn};
 
 pub fn driver_file_name<A: NoUninit>(
@@ -51,17 +51,20 @@ pub fn driver_file_name<A: NoUninit>(
     format!("{driver_id}.driver")
 }
 
-pub async fn try_read_driver(file_name: &str) -> Option<CachedDriver> {
-    if !Path::new(&file_name).try_exists().is_ok_and(identity) {
-        warn!("Derivation trace {file_name} not found.");
+pub async fn try_read_driver(data_dir: Option<&PathBuf>, file_name: &str) -> Option<CachedDriver> {
+    let file_path = data_dir
+        .map(|d| d.join(file_name))
+        .unwrap_or_else(|| PathBuf::from(file_name));
+    if !file_path.try_exists().is_ok_and(identity) {
+        warn!("Derivation trace {file_name:?} not found.");
         return None;
     }
-    match read_bincoded_file::<Vec<u8>>(file_name).await {
+    match read_bincoded_file::<Vec<u8>>(data_dir, file_name).await {
         Ok(derivation_trace_rkyv) => {
             match rkyv::from_bytes::<CachedDriver, Error>(&derivation_trace_rkyv) {
                 Ok(derivation_trace) => {
                     info!(
-                        "Read CachedDriver {} from {file_name}.",
+                        "Read CachedDriver {} from {file_path:?}.",
                         B256::new(derivation_trace.digest().into())
                     );
                     return Some(derivation_trace);
@@ -72,7 +75,7 @@ pub async fn try_read_driver(file_name: &str) -> Option<CachedDriver> {
             }
         }
         Err(err) => {
-            error!("Failed to read derivation trace from file {file_name}: {err:?}");
+            error!("Failed to read derivation trace from file {file_path:?}: {err:?}");
         }
     }
     None

@@ -15,6 +15,9 @@
 use canoe_bindings::StatusCode;
 use canoe_provider::CertVerifierCall;
 use canoe_verifier::{CanoeVerifier, CertValidity, HokuleaCanoeVerificationError};
+use canoe_verifier_address_fetcher::{
+    CanoeVerifierAddressFetcher, CanoeVerifierAddressFetcherDeployedByEigenLabs,
+};
 use eigenda_cert::AltDACommitment;
 use kona_preimage::CommsClient;
 use kona_proof::BootInfo;
@@ -59,6 +62,7 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
         // Load up boot information from oracle
         let boot = kona_proof::block_on(BootInfo::load(self.oracle.as_ref()))
             .expect("Failed to load boot info");
+
         let env = match boot.rollup_config.l1_chain_id {
             1 => evm_input.into_env(&ETH_MAINNET_CHAIN_SPEC),
             11155111 => evm_input.into_env(&ETH_SEPOLIA_CHAIN_SPEC),
@@ -69,10 +73,21 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
             )),
         };
         // Validate each steel proof
+        let fetcher = CanoeVerifierAddressFetcherDeployedByEigenLabs {};
         for (altda_commitment, cert_validity) in cert_validity_pairs {
             // Verify L1 chain data
             assert_eq!(boot.rollup_config.l1_chain_id, cert_validity.l1_chain_id);
             assert_eq!(boot.l1_head, cert_validity.l1_head_block_hash);
+            // Verify verifier address
+            assert_eq!(
+                cert_validity.verifier_address,
+                fetcher
+                    .fetch_address(
+                        boot.rollup_config.l1_chain_id,
+                        &altda_commitment.versioned_cert
+                    )
+                    .expect("Failed to fetch verifier address")
+            );
             // Verify certificate
             let is_valid = match CertVerifierCall::build(&altda_commitment) {
                 CertVerifierCall::ABIEncodeInterface(call) => {

@@ -17,6 +17,7 @@ use anyhow::Context;
 use futures::FutureExt;
 use kailua_prover::args::ProveArgs;
 use kailua_prover::channel::AsyncChannel;
+use kailua_prover::profiling::ProfiledReceipt;
 use kailua_prover::proof::read_bincoded_file;
 use kailua_prover::prove::prove;
 use kailua_sync::await_tel_res;
@@ -59,6 +60,15 @@ pub async fn handle_proving_tasks(
             break Ok(());
         };
         info!("Handling proof request for local index {proposal_index}.");
+
+        if let Ok(proof) = read_bincoded_file::<ProfiledReceipt>(None, &proof_file_name).await {
+            // Send proof via the channel
+            proof_sender
+                .send(Message::Proof(proposal_index, Some(proof.0)))
+                .await?;
+            info!("Proof for local index {proposal_index} already complete.");
+            continue;
+        }
 
         let insufficient_l1_data = if let Some(kailua_cli) = &kailua_cli {
             info!("Invoking prover binary.");
@@ -125,11 +135,11 @@ pub async fn handle_proving_tasks(
 
         // wait for io then read computed proof from disk
         sleep(Duration::from_secs(1)).await;
-        match read_bincoded_file(&proof_file_name).await {
+        match read_bincoded_file::<ProfiledReceipt>(None, &proof_file_name).await {
             Ok(proof) => {
                 // Send proof via the channel
                 proof_sender
-                    .send(Message::Proof(proposal_index, Some(proof)))
+                    .send(Message::Proof(proposal_index, Some(proof.0)))
                     .await?;
                 info!("Proof for local index {proposal_index} complete.");
             }

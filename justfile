@@ -152,7 +152,7 @@ rpc l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc socket="127.0.0.1:1337" data=".l
           {{verbosity}}
 
 
-bench l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data start length range count target="release" verbosity="":
+bench l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data start length range count target="release" seq_window="50" verbosity="":
     ./target/{{target}}/kailua-cli benchmark \
           --eth-rpc-url {{l1_rpc}} \
           --beacon-rpc-url {{l1_beacon_rpc}} \
@@ -163,9 +163,10 @@ bench l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data start length range count 
           --bench-length {{length}} \
           --bench-range {{range}} \
           --bench-count {{count}} \
+          --seq-window {{seq_window}} \
           {{verbosity}}
 
-export-fpvm target="release" data="./build/risczero/src" verbosity="":
+export-fpvm target="release" data="./build/risczero/src/bin" verbosity="":
   ./target/{{target}}/kailua-cli export {{verbosity}} --data-dir {{data}}
 
 # Run the client program natively with the host program attached.
@@ -262,4 +263,7 @@ cleanup:
 
 
 grep-proving-log log:
-    grep -v -e batch_queue -e kona_protocol -e R0VM -e block_builder -e batch_validator -e attributes_queue -e client_derivation_driver -e single_hint_handler -e kailua_common -e complete, -e client_blob_oracle -e agent -e channel_assembler -e kailua_sync -e "OUTPUT: " -e "CACHE "  {{log}}
+    grep -v -e host_backend -e batch_queue -e kona_protocol -e R0VM -e block_builder -e batch_validator -e attributes_queue -e client_derivation_driver -e single_hint_handler -e kailua_common -e complete, -e client_blob_oracle -e agent -e channel_assembler -e kailua_sync -e "OUTPUT: " -e "CACHE "  {{log}}
+
+follow-proving-log log:
+    tail -f -n +0 {{log}} | just grep-proving-log --line-buffered
