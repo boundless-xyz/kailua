@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.15;
+pragma solidity 0.8.24;
 
 import "./KailuaLib.sol";
 import "./KailuaTournament.sol";
@@ -22,8 +22,8 @@ import "./vendor/FlatOPImportV1.4.0.sol";
 
 contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     /// @notice Semantic version.
-    /// @custom:semver 1.0.0
-    string public constant version = "1.0.0";
+    /// @custom:semver 1.2.0
+    string public constant version = "1.2.0";
 
     // ------------------------------
     // Immutable configuration

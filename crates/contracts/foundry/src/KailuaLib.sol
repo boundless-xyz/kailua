@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 import "./vendor/FlatOPImportV1.4.0.sol";
 import "./vendor/FlatR0ImportV2.0.2.sol";
@@ -89,16 +89,11 @@ error VanguardError(address parentGame);
 /// @notice Thrown when a non-factory owner calls an owner-only function.
 error NotFactoryOwner();
 
-/// @notice Emitted when a proof is submitted.
-/// @param signature The proposal signature
-/// @param status The proven status
-event Proven(bytes32 indexed signature, ProofStatus indexed status);
-
-/// @notice Emitted when the participation bond is updated
-/// @param amount The new required bond amount
-event BondUpdated(uint256 amount);
-
 interface IKailuaTreasury {
+    /// @notice Emitted when the participation bond is updated
+    /// @param amount The new required bond amount
+    event BondUpdated(uint256 amount);
+
     /// @notice Returns the game index at which proposer was proven faulty
     function eliminationRound(address proposer) external view returns (uint256);
 
@@ -128,6 +123,11 @@ interface IKailuaTreasury {
 }
 
 interface IKailuaTournament {
+    /// @notice Emitted when a proof is submitted.
+    /// @param signature The proposal signature
+    /// @param status The proven status
+    event Proven(bytes32 indexed signature, ProofStatus indexed status);
+
     /// @notice Returns the KailuaTreasury of this tournament
     function KAILUA_TREASURY() external view returns (IKailuaTreasury);
     /// @notice The timestamp of when the first proof for a proposal signature was made

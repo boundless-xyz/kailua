@@ -13,16 +13,16 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 import "./KailuaLib.sol";
 import "./vendor/FlatOPImportV1.4.0.sol";
 import "./vendor/FlatR0ImportV2.0.2.sol";
 
-contract KailuaVerifier {
+contract KailuaVerifier is ISemver {
     /// @notice Semantic version.
-    /// @custom:semver 1.0.0
-    string public constant version = "1.0.0";
+    /// @custom:semver 1.2.0
+    string public constant version = "1.2.0";
 
     /// @notice The RISC Zero verifier contract
     IRiscZeroVerifier public immutable RISC_ZERO_VERIFIER;

@@ -8,7 +8,7 @@
 
 // The below code is copied as is from various files under https://github.com/ethereum-optimism/optimism/tree/op-contracts/v1.4.0/packages/contracts-bedrock
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.15;
+pragma solidity 0.8.24;
 
 // lib/openzeppelin-contracts/contracts/utils/Address.sol
 
