@@ -15,6 +15,8 @@
 use alloy::primitives::map::{Entry, HashMap};
 use alloy::primitives::{keccak256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
+use kailua_prover::profiling::ProfiledReceipt;
+use kailua_prover::proof::read_bincoded_file;
 use kailua_sync::args::SyncArgs;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, Span, Status, TraceContextExt, Tracer};
@@ -48,8 +50,11 @@ pub struct BenchArgs {
     pub bench_count: u64,
 
     /// Whether to select randomly instead of by highest txn count
-    #[clap(long, env)]
+    #[clap(long, env, default_value_t = false)]
     pub random_select: bool,
+    /// Whether to export a CSV file with benchmark results
+    #[clap(long, env, default_value_t = false)]
+    pub export_bench_csv: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -139,6 +144,7 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
     }
 
     // Benchmark top candidates
+    let mut profiles = Vec::with_capacity(block_heap.len());
     for _ in 0..args.bench_count {
         let Some(CandidateBlock {
             txn_count,
@@ -198,8 +204,24 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
             Span::set_status(&mut sub_span, Status::Ok);
         }
         res?;
-
         info!("Output written to {output_file_name}");
+
+        if args.export_bench_csv {
+            // read the file in output_file_name
+            let file_contents = std::fs::read_to_string(output_file_name)?;
+            // find last occurence of "Saved proof to file {file_name}" in file
+            let file_name = file_contents
+                .lines()
+                .rev()
+                .find_map(|line| line.strip_prefix("Saved proof to file "))
+                .unwrap_or_default();
+            // read the file in file name using read_bincoded_file as a ProfiledReceipt instance
+            let profiled_receipt = read_bincoded_file::<ProfiledReceipt>(None, file_name).await?;
+            // push the Profile into profiles
+            profiles.push(profiled_receipt.1);
+
+            info!("Read profile in {file_name}");
+        }
     }
     Ok(())
 }

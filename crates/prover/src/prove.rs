@@ -18,6 +18,7 @@ use crate::config::{generate_l1_config_file, generate_rollup_config_file};
 use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::create_disk_kv_store;
 use crate::preflight::{concurrent_execution_preflight, fetch_precondition_data};
+use crate::profiling::ProfiledReceipt;
 use crate::tasks::{handle_oneshot_tasks, CachedTask, Oneshot, OneshotResult};
 use crate::{current_time, ProvingError};
 use alloy::eips::BlockNumberOrTag;
@@ -45,7 +46,7 @@ use tempfile::tempdir;
 use tokio::fs::remove_dir_all;
 use tracing::{error, info, warn};
 
-pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
+pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt>> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("prove"));
     let start_time = current_time();
@@ -142,7 +143,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     .await
     .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
     {
-        return Ok(false);
+        return Ok(None);
     }
     // We only use executionWitness/executePayload during preflight.
     args.kona.enable_experimental_witness_endpoint = false;
@@ -493,7 +494,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
     }
 
     // recursively combine expected proofs
-    if !args.proving.skip_stitching() {
+    let final_result = if !args.proving.skip_stitching() {
         // gather sorted proofs into vec
         let mut results = result_pq
             .into_sorted_vec()
@@ -670,11 +671,14 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
         }
 
         // report profile data summary
-        if let Ok(((_, profile), _)) = results.pop().unwrap().result {
-            profile.report_summary();
+        if let Ok((final_result, _)) = results.pop().unwrap().result {
+            final_result.1.report_summary();
             if args.proving.export_profile_csv {
-                profile.save_csv_file().await;
+                final_result.1.clone().save_csv_file().await;
             }
+            Some(final_result)
+        } else {
+            None
         }
     } else {
         // Report all profiling data summary
@@ -687,7 +691,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
                 profile.save_csv_file().await;
             }
         }
-    }
+        None
+    };
 
     // Cleanup cached data
     drop(disk_kv_store);
@@ -698,7 +703,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<bool> {
         "Exiting prover program after {}.",
         humantime::format_duration(Duration::from_secs(end_time - start_time))
     );
-    Ok(true)
+    Ok(final_result)
 }
 
 pub async fn cleanup_cache_data(args: &ProveArgs) {

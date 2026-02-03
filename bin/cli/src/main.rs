@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
             maybe_restrict_permits(&args.proving).await;
             let result = await_tel!(context, kailua_prover::prove::prove(args));
             // Special exit code used to signal insufficient l1 data
-            if let Ok(false) = result {
+            if let Ok(None) = result {
                 std::process::exit(111);
             }
             result.map(|_| ())
