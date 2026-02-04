@@ -264,7 +264,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: kailua-v${{ needs.version.outputs.version }}
-          name: Kailua v${{ needs.version.outputs.version }}
+          name: v${{ needs.version.outputs.version }}
           body_path: release_notes.md
           draft: false
           prerelease: false
