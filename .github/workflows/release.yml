@@ -263,7 +263,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: kailua-v${{ needs.version.outputs.version }}
+          tag_name: v${{ needs.version.outputs.version }}
           name: v${{ needs.version.outputs.version }}
           body_path: release_notes.md
           draft: false
