@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "kailua-v*"
   workflow_dispatch:
     inputs:
       version:
