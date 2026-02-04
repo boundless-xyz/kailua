@@ -44,7 +44,7 @@ jobs:
             echo "dry_run=${{ inputs.dry_run }}" >> $GITHUB_OUTPUT
           else
             # Extract version from tag (e.g., kailua-v1.1.8 -> 1.1.8)
-            VERSION="${GITHUB_REF_NAME#kailua-v}"
+            VERSION="${GITHUB_REF_NAME#v}"
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "dry_run=false" >> $GITHUB_OUTPUT
           fi
