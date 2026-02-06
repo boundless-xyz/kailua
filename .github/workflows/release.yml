@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
   workflow_dispatch:
     inputs:
       version:
@@ -39,8 +42,11 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
             echo "dry_run=${{ inputs.dry_run }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "version=0.0.0-pr${{ github.event.number }}" >> $GITHUB_OUTPUT
+            echo "dry_run=true" >> $GITHUB_OUTPUT
           else
-            # Extract version from tag (e.g., kailua-v1.1.8 -> 1.1.8)
+            # Extract version from tag (e.g., v1.1.8 -> 1.1.8)
             VERSION="${GITHUB_REF_NAME#v}"
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "dry_run=false" >> $GITHUB_OUTPUT
@@ -227,17 +233,17 @@ jobs:
 
           | Platform | Architecture | Download |
           |----------|--------------|----------|
-          | Linux | x86-64 | [kailua-cli-VERSION-linux-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/kailua-vVERSION/kailua-cli-VERSION-linux-amd64.tar.gz) |
-          | Linux | ARM64 | [kailua-cli-VERSION-linux-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/kailua-vVERSION/kailua-cli-VERSION-linux-arm64.tar.gz) |
+          | Linux | x86-64 | `kailua-cli-VERSION-linux-amd64.tar.gz` |
+          | Linux | ARM64 | `kailua-cli-VERSION-linux-arm64.tar.gz` |
 
           ## Installation
 
           ```bash
           # Download (replace PLATFORM with linux-amd64 or linux-arm64)
-          curl -LO https://github.com/${{ github.repository }}/releases/download/kailua-vVERSION/kailua-cli-VERSION-PLATFORM.tar.gz
+          curl -LO https://github.com/REPO/releases/download/vVERSION/kailua-cli-VERSION-PLATFORM.tar.gz
 
           # Verify checksum
-          curl -LO https://github.com/${{ github.repository }}/releases/download/kailua-vVERSION/kailua-cli-VERSION-PLATFORM.tar.gz.sha256
+          curl -LO https://github.com/REPO/releases/download/vVERSION/kailua-cli-VERSION-PLATFORM.tar.gz.sha256
           sha256sum -c kailua-cli-VERSION-PLATFORM.tar.gz.sha256
 
           # Extract
@@ -252,8 +258,9 @@ jobs:
           See the `.sha256` files for each download to verify integrity.
           EOF
 
-          # Replace VERSION placeholder
+          # Replace VERSION and REPO placeholders
           sed -i "s/VERSION/${VERSION}/g" release_notes.md
+          sed -i "s|REPO|${{ github.repository }}|g" release_notes.md
 
           cat release_notes.md
 
