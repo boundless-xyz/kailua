@@ -6,8 +6,8 @@ This process will require access to your rollup's 'Owner' and 'Guardian' wallets
 ## Overview
 
 The steps required to upgrade your on-chain rollup contracts to support Kailua are as follows:
-1. (Optional) Deploy a RISC Zero Verifier contract set.
-   * This can be skipped by using a pre-existing verifier contract.
+1. Deploy a `KailuaVerifier` contract.
+   * This requires an underlying `RISCZeroVerifierRouter`, which you can deploy yourself or use an existing [deployment](https://dev.risczero.com/api/blockchain-integration/contracts/verifier#contract-addresses:~:text=Address-,RiscZeroVerifierRouter,-0x8EaB2D97Dfce405A1692a21b3ff3A172d593D319).
 2. Deploy a `KailuaTreasury` and a `KailuaGame` contract with your configuration.
 3. Initialize the `KailuaTreasury` contract to mark the start of sequencing under Kailua.
 4. Update the rollup's `DisputeGameFactory` contract to use `KailuaGame` for sequencing proposals.
@@ -17,6 +17,11 @@ The steps required to upgrade your on-chain rollup contracts to support Kailua a
 ```admonish tip
 The Kailua CLI has a `fast-track` command for automating the L1 transactions required to migrate to Kailua.
 If the command does not yet support your configuration, you'll need to follow the manual steps in the next sub-sections.
+```
+
+```admonish warning
+This command will use the `KailuaVerifier` directly without deploying it behind a `Proxy`, making future updates to the
+Kailua configuration difficult.
 ```
 
 ```admonish hint
@@ -32,10 +37,11 @@ The below table contains rounded-up gas cost estimates of various contract opera
 | RiscZeroVerifierRouter  | deploy           |   800K |                        |
 | RiscZeroVerifierRouter  | addVerifier      |    50K |                        |
 | RiscZeroGroth16Verifier | deploy           | 1,300K |                        |
-| RiscZeroMockVerifier    | deploy           |   615K |                        |
-| KailuaTreasury          | deploy           | 5,200K |                        |
+| RiscZeroMockVerifier    | deploy           |   615K | Fake test proofs only  |
+| KailuaVerifier          | deploy           | 1,337K |                        |
+| KailuaTreasury          | deploy           | 4,560K |                        |
 | KailuaTreasury          | propose          |   400K | 1 blob                 |
-| KailuaGame              | deploy           | 5,000K |                        |
+| KailuaGame              | deploy           | 4,200K |                        |
 | KailuaGame              | proveValidity    |   375K | Groth16 proof          |
 | KailuaGame              | proveOutputFault |   415K | Groth16 + 1 KZG proofs |
 | KailuaGame              | proveOutputFault |   470K | Groth16 + 2 KZG proofs |
@@ -82,6 +88,7 @@ kailua-cli fast-track \
       --collateral-amount [YOUR_COLLATERAL_AMOUNT] \
       --verifier-contract [RISC_ZERO_VERIFIER_ADDRESS] \
       --challenge-timeout [YOUR_CHALLENGE_PERIOD] \
+      --proof-permit-timeout [YOUR_FAULT_PROVING_LOCK_TIMEOUT]
 \
       --deployer-key [YOUR_DEPLOYER_KEY] \
       --owner-key [YOUR_OWNER_KEY] \
@@ -114,11 +121,12 @@ The sequencing state at the block `starting-block-number` as reported by the `op
 
 #### Fault Proving
 The next three parameters configure fault proving:
-* `collateral-amount`: The amount of collateral (in wei) a sequencer has to stake before publishing proposals.
+* `collateral-amount`: The amount of collateral (in wei) a proposer has to stake before publishing proposals.
 * `verifier-contract`: (Optional) The address of the existing RISC Zero verifier contract to use. If this argument is omitted, a new set of verifier contracts will be deployed.
   * If you wish to use an already existing verifier, you must provide this argument, even if the `config` command had located a verifier.
   * If you are deploying a new verifier contract and wish to support fake proofs generated in dev mode (insecure), make sure to set `RISC0_DEV_MODE=1` in your environment before invoking the `fast-track` command.
 * `challenge-timeout`: The timeout (in seconds) for a sequencing proposal to be contradicted.
+* `proof-permit-timeout`: The timeout (in seconds) after which a fault proving lock expires.
 
 #### Ethereum Transactions
 The next three parameters are the private keys for the respective parent chain wallets:

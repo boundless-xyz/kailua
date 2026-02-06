@@ -24,8 +24,8 @@ If your rollup `owner` account is controlled by a `Safe` contract, or some other
 
 ## Clear DGF Kailua Bond
 Optimism's `DisputeGameFactory` is design to require a bond value for each sequencing proposal.
-The `KailuaTreasury` instead requires a constant bond value for a sequencer to make any number of proposals.
-To ensure that the Kailua sequencer operates as expected, we will need to set this value to zero for Kailua proposals
+The `KailuaTreasury` instead requires a constant bond value for a proposer to make any number of proposals.
+To ensure that the Kailua proposer operates as expected, we will need to set this value to zero for Kailua proposals
 if it is non-zero.
 You can check the value as follows:
 

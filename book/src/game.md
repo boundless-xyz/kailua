@@ -4,7 +4,7 @@ If you've successfully performed fast-track migration, you do not need to follow
 ```
 
 In this section you will be integrating the `KailuaGame` contract with your rollup's `DisputeGameFactory`.
-This will allow Kailua sequencers to submit new proposals!
+This will allow Kailua proposers to submit new proposals!
 
 The commands below will be using Foundry's `cast` utility, which you should have installed as part of the
 foundry [prerequisite](quickstart.md#prerequisites).
@@ -23,7 +23,7 @@ If your rollup `owner` account is controlled by a `Safe` contract, or some other
 
 ## Set Collateral Requirement
 
-Before allowing sequencing proposals past the anchor state, you'll need to set the bond value (in wei) required for sequencers.
+Before allowing sequencing proposals past the anchor state, you'll need to set the bond value (in wei) required for proposers.
 This is done by calling the `setParticipationBond` function on the treasury contract using the `owner` wallet for your
 rollup.
 

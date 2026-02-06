@@ -5,7 +5,7 @@ If you've successfully performed fast-track migration, you do not need to follow
 ```
 
 Kailua's on-chain dispute mechanism is powered by its own custom contracts that define a novel ZK dispute game.
-Each rollup has to deploy its own pair of dispute resolution contracts, and this section will guide you through that
+Each rollup has to deploy its own set of dispute resolution contracts, and this section will guide you through that
 process.
 
 The commands below will be using Foundry's `forge` and `cast` utilities, which you should have installed as part of the
@@ -25,20 +25,51 @@ cd crates/contracts/foundry
 
 ```admonish warning
 The parameters used to deploy the contracts below are immutable.
-Any changes will require redeployment of both the `KailuaGame` and `KailuaTreasury` contracts, along with a repetition of
-the steps in the latter sections.
-The same `KailuaTreasury` deployment **should NOT** be reused with multiple `KailuaGame` deployments, unless they were
-**never** used to publish a proposal (except for the last `KailuaGame` deployment used).
+Any changes will require redeployment and reconfiguration.
 ```
 
-## KailuaTreasury
+## `KailuaVerifier`
+```admonish tip
+This contract can safely be deployed behind a proxy contract in order to allow for easy updates to the verification 
+configuration.
+```
 ```solidity
 constructor(
   IRiscZeroVerifier _verifierContract,
   bytes32 _imageId,
   bytes32 _configHash,
-  uint256 _proposalOutputCount,
-  uint256 _outputBlockSpan,
+  Duration _permitDuration
+)
+```
+This contract verifies all Kailua proofs submitted to the dispute contracts and manages the collateral staked for
+acquiring fault proving locks.
+
+### Deployment
+
+Deployment of this contract is via the command below:
+```shell
+forge create KailuaTreasury --constructor-args \
+  [YOUR_RISC_ZERO_VERIFIER] \
+  [YOUR_FPVM_IMAGE_ID] \
+  [YOUR_ROLLUP_CONFIG_HASH] \
+  [YOUR_LOCK_EXPIRY_TIME]
+```
+
+Deploying the contract successfully should yield similar output to the following:
+```
+Deployer: [YOUR_DEPLOYER_WALLET_ADDRESS]
+Deployed to: [YOUR_DEPLOYED_KAILUA_VERIFIER_CONTRACT]
+Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
+```
+Take note of the contract address since we'll need it later.
+
+
+## `KailuaTreasury`
+```solidity
+constructor(
+  KailuaVerifier _kailuaVerifier,
+  uint64 _proposalOutputCount,
+  uint64 _outputBlockSpan,
   GameType _gameType,
   OptimismPortal2 _optimismPortal,
   Claim _rootClaim,
@@ -46,7 +77,7 @@ constructor(
 )
 ```
 
-This contract stores the collateral bonds required for sequencers to publish their proposal, and also stores the first
+This contract stores the collateral bonds required for proposers to publish their proposal, and also stores the first
 sequencing proposal for Kailua as a fault dispute game in your rollup.
 
 ```admonish note
@@ -73,9 +104,7 @@ You can quickly filter through the response for `outputRoot` by piping it to `jq
 Deployment of this contract is via the command below:
 ```shell
 forge create KailuaTreasury --constructor-args \
-  [YOUR_RISC_ZERO_VERIFIER] \
-  [YOUR_FPVM_IMAGE_ID] \
-  [YOUR_ROLLUP_CONFIG_HASH] \
+  [YOUR_DEPLOYED_KAILUA_VERIFIER_CONTRACT] \
   [YOUR_PROPOSAL_OUTPUT_COUNT] \
   [YOUR_OUTPUT_BLOCK_SPAN] \
   [YOUR_KAILUA_GAME_TYPE] \
@@ -100,11 +129,10 @@ If your rollup `owner` account is controlled by a `Safe` contract, or some other
 * You can use the [safe gui](https://app.safe.global/home) web app to create the necessary transactions.
 ```
 
-## KailuaGame
+## `KailuaGame`
 ```solidity
 constructor(
   IKailuaTreasury _kailuaTreasury,
-  IRiscZeroVerifier _verifierContract,
   uint256 _genesisTimeStamp,
   uint256 _l2BlockTime,
   Duration _maxClockDuration
@@ -134,8 +162,7 @@ Deployed to: [YOUR_DEPLOYED_GAME_CONTRACT]
 Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
 ```
 Note down this contract's address, we'll use it later.
-There is no configuration needed for this contract.
 
 ```admonish success
-You now have two Kailua dispute resolution contracts tailored to your rollup and ZK verifier!
+You now have Kailua dispute resolution contracts tailored to your rollup and ZK verifier!
 ```

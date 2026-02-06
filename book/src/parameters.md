@@ -23,7 +23,7 @@ These commitments are published as Blobs, which means you should optimize your b
 where `B` is the number of blobs required for a single proposal transaction (Ethereum currently limits a single block to
 at most 6 blobs, i.e. `B < 7`).
 
-Subsequently, combining `S` with your rollup's block time determines how often your sequencer has to publish a proposal
+Subsequently, combining `S` with your rollup's block time determines how often your proposer has to publish a proposal
 to ensure the liveness of your chain.
 
 ```admonish example
@@ -35,14 +35,13 @@ per 2 hours and 15 minutes.
 
 ## Collateral Amount
 
-The collateral requirements for a sequencer in Kailua come in the form of a fixed amount to be deposited, independent of
+The collateral requirements for a proposer in Kailua come in the form of a fixed amount to be deposited, independent of
 how many sequencing proposals are in flight.
 This is because a malicious Kailua proposer, and any faulty sequencing proposals it has published, is eliminated using
 only a single fault proof.
 
-The prover who submitted that fault proof consequently gets compensated with the faulty sequencer's staked collateral.
-This collateral should at least cover the proving cost, but should also include a sizeable tip for the prover to
-incentivize proving priority.
+The prover who submitted that fault proof consequently gets compensated with a portion of the faulty proposer's collateral.
+This portion should at least cover the proving cost, but should also include a sizeable incentive for the prover.
 Our estimates put a worst-case proving cost using Bonsai for a single (OP Mainnet) block at $100 USD.
 
 ```admonish example
@@ -100,6 +99,19 @@ If the advantage time is unreasonably long, Vanguard downtime delays the livenes
 
 This middleground enables rollups transitioning from a permissioned scheme to enjoy permissionless fault proofs in
 Kailua with an added safety net.
+
+## Lock timeout
+Fault provers can acquire a lock on a faulty proposal to reserve the right to claim a reward for disproving it.
+This lock requires an amount of collateral directly proportional to the proposer collateral.
+Every lock expires after a configured period of time, after which two new locks can be acquired in its place.
+This process ensures that the collateral required to acquire a lock stays constant, while the collateral acquired to
+indefinitely hold a lock without submitting a proof grows exponentially.
+Additionally, a lock does not prevent anyone from holding a proof, but only guarantees that the prover will be rewarded.
+
+```admonish note
+Since fault proofs can be configured to cover a very small number of blocks, this lock timeout should be on the order
+of tens of minutes, if not an hour or two. Use your own judgement.
+```
 
 ```admonish success
 Once you've got your parameters all planned out, you're ready for the next step!
