@@ -89,15 +89,6 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     }
 
     // ------------------------------
-    // OP-CONTRACTS v5 TEMPORARY PATCH
-    // ------------------------------
-
-    /// @notice This is a workaround to allow withdrawals under op-contracts v5.0.0
-    function anchorStateRegistry() external view returns (address registry_) {
-        registry_ = msg.sender;
-    }
-
-    // ------------------------------
     // Game State
     // ------------------------------
 
@@ -288,6 +279,11 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
 
     /// @notice True iff the Kailua GameType was respected by OptimismPortal at time of creation
     bool public wasRespectedGameTypeWhenCreated;
+
+    /// @notice This is a workaround for withdrawal compatibility under op-contracts v5.0.0
+    function anchorStateRegistry() external view returns (address registry_) {
+        registry_ = msg.sender;
+    }
 
     // ------------------------------
     // Tournament
