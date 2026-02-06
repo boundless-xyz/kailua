@@ -71,8 +71,8 @@ jobs:
             artifact_name: linux-amd64
 
           - target: aarch64-unknown-linux-gnu
-            runner: [self-hosted, prod, Linux]
-            use_cross: true
+            runner: boundless-arm64-temp
+            use_cross: false
             artifact_name: linux-arm64
 
     steps:
