@@ -175,18 +175,24 @@ jobs:
     needs: [version, build]
     runs-on: [self-hosted, prod, Linux]
     steps:
-      - name: Download x86_64 artifact
+      - name: Download amd64 artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.BINARY_NAME }}-${{ needs.version.outputs.version }}-linux-amd64
-          path: dist
+          path: dist/amd64
 
-      - name: Extract and verify
+      - name: Download arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ needs.version.outputs.version }}-linux-arm64
+          path: dist/arm64
+
+      - name: Verify amd64 build
         run: |
           VERSION="${{ needs.version.outputs.version }}"
           ARTIFACT_NAME="${{ env.BINARY_NAME }}-${VERSION}-linux-amd64"
 
-          cd dist
+          cd dist/amd64
           tar -xzvf "${ARTIFACT_NAME}.tar.gz"
 
           # Verify checksum
@@ -196,6 +202,20 @@ jobs:
           chmod +x "${ARTIFACT_NAME}/${{ env.BINARY_NAME }}"
           "./${ARTIFACT_NAME}/${{ env.BINARY_NAME }}" --version
           "./${ARTIFACT_NAME}/${{ env.BINARY_NAME }}" --help
+
+      - name: Verify arm64 build
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          ARTIFACT_NAME="${{ env.BINARY_NAME }}-${VERSION}-linux-arm64"
+
+          cd dist/arm64
+          tar -xzvf "${ARTIFACT_NAME}.tar.gz"
+
+          # Verify checksum
+          sha256sum -c "${ARTIFACT_NAME}.tar.gz.sha256"
+
+          # Verify binary exists and is executable format
+          file "${ARTIFACT_NAME}/${{ env.BINARY_NAME }}"
 
   release:
     name: Create Release
