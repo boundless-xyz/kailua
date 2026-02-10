@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       version:
@@ -39,6 +40,9 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
             echo "dry_run=${{ inputs.dry_run }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "version=0.0.0-pr${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "dry_run=true" >> $GITHUB_OUTPUT
           else
             # Extract version from tag (e.g., v1.1.8 -> 1.1.8)
             VERSION="${GITHUB_REF_NAME#v}"
@@ -220,19 +224,21 @@ jobs:
       - name: Upload verified amd64 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: verified-${{ env.BINARY_NAME }}-${{ needs.version.outputs.version }}-linux-amd64
+          name: ${{ env.BINARY_NAME }}-${{ needs.version.outputs.version }}-linux-amd64
           path: |
             dist/amd64/*.tar.gz
             dist/amd64/*.sha256
+          overwrite: true
           retention-days: 7
 
       - name: Upload verified arm64 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: verified-${{ env.BINARY_NAME }}-${{ needs.version.outputs.version }}-linux-arm64
+          name: ${{ env.BINARY_NAME }}-${{ needs.version.outputs.version }}-linux-arm64
           path: |
             dist/arm64/*.tar.gz
             dist/arm64/*.sha256
+          overwrite: true
           retention-days: 7
 
   release:
