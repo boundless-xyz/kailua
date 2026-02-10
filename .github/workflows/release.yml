@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       version:
@@ -39,6 +40,9 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
             echo "dry_run=${{ inputs.dry_run }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "version=0.0.0-pr${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "dry_run=true" >> $GITHUB_OUTPUT
           else
             # Extract version from tag (e.g., v1.1.8 -> 1.1.8)
             VERSION="${GITHUB_REF_NAME#v}"
