@@ -1,5 +1,5 @@
 # TODO alpine is smaller
-FROM rust:1.81 as build-environment
+FROM rust:1.89 as build-environment
 
 ARG CARGO_BUILD_JOBS=1
 
@@ -21,12 +21,12 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=shared \
     --mount=type=cache,target=/root/.cargo/git,sharing=shared \
     --mount=type=cache,target=/kailua/target,sharing=private,id=rust-target-${TARGETARCH} \
-    cargo build --jobs ${CARGO_BUILD_JOBS} --release -F disable-dev-mode \
+    cargo build --jobs ${CARGO_BUILD_JOBS} --release -F disable-dev-mode --locked \
     && mkdir out \
     && mv target/release/kailua-cli out/ \
     && strip out/kailua-cli;
 
-FROM rust:1.81 as kailua
+FROM rust:1.89 as kailua
 COPY --from=build-environment /kailua/out/kailua-cli /usr/local/bin/kailua-cli
 
 ENTRYPOINT ["/bin/sh", "-c"]
