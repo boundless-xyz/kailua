@@ -1,7 +1,6 @@
 name: Release
 
 on:
-  pull_request:
   workflow_dispatch:
     inputs:
       version:
@@ -40,9 +39,6 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
             echo "dry_run=${{ inputs.dry_run }}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "version=0.0.0-pr${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-            echo "dry_run=true" >> $GITHUB_OUTPUT
           else
             # Extract version from tag (e.g., v1.1.8 -> 1.1.8)
             VERSION="${GITHUB_REF_NAME#v}"
@@ -65,12 +61,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runner: [self-hosted, prod, Linux]
-            use_cross: false
             artifact_name: linux-amd64
 
           - target: aarch64-unknown-linux-gnu
             runner: boundless-arm64-temp
-            use_cross: false
             artifact_name: linux-arm64
 
     steps:
@@ -110,15 +104,7 @@ jobs:
         with:
           version: ${{ env.FOUNDRY_VERSION }}
 
-      - name: Install cross
-        if: matrix.use_cross
-        uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
-        with:
-          crate: cross
-          version: "0.2.5"
-
-      - name: Build (native)
-        if: ${{ !matrix.use_cross }}
+      - name: Build
         run: |
           cargo build --bin ${{ env.BINARY_NAME }} --release --locked \
             -F prove -F disable-dev-mode -F eigen -F celestia \
@@ -127,27 +113,8 @@ jobs:
           RISC0_SKIP_BUILD: true
           RISC0_SKIP_BUILD_KERNEL: true
 
-      - name: Build (cross)
-        if: matrix.use_cross
-        run: |
-          cross build --bin ${{ env.BINARY_NAME }} --release --locked \
-            -F prove -F disable-dev-mode -F eigen -F celestia \
-            --target ${{ matrix.target }}
-        env:
-          RISC0_SKIP_BUILD: true
-          RISC0_SKIP_BUILD_KERNEL: true
-
       - name: Strip binary
-        run: |
-          BINARY_PATH="target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}"
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            # For cross-compiled ARM64, use the appropriate strip
-            docker run --rm -v "$(pwd):/workspace" -w /workspace \
-              ghcr.io/cross-rs/${{ matrix.target }}:main \
-              aarch64-linux-gnu-strip "$BINARY_PATH" || true
-          else
-            strip "$BINARY_PATH" || true
-          fi
+        run: strip "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" || true
 
       - name: Create tarball
         run: |
