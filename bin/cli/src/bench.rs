@@ -177,17 +177,12 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
                     let version = risc0_zkvm::get_version()?;
                     let output_file_name =
                         format!("bench-risc0-{version}-{block_number}-{end}-{txn_count}.out");
-                    let output_file = OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&output_file_name)?;
                     // Pipe outputs to file
                     let verbosity_level = if verbosity > 0 {
                         format!("-{}", "v".repeat(verbosity as usize))
                     } else {
                         String::new()
                     };
-                    let mut cmd = Command::new("just");
                     let block_number_str = block_number.to_string();
                     let block_count = args.bench_length.to_string();
                     let data_dir = {
@@ -195,33 +190,40 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
                         job_dir.push(format!("bench-{block_number}-{end}"));
                         job_dir
                     };
-                    cmd.args(vec![
-                        "prove",
-                        &block_number_str,
-                        &block_count,
-                        &args.sync.provider.eth_rpc_url,
-                        &args.sync.provider.beacon_rpc_url,
-                        &args.sync.provider.op_geth_url,
-                        &args.sync.provider.op_node_url,
-                        data_dir.to_str().unwrap(),
-                        "debug",
-                        &args.seq_window.to_string(),
-                        &verbosity_level,
-                    ]);
-                    println!("Executing: {cmd:?}");
 
                     let mut sub_span = tracer.start_with_context("prove", &context);
-                    let res = cmd.stdout(output_file).status();
-                    if let Err(err) = &res {
-                        sub_span.record_error(err);
-                        Span::set_status(
-                            &mut sub_span,
-                            Status::error(format!("Fatal error: {err:?}")),
-                        );
-                    } else {
-                        Span::set_status(&mut sub_span, Status::Ok);
+                    loop {
+                        let output_file = OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&output_file_name)?;
+                        let mut cmd = Command::new("just");
+                        cmd.args(vec![
+                            "prove",
+                            &block_number_str,
+                            &block_count,
+                            &args.sync.provider.eth_rpc_url,
+                            &args.sync.provider.beacon_rpc_url,
+                            &args.sync.provider.op_geth_url,
+                            &args.sync.provider.op_node_url,
+                            data_dir.to_str().unwrap(),
+                            "debug",
+                            &args.seq_window.to_string(),
+                            &verbosity_level,
+                        ]);
+                        println!("Executing: {cmd:?}");
+                        let res = cmd.stdout(output_file).status();
+                        if let Err(err) = &res {
+                            sub_span.record_error(err);
+                            Span::set_status(
+                                &mut sub_span,
+                                Status::error(format!("Fatal error: {err:?}")),
+                            );
+                        } else {
+                            Span::set_status(&mut sub_span, Status::Ok);
+                            break;
+                        }
                     }
-                    res?;
                     info!("Output written to {output_file_name}");
 
                     if args.export_bench_csv {
