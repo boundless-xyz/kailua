@@ -196,47 +196,48 @@ pub async fn handle_blocks(
         // queue required proofs
         while last_proven.unwrap() + args.num_blocks_per_proof < finalized_l2_number {
             let agreed_l2_block_number = last_proven.unwrap();
-            let agreed_l2_block = await_tel!(
-                context,
-                tracer,
-                "agreed_l2_block",
-                retry_res_ctx_timeout!(
-                    args.provider.timeouts.op_geth_timeout,
-                    provider
-                        .l2_provider
-                        .get_block_by_number(BlockNumberOrTag::Number(agreed_l2_block_number))
-                        .await
-                        .context("get_block_by_number")?
-                        .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block"))
-                )
-            );
-            let agreed_l2_output_root = await_tel!(
-                context,
-                tracer,
-                "agreed_l2_output_root",
-                retry_res_ctx_timeout!(
-                    args.provider.timeouts.op_node_timeout,
-                    provider
-                        .op_provider
-                        .output_at_block(agreed_l2_block_number)
-                        .await
-                )
-            );
             let claimed_l2_block_number = agreed_l2_block_number + args.num_blocks_per_proof;
-            let claimed_l2_output_root = await_tel!(
-                context,
-                tracer,
-                "claimed_l2_output_root",
-                retry_res_ctx_timeout!(
-                    args.provider.timeouts.op_node_timeout,
-                    provider
-                        .op_provider
-                        .output_at_block(claimed_l2_block_number)
-                        .await
-                )
-            );
             // request proof
             if n == args.nth_proof_to_process {
+                let agreed_l2_block = await_tel!(
+                    context,
+                    tracer,
+                    "agreed_l2_block",
+                    retry_res_ctx_timeout!(
+                        args.provider.timeouts.op_geth_timeout,
+                        provider
+                            .l2_provider
+                            .get_block_by_number(BlockNumberOrTag::Number(agreed_l2_block_number))
+                            .await
+                            .context("get_block_by_number")?
+                            .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block"))
+                    )
+                );
+                let agreed_l2_output_root = await_tel!(
+                    context,
+                    tracer,
+                    "agreed_l2_output_root",
+                    retry_res_ctx_timeout!(
+                        args.provider.timeouts.op_node_timeout,
+                        provider
+                            .op_provider
+                            .output_at_block(agreed_l2_block_number)
+                            .await
+                    )
+                );
+                let claimed_l2_output_root = await_tel!(
+                    context,
+                    tracer,
+                    "claimed_l2_output_root",
+                    retry_res_ctx_timeout!(
+                        args.provider.timeouts.op_node_timeout,
+                        provider
+                            .op_provider
+                            .output_at_block(claimed_l2_block_number)
+                            .await
+                    )
+                );
+
                 channel
                     .sender
                     .send(Message::Proposal {

@@ -209,12 +209,15 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
         if args.export_bench_csv {
             // read the file in output_file_name
             let file_contents = std::fs::read_to_string(output_file_name)?;
-            // find last occurence of "Saved proof to file {file_name}" in file
+            // find the last occurrence of "Saved proof to file {file_name}" in file
             let file_name = file_contents
                 .lines()
                 .rev()
-                .find_map(|line| line.strip_prefix("Saved proof to file "))
-                .unwrap_or_default();
+                .find(|line| line.contains("Saved proof to file "))
+                .expect("Failed to find line.")
+                .split_whitespace()
+                .last()
+                .expect("Failed to split line.");
             // read the file in file name using read_bincoded_file as a ProfiledReceipt instance
             let profiled_receipt = read_bincoded_file::<ProfiledReceipt>(None, file_name).await?;
             // push the Profile into profiles
