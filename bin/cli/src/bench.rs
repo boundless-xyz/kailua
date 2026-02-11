@@ -177,7 +177,11 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
         }
         let block_number = block_number.to_string();
         let block_count = args.bench_length.to_string();
-        let data_dir = args.sync.data_dir.clone().unwrap();
+        let data_dir = {
+            let mut job_dir = args.sync.data_dir.clone().unwrap();
+            job_dir.push(format!("bench-{block_number}-{end}"));
+            job_dir
+        };
         cmd.args(vec![
             "prove",
             &block_number,
