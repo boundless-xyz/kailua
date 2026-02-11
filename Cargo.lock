@@ -6483,6 +6483,7 @@ dependencies = [
  "boundless-market",
  "bytemuck",
  "clap",
+ "csv",
  "hex",
  "human_bytes",
  "kailua-build",

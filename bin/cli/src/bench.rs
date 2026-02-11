@@ -15,8 +15,9 @@
 use alloy::primitives::map::{Entry, HashMap};
 use alloy::primitives::{keccak256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
-use kailua_prover::profiling::ProfiledReceipt;
-use kailua_prover::proof::read_bincoded_file;
+use kailua_prover::current_time;
+use kailua_prover::profiling::{Profile, ProfiledReceipt};
+use kailua_prover::proof::{read_bincoded_file, save_to_file};
 use kailua_sync::args::SyncArgs;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, Span, Status, TraceContextExt, Tracer};
@@ -24,7 +25,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::fs::OpenOptions;
 use std::process::Command;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Benchmark proving cost and performance
 #[derive(clap::Args, Debug, Clone)]
@@ -226,5 +227,35 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
             info!("Read profile in {file_name}");
         }
     }
+
+    // Merge profile data
+    if args.export_bench_csv {
+        // Write CSV header row
+        let mut buffer = Vec::new();
+        let mut writer = csv::Writer::from_writer(&mut buffer);
+        Profile::write_csv_header(&mut writer)?;
+        writer.flush()?;
+        drop(writer);
+        // Write profiles to CSV buffer
+        for profile in profiles {
+            buffer.append(&mut profile.to_csv(false).await?);
+        }
+        // Write to file
+        let file_name = format!(
+            "{}.{}.{}.{}.{}.{}.csv",
+            current_time(),
+            args.bench_start,
+            args.bench_length,
+            args.bench_range,
+            args.bench_count,
+            args.random_select
+        );
+        if let Err(err) = save_to_file(&buffer, None, &file_name).await {
+            error!("Failed to save bench profile to file {file_name}: {err:?}");
+        } else {
+            info!("Saved bench profile to {file_name}.");
+        }
+    }
+
     Ok(())
 }

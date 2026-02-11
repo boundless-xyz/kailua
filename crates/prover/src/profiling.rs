@@ -221,11 +221,8 @@ impl Profile {
         );
     }
 
-    pub async fn to_csv(self) -> anyhow::Result<Vec<u8>> {
-        // Write CSV header row
-        let mut buffer = Vec::new();
-        let mut writer = csv::Writer::from_writer(&mut buffer);
-        writer.write_record([
+    pub fn write_csv_header<W: std::io::Write>(writer: &mut csv::Writer<W>) -> anyhow::Result<()> {
+        Ok(writer.write_record([
             "chain_id",
             "depth",
             "block_start",
@@ -251,7 +248,16 @@ impl Profile {
             "starks",
             "time_started",
             "time_finished",
-        ])?;
+        ])?)
+    }
+
+    pub async fn to_csv(self, with_header: bool) -> anyhow::Result<Vec<u8>> {
+        // Write CSV header row
+        let mut buffer = Vec::new();
+        let mut writer = csv::Writer::from_writer(&mut buffer);
+        if with_header {
+            Self::write_csv_header(&mut writer)?;
+        }
         // write profile rows
         let mut stack = vec![(self, 0u64)];
         while let Some((profile, depth)) = stack.pop() {
@@ -343,7 +349,7 @@ impl Profile {
             self.block_end,
             self.derivation,
         );
-        match self.to_csv().await {
+        match self.to_csv(true).await {
             Ok(data) => {
                 if let Err(err) = save_to_file(&data, None, &file_name).await {
                     error!("Failed to save profile to file {file_name}: {err:?}");
