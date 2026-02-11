@@ -341,8 +341,7 @@ pub async fn compute_fpvm_proof(
     let can_stitch_tail_proofs =
         args.proving.num_tail_blocks > 0 && !args.proving.skip_derivation_proof;
     let mut tail_proof_jobs = vec![];
-    if can_stitch_tail_proofs && streamed_witness_size > (args.proving.max_witness_size * 90) / 100
-    {
+    if can_stitch_tail_proofs && streamed_witness_size > args.proving.max_witness_size / 2 {
         let chain_providers =
             retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await).await;
         // Fetch earliest l1 block to start from
