@@ -150,7 +150,7 @@ rpc l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc socket="127.0.0.1:1337" data=".l
           {{verbosity}}
 
 
-bench l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data start length range count target="release" seq_window="50" verbosity="":
+bench start length range count l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data target="release" seq_window="50" verbosity="":
     ./target/{{target}}/kailua-cli benchmark \
           --eth-rpc-url {{l1_rpc}} \
           --beacon-rpc-url {{l1_beacon_rpc}} \
