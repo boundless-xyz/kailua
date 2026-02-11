@@ -237,10 +237,10 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
                             .last()
                             .expect("Failed to split line.");
                         // read the file in file name using read_bincoded_file as a ProfiledReceipt instance
-                        let profiled_receipt =
-                            futures::executor::block_on(read_bincoded_file::<ProfiledReceipt>(
-                                None, file_name,
-                            ))?;
+                        let profiled_receipt = tokio::runtime::Runtime::new()
+                            .unwrap()
+                            .block_on(read_bincoded_file::<ProfiledReceipt>(None, file_name))?;
+
                         // push the Profile into profiles
                         profiles.lock().unwrap().push(profiled_receipt.1);
 
@@ -256,6 +256,16 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
 
     // Merge profile data
     if args.export_bench_csv {
+        let file_name = format!(
+            "{}.{}.{}.{}.{}.{}.csv",
+            current_time(),
+            args.bench_start,
+            args.bench_length,
+            args.bench_range,
+            args.bench_count,
+            args.random_select
+        );
+        info!("Creating {file_name}");
         // Write CSV header row
         let mut buffer = Vec::new();
         let mut writer = csv::Writer::from_writer(&mut buffer);
@@ -267,15 +277,6 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
             buffer.append(&mut profile.to_csv(false).await?);
         }
         // Write to file
-        let file_name = format!(
-            "{}.{}.{}.{}.{}.{}.csv",
-            current_time(),
-            args.bench_start,
-            args.bench_length,
-            args.bench_range,
-            args.bench_count,
-            args.random_select
-        );
         if let Err(err) = save_to_file(&buffer, None, &file_name).await {
             error!("Failed to save bench profile to file {file_name}: {err:?}");
         } else {
