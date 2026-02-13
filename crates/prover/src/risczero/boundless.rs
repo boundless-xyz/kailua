@@ -651,6 +651,9 @@ pub async fn retrieve_proof(
                     return Err(ClientError::RequestError(RequestError::MissingRequirements));
                 };
 
+                // Log request id
+                profile = profile.with_boundless_request(request_id.to_string());
+
                 // Find proving cost
                 let price_point = if retry_res_timeout!(
                     15,

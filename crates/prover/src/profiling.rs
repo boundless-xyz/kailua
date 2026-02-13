@@ -38,6 +38,8 @@ pub struct Profile {
     pub cycles_system: Option<u64>,
     /// Total proving market costs
     pub boundless_cost: Option<U256>,
+    /// Market request id
+    pub boundless_request: Option<String>,
     /// Number of SNARK recursive verifications
     pub snarks: Option<u64>,
     /// Number of STARK recursive verifications
@@ -181,6 +183,11 @@ impl Profile {
         self
     }
 
+    pub fn with_boundless_request(mut self, boundless_request: String) -> Self {
+        self.boundless_request = Some(boundless_request);
+        self
+    }
+
     pub fn with_start_time(mut self, time_started: u64) -> Self {
         self.time_started = Some(time_started);
         self
@@ -239,6 +246,7 @@ impl Profile {
             "cycles_per_block",
             "cycles_per_tx",
             "cycles_per_gas",
+            "request_id",
             "cost",
             "cost_per_block",
             "cost_per_tx",
@@ -306,6 +314,7 @@ impl Profile {
                 cycles_per_block.map(|c| c.to_string()).unwrap_or_default(),
                 cycles_per_tx.map(|c| c.to_string()).unwrap_or_default(),
                 cycles_per_gas.map(|c| c.to_string()).unwrap_or_default(),
+                profile.boundless_request.clone().unwrap_or_default(),
                 profile
                     .boundless_cost
                     .map(|b| b.to_string())
