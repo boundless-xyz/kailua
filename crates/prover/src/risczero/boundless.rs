@@ -652,7 +652,7 @@ pub async fn retrieve_proof(
                 };
 
                 // Log request id
-                profile = profile.with_boundless_request(request_id.to_string());
+                profile = profile.with_boundless_request(request_id);
 
                 // Find proving cost
                 let price_point = if retry_res_timeout!(
