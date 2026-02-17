@@ -654,8 +654,8 @@ pub async fn retrieve_proof(
                 // Log request id
                 profile = profile.with_boundless_request(request_id);
 
-                // Find proving cost
-                let price_point = if retry_res_timeout!(
+                // Find proving cost and prover address
+                let (price_point, prover) = if retry_res_timeout!(
                     15,
                     boundless_client
                         .boundless_market
@@ -664,26 +664,27 @@ pub async fn retrieve_proof(
                 )
                 .await
                 {
-                    retry_res_timeout!(
+                    let event = retry_res_timeout!(
                         15,
                         boundless_client
                             .boundless_market
                             .query_request_locked_event(request_id, None, None)
                             .await
                     )
-                    .await
-                    .block_number
+                    .await;
+                    (event.block_number, event.event.prover)
                 } else {
-                    retry_res_timeout!(
+                    let event = retry_res_timeout!(
                         15,
                         boundless_client
                             .boundless_market
                             .query_request_fulfilled_event(request_id, None, None)
                             .await
                     )
-                    .await
-                    .block_number
+                    .await;
+                    (event.block_number, event.event.prover)
                 };
+                profile = profile.with_boundless_prover(prover);
 
                 let timestamp = retry_res_timeout!(
                     15,
