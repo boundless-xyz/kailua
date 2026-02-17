@@ -42,6 +42,8 @@ pub struct Profile {
     pub boundless_request: Option<U256>,
     /// Market prover address
     pub boundless_prover: Option<Address>,
+    /// Address that locked the proof request
+    pub lock_holder: Option<Address>,
     /// Number of SNARK recursive verifications
     pub snarks: Option<u64>,
     /// Number of STARK recursive verifications
@@ -195,6 +197,11 @@ impl Profile {
         self
     }
 
+    pub fn with_lock_holder(mut self, lock_holder: Address) -> Self {
+        self.lock_holder = Some(lock_holder);
+        self
+    }
+
     pub fn with_start_time(mut self, time_started: u64) -> Self {
         self.time_started = Some(time_started);
         self
@@ -255,6 +262,7 @@ impl Profile {
             "cycles_per_gas",
             "request_id",
             "prover",
+            "lock_holder",
             "cost",
             "cost_per_block",
             "cost_per_tx",
@@ -328,6 +336,10 @@ impl Profile {
                     .unwrap_or_default(),
                 profile
                     .boundless_prover
+                    .map(|p| p.to_string())
+                    .unwrap_or_default(),
+                profile
+                    .lock_holder
                     .map(|p| p.to_string())
                     .unwrap_or_default(),
                 profile

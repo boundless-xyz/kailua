@@ -654,8 +654,8 @@ pub async fn retrieve_proof(
                 // Log request id
                 profile = profile.with_boundless_request(request_id);
 
-                // Find proving cost and prover address
-                let (price_point, prover) = if retry_res_timeout!(
+                // Find proving cost, prover address, and lock holder
+                let (price_point, prover, lock_holder) = if retry_res_timeout!(
                     15,
                     boundless_client
                         .boundless_market
@@ -664,7 +664,7 @@ pub async fn retrieve_proof(
                 )
                 .await
                 {
-                    let event = retry_res_timeout!(
+                    let locked_event = retry_res_timeout!(
                         15,
                         boundless_client
                             .boundless_market
@@ -672,7 +672,19 @@ pub async fn retrieve_proof(
                             .await
                     )
                     .await;
-                    (event.block_number, event.event.prover)
+                    let fulfilled_event = retry_res_timeout!(
+                        15,
+                        boundless_client
+                            .boundless_market
+                            .query_request_fulfilled_event(request_id, None, None)
+                            .await
+                    )
+                    .await;
+                    (
+                        locked_event.block_number,
+                        fulfilled_event.event.prover,
+                        Some(locked_event.event.prover),
+                    )
                 } else {
                     let event = retry_res_timeout!(
                         15,
@@ -682,9 +694,13 @@ pub async fn retrieve_proof(
                             .await
                     )
                     .await;
-                    (event.block_number, event.event.prover)
+                    (event.block_number, event.event.prover, None)
                 };
                 profile = profile.with_boundless_prover(prover);
+
+                if let Some(lock_holder) = lock_holder {
+                    profile = profile.with_lock_holder(lock_holder);
+                }
 
                 let timestamp = retry_res_timeout!(
                     15,
