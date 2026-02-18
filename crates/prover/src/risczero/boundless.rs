@@ -321,10 +321,7 @@ impl MarketProviderConfig {
                         storage_cfg.gcs_bucket.clone().unwrap(),
                     ]);
                     if let Some(gcs_url) = &storage_cfg.gcs_url {
-                        proving_args.extend(vec![
-                            String::from("--gcs-url"),
-                            gcs_url.to_string(),
-                        ]);
+                        proving_args.extend(vec![String::from("--gcs-url"), gcs_url.to_string()]);
                     }
                     if let Some(gcs_credentials_json) = &storage_cfg.gcs_credentials_json {
                         proving_args.extend(vec![
@@ -498,6 +495,24 @@ pub async fn get_proof_request(
     request_id: U256,
 ) -> Option<ProofRequest> {
     loop {
+        // check if order exists
+        match boundless_client
+            .boundless_market
+            .get_status(request_id, None)
+            .await
+        {
+            Ok(_) => {}
+            Err(err) => {
+                // No request for nonce
+                if matches!(err, MarketError::RequestNotFound(..)) {
+                    break None;
+                }
+                // Some other error that needs us to retry
+                error!("get_status error: {err:?}");
+                sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        }
         // Bypass order stream check if not specified in config
         match market.boundless_order_stream_url.is_some() {
             true => {
