@@ -35,8 +35,8 @@ use boundless_market::contracts::{
     Predicate, RequestError, RequestId, RequestStatus, Requirements,
 };
 use boundless_market::request_builder::{OfferParams, RequirementParams};
-use boundless_market::storage::{StorageProviderConfig, StorageProviderType};
-use boundless_market::{Deployment, GuestEnv, ProofRequest, StandardStorageProvider};
+use boundless_market::storage::{StorageUploaderConfig, StorageUploaderType};
+use boundless_market::{Deployment, GuestEnv, ProofRequest, StandardUploader};
 use bytemuck::NoUninit;
 use clap::Parser;
 use human_bytes::human_bytes;
@@ -62,7 +62,7 @@ pub struct BoundlessArgs {
     pub market: Option<MarketProviderConfig>,
     /// Storage provider for elf and input
     #[clap(flatten)]
-    pub storage: Option<StorageProviderConfig>,
+    pub storage: Option<StorageUploaderConfig>,
 
     /// Custom domain for file retrieval.
     /// Currently used to upload with a custom prefix and replace the download URL with this domain.
@@ -186,7 +186,7 @@ pub struct MarketProviderConfig {
 impl MarketProviderConfig {
     pub fn to_arg_vec(
         &self,
-        storage_provider_config: &Option<StorageProviderConfig>,
+        storage_provider_config: &Option<StorageUploaderConfig>,
     ) -> Vec<String> {
         // RPC/Wallet args
         let mut proving_args = vec![
@@ -276,15 +276,15 @@ impl MarketProviderConfig {
         ]);
         // Storage provider args
         if let Some(storage_cfg) = storage_provider_config {
-            match &storage_cfg.storage_provider {
-                StorageProviderType::S3 => {
+            match &storage_cfg.storage_uploader {
+                StorageUploaderType::S3 => {
                     proving_args.extend(vec![
-                        String::from("--storage-provider"),
+                        String::from("--storage-uploader"),
                         String::from("s3"),
-                        String::from("--s3-access-key"),
-                        storage_cfg.s3_access_key.clone().unwrap(),
-                        String::from("--s3-secret-key"),
-                        storage_cfg.s3_secret_key.clone().unwrap(),
+                        String::from("--aws-access-key-id"),
+                        storage_cfg.aws_access_key_id.clone().unwrap(),
+                        String::from("--aws-secret-access-key"),
+                        storage_cfg.aws_secret_access_key.clone().unwrap(),
                         String::from("--s3-bucket"),
                         storage_cfg.s3_bucket.clone().unwrap(),
                         String::from("--s3-url"),
@@ -293,9 +293,9 @@ impl MarketProviderConfig {
                         storage_cfg.aws_region.clone().unwrap(),
                     ]);
                 }
-                StorageProviderType::Pinata => {
+                StorageUploaderType::Pinata => {
                     proving_args.extend(vec![
-                        String::from("--storage-provider"),
+                        String::from("--storage-uploader"),
                         String::from("pinata"),
                         String::from("--pinata-jwt"),
                         storage_cfg.pinata_jwt.clone().unwrap(),
@@ -313,9 +313,9 @@ impl MarketProviderConfig {
                         ]);
                     }
                 }
-                StorageProviderType::File => {
+                StorageUploaderType::File => {
                     proving_args.extend(vec![
-                        String::from("--storage-provider"),
+                        String::from("--storage-uploader"),
                         String::from("file"),
                     ]);
                     if let Some(file_path) = &storage_cfg.file_path {
@@ -340,7 +340,7 @@ lazy_static! {
 #[allow(clippy::too_many_arguments)]
 pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     market: MarketProviderConfig,
-    storage: StorageProviderConfig,
+    storage: StorageUploaderConfig,
     r2_domain: Option<String>,
     image: (A, &[u8]),
     journal: Journal,
@@ -366,8 +366,9 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     };
 
     // Instantiate storage provider (used when R2 is not configured)
-    let storage_provider = StandardStorageProvider::from_config(&storage)
-        .context("StandardStorageProvider::from_config")
+    let storage_provider = StandardUploader::from_config(&storage)
+        .await
+        .context("StandardUploader::from_config")
         .map_err(ProvingError::OtherError)?;
 
     // Override deployment configuration if set
@@ -405,7 +406,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             .with_private_key(market.boundless_wallet_key.clone())
             .with_rpc_url(market.boundless_rpc_url.clone())
             .with_deployment(market_deployment.clone())
-            .with_storage_provider(Some(storage_provider.clone()))
+            .with_uploader(Some(storage_provider.clone()))
             .build()
             .await
             .context("ClientBuilder::build()")
@@ -481,7 +482,7 @@ pub async fn get_proof_request(
         match market.boundless_order_stream_url.is_some() {
             true => {
                 match boundless_client
-                    .fetch_proof_request(request_id, None, None)
+                    .fetch_proof_request(request_id, None, None, None, None)
                     .await
                 {
                     Ok((req, _)) => break Some(req),
@@ -489,7 +490,7 @@ pub async fn get_proof_request(
                         // No request for nonce
                         if matches!(
                             err,
-                            ClientError::MarketError(MarketError::RequestNotFound(_))
+                            ClientError::MarketError(MarketError::RequestNotFound(..))
                         ) {
                             break None;
                         }
@@ -503,13 +504,13 @@ pub async fn get_proof_request(
             false => {
                 match boundless_client
                     .boundless_market
-                    .get_submitted_request(request_id, None)
+                    .get_submitted_request(request_id, None, None, None)
                     .await
                 {
                     Ok((req, _)) => break Some(req),
                     Err(err) => {
                         // No request for nonce
-                        if matches!(err, MarketError::RequestNotFound(_)) {
+                        if matches!(err, MarketError::RequestNotFound(..)) {
                             break None;
                         }
                         // Some other error that needs us to retry
@@ -718,7 +719,7 @@ pub async fn retrieve_proof(
                 let (proof_request, _) = retry_res_timeout!(
                     15,
                     boundless_client
-                        .fetch_proof_request(request_id, None, None)
+                        .fetch_proof_request(request_id, None, None, None, None)
                         .await
                         .context("fetch_proof_request")
                 )
@@ -1138,16 +1139,16 @@ pub struct R2Storage {
 
 impl R2Storage {
     pub async fn new(
-        storage_config: &StorageProviderConfig,
+        storage_config: &StorageUploaderConfig,
         r2_domain: &str,
     ) -> anyhow::Result<Self> {
         // Extract S3 configuration
         let access_key = storage_config
-            .s3_access_key
+            .aws_access_key_id
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("S3 access key required for R2"))?;
         let secret_key = storage_config
-            .s3_secret_key
+            .aws_secret_access_key
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("S3 secret key required for R2"))?;
         let bucket = storage_config

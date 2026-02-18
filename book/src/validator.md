@@ -202,11 +202,11 @@ The default scale values give a 1 MHz prover 3x the amount of time it needs to f
 10x its expected proving time as overall timeout.
 ```
 
-#### Storage Provider
+#### Storage Uploader
 The below second set of parameters determine where the proven executable and its input are stored:
-* `storage-provider`: One of `s3`, `pinata`, or `file`.
-* `s3-access-key`: The `s3` access key.
-* `s3-secret-key`: The `s3` secret key.
+* `storage-uploader`: One of `s3`, `pinata`, or `file`.
+* `aws-access-key-id`: The `s3` access key.
+* `aws-secret-access-key`: The `s3` secret key.
 * `s3-bucket`: The `s3` bucket.
 * `s3-url`: The `s3` url.
 * `s3-use-presigned`: Use presigned URLs for S3.
