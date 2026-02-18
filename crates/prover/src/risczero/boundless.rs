@@ -273,6 +273,10 @@ impl MarketProviderConfig {
             self.boundless_order_min_expiry.to_string(),
             String::from("--boundless-order-check-interval"),
             self.boundless_order_check_interval.to_string(),
+            String::from("--boundless-enable-upload-caching"),
+            self.boundless_enable_upload_caching.to_string(),
+            String::from("--boundless-order-submission-cooldown"),
+            self.boundless_order_submission_cooldown.to_string(),
         ]);
         // Storage provider args
         if let Some(storage_cfg) = storage_provider_config {
