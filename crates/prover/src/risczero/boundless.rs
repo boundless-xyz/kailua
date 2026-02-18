@@ -313,6 +313,26 @@ impl MarketProviderConfig {
                         ]);
                     }
                 }
+                StorageUploaderType::Gcs => {
+                    proving_args.extend(vec![
+                        String::from("--storage-uploader"),
+                        String::from("gcs"),
+                        String::from("--gcs-bucket"),
+                        storage_cfg.gcs_bucket.clone().unwrap(),
+                    ]);
+                    if let Some(gcs_url) = &storage_cfg.gcs_url {
+                        proving_args.extend(vec![
+                            String::from("--gcs-url"),
+                            gcs_url.to_string(),
+                        ]);
+                    }
+                    if let Some(gcs_credentials_json) = &storage_cfg.gcs_credentials_json {
+                        proving_args.extend(vec![
+                            String::from("--gcs-credentials-json"),
+                            gcs_credentials_json.clone(),
+                        ]);
+                    }
+                }
                 StorageUploaderType::File => {
                     proving_args.extend(vec![
                         String::from("--storage-uploader"),
