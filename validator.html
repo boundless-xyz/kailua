@@ -470,16 +470,19 @@ The default scale values give a 1 MHz prover 3x the amount of time it needs to f
 10x its expected proving time as overall timeout.</p>
 </div>
 </div>
-<h4 id="storage-provider"><a class="header" href="#storage-provider">Storage Provider</a></h4>
+<h4 id="storage-uploader"><a class="header" href="#storage-uploader">Storage Uploader</a></h4>
 <p>The below second set of parameters determine where the proven executable and its input are stored:</p>
 <ul>
-<li><code>storage-provider</code>: One of <code>s3</code>, <code>pinata</code>, or <code>file</code>.</li>
-<li><code>s3-access-key</code>: The <code>s3</code> access key.</li>
-<li><code>s3-secret-key</code>: The <code>s3</code> secret key.</li>
+<li><code>storage-uploader</code>: One of <code>s3</code>, <code>gcs</code>, <code>pinata</code>, or <code>file</code>.</li>
+<li><code>aws-access-key-id</code>: The <code>s3</code> access key.</li>
+<li><code>aws-secret-access-key</code>: The <code>s3</code> secret key.</li>
 <li><code>s3-bucket</code>: The <code>s3</code> bucket.</li>
 <li><code>s3-url</code>: The <code>s3</code> url.</li>
 <li><code>s3-use-presigned</code>: Use presigned URLs for S3.</li>
 <li><code>aws-region</code>: The <code>s3</code> region.</li>
+<li><code>gcs-bucket</code>: The GCS bucket name.</li>
+<li><code>gcs-url</code>: The GCS endpoint URL (optional, for emulators).</li>
+<li><code>gcs-credentials-json</code>: GCS service account credentials JSON (optional, uses ADC if not set).</li>
 <li><code>pinata-jwt</code>: The private <code>pinata</code> jwt.</li>
 <li><code>pinata-api-url</code>: The <code>pinata</code> api URL.</li>
 <li><code>ipfs-gateway-url</code>: The <code>pinata</code> gateway URL.</li>
