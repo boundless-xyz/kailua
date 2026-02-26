@@ -15,7 +15,7 @@ jobs:
   build-and-push:
     # Run on push, workflow_dispatch, or PRs from the same repo (skip fork PRs)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, docker, prod]
     permissions:
       contents: read
       packages: write
@@ -46,6 +46,6 @@ jobs:
           platforms: linux/amd64
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}
           build-args: |
-            CARGO_BUILD_JOBS=2
+            CARGO_BUILD_JOBS=16
           cache-from: type=gha
           cache-to: type=gha,mode=max
