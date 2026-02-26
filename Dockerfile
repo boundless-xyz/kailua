@@ -21,7 +21,7 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=shared \
     --mount=type=cache,target=/root/.cargo/git,sharing=shared \
     --mount=type=cache,target=/kailua/target,sharing=private,id=rust-target-${TARGETARCH} \
-    cargo build --jobs ${CARGO_BUILD_JOBS} --release -F disable-dev-mode -F eigen -F celestia --locked \
+    cargo build --jobs ${CARGO_BUILD_JOBS} --release -F disable-dev-mode -F eigen -F celestia -F prove --locked \
     && mkdir out \
     && mv target/release/kailua-cli out/ \
     && strip out/kailua-cli;
