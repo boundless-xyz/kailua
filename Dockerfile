@@ -27,6 +27,11 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=shared \
     && strip out/kailua-cli;
 
 FROM rust:1.89 as kailua
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build-environment /kailua/out/kailua-cli /usr/local/bin/kailua-cli
 
 ENTRYPOINT ["/bin/sh", "-c"]
