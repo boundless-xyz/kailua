@@ -117,22 +117,37 @@ pub async fn fetch_precondition_data(
         }
 
         let precondition_validation_data = if cfg.precondition_params.len() == 3 {
-            let mut fetch_requests = Vec::with_capacity(cfg.precondition_block_hashes.len());
-            for (block_hash, blob_hash) in zip(
+            // Create futures for parallel blob fetching
+            let fetch_futures: Vec<_> = zip(
                 cfg.precondition_block_hashes.iter(),
                 cfg.precondition_blob_hashes.iter(),
-            ) {
-                info!("Fetching blob hash {blob_hash} from block {block_hash}");
-                fetch_requests.push(
-                    get_blob_fetch_request(
-                        &providers.l1,
-                        cfg.timeouts.eth_rpc_timeout,
-                        *block_hash,
-                        *blob_hash,
-                    )
-                    .await?,
-                );
+            )
+            .map(|(block_hash, blob_hash)| {
+                let l1_provider = providers.l1.clone();
+                let timeout = cfg.timeouts.eth_rpc_timeout;
+                let block_hash = *block_hash;
+                let blob_hash = *blob_hash;
+                async move {
+                    info!("Fetching blob hash {blob_hash} from block {block_hash}");
+                    get_blob_fetch_request(&l1_provider, timeout, block_hash, blob_hash).await
+                }
+            })
+            .collect();
+
+            info!(
+                "Fetching {} blob references in parallel",
+                fetch_futures.len()
+            );
+
+            // Execute all blob fetches in parallel
+            let fetch_results = join_all(fetch_futures).await;
+
+            // Collect results, propagating any errors
+            let mut fetch_requests = Vec::with_capacity(fetch_results.len());
+            for result in fetch_results {
+                fetch_requests.push(result?);
             }
+
             ProposalPrecondition {
                 proposal_l2_head_number: cfg.precondition_params[0],
                 proposal_output_count: cfg.precondition_params[1],
