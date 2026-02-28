@@ -36,6 +36,7 @@ use opentelemetry::trace::{TraceContextExt, Tracer};
 use std::env::set_var;
 use std::iter::zip;
 use tracing::{error, info, warn};
+use futures::future::join_all;
 
 pub async fn get_blob_fetch_request(
     l1_provider: &RootProvider,
@@ -159,6 +160,18 @@ pub async fn fetch_precondition_data(
     }
 }
 
+/// Represents pre-fetched block metadata for a preflight job
+struct PreflightJobMetadata {
+    /// The target L2 block number for this job
+    target_block: u64,
+    /// The agreed L2 head hash (starting point)
+    agreed_l2_head_hash: B256,
+    /// The agreed L2 output root
+    agreed_l2_output_root: B256,
+    /// The claimed L2 output root (ending point)
+    claimed_l2_output_root: B256,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn concurrent_execution_preflight(
     args: &ProveArgs,
@@ -190,57 +203,102 @@ pub async fn concurrent_execution_preflight(
     .header
     .number;
 
-    let mut num_blocks = args.kona.claimed_l2_block_number - starting_block;
+    let num_blocks = args.kona.claimed_l2_block_number - starting_block;
     if num_blocks == 0 {
         return Ok(true);
     }
-    let blocks_per_thread = num_blocks / args.proving.num_concurrent_preflights;
-    let mut extra_blocks = num_blocks % args.proving.num_concurrent_preflights;
-    let mut jobs = vec![];
-    let mut args = args.clone();
-    args.proving.max_block_executions = usize::MAX;
-    args.proving.max_block_derivations = u64::MAX;
-    args.proving.max_witness_size = usize::MAX;
-    while num_blocks > 0 {
-        let processed_blocks = if extra_blocks > 0 {
-            extra_blocks -= 1;
-            blocks_per_thread + 1
-        } else {
-            blocks_per_thread
-        };
-        num_blocks = num_blocks.saturating_sub(processed_blocks);
 
-        // update ending block
-        args.kona.claimed_l2_block_number = await_tel!(
-            context,
-            tracer,
-            "l2_provider get_block_by_hash agreed_l2_head_hash",
-            retry_res_ctx_timeout!(
-                args.timeouts.op_geth_timeout,
-                l2_provider
-                    .get_block_by_hash(args.kona.agreed_l2_head_hash)
-                    .await
-                    .context("l2_provider get_block_by_hash agreed_l2_head_hash")?
-                    .ok_or_else(|| anyhow!("Failed to fetch agreed l2 block"))
-            )
-        )
-        .header
-        .number
-            + processed_blocks;
-        args.kona.claimed_l2_output_root = await_tel!(
-            context,
-            tracer,
-            "output_at_block claimed_l2_block_number",
-            retry_res_ctx_timeout!(
-                args.timeouts.op_node_timeout,
-                op_node_provider
-                    .output_at_block(args.kona.claimed_l2_block_number)
-                    .await
-            )
-        );
-        // queue and start new job
+    // Calculate block boundaries for each thread
+    let blocks_per_thread = num_blocks / args.proving.num_concurrent_preflights;
+    let extra_blocks = num_blocks % args.proving.num_concurrent_preflights;
+
+    // Compute all boundary block numbers upfront
+    let mut boundary_blocks = Vec::with_capacity(args.proving.num_concurrent_preflights as usize + 1);
+    boundary_blocks.push(starting_block);
+    let mut current_block = starting_block;
+    for i in 0..args.proving.num_concurrent_preflights {
+        let blocks_for_this_thread = blocks_per_thread + if i < extra_blocks { 1 } else { 0 };
+        current_block += blocks_for_this_thread;
+        boundary_blocks.push(current_block);
+    }
+
+    info!(
+        "Prefetching metadata for {} boundary blocks in parallel",
+        boundary_blocks.len()
+    );
+
+    // Prefetch all block hashes in parallel (we need hash for each boundary block)
+    let block_hash_futures: Vec<_> = boundary_blocks
+        .iter()
+        .map(|&block_num| {
+            let l2_provider = l2_provider.clone();
+            let timeout = args.timeouts.op_geth_timeout;
+            async move {
+                retry_res_ctx_timeout!(
+                    timeout,
+                    l2_provider
+                        .get_block_by_number(BlockNumberOrTag::Number(block_num))
+                        .await
+                        .context("get_block_by_number for prefetch")?
+                        .ok_or_else(|| anyhow!("Failed to fetch block {block_num}"))
+                )
+                .await
+            }
+        })
+        .collect();
+
+    // Prefetch all output roots in parallel (we need output root for each boundary block)
+    let output_root_futures: Vec<_> = boundary_blocks
+        .iter()
+        .map(|&block_num| {
+            let op_node = op_node_provider.clone();
+            let timeout = args.timeouts.op_node_timeout;
+            async move {
+                retry_res_ctx_timeout!(timeout, op_node.output_at_block(block_num).await).await
+            }
+        })
+        .collect();
+
+    // Execute all prefetch requests in parallel
+    info!("Executing parallel prefetch for {} blocks", boundary_blocks.len());
+    let (blocks, outputs) = tokio::join!(
+        join_all(block_hash_futures),
+        join_all(output_root_futures)
+    );
+
+    info!(
+        "Prefetched {} blocks and {} output roots",
+        blocks.len(),
+        outputs.len()
+    );
+
+    // Build job metadata from prefetched data
+    let mut job_metadata = Vec::with_capacity(args.proving.num_concurrent_preflights as usize);
+    for i in 0..args.proving.num_concurrent_preflights as usize {
+        job_metadata.push(PreflightJobMetadata {
+            target_block: boundary_blocks[i + 1],
+            agreed_l2_head_hash: blocks[i].header.hash,
+            agreed_l2_output_root: outputs[i],
+            claimed_l2_output_root: outputs[i + 1],
+        });
+    }
+
+    // Now spawn all tasks without any RPC blocking
+    let mut base_args = args.clone();
+    base_args.proving.max_block_executions = usize::MAX;
+    base_args.proving.max_block_derivations = u64::MAX;
+    base_args.proving.max_witness_size = usize::MAX;
+
+    let mut jobs = Vec::with_capacity(job_metadata.len());
+    for metadata in job_metadata {
+        let mut job_args = base_args.clone();
+        job_args.kona.agreed_l2_head_hash = metadata.agreed_l2_head_hash;
+        job_args.kona.agreed_l2_output_root = metadata.agreed_l2_output_root;
+        job_args.kona.claimed_l2_block_number = metadata.target_block;
+        job_args.kona.claimed_l2_output_root = metadata.claimed_l2_output_root;
+
         let task = tokio::spawn(crate::tasks::compute_cached_proof(
-            args.clone(),
+            job_args,
             rollup_config.clone(),
             l1_config.clone(),
             disk_kv_store.clone(),
@@ -256,30 +314,9 @@ pub async fn concurrent_execution_preflight(
             true,
             false,
         ));
-        jobs.push((args.kona.claimed_l2_block_number, task));
-        // update starting block for next job
-        if num_blocks > 0 {
-            args.kona.agreed_l2_head_hash = await_tel!(
-                context,
-                tracer,
-                "l2_provider get_block_by_number claimed_l2_block_number",
-                retry_res_ctx_timeout!(
-                    args.timeouts.op_geth_timeout,
-                    l2_provider
-                        .get_block_by_number(BlockNumberOrTag::Number(
-                            args.kona.claimed_l2_block_number
-                        ))
-                        .await
-                        .context("l2_provider get_block_by_number claimed_l2_block_number")?
-                        .ok_or_else(|| anyhow!("Failed to claimed l2 block"))
-                )
-            )
-            .header
-            .hash;
-
-            args.kona.agreed_l2_output_root = args.kona.claimed_l2_output_root;
-        }
+        jobs.push((metadata.target_block, task));
     }
+
     // Await all tasks
     let mut l1_head_sufficient = true;
     for (target_l2_height, job) in jobs {
