@@ -45,6 +45,7 @@ use std::time::Duration;
 use tempfile::tempdir;
 use tokio::fs::remove_dir_all;
 use tracing::{error, info, warn};
+use futures::future::join_all;
 
 pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt>> {
     let tracer = tracer("kailua");
@@ -167,8 +168,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     if let (Some(l2_provider), Some(op_node_provider)) =
         (l2_provider.as_ref(), op_node_provider.as_ref())
     {
-        // divide into subtasks
-        let mut agreed_l2_block_number = await_tel!(
+        // Get starting block number
+        let starting_block_number = await_tel!(
             context,
             tracer,
             "l2_provider get_block_by_hash agreed_l2_head_hash",
@@ -183,76 +184,113 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         )
         .header
         .number;
-        let mut agreed_l2_output_root = args.kona.agreed_l2_output_root;
-        let mut agreed_l2_head_hash = args.kona.agreed_l2_head_hash;
-        let mut num_continuous_derives = 0u64;
-        while agreed_l2_output_root != args.kona.claimed_l2_output_root {
-            let claimed_l2_block_number = agreed_l2_block_number
+
+        // Compute all boundary block numbers upfront
+        let mut boundary_blocks = vec![starting_block_number];
+        let mut current_block = starting_block_number;
+        while current_block < args.kona.claimed_l2_block_number {
+            current_block = current_block
                 .saturating_add(args.proving.max_block_derivations)
                 .min(args.kona.claimed_l2_block_number);
-            // decide whether to start the next derivation as a dependent on this task
-            num_continuous_derives +=
-                claimed_l2_block_number.saturating_sub(agreed_l2_block_number);
-            let should_continue_derivation =
-                num_continuous_derives < args.proving.max_derivation_length;
-            if !should_continue_derivation {
-                // reset the counter for the next iteration
-                num_continuous_derives = 0;
-            }
-            // Create sub-proof job
-            let mut job_args = args.clone();
-            job_args.kona.agreed_l2_output_root = agreed_l2_output_root;
-            job_args.kona.agreed_l2_head_hash = agreed_l2_head_hash;
-            job_args.kona.claimed_l2_output_root = await_tel!(
-                context,
-                tracer,
-                "claimed_l2_output_root",
-                retry_res_ctx_timeout!(
-                    args.timeouts.op_node_timeout,
-                    op_node_provider
-                        .output_at_block(claimed_l2_block_number)
-                        .await
-                )
+            boundary_blocks.push(current_block);
+        }
+
+        if boundary_blocks.len() > 1 {
+            info!(
+                "Prefetching metadata for {} boundary blocks in parallel for prove",
+                boundary_blocks.len()
             );
-            job_args.kona.claimed_l2_block_number = claimed_l2_block_number;
-            // advance agreed pointers
-            agreed_l2_block_number = claimed_l2_block_number;
-            agreed_l2_output_root = job_args.kona.claimed_l2_output_root;
-            agreed_l2_head_hash = await_tel!(
-                context,
-                tracer,
-                "l2_provider get_block_by_number claimed_l2_block_number",
-                retry_res_ctx_timeout!(
-                    args.timeouts.op_geth_timeout,
-                    l2_provider
-                        .get_block_by_number(BlockNumberOrTag::Number(claimed_l2_block_number))
+
+            // Prefetch all output roots in parallel
+            let output_root_futures: Vec<_> = boundary_blocks
+                .iter()
+                .map(|&block_num| {
+                    let op_node = op_node_provider.clone();
+                    let timeout = args.timeouts.op_node_timeout;
+                    async move {
+                        retry_res_ctx_timeout!(timeout, op_node.output_at_block(block_num).await)
+                            .await
+                    }
+                })
+                .collect();
+
+            // Prefetch all block hashes in parallel
+            let block_hash_futures: Vec<_> = boundary_blocks
+                .iter()
+                .map(|&block_num| {
+                    let l2_prov = l2_provider.clone();
+                    let timeout = args.timeouts.op_geth_timeout;
+                    async move {
+                        retry_res_ctx_timeout!(
+                            timeout,
+                            l2_prov
+                                .get_block_by_number(BlockNumberOrTag::Number(block_num))
+                                .await
+                                .context("get_block_by_number for prefetch")?
+                                .ok_or_else(|| anyhow!("Failed to fetch block {block_num}"))
+                        )
                         .await
-                        .context("l2_provider get_block_by_number claimed_l2_block_number")?
-                        .ok_or_else(|| anyhow!("Failed to fetch claimed l2 block"))
-                )
-            )
-            .header
-            .hash;
-            // instantiate cached driver relays
-            let is_last_iteration = agreed_l2_output_root == args.kona.claimed_l2_output_root;
-            let (derivation_trace_sender, new_receiver) = (!is_last_iteration
-                && should_continue_derivation)
-                .then(|| async_channel::bounded::<CachedDriver>(1))
-                .unzip();
-            // queue up job
-            num_proofs += 1;
-            prover_channel
-                .0
-                .send((
-                    false,
-                    job_args.clone(),
-                    derivation_cache_receiver,
-                    derivation_trace_sender,
-                ))
-                .await
-                .expect("Failed to send prover task");
-            // prepare receiver for next iteration if any
-            derivation_cache_receiver = new_receiver;
+                    }
+                })
+                .collect();
+
+            // Execute all prefetch requests in parallel
+            let (output_roots, blocks) = tokio::join!(
+                join_all(output_root_futures),
+                join_all(block_hash_futures)
+            );
+
+            info!(
+                "Prefetched {} output roots and {} blocks for prove subtasks",
+                output_roots.len(),
+                blocks.len()
+            );
+
+            // Now create jobs using prefetched data
+            let mut num_continuous_derives = 0u64;
+            for i in 0..(boundary_blocks.len() - 1) {
+                let agreed_l2_block_number = boundary_blocks[i];
+                let claimed_l2_block_number = boundary_blocks[i + 1];
+
+                // Compute continuous derivation tracking
+                num_continuous_derives +=
+                    claimed_l2_block_number.saturating_sub(agreed_l2_block_number);
+                let should_continue_derivation =
+                    num_continuous_derives < args.proving.max_derivation_length;
+                if !should_continue_derivation {
+                    num_continuous_derives = 0;
+                }
+
+                // Create sub-proof job using prefetched data
+                let mut job_args = args.clone();
+                job_args.kona.agreed_l2_output_root = output_roots[i];
+                job_args.kona.agreed_l2_head_hash = blocks[i].header.hash;
+                job_args.kona.claimed_l2_output_root = output_roots[i + 1];
+                job_args.kona.claimed_l2_block_number = claimed_l2_block_number;
+
+                // instantiate cached driver relays
+                let is_last_iteration = i + 1 == boundary_blocks.len() - 1;
+                let (derivation_trace_sender, new_receiver) = (!is_last_iteration
+                    && should_continue_derivation)
+                    .then(|| async_channel::bounded::<CachedDriver>(1))
+                    .unzip();
+
+                // queue up job
+                num_proofs += 1;
+                prover_channel
+                    .0
+                    .send((
+                        false,
+                        job_args.clone(),
+                        derivation_cache_receiver,
+                        derivation_trace_sender,
+                    ))
+                    .await
+                    .expect("Failed to send prover task");
+
+                // prepare receiver for next iteration if any
+                derivation_cache_receiver = new_receiver;
+            }
         }
     } else {
         // one big task
