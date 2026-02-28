@@ -37,6 +37,7 @@ use std::env::set_var;
 use std::iter::zip;
 use tracing::{error, info, warn};
 use futures::future::join_all;
+use futures::stream::{FuturesUnordered, StreamExt};
 
 pub async fn get_blob_fetch_request(
     l1_provider: &RootProvider,
@@ -289,38 +290,45 @@ pub async fn concurrent_execution_preflight(
     base_args.proving.max_block_derivations = u64::MAX;
     base_args.proving.max_witness_size = usize::MAX;
 
-    let mut jobs = Vec::with_capacity(job_metadata.len());
-    for metadata in job_metadata {
-        let mut job_args = base_args.clone();
-        job_args.kona.agreed_l2_head_hash = metadata.agreed_l2_head_hash;
-        job_args.kona.agreed_l2_output_root = metadata.agreed_l2_output_root;
-        job_args.kona.claimed_l2_block_number = metadata.target_block;
-        job_args.kona.claimed_l2_output_root = metadata.claimed_l2_output_root;
+    // Spawn all tasks and collect into FuturesUnordered for as-completed processing
+    let mut futures: FuturesUnordered<_> = job_metadata
+        .into_iter()
+        .map(|metadata| {
+            let mut job_args = base_args.clone();
+            job_args.kona.agreed_l2_head_hash = metadata.agreed_l2_head_hash;
+            job_args.kona.agreed_l2_output_root = metadata.agreed_l2_output_root;
+            job_args.kona.claimed_l2_block_number = metadata.target_block;
+            job_args.kona.claimed_l2_output_root = metadata.claimed_l2_output_root;
 
-        let task = tokio::spawn(crate::tasks::compute_cached_proof(
-            job_args,
-            rollup_config.clone(),
-            l1_config.clone(),
-            disk_kv_store.clone(),
-            Precondition::default(),
-            B256::ZERO,
-            vec![],
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            false,
-            true,
-            false,
-        ));
-        jobs.push((metadata.target_block, task));
-    }
+            let target_block = metadata.target_block;
+            let task = tokio::spawn(crate::tasks::compute_cached_proof(
+                job_args,
+                rollup_config.clone(),
+                l1_config.clone(),
+                disk_kv_store.clone(),
+                Precondition::default(),
+                B256::ZERO,
+                vec![],
+                None,
+                None,
+                vec![],
+                vec![],
+                vec![],
+                false,
+                true,
+                false,
+            ));
 
-    // Await all tasks
+            // Wrap the task with its target block number
+            async move { (target_block, task.await) }
+        })
+        .collect();
+
+    // Process results as they complete (not in order)
+    // This allows faster error detection and better resource utilization
     let mut l1_head_sufficient = true;
-    for (target_l2_height, job) in jobs {
-        let result = job.await?;
+    while let Some((target_l2_height, join_result)) = futures.next().await {
+        let result = join_result?;
         let claimed_l2_block_number = match result {
             Err(e) => {
                 let ProvingError::NotSeekingProof(_, _, executions, ..) = e else {
