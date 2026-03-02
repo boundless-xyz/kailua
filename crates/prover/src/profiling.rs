@@ -227,6 +227,61 @@ impl Profile {
         self.snarks.unwrap_or_default() + self.starks.unwrap_or_default() + 1
     }
 
+    pub async fn gas(&self) -> Option<u64> {
+        let Some(mut gas) = self.gas else { return None };
+        for proof_id in &self.children {
+            let file_name = proof_id_file_name(*proof_id);
+            if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
+            {
+                if let Some(child_value) = prior_receipt.1.gas {
+                    gas -= child_value;
+                }
+            }
+        }
+        if gas == 0 {
+            return None;
+        }
+        Some(gas)
+    }
+
+    pub async fn input_bytes(&self) -> Option<u64> {
+        let Some(mut input_bytes) = self.input_bytes else {
+            return None;
+        };
+        for proof_id in &self.children {
+            let file_name = proof_id_file_name(*proof_id);
+            if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
+            {
+                if let Some(child_value) = prior_receipt.1.input_bytes {
+                    input_bytes -= child_value;
+                }
+            }
+        }
+        if input_bytes == 0 {
+            return None;
+        }
+        Some(input_bytes)
+    }
+
+    pub async fn snarks(&self) -> Option<u64> {
+        let Some(mut snarks) = self.snarks else {
+            return None;
+        };
+        for proof_id in &self.children {
+            let file_name = proof_id_file_name(*proof_id);
+            if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
+            {
+                if let Some(child_value) = prior_receipt.1.snarks {
+                    snarks -= child_value;
+                }
+            }
+        }
+        if snarks == 0 {
+            return None;
+        }
+        Some(snarks)
+    }
+
     pub fn report_summary(&self) {
         info!(
             "Proved: {} blocks having {} transactions totaling {} gas with {} cycles over {} proofs in {}.",

@@ -132,6 +132,16 @@ pub struct MarketProviderConfig {
     /// Whether to skip preflighting execution and assume a fixed cycle count.
     #[clap(long, env, required = false)]
     pub boundless_assume_cycle_count: Option<u64>,
+    /// Whether to skip preflighting execution and assume a fixed cycle count per gas.
+    #[clap(long, env, required = false)]
+    pub boundless_assume_cycles_per_gas: Option<u64>,
+    /// Whether to skip preflighting execution and assume a fixed cycle count per input byte.
+    #[clap(long, env, required = false)]
+    pub boundless_assume_cycles_per_byte: Option<u64>,
+    /// Whether to skip preflighting execution and assume a fixed cycle count per recursive snark.
+    #[clap(long, env, required = false)]
+    pub boundless_assume_cycles_per_snark: Option<u64>,
+
     /// Starting price (wei) per cycle of the proving order
     #[clap(long, env, required = false, default_value = "200000000")]
     pub boundless_cycle_min_wei: U256,
@@ -808,22 +818,33 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     let req_file_name = request_file_name(image.0, journal.clone());
     let request_cycles = match (
         market.boundless_assume_cycle_count,
+        (
+            market.boundless_assume_cycles_per_gas,
+            market.boundless_assume_cycles_per_byte,
+            market.boundless_assume_cycles_per_snark,
+        ),
         read_bincoded_file::<BoundlessRequest>(data_dir, &req_file_name).await,
     ) {
-        (_, Ok(request)) => {
-            // we sleep here so to avoid pinata api rate limits
-            sleep(Duration::from_secs(2)).await;
-            request
-        }
-        (Some(cycle_count), _) => {
-            // we sleep here so to avoid pinata api rate limits
-            sleep(Duration::from_secs(2)).await;
+        (_, _, Ok(request)) => request,
+        (Some(cycle_count), _, _) => BoundlessRequest {
+            total_cycle_count: cycle_count,
+            user_cycle_count: cycle_count,
+        },
+        (_, (Some(cycles_per_gas), Some(cycles_per_byte), Some(cycles_per_snark)), _) => {
+            let program_cycles = if let Some(gas) = profile.gas().await {
+                // This is a complete proof, or an execution-only proof
+                cycles_per_gas * gas
+            } else {
+                // This is a tail proof, i.e. L1 scanning only
+                cycles_per_byte * profile.input_bytes().await.unwrap()
+            };
+            let snark_cycles = cycles_per_snark * profile.snarks().await.unwrap_or_default();
             BoundlessRequest {
-                total_cycle_count: cycle_count,
-                user_cycle_count: cycle_count,
+                total_cycle_count: program_cycles + snark_cycles,
+                user_cycle_count: program_cycles + snark_cycles,
             }
         }
-        (None, Err(err)) => {
+        (None, _, Err(err)) => {
             warn!("Preflighting execution: {err:?}");
             let preflight_witness_slices = witness_slices.clone();
             let preflight_witness_frames = witness_frames.clone();

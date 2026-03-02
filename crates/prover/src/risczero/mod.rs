@@ -63,15 +63,16 @@ pub async fn seek_proof(
         info!("Proving skipped. Proof file {file_name} already exists.");
     }
 
-    // accrue input data
-    profile = profile
-        .with_start_time(current_time())
-        .with_witness_frames(&witness_frames);
     // separate sub-proof data
     let stitched_receipts = stitched_proofs
         .iter()
         .map(|r| r.0.clone())
         .collect::<Vec<_>>();
+    // accrue input data
+    profile = profile
+        .with_start_time(current_time())
+        .with_witness_frames(&witness_frames)
+        .with_proofs(proving.image().0, &stitched_proofs);
 
     // compute the zkvm proof
     let mut proof = match (boundless.market, boundless.storage) {
@@ -121,10 +122,7 @@ pub async fn seek_proof(
     };
 
     // accumulate sub-proof data
-    proof.1 = proof
-        .1
-        .with_finish_time(current_time())
-        .with_proofs(proving.image().0, &stitched_proofs);
+    proof.1 = proof.1.with_finish_time(current_time());
 
     // Save proof file to disk
     if journal != proof.0.journal {
