@@ -142,6 +142,13 @@ pub struct MarketProviderConfig {
     #[clap(long, env, required = false)]
     pub boundless_assume_cycles_per_snark: Option<u64>,
 
+    /// How much % to increase the price of the proving order by after it expires.
+    #[clap(long, env, required = false, default_value_t = 10)]
+    pub boundless_expired_price_inc_perc: u64,
+    /// How much % to increase the time allowed for the proving order by after it expires.
+    #[clap(long, env, required = false, default_value_t = 4)]
+    pub boundless_expired_time_inc_perc: u64,
+
     /// Starting price (wei) per cycle of the proving order
     #[clap(long, env, required = false, default_value = "200000000")]
     pub boundless_cycle_min_wei: U256,
@@ -457,8 +464,8 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
         .with_selector((Selector::groth16_latest() as u32).into());
 
     // Wait for a market request to be fulfilled
+    let mut attempt = 0;
     loop {
-        // todo: price increase / timing relaxation
         match request_proof(
             &market,
             &boundless_client,
@@ -472,9 +479,16 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             &requirements,
             profile.clone(),
             data_dir,
+            attempt,
         )
         .await
         {
+            Err(ProvingError::ProvingTimeout) => {
+                error!("(Retrying) Boundless request expired.");
+                sleep(Duration::from_secs(1)).await;
+                // increase price / relax timeouts on next attempt
+                attempt += 1;
+            }
             Err(ProvingError::OtherError(e)) => {
                 error!("(Retrying) Boundless request failed: {e:?}");
                 sleep(Duration::from_secs(1)).await;
@@ -813,6 +827,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     requirements: &Requirements,
     profile: Profile,
     data_dir: Option<&PathBuf>,
+    attempt: u64,
 ) -> Result<ProfiledReceipt, ProvingError> {
     // Get cycle count
     let req_file_name = request_file_name(image.0, journal.clone());
@@ -1061,11 +1076,18 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
 
     let priced_cycles =
         U256::from((market.boundless_mega_cycle_min << 20).max(request_cycles.total_cycle_count));
-    let min_price = market.boundless_cycle_min_wei * priced_cycles;
-    let max_price = market.boundless_cycle_max_wei * priced_cycles;
+    let price_increase_numerator =
+        U256::from(100 + attempt * market.boundless_expired_price_inc_perc);
+    let min_price =
+        market.boundless_cycle_min_wei * priced_cycles * price_increase_numerator / U256::from(100);
+    let max_price =
+        market.boundless_cycle_max_wei * priced_cycles * price_increase_numerator / U256::from(100);
+
+    let time_increase_factor = market.boundless_expired_price_inc_perc as f64 / 100.0 + 1.0;
     let timed_mega_cycles = market
         .boundless_mega_cycle_min
-        .max(request_cycles.total_cycle_count.div_ceil(1 << 20)) as f64;
+        .max(request_cycles.total_cycle_count.div_ceil(1 << 20)) as f64
+        * time_increase_factor;
     let bid_delay_time = market
         .boundless_order_min_bid_delay
         .max((market.boundless_order_bid_delay_factor * timed_mega_cycles) as u64);
@@ -1145,7 +1167,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     }
 
     // Wait for request fulfillment
-    retrieve_proof(
+    match retrieve_proof(
         boundless_client,
         request_id,
         image.0,
@@ -1154,8 +1176,14 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         profile,
     )
     .await
-    .context("retrieve_proof")
-    .map_err(|e| ProvingError::OtherError(anyhow!(e)))
+    {
+        Err(ClientError::MarketError(MarketError::RequestHasExpired(_))) => {
+            Err(ProvingError::ProvingTimeout)
+        }
+        result => result
+            .context("retrieve_proof")
+            .map_err(|e| ProvingError::OtherError(anyhow!(e))),
+    }
 }
 
 pub fn request_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> String {

@@ -414,6 +414,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                     ProvingError::NotSeekingProof(..) => {
                         unreachable!("NotSeekingProof bubbled up")
                     }
+                    ProvingError::ProvingTimeout => {
+                        unreachable!("ProvingTimeout bubbled up")
+                    }
                     ProvingError::SkippingDerivation(proofs) => {
                         info!(
                             "Successfully proved execution-only for {num_blocks} blocks ({starting_block}..{last_block}) over {proofs} proofs",
