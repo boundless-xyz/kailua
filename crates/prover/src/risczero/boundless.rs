@@ -1083,7 +1083,8 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     let max_price =
         market.boundless_cycle_max_wei * priced_cycles * price_increase_numerator / U256::from(100);
 
-    let time_increase_factor = market.boundless_expired_price_inc_perc as f64 / 100.0 + 1.0;
+    let time_increase_factor =
+        (attempt * market.boundless_expired_price_inc_perc) as f64 / 100.0 + 1.0;
     let timed_mega_cycles = market
         .boundless_mega_cycle_min
         .max(request_cycles.total_cycle_count.div_ceil(1 << 20)) as f64
