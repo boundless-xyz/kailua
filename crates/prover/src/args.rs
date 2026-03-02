@@ -77,6 +77,15 @@ pub struct ProvingArgs {
     /// Whether to export profiling data to a CSV file
     #[clap(long, env, default_value_t = false)]
     pub export_profile_csv: bool,
+    /// Whether to skip the L1 data prefetch phase
+    #[clap(long, env, default_value_t = false)]
+    pub skip_l1_prefetch: bool,
+    /// Number of concurrent L1 block fetches during prefetch
+    #[clap(long, env, default_value_t = 32)]
+    pub l1_prefetch_concurrency: usize,
+    /// Number of concurrent blob fetches during prefetch
+    #[clap(long, env, default_value_t = 8)]
+    pub blob_prefetch_concurrency: usize,
 
     #[clap(flatten)]
     #[cfg(feature = "eigen")]
@@ -108,10 +117,18 @@ impl ProvingArgs {
                     .then(|| String::from("--skip-derivation-proof")),
                 self.skip_await_proof
                     .then(|| String::from("--skip-await-proof")),
+                self.skip_l1_prefetch
+                    .then(|| String::from("--skip-l1-prefetch")),
             ]
             .into_iter()
             .flatten(),
         );
+        proving_args.extend(vec![
+            String::from("--l1-prefetch-concurrency"),
+            self.l1_prefetch_concurrency.to_string(),
+            String::from("--blob-prefetch-concurrency"),
+            self.blob_prefetch_concurrency.to_string(),
+        ]);
         if let Some(payout_recipient_address) = &self.payout_recipient_address {
             proving_args.extend(vec![
                 // wallet address for payouts

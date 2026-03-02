@@ -28,6 +28,7 @@ pub mod hana;
 #[cfg(feature = "eigen")]
 pub mod hokulea;
 pub mod kv;
+pub mod l1_prefetch;
 pub mod preflight;
 pub mod profiling;
 pub mod proof;

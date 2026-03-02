@@ -123,6 +123,17 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
 
     // create concurrent db
     let disk_kv_store = create_disk_kv_store(&args.kona);
+    // aggressively prefetch L1 data before preflight
+    if !args.kona.is_offline() {
+        crate::l1_prefetch::l1_prefetch(
+            &args,
+            &rollup_config,
+            disk_kv_store.clone(),
+            l2_provider.as_ref(),
+        )
+        .await
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+    }
     // perform preflight
     if args.proving.num_concurrent_preflights == 0 {
         warn!("Performing mandatory single-thread preflight.");
