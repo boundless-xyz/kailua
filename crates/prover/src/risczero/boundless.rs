@@ -29,7 +29,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
 use boundless_market::alloy::providers::Provider;
 use boundless_market::alloy::signers::local::PrivateKeySigner;
-use boundless_market::client::{Client, ClientError};
+use boundless_market::client::{Client, ClientError, FundingMode};
 use boundless_market::contracts::boundless_market::MarketError;
 use boundless_market::contracts::{
     Predicate, RequestError, RequestId, RequestStatus, Requirements,
@@ -181,9 +181,35 @@ pub struct MarketProviderConfig {
     /// Time in seconds between attempts to submit new orders
     #[clap(long, env, required = false, default_value_t = 12)]
     pub boundless_order_submission_cooldown: u64,
+
+    /// Funding mode for order submission.
+    /// Options: "never", "always", "available-balance", "below-threshold".
+    /// When "below-threshold", also set --boundless-order-funding-threshold.
+    #[clap(long, env, required = false, default_value = "never")]
+    pub boundless_order_funding_mode: String,
+
+    /// Threshold (wei) for below-threshold funding mode.
+    /// Only used when --boundless-order-funding-mode is "below-threshold".
+    #[clap(long, env, required = false)]
+    pub boundless_order_funding_threshold: Option<U256>,
 }
 
 impl MarketProviderConfig {
+    pub fn funding_mode(&self) -> FundingMode {
+        match self.boundless_order_funding_mode.as_str() {
+            "always" => FundingMode::Always,
+            "never" => FundingMode::Never,
+            "available-balance" => FundingMode::AvailableBalance,
+            "below-threshold" => FundingMode::BelowThreshold(
+                self.boundless_order_funding_threshold
+                    .expect("--boundless-order-funding-threshold required when funding mode is below-threshold"),
+            ),
+            other => panic!(
+                "Unknown funding mode: {other}. Valid options: never, always, available-balance, below-threshold"
+            ),
+        }
+    }
+
     pub fn to_arg_vec(
         &self,
         storage_provider_config: &Option<StorageUploaderConfig>,
@@ -277,7 +303,15 @@ impl MarketProviderConfig {
             self.boundless_enable_upload_caching.to_string(),
             String::from("--boundless-order-submission-cooldown"),
             self.boundless_order_submission_cooldown.to_string(),
+            String::from("--boundless-order-funding-mode"),
+            self.boundless_order_funding_mode.clone(),
         ]);
+        if let Some(threshold) = &self.boundless_order_funding_threshold {
+            proving_args.extend(vec![
+                String::from("--boundless-order-funding-threshold"),
+                threshold.to_string(),
+            ]);
+        }
         // Storage provider args
         if let Some(storage_cfg) = storage_provider_config {
             match &storage_cfg.storage_uploader {
@@ -428,6 +462,7 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             .with_rpc_url(market.boundless_rpc_url.clone())
             .with_deployment(market_deployment.clone())
             .with_uploader(Some(storage_provider.clone()))
+            .with_funding_mode(market.funding_mode())
             .build()
             .await
             .context("ClientBuilder::build()")
