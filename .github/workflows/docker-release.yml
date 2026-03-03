@@ -57,6 +57,5 @@ jobs:
             CARGO_BUILD_JOBS=16
             BUILD_FEATURES=${{ matrix.build_features }}
             BUILD_CACHE_SUFFIX=${{ matrix.cache_suffix }}
-            TARGETARCH=amd64
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.cache_suffix }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.cache_suffix }},mode=max
