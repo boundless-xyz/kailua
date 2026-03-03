@@ -6764,6 +6764,7 @@ version = "1.1.11"
 dependencies = [
  "alloy",
  "alloy-primitives 1.4.1",
+ "alloy-rlp",
  "anyhow",
  "async-channel",
  "async-trait",

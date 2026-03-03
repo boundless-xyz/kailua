@@ -17,7 +17,7 @@ use crate::channel::AsyncChannel;
 use crate::config::{generate_l1_config_file, generate_rollup_config_file};
 use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::create_disk_kv_store;
-use crate::preflight::{concurrent_execution_preflight, fetch_precondition_data};
+use crate::preflight::{concurrent_preflight, fetch_precondition_data};
 use crate::profiling::ProfiledReceipt;
 use crate::tasks::{handle_oneshot_tasks, CachedTask, Oneshot, OneshotResult};
 use crate::{current_time, ProvingError};
@@ -124,26 +124,29 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     // create concurrent db
     let disk_kv_store = create_disk_kv_store(&args.kona);
     // perform preflight
+    let do_preflight = args.proving.num_concurrent_preflights > 0
+        || args.kona.enable_experimental_witness_endpoint;
     if args.proving.num_concurrent_preflights == 0 {
-        warn!("Performing mandatory single-thread preflight.");
         args.proving.num_concurrent_preflights = 1;
     }
     // run parallelized preflight instances to populate kv store
-    info!(
-        "Running concurrent preflights with {} threads",
-        args.proving.num_concurrent_preflights
-    );
-    if !concurrent_execution_preflight(
-        &args,
-        rollup_config.clone(),
-        l1_config.clone(),
-        op_node_provider.as_ref().expect("Missing op_node_provider"),
-        disk_kv_store.clone(),
-    )
-    .await
-    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-    {
-        return Ok(None);
+    if do_preflight {
+        info!(
+            "Running Kailua preflights with {} threads",
+            args.proving.num_concurrent_preflights
+        );
+        if !concurrent_preflight(
+            &args,
+            rollup_config.clone(),
+            l1_config.clone(),
+            op_node_provider.as_ref().expect("Missing op_node_provider"),
+            disk_kv_store.clone(),
+        )
+        .await
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+        {
+            return Ok(None);
+        }
     }
     // We only use executionWitness/executePayload during preflight.
     args.kona.enable_experimental_witness_endpoint = false;

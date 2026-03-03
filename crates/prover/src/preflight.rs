@@ -15,12 +15,16 @@
 use crate::args::ProveArgs;
 use crate::kv::RWLKeyValueStore;
 use crate::ProvingError;
-use alloy::consensus::Transaction;
+use alloy::consensus::{Header, Transaction};
 use alloy::eips::eip4844::IndexedBlobHash;
 use alloy::eips::BlockNumberOrTag;
 use alloy::providers::{Provider, RootProvider};
+use alloy_primitives::hex::FromHex;
+use alloy_primitives::keccak256;
 use alloy_primitives::B256;
+use alloy_rlp::Decodable;
 use anyhow::{anyhow, bail, Context};
+use human_bytes::human_bytes;
 use kailua_kona::blobs::BlobFetchRequest;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::proposal::ProposalPrecondition;
@@ -28,11 +32,13 @@ use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::{await_tel, retry_res_ctx_timeout};
 use kona_genesis::{L1ChainConfig, RollupConfig};
+use kona_host::KeyValueStore;
 use kona_preimage::{PreimageKey, PreimageKeyType};
 use kona_protocol::BlockInfo;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
+use serde_json::Value;
 use std::env::set_var;
 use std::iter::zip;
 use tracing::{error, info, warn};
@@ -160,7 +166,7 @@ pub async fn fetch_precondition_data(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn concurrent_execution_preflight(
+pub async fn concurrent_preflight(
     args: &ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,
@@ -168,13 +174,13 @@ pub async fn concurrent_execution_preflight(
     disk_kv_store: Option<RWLKeyValueStore>,
 ) -> anyhow::Result<bool> {
     let tracer = tracer("kailua");
-    let context =
-        opentelemetry::Context::current_with_span(tracer.start("concurrent_execution_preflight"));
+    let context = opentelemetry::Context::current_with_span(tracer.start("concurrent_preflight"));
 
+    // Resolve agreed L2 head block number (needed for both L1 origin derivation and L2 work)
     let l2_provider = retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await)
         .await
         .l2;
-    let starting_block = await_tel!(
+    let starting_l2_block = await_tel!(
         context,
         tracer,
         "l2_provider get_block_by_hash agreed_l2_head_hash",
@@ -189,26 +195,146 @@ pub async fn concurrent_execution_preflight(
     )
     .header
     .number;
-
-    let mut num_blocks = args.kona.claimed_l2_block_number - starting_block;
-    if num_blocks == 0 {
+    let mut num_l2_blocks = args.kona.claimed_l2_block_number - starting_l2_block;
+    if num_l2_blocks == 0 {
         return Ok(true);
     }
-    let blocks_per_thread = num_blocks / args.proving.num_concurrent_preflights;
-    let mut extra_blocks = num_blocks % args.proving.num_concurrent_preflights;
+
+    // Determine l1_origin_number from OP Node
+    let l1_origin_number = {
+        let output: Value = await_tel!(
+            context,
+            tracer,
+            "optimism_outputAtBlock for l1_origin",
+            retry_res_ctx_timeout!(
+                args.timeouts.op_node_timeout,
+                op_node_provider
+                    .0
+                    .client()
+                    .request::<(String,), Value>(
+                        "optimism_outputAtBlock",
+                        (format!("0x{starting_l2_block:x}"),),
+                    )
+                    .await
+                    .context("optimism_outputAtBlock for l1_origin")
+            )
+        );
+        output["blockRef"]["l1origin"]["number"].as_u64()
+    };
+
+    // Pre-fetch L1 headers into disk KV store
+    let mut l1_jobs = vec![];
+    if let Some(l1_origin_number) = l1_origin_number {
+        if let Some(ref disk_kv_store) = disk_kv_store {
+            // 1. Create an L1 provider
+            let l1_provider =
+                retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await)
+                    .await
+                    .l1;
+
+            // 2. Get L1 head block number from the l1_head hash
+            let l1_head_num = await_tel!(
+                context,
+                tracer,
+                "l1_provider get_block_by_hash l1_head",
+                retry_res_ctx_timeout!(
+                    args.timeouts.eth_rpc_timeout,
+                    l1_provider
+                        .get_block_by_hash(args.kona.l1_head)
+                        .await
+                        .context("l1_provider get_block_by_hash l1_head")?
+                        .ok_or_else(|| anyhow!("Failed to fetch L1 head block"))
+                )
+            )
+            .header
+            .number;
+
+            // 3. Split range among num_concurrent_preflights worker tasks
+            if l1_origin_number <= l1_head_num {
+                let total_headers = l1_head_num - l1_origin_number + 1;
+                let num_workers = args.proving.num_concurrent_preflights;
+                let headers_per_worker = total_headers / num_workers;
+                let mut extra = total_headers % num_workers;
+                info!(
+                    "Prefetching {total_headers} L1 headers from block {l1_origin_number} to {l1_head_num} with {num_workers} workers"
+                );
+
+                let mut start = l1_origin_number;
+                for _ in 0..num_workers {
+                    let chunk_size = if extra > 0 {
+                        extra -= 1;
+                        headers_per_worker + 1
+                    } else {
+                        headers_per_worker
+                    };
+                    let end = start + chunk_size - 1;
+                    let provider = l1_provider.clone();
+                    let kv = disk_kv_store.clone();
+                    let timeout = args.timeouts.eth_rpc_timeout;
+                    l1_jobs.push(tokio::spawn(async move {
+                        let mut size: u64 = 0;
+                        let mut count: u64 = 0;
+                        let mut expected_hash: Option<B256> = None;
+                        for block_num in (start..=end).rev() {
+                            // If we know the expected hash (from child's parent_hash),
+                            // check if it's already cached in the KV store
+                            if let Some(hash) = expected_hash {
+                                let key = PreimageKey::new_keccak256(*hash);
+                                if let Some(cached) = kv.read().unwrap().get(key.into()) {
+                                    // Cached — decode to continue parent_hash chain
+                                    let header = Header::decode(&mut cached.as_slice())
+                                        .context("Failed to RLP-decode cached L1 header")?;
+                                    expected_hash = Some(header.parent_hash);
+                                    continue;
+                                }
+                            }
+
+                            let raw_header_hex: String = retry_res_ctx_timeout!(
+                                timeout,
+                                provider
+                                    .client()
+                                    .request::<(BlockNumberOrTag,), String>(
+                                        "debug_getRawHeader",
+                                        (BlockNumberOrTag::Number(block_num),),
+                                    )
+                                    .await
+                                    .context("debug_getRawHeader")
+                            )
+                            .await;
+                            let raw_bytes = alloy_primitives::Bytes::from_hex(&raw_header_hex)?;
+                            let hash = keccak256(raw_bytes.as_ref());
+                            let key = PreimageKey::new_keccak256(*hash);
+                            size += raw_bytes.len() as u64;
+                            count += 1;
+                            // Decode header to get parent_hash for next iteration
+                            let header = Header::decode(&mut raw_bytes.as_ref())
+                                .context("Failed to RLP-decode L1 header")?;
+                            expected_hash = Some(header.parent_hash);
+                            kv.write().unwrap().set(key.into(), raw_bytes.into())?;
+                        }
+                        Ok::<(u64, u64), anyhow::Error>((count, size))
+                    }));
+                    start = end + 1;
+                }
+            }
+        }
+    }
+
+    let blocks_per_thread = num_l2_blocks / args.proving.num_concurrent_preflights;
+    let mut extra_blocks = num_l2_blocks % args.proving.num_concurrent_preflights;
     let mut jobs = vec![];
     let mut args = args.clone();
     args.proving.max_block_executions = usize::MAX;
     args.proving.max_block_derivations = u64::MAX;
     args.proving.max_witness_size = usize::MAX;
-    while num_blocks > 0 {
+    while num_l2_blocks > 0 {
         let processed_blocks = if extra_blocks > 0 {
             extra_blocks -= 1;
             blocks_per_thread + 1
         } else {
             blocks_per_thread
         };
-        num_blocks = num_blocks.saturating_sub(processed_blocks);
+        num_l2_blocks = num_l2_blocks.saturating_sub(processed_blocks);
 
         // update ending block
         args.kona.claimed_l2_block_number = await_tel!(
@@ -258,7 +384,7 @@ pub async fn concurrent_execution_preflight(
         ));
         jobs.push((args.kona.claimed_l2_block_number, task));
         // update starting block for next job
-        if num_blocks > 0 {
+        if num_l2_blocks > 0 {
             args.kona.agreed_l2_head_hash = await_tel!(
                 context,
                 tracer,
@@ -280,7 +406,22 @@ pub async fn concurrent_execution_preflight(
             args.kona.agreed_l2_output_root = args.kona.claimed_l2_output_root;
         }
     }
-    // Await all tasks
+    // Await L1 header workers and sum totals
+    let mut total_l1_size: u64 = 0;
+    let mut total_l1_headers: u64 = 0;
+    for job in l1_jobs {
+        let (count, size) = job.await??;
+        total_l1_headers += count;
+        total_l1_size += size;
+    }
+    if total_l1_headers > 0 {
+        info!(
+            "Saved {} of L1 header preimages ({total_l1_headers} headers)",
+            human_bytes(total_l1_size as f64)
+        );
+    }
+
+    // Await L2 preflight tasks
     let mut l1_head_sufficient = true;
     for (target_l2_height, job) in jobs {
         let result = job.await?;
