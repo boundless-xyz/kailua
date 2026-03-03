@@ -151,9 +151,9 @@ risc0-steel = { git = "https://github.com/boundless-xyz/steel.git", tag = "v2.4.
 opt-level = 3
 
 [profile.release]
-codegen-units = 1
+codegen-units = 16
 debug = 1
-lto = "fat"
+lto = "thin"
 overflow-checks = true
 
 [profile.release.build-override]
