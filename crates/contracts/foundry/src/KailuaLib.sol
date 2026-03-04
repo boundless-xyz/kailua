@@ -204,7 +204,7 @@ library KailuaKZGLib {
         uint256 value,
         bytes calldata blobCommitment,
         bytes calldata proof
-    ) internal returns (bool success) {
+    ) internal view returns (bool success) {
         uint256 rootOfUnity = modExp(reverseBits(index));
         // Byte range	Name	        Description
         // [0:32]	    versioned_hash	Reference to a blob in the execution layer.
@@ -214,7 +214,7 @@ library KailuaKZGLib {
         // [144:192]	proof	        Proof associated with the commitment.
         bytes memory kzgCallData = abi.encodePacked(versionedBlobHash, rootOfUnity, value, blobCommitment, proof);
         // The precompile will reject non-canonical field elements (i.e. value must be less than BLS_MODULUS).
-        (bool _success, bytes memory kzgResult) = KZG.call(kzgCallData);
+        (bool _success, bytes memory kzgResult) = KZG.staticcall(kzgCallData);
         // Validate the precompile response
         require(keccak256(kzgResult) == KZG_RESULT);
         // Return the result
@@ -222,10 +222,10 @@ library KailuaKZGLib {
     }
 
     /// @notice Calls the modular exponentiation precompile with a fixed base and modulus
-    function modExp(uint256 exponent) internal returns (uint256 result) {
+    function modExp(uint256 exponent) internal view returns (uint256 result) {
         bytes memory modExpData =
             abi.encodePacked(uint256(32), uint256(32), uint256(32), ROOT_OF_UNITY, exponent, BLS_MODULUS);
-        (bool success, bytes memory mexpResult) = MOD_EXP.call(modExpData);
+        (bool success, bytes memory mexpResult) = MOD_EXP.staticcall(modExpData);
         require(success);
         result = uint256(bytes32(mexpResult));
     }
