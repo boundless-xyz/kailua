@@ -91,7 +91,26 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update -y && apt-get install -y --no-install-recommends \
     jq \
-    ca-certificates
+    ca-certificates \
+    curl \
+    unzip \
+    gnupg
+
+# Install AWS CLI v2 (bundles its own Python, no system Python required)
+RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip \
+    && unzip -q /tmp/awscliv2.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/awscliv2.zip /tmp/aws
+
+# Install Google Cloud CLI via official apt repository
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+      | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+      > /etc/apt/sources.list.d/google-cloud-sdk.list \
+    && apt-get update -y \
+    && apt-get install -y --no-install-recommends google-cloud-cli
 
 COPY --from=builder /kailua/out/kailua-cli /usr/local/bin/kailua-cli
 
