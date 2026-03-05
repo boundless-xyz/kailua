@@ -14,7 +14,7 @@ env:
 jobs:
   build-and-push:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, X64, docker, prod]
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -51,7 +51,7 @@ jobs:
           platforms: linux/amd64
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ matrix.tag_prefix }}${{ steps.vars.outputs.sha_short }}
           build-args: |
-            CARGO_BUILD_JOBS=16
+            CARGO_BUILD_JOBS=4
             BUILD_FEATURES=${{ matrix.build_features }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.build_features || 'base' }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.build_features || 'base' }},mode=max
