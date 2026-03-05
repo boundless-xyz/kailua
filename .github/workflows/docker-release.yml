@@ -25,13 +25,10 @@ jobs:
         include:
           - build_features: ""
             tag_prefix: ""
-            cache_suffix: base
           - build_features: celestia
             tag_prefix: "celestia-"
-            cache_suffix: celestia
           - build_features: eigen
             tag_prefix: "eigen-"
-            cache_suffix: eigen
 
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +53,5 @@ jobs:
           build-args: |
             CARGO_BUILD_JOBS=16
             BUILD_FEATURES=${{ matrix.build_features }}
-            BUILD_CACHE_SUFFIX=${{ matrix.cache_suffix }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.cache_suffix }}
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.cache_suffix }},mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.build_features || 'base' }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.build_features || 'base' }},mode=max
