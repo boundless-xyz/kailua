@@ -13,7 +13,17 @@ L1_CL_SERVICE = "cl-1-teku-geth"
 L2_PARTICIPANT = "node0"
 L2_EL_TYPE = "op-geth"
 L2_CL_TYPE = "op-node"
-L1_WALLET_COUNT = 20
+L1_WALLET_INDEXES = range(3, 10)
+ROLE_WALLET_ALIASES = {
+    "deployer": "l1ProxyAdmin",
+    "owner": "l1ProxyAdmin",
+    "guardian": "l1ProxyAdmin",
+    "proposer": "l1Faucet",
+    "validator": "sequencer",
+    "fault-proposer": "challenger",
+    "trail-fault-proposer": "l1ProxyAdmin",
+    "vanguard": "l1Faucet",
+}
 
 
 def run(*args: str, capture: bool = True) -> str:
@@ -96,27 +106,12 @@ def build_descriptor(enclave: str) -> dict:
     l2_cl = inspect_service(enclave, f"op-cl-{chain_id}-{L2_PARTICIPANT}-{L2_CL_TYPE}")
     wallets = {
         f"user-key-{index}": derive_l1_wallet(index)
-        for index in range(L1_WALLET_COUNT)
+        for index in L1_WALLET_INDEXES
     }
     wallets.update(
         {
-            "deployer": op_role_wallet(op_wallets, "l1ProxyAdmin"),
-            "owner": op_role_wallet(op_wallets, "l1ProxyAdmin"),
-            "guardian": op_role_wallet(op_wallets, "l1ProxyAdmin"),
-            "proposer": op_role_wallet(op_wallets, "l1Faucet"),
-            "validator": op_role_wallet(op_wallets, "sequencer"),
-            "fault-proposer": op_role_wallet(op_wallets, "challenger"),
-            "trail-fault-proposer": op_role_wallet(op_wallets, "l1ProxyAdmin"),
-            "vanguard": op_role_wallet(op_wallets, "l1Faucet"),
-            "op-batcher": op_role_wallet(op_wallets, "batcher"),
-            "op-challenger": op_role_wallet(op_wallets, "challenger"),
-            "op-l1-faucet": op_role_wallet(op_wallets, "l1Faucet"),
-            "op-l1-proxy-admin": op_role_wallet(op_wallets, "l1ProxyAdmin"),
-            "op-l2-faucet": op_role_wallet(op_wallets, "l2Faucet"),
-            "op-l2-proxy-admin": op_role_wallet(op_wallets, "l2ProxyAdmin"),
-            "op-proposer": op_role_wallet(op_wallets, "proposer"),
-            "op-sequencer": op_role_wallet(op_wallets, "sequencer"),
-            "op-system-config-owner": op_role_wallet(op_wallets, "systemConfigOwner"),
+            alias: op_role_wallet(op_wallets, op_wallet_alias)
+            for alias, op_wallet_alias in ROLE_WALLET_ALIASES.items()
         }
     )
 

@@ -67,6 +67,7 @@ const PROPOSER_ALIAS: &str = "proposer";
 const VALIDATOR_ALIAS: &str = "validator";
 const FAULT_PROPOSER_ALIAS: &str = "fault-proposer";
 const TRAIL_FAULT_PROPOSER_ALIAS: &str = "trail-fault-proposer";
+const VANGUARD_ALIAS: &str = "vanguard";
 
 #[derive(Clone, Debug, Deserialize)]
 struct DevnetConfig {
@@ -335,7 +336,7 @@ async fn deploy_kailua_contracts(
         guardian_signer: Some(GuardianSignerArgs::from(
             devnet.private_key(GUARDIAN_ALIAS)?,
         )),
-        vanguard_address: Some(devnet.address(PROPOSER_ALIAS)?),
+        vanguard_address: Some(devnet.address(VANGUARD_ALIAS)?),
         vanguard_advantage: Some(60),
         respect_kailua_proposals: true,
         telemetry: Default::default(),
@@ -368,20 +369,12 @@ async fn start_devnet() -> anyhow::Result<DevnetConfig> {
 }
 
 async fn stop_devnet() {
-    match just("devnet-down").await {
-        Ok(exit_code) => {
-            println!("1/2 Complete: {exit_code:?}")
-        }
-        Err(err) => {
-            println!("1/2 Error: {err:?}")
-        }
-    }
     match just("devnet-clean").await {
         Ok(exit_code) => {
-            println!("2/2 Complete: {exit_code:?}")
+            println!("Cleanup Complete: {exit_code:?}")
         }
         Err(err) => {
-            println!("2/2 Error: {err:?}")
+            println!("Cleanup Error: {err:?}")
         }
     }
 }

@@ -16,6 +16,14 @@ EXECUTION_MARKERS = (
     "Starlark code successfully run.",
 )
 UPLOAD_MARKER = "Uploading and executing package"
+RETRYABLE_ERROR_MARKERS = (
+    "error reading from server: EOF",
+    "connection reset by peer",
+    "Client might have cancelled the stream",
+    "error reading server preface",
+    "HTTP/1.1 header",
+)
+RETRYABLE_EXIT_CODE = 75
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,6 +71,7 @@ def main() -> int:
 
         upload_started_at = None
         execution_started = False
+        retryable_error_seen = False
 
         while True:
             events = selector.select(timeout=1)
@@ -77,6 +86,8 @@ def main() -> int:
                         upload_started_at = time.monotonic()
                     if any(marker in line for marker in EXECUTION_MARKERS):
                         execution_started = True
+                    if any(marker in line for marker in RETRYABLE_ERROR_MARKERS):
+                        retryable_error_seen = True
                 elif proc.poll() is not None:
                     break
             elif proc.poll() is not None:
@@ -94,14 +105,19 @@ def main() -> int:
                 sys.stderr.flush()
                 log_file.write(message)
                 log_file.flush()
+                retryable_error_seen = True
                 proc.terminate()
                 try:
-                    return proc.wait(timeout=10)
+                    proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                    return proc.wait()
+                    proc.wait()
+                return RETRYABLE_EXIT_CODE
 
-        return proc.wait()
+        return_code = proc.wait()
+        if return_code != 0 and retryable_error_seen:
+            return RETRYABLE_EXIT_CODE
+        return return_code
 
 
 if __name__ == "__main__":

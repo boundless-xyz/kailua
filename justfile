@@ -6,6 +6,10 @@ devnet_runtime_dir := "devnet"
 devnet_descriptor := "devnet/kurtosis-devnet.json"
 devnet_package_dir := "devnet/optimism-package"
 devnet_data_dir := "devnet/data"
+devnet_log := "devnet/devnet.log"
+devnet_propose_dir := "devnet/propose"
+devnet_validate_dir := "devnet/validate"
+devnet_optimism_commit := "3019251e80aa248e91743addd3e833190acb26f1"
 devnet_package_commit := "89e0b8cacab9f7e9f74d53b72d4870092825d577"
 
 # default recipe to display help information
@@ -57,15 +61,28 @@ coverage-open:
 devnet-fetch:
   #!/usr/bin/env bash
   set -euo pipefail
+  is_detached_at() {
+    local dir="$1"
+    local expected="$2"
+    [[ -d "$dir/.git" ]] || return 1
+    [[ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" == "$expected" ]] || return 1
+    ! git -C "$dir" symbolic-ref -q HEAD >/dev/null 2>&1
+  }
   mkdir -p {{devnet_runtime_dir}}
-  if [ -d optimism/.git ]; then
-    git -C optimism fetch --depth 1 origin tag v1.16.7
-    git -C optimism checkout --detach v1.16.7
+  if is_detached_at optimism {{devnet_optimism_commit}}; then
+    git -C optimism submodule update --init --recursive
+  elif [ -d optimism/.git ]; then
+    git -C optimism fetch --depth 1 origin {{devnet_optimism_commit}}
+    git -C optimism checkout --detach {{devnet_optimism_commit}}
     git -C optimism submodule update --init --recursive
   else
     git clone --depth 1 --branch v1.16.7 --recursive https://github.com/ethereum-optimism/optimism.git
+    git -C optimism checkout --detach {{devnet_optimism_commit}}
+    git -C optimism submodule update --init --recursive
   fi
-  if [ -d {{devnet_package_dir}}/.git ]; then
+  if is_detached_at {{devnet_package_dir}} {{devnet_package_commit}}; then
+    :
+  elif [ -d {{devnet_package_dir}}/.git ]; then
     git -C {{devnet_package_dir}} fetch --depth 1 origin {{devnet_package_commit}}
     git -C {{devnet_package_dir}} checkout --detach {{devnet_package_commit}}
   else
@@ -91,22 +108,25 @@ devnet-up:
       --package-dir {{devnet_package_dir}} \
       --args-file "$PWD/kurtosis.yaml" \
       --enclave {{devnet_enclave}} \
-      --log devnet.log \
+      --log {{devnet_log}} \
       --stall-timeout-secs 60
   }
   just devnet-fetch
   kurtosis enclave rm -f {{devnet_enclave}} >/dev/null 2>&1 || true
   mkdir -p {{devnet_runtime_dir}}
-  rm -f devnet.log
-  if ! run_kurtosis; then
-    if rg -q "error reading from server: EOF|connection reset by peer|Client might have cancelled the stream|error reading server preface|HTTP/1.1 header|Kurtosis timed out waiting for package execution to start after upload" devnet.log; then
+  rm -f {{devnet_descriptor}} {{devnet_log}}
+  if run_kurtosis; then
+    :
+  else
+    status="$?"
+    if [ "$status" -eq 75 ]; then
       echo "Kurtosis failed during package upload; restarting engine and retrying once." >&2
       kurtosis enclave rm -f {{devnet_enclave}} >/dev/null 2>&1 || true
       kurtosis engine restart
-      rm -f devnet.log
+      rm -f {{devnet_log}}
       run_kurtosis
     else
-      exit 1
+      exit "$status"
     fi
   fi
   python3 ./scripts/render-devnet-descriptor.py --enclave {{devnet_enclave}} --output {{devnet_descriptor}}
@@ -120,7 +140,7 @@ devnet-clean:
   #!/usr/bin/env bash
   set -euo pipefail
   kurtosis enclave rm -f {{devnet_enclave}} >/dev/null 2>&1 || true
-  rm -f {{devnet_descriptor}} devnet.log
+  rm -rf {{devnet_descriptor}} {{devnet_log}} {{devnet_data_dir}} {{devnet_propose_dir}} {{devnet_validate_dir}}
 
 devnet-config target="debug" verbosity="" l1_rpc="" l2_rpc="" rollup_node_rpc="":
   #!/usr/bin/env bash
@@ -166,7 +186,7 @@ devnet-upgrade timeout="3600" advantage="60" target="debug" verbosity="" l1_rpc=
 
 devnet-reset: devnet-clean devnet-up
 
-devnet-propose target="debug" verbosity="" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="" data_dir="devnet/propose" proposer="":
+devnet-propose target="debug" verbosity="" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="" data_dir="{{devnet_propose_dir}}" proposer="":
   #!/usr/bin/env bash
   set -euo pipefail
   source ./scripts/devnet-env.sh
@@ -203,7 +223,7 @@ devnet-fault offset parent target="debug" proposer="" verbosity="" l1_rpc="" l1_
       --fault-parent {{parent}} \
       {{verbosity}}
 
-devnet-validate fastforward="0" target="debug" verbosity="" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="" data_dir="devnet/validate" validator="":
+devnet-validate fastforward="0" target="debug" verbosity="" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="" data_dir="{{devnet_validate_dir}}" validator="":
   #!/usr/bin/env bash
   set -euo pipefail
   source ./scripts/devnet-env.sh

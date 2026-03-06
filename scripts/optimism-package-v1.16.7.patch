@@ -1,0 +1,74 @@
+diff --git a/src/cl/op-node/launcher.star b/src/cl/op-node/launcher.star
+index cc0caae..3d5f6a5 100644
+--- a/src/cl/op-node/launcher.star
++++ b/src/cl/op-node/launcher.star
+@@ -167,6 +167,10 @@ def get_service_config(
+             _ethereum_package_constants.GENESIS_DATA_MOUNTPOINT_ON_CLIENTS,
+             network_params.network_id,
+         ),
++        "--rollup.l1-chain-config="
++        + "{0}/l1-chain-config.json".format(
++            _ethereum_package_constants.GENESIS_DATA_MOUNTPOINT_ON_CLIENTS,
++        ),
+         "--rpc.addr=0.0.0.0",
+         "--rpc.port={0}".format(rpc_port_number),
+         "--rpc.enable-admin",
+@@ -196,15 +200,23 @@ def get_service_config(
+ 
+     # configure files
+ 
++    l1_chain_config = plan.run_sh(
++        name=params.service_name + "-l1-chain-config",
++        description="Build L1 chain config for op-node",
++        image=_util.DEPLOYMENT_UTILS_IMAGE,
++        files={"/l1-genesis": plan.get_files_artifact(name="el_cl_genesis_data")},
++        store=[StoreSpec(src="/l1-chain-config.json", name=params.service_name + "-l1-chain-config")],
++        run="jq '.config | del(.terminalTotalDifficultyPassed)' /l1-genesis/genesis.json > /l1-chain-config.json",
++    )
++
++    network_config_artifacts = [deployment_output, l1_chain_config.files_artifacts[0]]
++    if supervisor_params:
++        network_config_artifacts.append(supervisor_params.superchain.dependency_set.name)
++
+     files = {
+         _ethereum_package_constants.GENESIS_DATA_MOUNTPOINT_ON_CLIENTS: Directory(
+-            artifact_names=[
+-                deployment_output,
+-                supervisor_params.superchain.dependency_set.name,
+-            ]
+-        )
+-        if supervisor_params
+-        else deployment_output,
++            artifact_names=network_config_artifacts,
++        ),
+         _ethereum_package_constants.JWT_MOUNTPOINT_ON_CLIENTS: jwt_file,
+     }
+ 
+diff --git a/src/contracts/contract_deployer.star b/src/contracts/contract_deployer.star
+index 68c1e5a..434871c 100644
+--- a/src/contracts/contract_deployer.star
++++ b/src/contracts/contract_deployer.star
+@@ -176,6 +176,9 @@ def _build_chain_intent(
+             "sequencerFeeVaultRecipient": read_chain_cmd(
+                 "sequencerFeeVaultRecipient", chain_id
+             ),
++            "operatorFeeVaultRecipient": read_chain_cmd(
++                "baseFeeVaultRecipient", chain_id
++            ),
+             "roles": {
+                 "batcher": read_chain_cmd("batcher", chain_id),
+                 "challenger": read_chain_cmd("challenger", chain_id),
+diff --git a/src/observability/observability.star b/src/observability/observability.star
+index 228bdb8..3501c7c 100644
+--- a/src/observability/observability.star
++++ b/src/observability/observability.star
+@@ -125,6 +125,9 @@ def new_metrics_job(
+ 
+ # Note: kona services use identical metrics registration.
+ def register_op_service_metrics_job(helper, service, network_name=None):
++    if not helper.enabled:
++        return
++
+     register_service_metrics_job(
+         helper,
+         service_name=service.name,
