@@ -36,11 +36,22 @@ contract KailuaVerifier is ISemver {
     /// @notice The duration after which a permit expires
     Duration public immutable PERMIT_DURATION;
 
-    constructor(IRiscZeroVerifier _verifierContract, bytes32 _imageId, bytes32 _configHash, Duration _permitDuration) {
+    /// @notice The duration after which a permit is active
+    Duration public immutable PERMIT_DELAY;
+
+    constructor(
+        IRiscZeroVerifier _verifierContract,
+        bytes32 _imageId,
+        bytes32 _configHash,
+        Duration _permitDuration,
+        Duration _permitDelay
+    ) {
         RISC_ZERO_VERIFIER = _verifierContract;
         FPVM_IMAGE_ID = _imageId;
         ROLLUP_CONFIG_HASH = _configHash;
         PERMIT_DURATION = _permitDuration;
+        PERMIT_DELAY = _permitDelay;
+        assert(_permitDelay.raw() < _permitDuration.raw());
     }
 
     /// @notice Maps parent-child to their fault proving permits
@@ -105,8 +116,12 @@ contract KailuaVerifier is ISemver {
         if (proposalPermits.length != 1) {
             return address(0x0);
         }
-        // If there was no proof or the permit was expired as of proof submission, disqualify the beneficiary
+        // If the permit was not yet active at proof submission, ignore the permit
         uint64 provingTime = faultProofPermitProvenAt(proposalParent, proposalSignature);
+        if (provingTime < proposalPermits[0].timestamp + PERMIT_DELAY.raw()) {
+            return address(0x0);
+        }
+        // If there was no proof or the permit was expired as of proof submission, disqualify the beneficiary
         if (provingTime == 0 || proposalPermits[0].timestamp + PERMIT_DURATION.raw() < provingTime) {
             return address(0x0);
         }
@@ -114,15 +129,21 @@ contract KailuaVerifier is ISemver {
         return proposalPermits[0].recipient;
     }
 
-    /// @notice Given a reference timestamp, returns the number of expired permits, their total collateral, and the number of active permits
-    function countExpiredPermits(bytes32 proposalKey, uint64 numExpiredPermits, uint64 timestamp)
-        public
-        view
-        returns (uint64, uint256, uint64)
-    {
+    /// @notice Given a reference timestamp, returns the number of expired permits, the number of delayed permits,
+    /// the total expired permit collateral, and the number of active permits
+    function countExpiredPermits(
+        bytes32 proposalKey,
+        uint64 numExpiredPermits,
+        uint64 numDelayedPermits,
+        uint64 timestamp
+    ) public view returns (uint64, uint64, uint256, uint64) {
         FaultProofPermit[] storage proposalPermits = faultProofPermits[proposalKey];
         uint256 expiredCollateral = 0;
         uint64 totalPermits = uint64(proposalPermits.length);
+        if (totalPermits == 0) {
+            // If there are no permits, no permit is expired or active, and there is no collateral
+            return (0, 0, 0, 0);
+        }
         // Increment numExpiredPermits if possible
         for (; numExpiredPermits < totalPermits; numExpiredPermits++) {
             if (proposalPermits[numExpiredPermits].timestamp + PERMIT_DURATION.raw() >= timestamp) {
@@ -138,7 +159,28 @@ contract KailuaVerifier is ISemver {
             // Set expired collateral
             expiredCollateral = proposalPermits[numExpiredPermits - 1].aggregateCollateral;
         }
-        return (numExpiredPermits, expiredCollateral, totalPermits - numExpiredPermits);
+        // Increment numDelayedPermits if possible
+        for (; numDelayedPermits < totalPermits; numDelayedPermits++) {
+            // If this permit is active, stop incrementing
+            if (proposalPermits[totalPermits - numDelayedPermits - 1].timestamp + PERMIT_DELAY.raw() <= timestamp) {
+                break;
+            }
+        }
+        // Decrement numDelayedPermits if possible
+        numDelayedPermits = numDelayedPermits > totalPermits ? totalPermits : numDelayedPermits;
+        for (; numDelayedPermits > 0 && numDelayedPermits <= totalPermits; numDelayedPermits--) {
+            // If this permit is delayed, stop decrementing
+            if (proposalPermits[totalPermits - numDelayedPermits].timestamp + PERMIT_DELAY.raw() > timestamp) {
+                break;
+            }
+        }
+        return
+            (
+                numExpiredPermits,
+                numDelayedPermits,
+                expiredCollateral,
+                totalPermits - numExpiredPermits - numDelayedPermits
+            );
     }
 
     /// @notice Returns the collateral required to acquire a fault proof permit
@@ -153,6 +195,7 @@ contract KailuaVerifier is ISemver {
         IKailuaTournament proposalParent,
         bytes32 proposalSignature,
         uint64 numExpiredPermits,
+        uint64 numDelayedPermits,
         address payoutRecipient
     ) external payable returns (uint256 totalPermitsIssued_) {
         // INVARIANT: The child signature is still viable so no proof is submitted for/against it
@@ -166,7 +209,8 @@ contract KailuaVerifier is ISemver {
         }
         // INVARIANT: There are exactly numExpiredPermits expired permits as of block.timestamp
         bytes32 proposalKey = faultProofPermitKey(proposalParent, proposalSignature);
-        (numExpiredPermits,,) = countExpiredPermits(proposalKey, numExpiredPermits, uint64(block.timestamp));
+        (numExpiredPermits,,,) =
+            countExpiredPermits(proposalKey, numExpiredPermits, numDelayedPermits, uint64(block.timestamp));
         // INVARIANT: There is at least one permit available
         FaultProofPermit[] storage proposalPermits = faultProofPermits[proposalKey];
         totalPermitsIssued_ = proposalPermits.length;
@@ -187,6 +231,7 @@ contract KailuaVerifier is ISemver {
         IKailuaTournament proposalParent,
         bytes32 proposalSignature,
         uint64 numExpiredPermits,
+        uint64 numDelayedPermits,
         uint64 permitIndex
     ) external {
         // INVARIANT: The child signature is proven faulty
@@ -196,8 +241,8 @@ contract KailuaVerifier is ISemver {
         // INVARIANT: There are exactly numExpiredPermits expired permits as of proof submission
         uint64 proofTimestamp = faultProofPermitProvenAt(proposalParent, proposalSignature);
         bytes32 permitKey = faultProofPermitKey(proposalParent, proposalSignature);
-        (, uint256 expiredCollateral, uint64 numActivePermits) =
-            countExpiredPermits(permitKey, numExpiredPermits, proofTimestamp);
+        (,, uint256 expiredCollateral, uint64 numActivePermits) =
+            countExpiredPermits(permitKey, numExpiredPermits, numDelayedPermits, proofTimestamp);
         // INVARIANT: The permit is not already released
         FaultProofPermit storage permit = faultProofPermits[permitKey][permitIndex];
         if (permit.released) {
@@ -207,8 +252,9 @@ contract KailuaVerifier is ISemver {
         if (permit.timestamp + PERMIT_DURATION.raw() < proofTimestamp) {
             revert AlreadyEliminated();
         }
-        // Calculate total payout
-        uint256 payout = expiredCollateral / numActivePermits;
+        // If the permit was active at proof submission, then we pay out a share of the locked collateral.
+        uint256 payout =
+            permit.timestamp + PERMIT_DELAY.raw() < proofTimestamp ? expiredCollateral / numActivePermits : 0;
         // Add in recipient's own deposited collateral
         if (permitIndex > 0) {
             payout += permit.aggregateCollateral - faultProofPermits[permitKey][permitIndex - 1].aggregateCollateral;
