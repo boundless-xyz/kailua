@@ -165,13 +165,14 @@ contract KailuaTest is Test {
 
     function verifyKZGBlobProof(uint32 index, uint256 value, bytes calldata commitment, bytes calldata proof)
         external
+        view
         returns (bool)
     {
         return
             KailuaKZGLib.verifyKZGBlobProof(KailuaKZGLib.versionedKZGHash(commitment), index, value, commitment, proof);
     }
 
-    function modExp(uint256 exponent) external returns (uint256) {
+    function modExp(uint256 exponent) external view returns (uint256) {
         return KailuaKZGLib.modExp(exponent);
     }
 }

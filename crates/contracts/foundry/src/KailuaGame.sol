@@ -211,7 +211,7 @@ contract KailuaGame is KailuaTournament {
         uint256 outputFe,
         bytes calldata blobCommitment,
         bytes calldata kzgProof
-    ) external override returns (bool success) {
+    ) external view override returns (bool success) {
         uint256 blobIndex = KailuaKZGLib.blobIndex(outputNumber);
         uint32 blobPosition = KailuaKZGLib.fieldElementIndex(outputNumber);
         bytes32 proposalBlobHash = KailuaKZGLib.versionedKZGHash(blobCommitment);
