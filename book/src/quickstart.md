@@ -35,11 +35,11 @@ You can deploy a local optimism devnet equipped with Kailua through the followin
     * The OP Stack services themselves use prebuilt artifacts from the Optimism release pipeline.
 3. `just devnet-up`
     * Starts a local OP Stack devnet using Kurtosis.
-    * Writes the devnet descriptor to `.localtestdata/kurtosis-devnet.json`.
+    * Writes the devnet descriptor to `devnet/kurtosis-devnet.json`.
     * Dumps the deployment output into `devnet.log` for inspection.
 4. `just devnet-upgrade`
     * Upgrades the devnet to use the `KailuaGame` contract.
-    * Auto-discovers RPC endpoints and default keys from `.localtestdata/kurtosis-devnet.json`, but can still take explicit overrides.
+    * Auto-discovers RPC endpoints and default keys from `devnet/kurtosis-devnet.json`, but can still take explicit overrides.
 5. `just devnet-propose`
     * Launches the Kailua proposer.
     * This runs the sequences, which periodically creates new `KailuaGame` instances.

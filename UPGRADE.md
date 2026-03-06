@@ -9,7 +9,7 @@ The public `just devnet-*` interface in this repository remains intact, but the 
 - `optimism` at tag `v1.16.7`
 - a pinned local checkout of `ethpandaops/optimism-package`
 - a local Kurtosis enclave named `kailua-devnet`
-- a rendered descriptor at `.localtestdata/kurtosis-devnet.json`
+- a rendered descriptor at `devnet/kurtosis-devnet.json`
 
 The upgraded workflow was verified by running the devnet integration tests in `bin/cli/tests/devnet.rs` successfully.
 
@@ -31,7 +31,7 @@ The upgraded workflow was verified by running the devnet integration tests in `b
 - fetches a pinned `optimism-package` checkout
 - patches the local package for compatibility
 - runs `kurtosis run` locally in the `kailua-devnet` enclave
-- renders a stable descriptor to `.localtestdata/kurtosis-devnet.json`
+- renders a stable descriptor to `devnet/kurtosis-devnet.json`
 
 This keeps all OP services local. The only networked behavior is normal source/image fetching when dependencies are not already present locally.
 
@@ -50,7 +50,7 @@ It also disables optional extras such as observability and faucet services to ke
 
 ### 3. Descriptor-driven defaults replaced hardcoded ports and keys
 
-The repo now treats `.localtestdata/kurtosis-devnet.json` as the source of truth for:
+The repo now treats `devnet/kurtosis-devnet.json` as the source of truth for:
 
 - L1 RPC
 - L1 beacon RPC
@@ -107,7 +107,7 @@ cargo test -p kailua-cli -F devnet --test devnet proposer_validator -- --nocaptu
 
 Observed result:
 
-- `just devnet-up` completed and produced `.localtestdata/kurtosis-devnet.json`
+- `just devnet-up` completed and produced `devnet/kurtosis-devnet.json`
 - `prover` passed
 - `proposer_validator` passed
 

@@ -57,7 +57,7 @@ lazy_static! {
 }
 
 const WORKSPACE_ROOT: &str = "../..";
-const DEVNET_DESCRIPTOR_PATH: &str = "../../.localtestdata/kurtosis-devnet.json";
+const DEVNET_DESCRIPTOR_PATH: &str = "../../devnet/kurtosis-devnet.json";
 const DEVNET_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
 const DEVNET_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEPLOYER_ALIAS: &str = "deployer";

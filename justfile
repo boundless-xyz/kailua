@@ -2,8 +2,10 @@ set fallback := true
 
 devnet_name := "kailua"
 devnet_enclave := "kailua-devnet"
-devnet_descriptor := ".localtestdata/kurtosis-devnet.json"
-devnet_package_dir := ".localtestdata/optimism-package"
+devnet_runtime_dir := "devnet"
+devnet_descriptor := "devnet/kurtosis-devnet.json"
+devnet_package_dir := "devnet/optimism-package"
+devnet_data_dir := "devnet/data"
 devnet_package_commit := "89e0b8cacab9f7e9f74d53b72d4870092825d577"
 
 # default recipe to display help information
@@ -55,7 +57,7 @@ coverage-open:
 devnet-fetch:
   #!/usr/bin/env bash
   set -euo pipefail
-  mkdir -p .localtestdata
+  mkdir -p {{devnet_runtime_dir}}
   if [ -d optimism/.git ]; then
     git -C optimism fetch --depth 1 origin tag v1.16.7
     git -C optimism checkout --detach v1.16.7
@@ -94,7 +96,7 @@ devnet-up:
   }
   just devnet-fetch
   kurtosis enclave rm -f {{devnet_enclave}} >/dev/null 2>&1 || true
-  mkdir -p .localtestdata
+  mkdir -p {{devnet_runtime_dir}}
   rm -f devnet.log
   if ! run_kurtosis; then
     if rg -q "error reading from server: EOF|connection reset by peer|Client might have cancelled the stream|error reading server preface|HTTP/1.1 header|Kurtosis timed out waiting for package execution to start after upload" devnet.log; then
@@ -164,7 +166,7 @@ devnet-upgrade timeout="3600" advantage="60" target="debug" verbosity="" l1_rpc=
 
 devnet-reset: devnet-clean devnet-up
 
-devnet-propose target="debug" verbosity="" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="" data_dir=".localtestdata/propose" proposer="":
+devnet-propose target="debug" verbosity="" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="" data_dir="devnet/propose" proposer="":
   #!/usr/bin/env bash
   set -euo pipefail
   source ./scripts/devnet-env.sh
@@ -201,7 +203,7 @@ devnet-fault offset parent target="debug" proposer="" verbosity="" l1_rpc="" l1_
       --fault-parent {{parent}} \
       {{verbosity}}
 
-devnet-validate fastforward="0" target="debug" verbosity="" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="" data_dir=".localtestdata/validate" validator="":
+devnet-validate fastforward="0" target="debug" verbosity="" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="" data_dir="devnet/validate" validator="":
   #!/usr/bin/env bash
   set -euo pipefail
   source ./scripts/devnet-env.sh
@@ -220,7 +222,7 @@ devnet-validate fastforward="0" target="debug" verbosity="" l1_rpc="" l1_beacon_
       --validator-key "$VALIDATOR" \
       {{verbosity}}
 
-devnet-prove block_number block_count="1" target="debug" seq_window="50" verbosity="" data=".localtestdata" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="":
+devnet-prove block_number block_count="1" target="debug" seq_window="50" verbosity="" data="{{devnet_data_dir}}" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="":
   #!/usr/bin/env bash
   set -euo pipefail
   source ./scripts/devnet-env.sh
@@ -230,7 +232,7 @@ devnet-prove block_number block_count="1" target="debug" seq_window="50" verbosi
   ROLLUP_NODE_RPC="$(devnet_resolve "{{rollup_node_rpc}}" DEVNET_OP_NODE_RPC)"
   just --justfile justfile prove "{{block_number}}" "{{block_count}}" "$L1_RPC" "$L1_BEACON_RPC" "$L2_RPC" "$ROLLUP_NODE_RPC" "{{data}}" "{{target}}" "{{seq_window}}" "{{verbosity}}"
 
-devnet-rpc socket="127.0.0.1:1337" target="debug" verbosity="" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="" data=".localtestdata":
+devnet-rpc socket="127.0.0.1:1337" target="debug" verbosity="" l1_rpc="" l1_beacon_rpc="" l2_rpc="" rollup_node_rpc="" data="{{devnet_data_dir}}":
   #!/usr/bin/env bash
   set -euo pipefail
   source ./scripts/devnet-env.sh
@@ -240,7 +242,7 @@ devnet-rpc socket="127.0.0.1:1337" target="debug" verbosity="" l1_rpc="" l1_beac
   ROLLUP_NODE_RPC="$(devnet_resolve "{{rollup_node_rpc}}" DEVNET_OP_NODE_RPC)"
   just --justfile justfile rpc "$L1_RPC" "$L1_BEACON_RPC" "$L2_RPC" "$ROLLUP_NODE_RPC" "{{socket}}" "{{data}}" "{{target}}" "{{verbosity}}"
 
-demo size l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data=".localtestdata" target="release" verbosity="":
+demo size l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data="{{devnet_data_dir}}" target="release" verbosity="":
     ./target/{{target}}/kailua-cli demo \
           --eth-rpc-url {{l1_rpc}} \
           --beacon-rpc-url {{l1_beacon_rpc}} \
@@ -250,7 +252,7 @@ demo size l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data=".localtestdata" targ
           --num-blocks-per-proof {{size}} \
           {{verbosity}}
 
-rpc l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc socket="127.0.0.1:1337" data=".localtestdata" target="release" verbosity="":
+rpc l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc socket="127.0.0.1:1337" data="{{devnet_data_dir}}" target="release" verbosity="":
     ./target/{{target}}/kailua-cli rpc \
           --eth-rpc-url {{l1_rpc}} \
           --beacon-rpc-url {{l1_beacon_rpc}} \

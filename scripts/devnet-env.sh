@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 devnet_load_env() {
-  local descriptor="${1:-${KAILUA_DEVNET_DESCRIPTOR:-.localtestdata/kurtosis-devnet.json}}"
+  local descriptor="${1:-${KAILUA_DEVNET_DESCRIPTOR:-devnet/kurtosis-devnet.json}}"
 
   if [[ ! -f "$descriptor" ]]; then
     echo "Missing devnet descriptor at $descriptor. Run 'just devnet-up' first or pass explicit RPC/key args." >&2
@@ -56,7 +56,7 @@ devnet_load_env() {
 devnet_resolve() {
   local provided="$1"
   local env_name="$2"
-  local descriptor="${3:-${KAILUA_DEVNET_DESCRIPTOR:-.localtestdata/kurtosis-devnet.json}}"
+  local descriptor="${3:-${KAILUA_DEVNET_DESCRIPTOR:-devnet/kurtosis-devnet.json}}"
 
   if [[ -n "$provided" ]]; then
     printf '%s\n' "$provided"
