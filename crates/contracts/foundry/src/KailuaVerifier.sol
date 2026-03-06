@@ -129,7 +129,8 @@ contract KailuaVerifier is ISemver {
         return proposalPermits[0].recipient;
     }
 
-    /// @notice Given a reference timestamp, returns the number of expired permits, their total collateral, and the number of active permits
+    /// @notice Given a reference timestamp, returns the number of expired permits, the number of delayed permits,
+    /// the total expired permit collateral, and the number of active permits
     function countExpiredPermits(
         bytes32 proposalKey,
         uint64 numExpiredPermits,
