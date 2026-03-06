@@ -15,7 +15,7 @@
 use crate::await_tel;
 use alloy::primitives::B256;
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use kona_genesis::RollupConfig;
 use kona_registry::Registry;
 use opentelemetry::global::tracer;
@@ -77,6 +77,38 @@ impl OpNodeProvider {
             self.0.client().request_noparams("optimism_rollupConfig")
         )?)
     }
+}
+
+pub fn available_output_l2_head(
+    sync_status: &Value,
+    op_rpc_delay: u64,
+) -> anyhow::Result<(u64, &'static str)> {
+    let finalized_l2_number = sync_status["finalized_l2"]["number"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("failed to parse finalized_l2"))?;
+    let safe_l2_number = sync_status["safe_l2"]["number"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("failed to parse safe_l2"))?;
+
+    #[cfg(feature = "devnet")]
+    {
+        let current_l1_finalized = sync_status["current_l1_finalized"]["number"]
+            .as_u64()
+            .ok_or_else(|| anyhow!("failed to parse current_l1_finalized"))?;
+
+        // The local Kurtosis devnet can keep op-node finality well behind safe head progress.
+        // Prefer safe outputs for local testing whenever they are ahead.
+        if safe_l2_number > finalized_l2_number
+            || (finalized_l2_number == 0 && current_l1_finalized == 0 && safe_l2_number > 0)
+        {
+            return Ok((safe_l2_number.saturating_sub(op_rpc_delay), "safe"));
+        }
+    }
+
+    Ok((
+        finalized_l2_number.saturating_sub(op_rpc_delay),
+        "finalized",
+    ))
 }
 
 pub async fn fetch_rollup_config(

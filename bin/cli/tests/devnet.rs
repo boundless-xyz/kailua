@@ -17,6 +17,7 @@
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::network::BlockResponse;
 use alloy::providers::Provider;
+use anyhow::{anyhow, Context};
 use kailua_cli::fast_track::{fast_track, FastTrackArgs};
 use kailua_cli::fault::{fault, FaultArgs};
 use kailua_proposer::args::ProposeArgs;
@@ -34,10 +35,17 @@ use kailua_sync::transact::TransactArgs;
 use kailua_validator::args::ValidateArgs;
 use kailua_validator::validate::validate;
 use lazy_static::lazy_static;
+use reqwest::Client;
+use serde::Deserialize;
+use serde_json::json;
+use std::collections::HashMap;
 use std::env::set_var;
+use std::fs;
+use std::path::Path;
 use std::process::ExitStatus;
+use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -48,24 +56,268 @@ lazy_static! {
     static ref DEVNET: Arc<Mutex<()>> = Default::default();
 }
 
-async fn make(recipe: &str) -> io::Result<ExitStatus> {
-    let mut cmd = Command::new("make");
-    cmd.args(vec!["-C", "../../optimism", recipe]);
+const WORKSPACE_ROOT: &str = "../..";
+const DEVNET_DESCRIPTOR_PATH: &str = "../../.localtestdata/kurtosis-devnet.json";
+const DEVNET_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
+const DEVNET_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const DEPLOYER_ALIAS: &str = "deployer";
+const OWNER_ALIAS: &str = "owner";
+const GUARDIAN_ALIAS: &str = "guardian";
+const PROPOSER_ALIAS: &str = "proposer";
+const VALIDATOR_ALIAS: &str = "validator";
+const FAULT_PROPOSER_ALIAS: &str = "fault-proposer";
+const TRAIL_FAULT_PROPOSER_ALIAS: &str = "trail-fault-proposer";
+
+#[derive(Clone, Debug, Deserialize)]
+struct DevnetConfig {
+    l1: ChainDescriptor,
+    l2: Vec<L2ChainDescriptor>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct L2ChainDescriptor {
+    #[serde(flatten)]
+    chain: ChainDescriptor,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ChainDescriptor {
+    nodes: Vec<NodeDescriptor>,
+    #[serde(default)]
+    wallets: HashMap<String, WalletDescriptor>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct NodeDescriptor {
+    services: HashMap<String, ServiceDescriptor>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ServiceDescriptor {
+    endpoints: HashMap<String, EndpointDescriptor>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct EndpointDescriptor {
+    host: String,
+    port: u16,
+    #[serde(default)]
+    scheme: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct WalletDescriptor {
+    address: String,
+    private_key: String,
+}
+
+impl DevnetConfig {
+    fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let path = path.as_ref();
+        let descriptor = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read devnet descriptor at {}", path.display()))?;
+        serde_json::from_str(&descriptor)
+            .with_context(|| format!("Failed to parse devnet descriptor at {}", path.display()))
+    }
+
+    fn l2_chain(&self) -> anyhow::Result<&ChainDescriptor> {
+        self.l2
+            .first()
+            .map(|chain| &chain.chain)
+            .ok_or_else(|| anyhow!("Missing L2 chain in devnet descriptor"))
+    }
+
+    fn endpoint_url(
+        &self,
+        chain: &ChainDescriptor,
+        service: &str,
+        endpoint: &str,
+    ) -> anyhow::Result<String> {
+        let node = chain
+            .nodes
+            .first()
+            .ok_or_else(|| anyhow!("Missing node in devnet descriptor"))?;
+        let service = node
+            .services
+            .get(service)
+            .ok_or_else(|| anyhow!("Missing {service} service in devnet descriptor"))?;
+        let endpoint = service
+            .endpoints
+            .get(endpoint)
+            .ok_or_else(|| anyhow!("Missing {endpoint} endpoint in devnet descriptor"))?;
+        let scheme = endpoint.scheme.as_deref().unwrap_or("http");
+        Ok(format!("{scheme}://{}:{}", endpoint.host, endpoint.port))
+    }
+
+    fn l1_rpc_url(&self) -> anyhow::Result<String> {
+        self.endpoint_url(&self.l1, "el", "rpc")
+    }
+
+    fn l1_beacon_rpc_url(&self) -> anyhow::Result<String> {
+        self.endpoint_url(&self.l1, "cl", "http")
+    }
+
+    fn l2_rpc_url(&self) -> anyhow::Result<String> {
+        self.endpoint_url(self.l2_chain()?, "el", "rpc")
+    }
+
+    fn op_node_rpc_url(&self) -> anyhow::Result<String> {
+        self.endpoint_url(self.l2_chain()?, "cl", "http")
+    }
+
+    fn wallet(&self, alias: &str) -> anyhow::Result<&WalletDescriptor> {
+        self.l1
+            .wallets
+            .get(alias)
+            .ok_or_else(|| anyhow!("Missing wallet alias {alias} in devnet descriptor"))
+    }
+
+    fn private_key(&self, alias: &str) -> anyhow::Result<String> {
+        Ok(self.wallet(alias)?.private_key.clone())
+    }
+
+    fn address(&self, alias: &str) -> anyhow::Result<String> {
+        Ok(self.wallet(alias)?.address.clone())
+    }
+
+    fn provider_args(&self) -> anyhow::Result<ProviderArgs> {
+        Ok(ProviderArgs {
+            eth_rpc_url: self.l1_rpc_url()?,
+            op_geth_url: self.l2_rpc_url()?,
+            op_node_url: self.op_node_rpc_url()?,
+            op_rpc_delay: 0,
+            beacon_rpc_url: self.l1_beacon_rpc_url()?,
+            op_rpc_concurrency: 64,
+            rpc_poll_interval: 1,
+            timeouts: Default::default(),
+        })
+    }
+}
+
+async fn just(recipe: &str) -> io::Result<ExitStatus> {
+    let mut cmd = Command::new("just");
+    cmd.current_dir(WORKSPACE_ROOT)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .args(vec!["--justfile", "justfile", recipe]);
     cmd.kill_on_drop(true)
         .spawn()
-        .expect("Failed to spawn devnet up")
+        .expect("Failed to spawn just recipe")
         .wait()
         .await
 }
 
-async fn deploy_kailua_contracts(challenge_timeout: u64) -> anyhow::Result<()> {
+async fn run_just(recipe: &str) -> anyhow::Result<()> {
+    let exit_status = just(recipe).await?;
+    if !exit_status.success() {
+        return Err(anyhow!("just recipe {recipe} failed with {exit_status:?}"));
+    }
+    Ok(())
+}
+
+async fn wait_for_json_rpc(
+    client: &Client,
+    url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> anyhow::Result<()> {
+    let response = client
+        .post(url)
+        .json(&json!({
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        }))
+        .send()
+        .await
+        .with_context(|| format!("Failed to reach {url}"))?
+        .error_for_status()
+        .with_context(|| format!("Non-success response from {url}"))?;
+    let payload: serde_json::Value = response
+        .json()
+        .await
+        .with_context(|| format!("Invalid JSON-RPC response from {url}"))?;
+    if let Some(error) = payload.get("error") {
+        return Err(anyhow!("JSON-RPC error from {url}: {error}"));
+    }
+    Ok(())
+}
+
+async fn wait_for_beacon_api(client: &Client, url: &str) -> anyhow::Result<()> {
+    client
+        .get(format!("{url}/eth/v1/beacon/genesis"))
+        .send()
+        .await
+        .with_context(|| format!("Failed to reach beacon endpoint {url}"))?
+        .error_for_status()
+        .with_context(|| format!("Non-success response from beacon endpoint {url}"))?;
+    Ok(())
+}
+
+async fn wait_for_devnet_ready() -> anyhow::Result<DevnetConfig> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .context("Failed to construct readiness HTTP client")?;
+    let start = Instant::now();
+    let descriptor_path = Path::new(DEVNET_DESCRIPTOR_PATH);
+
+    loop {
+        let current_error = match DevnetConfig::load(descriptor_path) {
+            Ok(config) => {
+                let readiness: anyhow::Result<()> = async {
+                    wait_for_json_rpc(&client, &config.l1_rpc_url()?, "eth_chainId", json!([]))
+                        .await?;
+                    wait_for_beacon_api(&client, &config.l1_beacon_rpc_url()?).await?;
+                    wait_for_json_rpc(&client, &config.l2_rpc_url()?, "eth_chainId", json!([]))
+                        .await?;
+                    wait_for_json_rpc(
+                        &client,
+                        &config.op_node_rpc_url()?,
+                        "optimism_outputAtBlock",
+                        json!(["0x0"]),
+                    )
+                    .await?;
+                    Ok(())
+                }
+                .await;
+
+                match readiness {
+                    Ok(()) => return Ok(config),
+                    Err(err) => err.to_string(),
+                }
+            }
+            Err(err) if descriptor_path.exists() => err.to_string(),
+            Err(_) => format!(
+                "Waiting for devnet descriptor at {}",
+                descriptor_path.display()
+            ),
+        };
+
+        if start.elapsed() >= DEVNET_READINESS_TIMEOUT {
+            return Err(anyhow!(
+                "Timed out waiting for devnet readiness: {}",
+                current_error
+            ));
+        }
+
+        sleep(DEVNET_POLL_INTERVAL).await;
+    }
+}
+
+async fn deploy_kailua_contracts(
+    devnet: &DevnetConfig,
+    challenge_timeout: u64,
+) -> anyhow::Result<()> {
     // fast-track upgrade w/ devmode proof support
     set_var("RISC0_DEV_MODE", "1");
     set_var("RISC0_INFO", "1");
     fast_track(FastTrackArgs {
-        eth_rpc_url: "http://127.0.0.1:8545".to_string(),
-        op_geth_url: "http://127.0.0.1:9545".to_string(),
-        op_node_url: "http://127.0.0.1:7545".to_string(),
+        eth_rpc_url: devnet.l1_rpc_url()?,
+        op_geth_url: devnet.l2_rpc_url()?,
+        op_node_url: devnet.op_node_rpc_url()?,
         txn_args: TransactArgs {
             txn_timeout: 12,
             exec_gas_premium: 0,
@@ -78,16 +330,12 @@ async fn deploy_kailua_contracts(challenge_timeout: u64) -> anyhow::Result<()> {
         collateral_amount: 1,
         verifier_contract: None,
         challenge_timeout,
-        deployer_signer: DeployerSignerArgs::from(
-            "0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356".to_string(),
-        ),
-        owner_signer: OwnerSignerArgs::from(
-            "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6".to_string(),
-        ),
+        deployer_signer: DeployerSignerArgs::from(devnet.private_key(DEPLOYER_ALIAS)?),
+        owner_signer: OwnerSignerArgs::from(devnet.private_key(OWNER_ALIAS)?),
         guardian_signer: Some(GuardianSignerArgs::from(
-            "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6".to_string(),
+            devnet.private_key(GUARDIAN_ALIAS)?,
         )),
-        vanguard_address: Some("0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc".to_string()),
+        vanguard_address: Some(devnet.address(PROPOSER_ALIAS)?),
         vanguard_advantage: Some(60),
         respect_kailua_proposals: true,
         telemetry: Default::default(),
@@ -99,7 +347,7 @@ async fn deploy_kailua_contracts(challenge_timeout: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn start_devnet() -> anyhow::Result<()> {
+async fn start_devnet() -> anyhow::Result<DevnetConfig> {
     // print out INFO logs
     if let Err(err) = kona_cli::LogConfig::new(kona_cli::LogArgs {
         level: 3,
@@ -113,14 +361,14 @@ async fn start_devnet() -> anyhow::Result<()> {
     {
         eprintln!("Failed to set up tracing: {err:?}");
     }
-    // start optimism devnet
-    make("devnet-up").await?;
+    run_just("devnet-up").await?;
+    let config = wait_for_devnet_ready().await?;
     println!("Optimism devnet deployed.");
-    Ok(())
+    Ok(config)
 }
 
 async fn stop_devnet() {
-    match make("devnet-down").await {
+    match just("devnet-down").await {
         Ok(exit_code) => {
             println!("1/2 Complete: {exit_code:?}")
         }
@@ -128,7 +376,7 @@ async fn stop_devnet() {
             println!("1/2 Error: {err:?}")
         }
     }
-    match make("devnet-clean").await {
+    match just("devnet-clean").await {
         Ok(exit_code) => {
             println!("2/2 Complete: {exit_code:?}")
         }
@@ -138,11 +386,15 @@ async fn stop_devnet() {
     }
 }
 
-async fn start_clean_devnet() {
+async fn start_clean_devnet() -> anyhow::Result<DevnetConfig> {
     stop_devnet().await;
-    if let Err(err) = start_devnet().await {
-        eprintln!("Error: {err}");
-        stop_devnet().await;
+    match start_devnet().await {
+        Ok(config) => Ok(config),
+        Err(err) => {
+            eprintln!("Error: {err}");
+            stop_devnet().await;
+            Err(err)
+        }
     }
 }
 
@@ -150,27 +402,18 @@ async fn start_clean_devnet() {
 async fn proposer_validator() {
     // We can only run one of these dockerized devnets at a time
     let devnet_lock = DEVNET.lock().await;
-    sleep(Duration::from_secs(5)).await;
 
     // Start the optimism devnet
-    start_clean_devnet().await;
+    let devnet = start_clean_devnet().await.unwrap();
     // update dgf to use kailua
-    deploy_kailua_contracts(60).await.unwrap();
+    deploy_kailua_contracts(&devnet, 60).await.unwrap();
 
     // Instantiate sync arguments
     let tmp_dir = tempdir().unwrap();
     let proposer_data_dir = tmp_dir.path().join("proposer").to_path_buf();
+    let provider = devnet.provider_args().unwrap();
     let sync = SyncArgs {
-        provider: ProviderArgs {
-            eth_rpc_url: "http://127.0.0.1:8545".to_string(),
-            op_geth_url: "http://127.0.0.1:9545".to_string(),
-            op_node_url: "http://127.0.0.1:7545".to_string(),
-            op_rpc_delay: 0,
-            beacon_rpc_url: "http://127.0.0.1:5052".to_string(),
-            op_rpc_concurrency: 64,
-            rpc_poll_interval: 1,
-            timeouts: Default::default(),
-        },
+        provider: provider.clone(),
         kailua_game_implementation: None,
         kailua_anchor_address: None,
         final_l2_block: Some(60),
@@ -187,9 +430,7 @@ async fn proposer_validator() {
     };
 
     // Instantiate proposer wallet
-    let proposer_signer = ProposerSignerArgs::from(
-        "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba".to_string(),
-    );
+    let proposer_signer = ProposerSignerArgs::from(devnet.private_key(PROPOSER_ALIAS).unwrap());
 
     // Run the proposer until block 60
     propose(
@@ -237,7 +478,7 @@ async fn proposer_validator() {
             sync: sync.clone(),
             bypass_chain_registry: false,
             proposer_signer: ProposerSignerArgs::from(
-                "0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356".to_string(),
+                devnet.private_key(FAULT_PROPOSER_ALIAS).unwrap(),
             ),
             txn_args: txn_args.clone(),
         },
@@ -253,7 +494,7 @@ async fn proposer_validator() {
             sync: sync.clone(),
             bypass_chain_registry: false,
             proposer_signer: ProposerSignerArgs::from(
-                "0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97".to_string(),
+                devnet.private_key(TRAIL_FAULT_PROPOSER_ALIAS).unwrap(),
             ),
             txn_args: txn_args.clone(),
         },
@@ -287,7 +528,7 @@ async fn proposer_validator() {
             min_validity_proving_timestamp: 0,
             l1_head_jump_back: 0,
             validator_signer: ValidatorSignerArgs::from(
-                "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e".to_string(),
+                devnet.private_key(VALIDATOR_ALIAS).unwrap(),
             ),
             txn_args: txn_args.clone(),
             proving: ProvingArgs {
@@ -334,7 +575,7 @@ async fn proposer_validator() {
     proposer.unwrap();
 
     // Deploy new set of Kailua contracts for validity proving
-    deploy_kailua_contracts(u64::MAX).await.unwrap();
+    deploy_kailua_contracts(&devnet, u64::MAX).await.unwrap();
     // Run the proposer and validator until block 90
     let validator_data_dir = tmp_dir.path().join("validator").to_path_buf();
     let validator_handle = tokio::task::spawn(validate(
@@ -353,7 +594,7 @@ async fn proposer_validator() {
             min_validity_proving_timestamp: 0,
             l1_head_jump_back: 0,
             validator_signer: ValidatorSignerArgs::from(
-                "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e".to_string(),
+                devnet.private_key(VALIDATOR_ALIAS).unwrap(),
             ),
             txn_args: txn_args.clone(),
             proving: ProvingArgs {
@@ -410,27 +651,18 @@ async fn prover() {
 
     // We can only run one of these dockerized devnets at a time
     let devnet_lock = DEVNET.lock().await;
-    sleep(Duration::from_secs(5)).await;
 
     // Start the optimism devnet
-    start_clean_devnet().await;
+    let devnet = start_clean_devnet().await.unwrap();
     // update dgf to use kailua
-    deploy_kailua_contracts(60).await.unwrap();
+    deploy_kailua_contracts(&devnet, 60).await.unwrap();
 
     // Instantiate sync arguments
     let tmp_dir = tempdir().unwrap();
     let data_dir = tmp_dir.path().join("agent").to_path_buf();
+    let provider = devnet.provider_args().unwrap();
     let sync = SyncArgs {
-        provider: ProviderArgs {
-            eth_rpc_url: "http://127.0.0.1:8545".to_string(),
-            op_geth_url: "http://127.0.0.1:9545".to_string(),
-            op_node_url: "http://127.0.0.1:7545".to_string(),
-            op_rpc_delay: 0,
-            beacon_rpc_url: "http://127.0.0.1:5052".to_string(),
-            op_rpc_concurrency: 64,
-            rpc_poll_interval: 1,
-            timeouts: Default::default(),
-        },
+        provider: provider,
         kailua_game_implementation: None,
         kailua_anchor_address: None,
         final_l2_block: Some(60),

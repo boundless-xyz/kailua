@@ -18,6 +18,7 @@ use anyhow::{anyhow, Context};
 use kailua_prover::args::ProvingArgs;
 use kailua_prover::risczero::boundless::BoundlessArgs;
 use kailua_sync::args::SyncArgs;
+use kailua_sync::provider::optimism::available_output_l2_head;
 use kailua_sync::provider::{ProviderArgs, SyncProvider};
 use kailua_sync::telemetry::TelemetryArgs;
 use kailua_sync::transact::signer::ValidatorSignerArgs;
@@ -165,11 +166,10 @@ pub async fn handle_blocks(
                 provider.op_provider.sync_status().await
             )
         );
-        let Some(finalized_l2_number) = sync_status["finalized_l2"]["number"]
-            .as_u64()
-            .map(|v| v.saturating_sub(args.provider.op_rpc_delay))
+        let Ok((available_l2_number, available_l2_label)) =
+            available_output_l2_head(&sync_status, args.provider.op_rpc_delay)
         else {
-            error!("Failed to parse finalized_l2_number");
+            error!("Failed to parse available_l2_number");
             continue;
         };
         let l1_head = await_tel!(
@@ -189,12 +189,12 @@ pub async fn handle_blocks(
         // start from most recent block if unspecified
         if last_proven.is_none() {
             last_proven = Some(
-                finalized_l2_number
+                available_l2_number
                     .saturating_sub(args.nth_proof_to_process * args.num_blocks_per_proof + 1),
             );
         }
         // queue required proofs
-        while last_proven.unwrap() + args.num_blocks_per_proof < finalized_l2_number {
+        while last_proven.unwrap() + args.num_blocks_per_proof < available_l2_number {
             let agreed_l2_block_number = last_proven.unwrap();
             let claimed_l2_block_number = agreed_l2_block_number + args.num_blocks_per_proof;
             // request proof
@@ -267,9 +267,11 @@ pub async fn handle_blocks(
         }
         let wait = args
             .num_blocks_per_proof
-            .saturating_sub(finalized_l2_number.saturating_sub(last_proven.unwrap()));
+            .saturating_sub(available_l2_number.saturating_sub(last_proven.unwrap()));
         if wait != last_wait {
-            info!("Waiting for {wait} more finalized L2 blocks to request a new proof.",);
+            info!(
+                "Waiting for {wait} more op-node {available_l2_label} L2 blocks to request a new proof.",
+            );
             last_wait = wait;
         }
         // report completed proofs

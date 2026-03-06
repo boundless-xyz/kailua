@@ -16,7 +16,7 @@ use crate::args::SyncArgs;
 use crate::cursor::SyncCursor;
 use crate::deployment::SyncDeployment;
 use crate::proposal::{Proposal, ProposalSync};
-use crate::provider::optimism::fetch_rollup_config;
+use crate::provider::optimism::{available_output_l2_head, fetch_rollup_config};
 use crate::provider::{ProviderArgs, SyncProvider};
 use crate::stall::Stall;
 use crate::telemetry::SyncTelemetry;
@@ -261,16 +261,14 @@ impl SyncAgent {
                 self.provider.op_provider.sync_status().await
             )
         );
-        let finalized_l2_number = sync_status["finalized_l2"]["number"]
-            .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("failed to parse finalized_l2"))?
-            .saturating_sub(args.provider.op_rpc_delay);
-        let output_block_number = finalized_l2_number
+        let (available_l2_number, available_l2_label) =
+            available_output_l2_head(&sync_status, args.provider.op_rpc_delay)?;
+        let output_block_number = available_l2_number
             .min(self.cursor.last_output_index + self.deployment.blocks_per_proposal());
         if self.cursor.last_output_index + self.deployment.output_block_span < output_block_number {
             info!(
-                "Syncing with op-node from block {} until block {output_block_number}",
-                self.cursor.last_output_index
+                "Syncing with op-node {available_l2_label} head from block {} until block {output_block_number}",
+                self.cursor.last_output_index,
             );
             await_tel!(
                 context,
@@ -321,7 +319,7 @@ impl SyncAgent {
                 }
                 Ok(ProposalSync::DELAYED(proposal_block)) => {
                     // sync more blocks and try again if available
-                    if proposal_block < finalized_l2_number {
+                    if proposal_block < available_l2_number {
                         break;
                     }
                     // Queue delayed proposal for later reprocessing once more blocks are available

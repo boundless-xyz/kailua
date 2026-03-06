@@ -15,6 +15,7 @@
 use alloy::network::{Ethereum, Network, ReceiptResponse, TxSigner};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::providers::{Provider, RootProvider};
+use alloy::sol;
 use alloy::sol_types::SolValue;
 use anyhow::{anyhow, bail, Context};
 use kailua_build::KAILUA_FPVM_KONA_ID;
@@ -35,6 +36,21 @@ use risc0_circuit_recursion::control_id::BN254_IDENTITY_CONTROL_ID;
 use risc0_zkvm::ALLOWED_CONTROL_ROOT;
 use std::str::FromStr;
 use tracing::{info, warn};
+
+sol! {
+    #[sol(rpc)]
+    interface OptimismPortal2AnchorStateRegistryAccessor {
+        function anchorStateRegistry() external view returns (address);
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface AnchorStateRegistryAdmin {
+        function respectedGameType() external view returns (uint32);
+        function setRespectedGameType(uint32 _gameType) external;
+    }
+}
 
 /// Fast-track migrate a rollup to use Kailua
 #[derive(clap::Args, Debug, Clone)]
@@ -93,7 +109,7 @@ pub struct FastTrackArgs {
     #[clap(long, env, requires = "vanguard_address")]
     pub vanguard_advantage: Option<u64>,
 
-    /// Whether to set Kailua as the OptimismPortal's respected game type
+    /// Whether to set Kailua as the AnchorStateRegistry's respected game type
     #[clap(long, env)]
     pub respect_kailua_proposals: bool,
 
@@ -190,23 +206,38 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
             args.timeouts.eth_rpc_timeout,
         )
         .await;
-    let factory_owner_safe = Safe::new(factory_owner_address, &owner_provider);
-    info!("Safe({:?})", factory_owner_safe.address());
-    let safe_owners = factory_owner_safe
-        .getOwners()
-        .stall_with_context(
-            context.clone(),
-            "Safe::getOwners",
-            args.timeouts.eth_rpc_timeout,
-        )
-        .await;
-    info!("Safe::owners({:?})", &safe_owners);
     let owner_address = owner_wallet.default_signer().address();
-    if safe_owners.first().unwrap() != &owner_address {
-        bail!("Incorrect owner key.");
-    } else if safe_owners.len() != 1 {
-        bail!("Expected exactly one owner of safe account.");
-    }
+    let factory_owner_code = owner_provider
+        .get_code_at(factory_owner_address)
+        .await
+        .context("DisputeGameFactory::ownerCode")?;
+    let factory_owner_safe = if factory_owner_code.is_empty() {
+        info!("DisputeGameFactory owner is an EOA({factory_owner_address:?}).");
+        if factory_owner_address != owner_address {
+            bail!(
+                "Incorrect owner key. DisputeGameFactory owner is {factory_owner_address}, but provided private key has account address {owner_address}."
+            );
+        }
+        None
+    } else {
+        let factory_owner_safe = Safe::new(factory_owner_address, &owner_provider);
+        info!("Safe({:?})", factory_owner_safe.address());
+        let safe_owners = factory_owner_safe
+            .getOwners()
+            .stall_with_context(
+                context.clone(),
+                "Safe::getOwners",
+                args.timeouts.eth_rpc_timeout,
+            )
+            .await;
+        info!("Safe::owners({:?})", &safe_owners);
+        if safe_owners.first().unwrap() != &owner_address {
+            bail!("Incorrect owner key.");
+        } else if safe_owners.len() != 1 {
+            bail!("Expected exactly one owner of safe account.");
+        }
+        Some(factory_owner_safe)
+    };
 
     // initialize deployment wallet
     info!("Initializing deployer wallet.");
@@ -275,16 +306,24 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
 
     // Update dispute factory implementation to new KailuaTreasury deployment
     info!("Setting KailuaTreasury implementation address in DisputeGameFactory.");
-    await_tel_res!(
-        context,
-        tracer,
-        "DisputeGameFactory::setImplementation",
-        exec_safe_txn(
-            dispute_game_factory.setImplementation(KAILUA_GAME_TYPE, kailua_treasury_impl_addr),
-            &factory_owner_safe,
-            owner_address,
-        )
-    )?;
+    if let Some(factory_owner_safe) = &factory_owner_safe {
+        await_tel_res!(
+            context,
+            tracer,
+            "DisputeGameFactory::setImplementation",
+            exec_safe_txn(
+                dispute_game_factory.setImplementation(KAILUA_GAME_TYPE, kailua_treasury_impl_addr),
+                factory_owner_safe,
+                owner_address,
+            )
+        )?;
+    } else {
+        dispute_game_factory
+            .setImplementation(KAILUA_GAME_TYPE, kailua_treasury_impl_addr)
+            .transact_with_context(context.clone(), "DisputeGameFactory::setImplementation")
+            .await
+            .context("DisputeGameFactory::setImplementation")?;
+    }
     assert_eq!(
         dispute_game_factory
             .gameImpls(KAILUA_GAME_TYPE)
@@ -308,16 +347,24 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         .is_zero()
     {
         info!("Setting KailuaTreasury initialization bond value in DisputeGameFactory to zero.");
-        await_tel_res!(
-            context,
-            tracer,
-            "DisputeGameFactory::setInitBond",
-            exec_safe_txn(
-                dispute_game_factory.setInitBond(KAILUA_GAME_TYPE, U256::ZERO),
-                &factory_owner_safe,
-                owner_address,
-            )
-        )?;
+        if let Some(factory_owner_safe) = &factory_owner_safe {
+            await_tel_res!(
+                context,
+                tracer,
+                "DisputeGameFactory::setInitBond",
+                exec_safe_txn(
+                    dispute_game_factory.setInitBond(KAILUA_GAME_TYPE, U256::ZERO),
+                    factory_owner_safe,
+                    owner_address,
+                )
+            )?;
+        } else {
+            dispute_game_factory
+                .setInitBond(KAILUA_GAME_TYPE, U256::ZERO)
+                .transact_with_context(context.clone(), "DisputeGameFactory::setInitBond")
+                .await
+                .context("DisputeGameFactory::setInitBond")?;
+        }
         assert_eq!(
             dispute_game_factory
                 .initBonds(KAILUA_GAME_TYPE)
@@ -377,16 +424,24 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         .await;
     if status == 0 {
         info!("Resolving KailuaTreasury instance");
-        await_tel_res!(
-            context,
-            tracer,
-            "KailuaTreasury::resolve",
-            exec_safe_txn(
-                kailua_treasury_instance.resolve(),
-                &factory_owner_safe,
-                owner_address,
-            )
-        )?;
+        if let Some(factory_owner_safe) = &factory_owner_safe {
+            await_tel_res!(
+                context,
+                tracer,
+                "KailuaTreasury::resolve",
+                exec_safe_txn(
+                    kailua_treasury_instance.resolve(),
+                    factory_owner_safe,
+                    owner_address,
+                )
+            )?;
+        } else {
+            kailua_treasury_instance
+                .resolve()
+                .transact_with_context(context.clone(), "KailuaTreasury::resolve")
+                .await
+                .context("KailuaTreasury::resolve")?;
+        }
     } else {
         info!("Game instance is not ongoing ({status})");
     }
@@ -397,16 +452,24 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         args.collateral_amount
     );
     let bond_value = U256::from(args.collateral_amount);
-    await_tel_res!(
-        context,
-        tracer,
-        "KailuaTreasury::setParticipationBond",
-        exec_safe_txn(
-            kailua_treasury_implementation.setParticipationBond(bond_value),
-            &factory_owner_safe,
-            owner_address,
-        )
-    )?;
+    if let Some(factory_owner_safe) = &factory_owner_safe {
+        await_tel_res!(
+            context,
+            tracer,
+            "KailuaTreasury::setParticipationBond",
+            exec_safe_txn(
+                kailua_treasury_implementation.setParticipationBond(bond_value),
+                factory_owner_safe,
+                owner_address,
+            )
+        )?;
+    } else {
+        kailua_treasury_implementation
+            .setParticipationBond(bond_value)
+            .transact_with_context(context.clone(), "KailuaTreasury::setParticipationBond")
+            .await
+            .context("KailuaTreasury::setParticipationBond")?;
+    }
     assert_eq!(
         kailua_treasury_implementation
             .participationBond()
@@ -442,17 +505,25 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
 
     // Update implementation to KailuaGame
     info!("Setting KailuaGame implementation address in DisputeGameFactory.");
-    await_tel_res!(
-        context,
-        tracer,
-        "DisputeGameFactory::setImplementation",
-        exec_safe_txn(
-            dispute_game_factory
-                .setImplementation(KAILUA_GAME_TYPE, *kailua_game_contract.address()),
-            &factory_owner_safe,
-            owner_address,
-        )
-    )?;
+    if let Some(factory_owner_safe) = &factory_owner_safe {
+        await_tel_res!(
+            context,
+            tracer,
+            "DisputeGameFactory::setImplementation",
+            exec_safe_txn(
+                dispute_game_factory
+                    .setImplementation(KAILUA_GAME_TYPE, *kailua_game_contract.address()),
+                factory_owner_safe,
+                owner_address,
+            )
+        )?;
+    } else {
+        dispute_game_factory
+            .setImplementation(KAILUA_GAME_TYPE, *kailua_game_contract.address())
+            .transact_with_context(context.clone(), "DisputeGameFactory::setImplementation")
+            .await
+            .context("DisputeGameFactory::setImplementation")?;
+    }
 
     // Set the vanguard parameters if provided
     if let Some(vanguard_address_string) = args.vanguard_address {
@@ -460,16 +531,25 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         let vanguard_advantage = args.vanguard_advantage.unwrap_or(u64::MAX >> 4);
         info!("Assigning proposal advantage to vanguard in KailuaTreasury.");
 
-        await_tel_res!(
-            context,
-            tracer,
-            "KailuaTreasury::assignVanguard",
-            exec_safe_txn(
-                kailua_treasury_implementation.assignVanguard(vanguard_address, vanguard_advantage),
-                &factory_owner_safe,
-                owner_address,
-            )
-        )?;
+        if let Some(factory_owner_safe) = &factory_owner_safe {
+            await_tel_res!(
+                context,
+                tracer,
+                "KailuaTreasury::assignVanguard",
+                exec_safe_txn(
+                    kailua_treasury_implementation
+                        .assignVanguard(vanguard_address, vanguard_advantage),
+                    factory_owner_safe,
+                    owner_address,
+                )
+            )?;
+        } else {
+            kailua_treasury_implementation
+                .assignVanguard(vanguard_address, vanguard_advantage)
+                .transact_with_context(context.clone(), "KailuaTreasury::assignVanguard")
+                .await
+                .context("KailuaTreasury::assignVanguard")?;
+        }
     }
 
     // Update the respectedGameType as the guardian
@@ -503,16 +583,40 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
             bail!("OptimismPortal2 Guardian is {portal_guardian_address}. Provided private key has account address {guardian_address}.");
         }
 
-        info!("Setting respectedGameType in OptimismPortal2.");
-        let receipt = optimism_portal
-            .setRespectedGameType(KAILUA_GAME_TYPE)
-            .transact_with_context(context.clone(), "OptimismPortal2::setRespectedGameType")
-            .await
-            .context("OptimismPortal2::setRespectedGameType")?;
-        info!(
-            "OptimismPortal2::setRespectedGameType: {} gas",
-            receipt.gas_used
-        );
+        let optimism_portal_registry =
+            OptimismPortal2AnchorStateRegistryAccessor::new(portal_address, &guardian_provider);
+        let anchor_state_registry_address = optimism_portal_registry
+            .anchorStateRegistry()
+            .stall_with_context(
+                context.clone(),
+                "OptimismPortal2::anchorStateRegistry",
+                args.timeouts.eth_rpc_timeout,
+            )
+            .await;
+        let anchor_state_registry =
+            AnchorStateRegistryAdmin::new(anchor_state_registry_address, &guardian_provider);
+        let respected_game_type = anchor_state_registry
+            .respectedGameType()
+            .stall_with_context(
+                context.clone(),
+                "AnchorStateRegistry::respectedGameType",
+                args.timeouts.eth_rpc_timeout,
+            )
+            .await;
+        if respected_game_type == KAILUA_GAME_TYPE {
+            info!("AnchorStateRegistry already respects Kailua proposals ({KAILUA_GAME_TYPE}).");
+        } else {
+            info!("Setting respectedGameType in AnchorStateRegistry.");
+            let receipt = anchor_state_registry
+                .setRespectedGameType(KAILUA_GAME_TYPE)
+                .transact_with_context(context.clone(), "AnchorStateRegistry::setRespectedGameType")
+                .await
+                .context("AnchorStateRegistry::setRespectedGameType")?;
+            info!(
+                "AnchorStateRegistry::setRespectedGameType: {} gas",
+                receipt.gas_used
+            );
+        }
     }
 
     info!("Kailua upgrade complete.");
