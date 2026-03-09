@@ -41,7 +41,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::env::set_var;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -56,8 +56,7 @@ lazy_static! {
     static ref DEVNET: Arc<Mutex<()>> = Default::default();
 }
 
-const WORKSPACE_ROOT: &str = "../..";
-const DEVNET_DESCRIPTOR_PATH: &str = "../../devnet/kurtosis-devnet.json";
+const WORKSPACE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
 const DEVNET_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
 const DEVNET_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEPLOYER_ALIAS: &str = "deployer";
@@ -195,24 +194,40 @@ impl DevnetConfig {
     }
 }
 
-async fn just(recipe: &str) -> io::Result<ExitStatus> {
-    let mut cmd = Command::new("just");
-    cmd.current_dir(WORKSPACE_ROOT)
+fn workspace_root() -> PathBuf {
+    Path::new(WORKSPACE_ROOT)
+        .join("../..")
+        .canonicalize()
+        .expect("Failed to resolve workspace root")
+}
+
+fn devnet_descriptor_path() -> PathBuf {
+    workspace_root().join("devnet/kurtosis-devnet.json")
+}
+
+fn devnet_script(name: &str) -> PathBuf {
+    workspace_root().join("scripts").join(name)
+}
+
+async fn run_devnet_script(script: &str) -> io::Result<ExitStatus> {
+    let script_path = devnet_script(script);
+    let mut cmd = Command::new("/bin/bash");
+    cmd.current_dir(workspace_root())
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .args(vec!["--justfile", "justfile", recipe]);
+        .arg(&script_path);
     cmd.kill_on_drop(true)
         .spawn()
-        .expect("Failed to spawn just recipe")
+        .unwrap_or_else(|err| panic!("Failed to spawn devnet script {}: {err}", script_path.display()))
         .wait()
         .await
 }
 
-async fn run_just(recipe: &str) -> anyhow::Result<()> {
-    let exit_status = just(recipe).await?;
+async fn run_devnet(script: &str) -> anyhow::Result<()> {
+    let exit_status = run_devnet_script(script).await?;
     if !exit_status.success() {
-        return Err(anyhow!("just recipe {recipe} failed with {exit_status:?}"));
+        return Err(anyhow!("devnet script {script} failed with {exit_status:?}"));
     }
     Ok(())
 }
@@ -263,10 +278,10 @@ async fn wait_for_devnet_ready() -> anyhow::Result<DevnetConfig> {
         .build()
         .context("Failed to construct readiness HTTP client")?;
     let start = Instant::now();
-    let descriptor_path = Path::new(DEVNET_DESCRIPTOR_PATH);
+    let descriptor_path = devnet_descriptor_path();
 
     loop {
-        let current_error = match DevnetConfig::load(descriptor_path) {
+        let current_error = match DevnetConfig::load(&descriptor_path) {
             Ok(config) => {
                 let readiness: anyhow::Result<()> = async {
                     wait_for_json_rpc(&client, &config.l1_rpc_url()?, "eth_chainId", json!([]))
@@ -362,14 +377,14 @@ async fn start_devnet() -> anyhow::Result<DevnetConfig> {
     {
         eprintln!("Failed to set up tracing: {err:?}");
     }
-    run_just("devnet-up").await?;
+    run_devnet("devnet-up.sh").await?;
     let config = wait_for_devnet_ready().await?;
     println!("Optimism devnet deployed.");
     Ok(config)
 }
 
 async fn stop_devnet() {
-    match just("devnet-clean").await {
+    match run_devnet_script("devnet-clean.sh").await {
         Ok(exit_code) => {
             println!("Cleanup Complete: {exit_code:?}")
         }

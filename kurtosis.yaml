@@ -82,13 +82,12 @@ ethereum_package:
     - el_type: geth
       cl_type: teku
       cl_image: consensys/teku:25.7.1
-      el_storage_type: archive
       el_volume_size: 16384
       cl_volume_size: 8192
   network_params:
     preset: minimal
     genesis_delay: 2
-    slot_duration_ms: 2000
+    seconds_per_slot: 2
     eth1_follow_distance: 16
     min_validator_withdrawability_delay: 8
     shard_committee_period: 8

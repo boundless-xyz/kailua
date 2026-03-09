@@ -59,38 +59,7 @@ coverage-open:
   cargo +nightly llvm-cov -p kailua-kona --branch --open
 
 devnet-fetch:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  is_detached_at() {
-    local dir="$1"
-    local expected="$2"
-    [[ -d "$dir/.git" ]] || return 1
-    [[ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" == "$expected" ]] || return 1
-    ! git -C "$dir" symbolic-ref -q HEAD >/dev/null 2>&1
-  }
-  mkdir -p {{devnet_runtime_dir}}
-  if is_detached_at optimism {{devnet_optimism_commit}}; then
-    git -C optimism submodule update --init --recursive
-  elif [ -d optimism/.git ]; then
-    git -C optimism fetch --depth 1 origin {{devnet_optimism_commit}}
-    git -C optimism checkout --detach {{devnet_optimism_commit}}
-    git -C optimism submodule update --init --recursive
-  else
-    git clone --depth 1 --branch v1.16.7 --recursive https://github.com/ethereum-optimism/optimism.git
-    git -C optimism checkout --detach {{devnet_optimism_commit}}
-    git -C optimism submodule update --init --recursive
-  fi
-  if is_detached_at {{devnet_package_dir}} {{devnet_package_commit}}; then
-    :
-  elif [ -d {{devnet_package_dir}}/.git ]; then
-    git -C {{devnet_package_dir}} fetch --depth 1 origin {{devnet_package_commit}}
-    git -C {{devnet_package_dir}} checkout --detach {{devnet_package_commit}}
-  else
-    git clone --depth 1 https://github.com/ethpandaops/optimism-package.git {{devnet_package_dir}}
-    git -C {{devnet_package_dir}} fetch --depth 1 origin {{devnet_package_commit}}
-    git -C {{devnet_package_dir}} checkout --detach {{devnet_package_commit}}
-  fi
-  ./scripts/patch-optimism-package.sh {{devnet_package_dir}}
+  ./scripts/devnet-fetch.sh
 
 devnet-build +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia": (build ARGS)
 
@@ -101,46 +70,13 @@ devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F 
 devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm": (build ARGS)
 
 devnet-up:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  run_kurtosis() {
-    python3 ./scripts/run-kurtosis-devnet.py \
-      --package-dir {{devnet_package_dir}} \
-      --args-file "$PWD/kurtosis.yaml" \
-      --enclave {{devnet_enclave}} \
-      --log {{devnet_log}} \
-      --stall-timeout-secs 60
-  }
-  just devnet-fetch
-  kurtosis enclave rm -f {{devnet_enclave}} >/dev/null 2>&1 || true
-  mkdir -p {{devnet_runtime_dir}}
-  rm -f {{devnet_descriptor}} {{devnet_log}}
-  if run_kurtosis; then
-    :
-  else
-    status="$?"
-    if [ "$status" -eq 75 ]; then
-      echo "Kurtosis failed during package upload; restarting engine and retrying once." >&2
-      kurtosis enclave rm -f {{devnet_enclave}} >/dev/null 2>&1 || true
-      kurtosis engine restart
-      rm -f {{devnet_log}}
-      run_kurtosis
-    else
-      exit "$status"
-    fi
-  fi
-  python3 ./scripts/render-devnet-descriptor.py --enclave {{devnet_enclave}} --output {{devnet_descriptor}}
+  ./scripts/devnet-up.sh
 
 devnet-down:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  kurtosis enclave rm -f {{devnet_enclave}} >/dev/null 2>&1 || true
+  ./scripts/devnet-down.sh
 
 devnet-clean:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  kurtosis enclave rm -f {{devnet_enclave}} >/dev/null 2>&1 || true
-  rm -rf {{devnet_descriptor}} {{devnet_log}} {{devnet_data_dir}} {{devnet_propose_dir}} {{devnet_validate_dir}} || true
+  ./scripts/devnet-clean.sh
 
 devnet-config target="debug" verbosity="" l1_rpc="" l2_rpc="" rollup_node_rpc="":
   #!/usr/bin/env bash
