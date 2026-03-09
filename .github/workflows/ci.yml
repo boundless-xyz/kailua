@@ -118,6 +118,30 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13.1'
+      - name: Install Kurtosis
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO=sudo
+          else
+            SUDO=
+          fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y jq
+          if ! command -v kurtosis >/dev/null 2>&1; then
+            echo "deb [trusted=yes] https://apt.fury.io/kurtosis-tech/ /" | $SUDO tee /etc/apt/sources.list.d/kurtosis.list
+            $SUDO apt-get update
+            $SUDO apt-get install -y kurtosis-cli
+          fi
+          docker version
+          kurtosis version
+      - name: Start Kurtosis engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          kurtosis engine start
+          kurtosis engine status
       - uses: risc0/risc0/.github/actions/rustup@main
       - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install rzup
@@ -143,8 +167,6 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: v1.0.0
-      - name: Install just
-        run: cargo install just
       - name: cargo test kailua
         run: cargo test --locked --workspace --exclude kailua-hana --exclude kailua-hokulea -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
 
