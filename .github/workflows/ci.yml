@@ -143,6 +143,8 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: v1.0.0
+      - name: Install just
+        run: cargo install just
       - name: cargo test kailua
         run: cargo test --locked --workspace --exclude kailua-hana --exclude kailua-hokulea -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
 
