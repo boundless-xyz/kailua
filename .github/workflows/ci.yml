@@ -23,6 +23,7 @@ env:
   SOLC_VERSION: 0.8.24
   RISC0_VERSION: 2.3.1
   RISC0_TOOLCHAIN_VERSION: 1.88.0
+  RUST_BACKTRACE: full
 
 jobs:
   cargo-fmt:
