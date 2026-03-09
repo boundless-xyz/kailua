@@ -140,7 +140,7 @@ devnet-clean:
   #!/usr/bin/env bash
   set -euo pipefail
   kurtosis enclave rm -f {{devnet_enclave}} >/dev/null 2>&1 || true
-  rm -rf {{devnet_descriptor}} {{devnet_log}} {{devnet_data_dir}} {{devnet_propose_dir}} {{devnet_validate_dir}}
+  rm -rf {{devnet_descriptor}} {{devnet_log}} {{devnet_data_dir}} {{devnet_propose_dir}} {{devnet_validate_dir}} || true
 
 devnet-config target="debug" verbosity="" l1_rpc="" l2_rpc="" rollup_node_rpc="":
   #!/usr/bin/env bash
