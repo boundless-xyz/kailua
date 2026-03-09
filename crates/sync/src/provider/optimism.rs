@@ -15,7 +15,7 @@
 use crate::await_tel;
 use alloy::primitives::B256;
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use kona_genesis::RollupConfig;
 use kona_registry::Registry;
 use opentelemetry::global::tracer;
