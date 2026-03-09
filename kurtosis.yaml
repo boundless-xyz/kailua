@@ -80,6 +80,9 @@ optimism_package:
 ethereum_package:
   participants:
     - el_type: geth
+      el_image: ethereum/client-go:v1.16.9
+      el_extra_params:
+        - --gcmode=archive
       cl_type: teku
       cl_image: consensys/teku:25.7.1
       el_volume_size: 16384
