@@ -219,7 +219,12 @@ async fn run_devnet_script(script: &str) -> io::Result<ExitStatus> {
         .arg(&script_path);
     cmd.kill_on_drop(true)
         .spawn()
-        .unwrap_or_else(|err| panic!("Failed to spawn devnet script {}: {err}", script_path.display()))
+        .unwrap_or_else(|err| {
+            panic!(
+                "Failed to spawn devnet script {}: {err}",
+                script_path.display()
+            )
+        })
         .wait()
         .await
 }
@@ -227,7 +232,9 @@ async fn run_devnet_script(script: &str) -> io::Result<ExitStatus> {
 async fn run_devnet(script: &str) -> anyhow::Result<()> {
     let exit_status = run_devnet_script(script).await?;
     if !exit_status.success() {
-        return Err(anyhow!("devnet script {script} failed with {exit_status:?}"));
+        return Err(anyhow!(
+            "devnet script {script} failed with {exit_status:?}"
+        ));
     }
     Ok(())
 }
