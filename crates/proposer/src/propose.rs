@@ -28,7 +28,6 @@ use kailua_contracts::*;
 use kailua_kona::blobs::hash_to_fe;
 use kailua_sync::agent::{SyncAgent, FINAL_L2_BLOCK_RESOLVED};
 use kailua_sync::proposal::Proposal;
-use kailua_sync::provider::optimism::available_output_l2_head;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::provider::KailuaProvider;
 use kailua_sync::transact::rpc::get_block;
@@ -182,7 +181,7 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
             }
         }
 
-        // Check the latest output-eligible L2 head.
+        // Check the latest finalized L2 head.
         let proposal_block_number =
             canonical_tip.output_block_number + agent.deployment.blocks_per_proposal();
         if agent.cursor.last_output_index < canonical_tip.output_block_number {
@@ -192,19 +191,8 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
             );
             continue;
         } else if agent.cursor.last_output_index < proposal_block_number {
-            let sync_status = await_tel!(
-                context,
-                tracer,
-                "sync_status",
-                retry_res_ctx_timeout!(
-                    args.sync.provider.timeouts.op_node_timeout,
-                    agent.provider.op_provider.sync_status().await
-                )
-            );
-            let (_, available_l2_label) =
-                available_output_l2_head(&sync_status, args.sync.provider.op_rpc_delay)?;
             info!(
-                "Waiting for op-node {available_l2_label} l2 head to reach block {proposal_block_number} before proposing ({} more blocks needed).",
+                "Waiting for op-node finalized l2 head to reach block {proposal_block_number} before proposing ({} more blocks needed).",
                 proposal_block_number - agent.cursor.last_output_index
             );
             continue;
