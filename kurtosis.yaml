@@ -87,10 +87,7 @@ ethereum_package:
   network_params:
     preset: minimal
     genesis_delay: 2
-    seconds_per_slot: 2
-    eth1_follow_distance: 16
-    min_validator_withdrawability_delay: 8
-    shard_committee_period: 8
+    seconds_per_slot: 4
     additional_preloaded_contracts: |
       {
         "0x4e59b44847b379578588920cA78FbF26c0B4956C": {

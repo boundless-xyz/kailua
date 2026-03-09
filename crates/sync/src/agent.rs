@@ -261,6 +261,12 @@ impl SyncAgent {
                 self.provider.op_provider.sync_status().await
             )
         );
+        #[cfg(feature = "devnet")]
+        let finalized_l2_number = sync_status["safe_l2"]["number"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("failed to parse finalized_l2"))?
+            .saturating_sub(args.provider.op_rpc_delay);
+        #[cfg(not(feature = "devnet"))]
         let finalized_l2_number = sync_status["finalized_l2"]["number"]
             .as_u64()
             .ok_or_else(|| anyhow::anyhow!("failed to parse finalized_l2"))?
