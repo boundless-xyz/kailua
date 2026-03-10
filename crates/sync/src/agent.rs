@@ -986,7 +986,7 @@ impl SyncAgent {
 
         // Query permit counts as of latest block
         let permit_counts = kailua_verifier
-            .countExpiredPermits(proposal_key, 0, latest_block.header.timestamp)
+            .countExpiredPermits(proposal_key, 0, 0, latest_block.header.timestamp)
             .stall_with_context(
                 context.clone(),
                 "KailuaVerifier::countExpiredPermits",
@@ -994,8 +994,9 @@ impl SyncAgent {
             )
             .await;
         let num_expired_permits = permit_counts._0;
-        let num_active_permits = permit_counts._2;
-        let mut num_issued_permits = num_expired_permits + num_active_permits;
+        let num_delayed_permits = permit_counts._1;
+        let num_active_permits = permit_counts._3;
+        let mut num_issued_permits = num_expired_permits + num_delayed_permits + num_active_permits;
 
         // No permits available
         if num_issued_permits > 2 * num_expired_permits {
@@ -1012,6 +1013,7 @@ impl SyncAgent {
                 parent.contract,
                 proposal.signature,
                 num_expired_permits,
+                num_delayed_permits,
                 payout_recipient,
             )
             .value(bond)
@@ -1125,7 +1127,7 @@ impl SyncAgent {
 
         // Count expired permits
         let permit_counts = kailua_verifier
-            .countExpiredPermits(proposal_key, 0, proof_time)
+            .countExpiredPermits(proposal_key, 0, 0, proof_time)
             .stall_with_context(
                 context.clone(),
                 "KailuaVerifier::countExpiredPermits",
@@ -1134,7 +1136,7 @@ impl SyncAgent {
             .await;
 
         // Calculate expected payout
-        let payout = permit_counts._1 / U256::from(permit_counts._2);
+        let payout = permit_counts._2 / U256::from(permit_counts._3);
 
         for (expiry, index) in permits.into_iter() {
             // Skip if unreleasable
@@ -1167,6 +1169,7 @@ impl SyncAgent {
                     parent.contract,
                     proposal.signature,
                     permit_counts._0,
+                    permit_counts._1,
                     index,
                 )
                 .transact_with_context(context.clone(), "KailuaVerifier::releaseFaultProofPermit")

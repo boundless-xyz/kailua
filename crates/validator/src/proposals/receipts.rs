@@ -615,7 +615,8 @@ pub async fn publish_receipt_proofs<P: Provider>(
         let permits = agent.get_fp_permits(proposal.contract, proof_journal.payout_recipient);
         if let Some(&(expiry, permit_index)) = permits.last() {
             if permit_index > 0 {
-                let activation_time = expiry - agent.deployment.permit_duration + agent.deployment.permit_delay;
+                let activation_time =
+                    expiry - agent.deployment.permit_duration + agent.deployment.permit_delay;
                 match validator_provider
                     .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
                     .await
@@ -627,18 +628,21 @@ pub async fn publish_receipt_proofs<P: Provider>(
                                 "Waiting {}s for permit activation before submitting output fault proof for proposal {proposal_index} (L1 time: {l1_timestamp}, activation: {activation_time}).",
                                 activation_time - l1_timestamp
                             );
-                            computed_proof_buffer.push_back(Message::Proof(proposal_index, Some(receipt)));
+                            computed_proof_buffer
+                                .push_back(Message::Proof(proposal_index, Some(receipt)));
                             continue;
                         }
                     }
                     Ok(None) => {
                         error!("Failed to fetch latest block for permit activation check");
-                        computed_proof_buffer.push_back(Message::Proof(proposal_index, Some(receipt)));
+                        computed_proof_buffer
+                            .push_back(Message::Proof(proposal_index, Some(receipt)));
                         continue;
                     }
                     Err(e) => {
                         error!("Failed to fetch latest block for permit activation check: {e:?}");
-                        computed_proof_buffer.push_back(Message::Proof(proposal_index, Some(receipt)));
+                        computed_proof_buffer
+                            .push_back(Message::Proof(proposal_index, Some(receipt)));
                         continue;
                     }
                 }

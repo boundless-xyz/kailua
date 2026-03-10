@@ -175,7 +175,8 @@ pub async fn publish_trail_proofs<P: Provider>(
         let permits = agent.get_fp_permits(proposal.contract, validator_address);
         if let Some(&(expiry, permit_index)) = permits.last() {
             if permit_index > 0 {
-                let activation_time = expiry - agent.deployment.permit_duration + agent.deployment.permit_delay;
+                let activation_time =
+                    expiry - agent.deployment.permit_duration + agent.deployment.permit_delay;
                 match validator_provider
                     .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
                     .await

@@ -132,19 +132,11 @@ impl SyncDeployment {
             .await;
         let permit_duration = kailua_verifier
             .PERMIT_DURATION()
-            .stall_with_context(
-                context.clone(),
-                "KailuaVerifier::PERMIT_DURATION",
-                timeout,
-            )
+            .stall_with_context(context.clone(), "KailuaVerifier::PERMIT_DURATION", timeout)
             .await;
         let permit_delay = kailua_verifier
             .PERMIT_DELAY()
-            .stall_with_context(
-                context.clone(),
-                "KailuaVerifier::PERMIT_DELAY",
-                timeout,
-            )
+            .stall_with_context(context.clone(), "KailuaVerifier::PERMIT_DELAY", timeout)
             .await;
         let proposal_output_count = kailua_game_implementation
             .PROPOSAL_OUTPUT_COUNT()
