@@ -40,4 +40,4 @@ else
   git -C "$devnet_package_dir" checkout --detach "$devnet_package_commit"
 fi
 
-./scripts/patch-optimism-package.sh "$devnet_package_dir"
+#./scripts/patch-optimism-package.sh "$devnet_package_dir"
