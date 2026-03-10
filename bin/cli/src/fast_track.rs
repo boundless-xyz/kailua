@@ -78,6 +78,9 @@ pub struct FastTrackArgs {
     /// The timeout after which a fault proof permit expires
     #[clap(long, env)]
     pub proof_permit_timeout: u64,
+    /// The delay after which a fault proof permit is active
+    #[clap(long, env)]
+    pub proof_permit_delay: u64,
 
     /// Secret key of L1 wallet to use for deploying contracts
     #[clap(flatten)]
@@ -247,6 +250,7 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
         bytemuck::cast::<[u32; 8], [u8; 32]>(KAILUA_FPVM_KONA_ID).into(),
         rollup_config_hash.into(),
         args.proof_permit_timeout,
+        args.proof_permit_delay,
     )
     .transact_with_context(context.clone(), "KailuaVerifier::deploy")
     .await
