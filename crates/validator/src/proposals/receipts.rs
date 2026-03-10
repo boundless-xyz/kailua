@@ -611,6 +611,40 @@ pub async fn publish_receipt_proofs<P: Provider>(
             }
         }
 
+        // Check permit activation before submitting fault proof
+        let permits = agent.get_fp_permits(proposal.contract, proof_journal.payout_recipient);
+        if let Some(&(expiry, permit_index)) = permits.last() {
+            if permit_index > 0 {
+                let activation_time = expiry - agent.deployment.permit_duration + agent.deployment.permit_delay;
+                match validator_provider
+                    .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
+                    .await
+                {
+                    Ok(Some(latest_block)) => {
+                        let l1_timestamp = latest_block.header.timestamp;
+                        if l1_timestamp < activation_time {
+                            info!(
+                                "Waiting {}s for permit activation before submitting output fault proof for proposal {proposal_index} (L1 time: {l1_timestamp}, activation: {activation_time}).",
+                                activation_time - l1_timestamp
+                            );
+                            computed_proof_buffer.push_back(Message::Proof(proposal_index, Some(receipt)));
+                            continue;
+                        }
+                    }
+                    Ok(None) => {
+                        error!("Failed to fetch latest block for permit activation check");
+                        computed_proof_buffer.push_back(Message::Proof(proposal_index, Some(receipt)));
+                        continue;
+                    }
+                    Err(e) => {
+                        error!("Failed to fetch latest block for permit activation check: {e:?}");
+                        computed_proof_buffer.push_back(Message::Proof(proposal_index, Some(receipt)));
+                        continue;
+                    }
+                }
+            }
+        }
+
         info!(
             "Submitting output fault proof to tournament at index {} for child {child_index} with \
                 divergence position {divergence_point} with {} kzg proof(s).",

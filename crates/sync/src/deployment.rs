@@ -53,6 +53,10 @@ pub struct SyncDeployment {
     pub genesis_time: u64,
     /// L2 Chain block time
     pub block_time: u64,
+    /// Duration of a fault proof permit
+    pub permit_duration: u64,
+    /// Delay before a fault proof permit becomes active
+    pub permit_delay: u64,
 }
 
 impl SyncDeployment {
@@ -126,6 +130,22 @@ impl SyncDeployment {
                 timeout,
             )
             .await;
+        let permit_duration = kailua_verifier
+            .PERMIT_DURATION()
+            .stall_with_context(
+                context.clone(),
+                "KailuaVerifier::PERMIT_DURATION",
+                timeout,
+            )
+            .await;
+        let permit_delay = kailua_verifier
+            .PERMIT_DELAY()
+            .stall_with_context(
+                context.clone(),
+                "KailuaVerifier::PERMIT_DELAY",
+                timeout,
+            )
+            .await;
         let proposal_output_count = kailua_game_implementation
             .PROPOSAL_OUTPUT_COUNT()
             .stall_with_context(
@@ -178,6 +198,8 @@ impl SyncDeployment {
             timeout,
             genesis_time,
             block_time,
+            permit_duration,
+            permit_delay,
         })
     }
 
