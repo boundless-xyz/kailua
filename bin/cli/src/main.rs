@@ -35,6 +35,10 @@ async fn main() -> anyhow::Result<()> {
     })
     .init_tracing_subscriber(None)?;
     init_tracer_provider(cli.telemetry_args())?;
+
+    rustls::crypto::CryptoProvider::install_default(rustls::crypto::ring::default_provider())
+        .expect("Failed to install default crypto provider");
+
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("cli"));
 
@@ -62,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
             maybe_restrict_permits(&args.proving).await;
             let result = await_tel!(context, kailua_prover::prove::prove(args));
             // Special exit code used to signal insufficient l1 data
-            if let Ok(false) = result {
+            if let Ok(None) = result {
                 std::process::exit(111);
             }
             result.map(|_| ())

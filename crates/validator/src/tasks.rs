@@ -110,7 +110,7 @@ pub async fn handle_proving_tasks(
             // catch any proving errors
             let result_fut = async {
                 match await_tel_res!(context, tracer, "prove", prove(prove_args.clone())) {
-                    Ok(l1_head_sufficient) => !l1_head_sufficient,
+                    Ok(l1_head_sufficient) => l1_head_sufficient.is_none(),
                     Err(err) => {
                         error!("Prover encountered error: {err:?}");
                         false

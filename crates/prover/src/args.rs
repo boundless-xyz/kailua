@@ -300,6 +300,9 @@ impl ProveArgs {
         if let Some(market) = &self.boundless.market {
             prove_args.extend(market.to_arg_vec(&self.boundless.storage));
         }
+        if let Some(r2_domain) = &self.boundless.r2_domain {
+            prove_args.extend(vec![String::from("--r2-domain"), r2_domain.clone()]);
+        }
 
         // precondition data
         if !self.precondition_params.is_empty() {

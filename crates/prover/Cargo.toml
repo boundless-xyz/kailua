@@ -12,6 +12,7 @@ categories.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+ark-ff.workspace = true
 async-channel.workspace = true
 async-trait.workspace = true
 aws-config.workspace = true
@@ -37,10 +38,12 @@ thousands.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 tokio-retry.workspace = true
+url.workspace = true
 
 # Alloy
 alloy = { workspace = true, features = ["full", "kzg", "contract", "rlp", "sol-types"] }
 alloy-primitives.workspace = true
+alloy-rlp.workspace = true
 op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
 

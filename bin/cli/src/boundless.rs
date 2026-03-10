@@ -17,7 +17,7 @@ use alloy::signers::local::PrivateKeySigner;
 use alloy::transports::http::reqwest::Url;
 use anyhow::Context;
 use boundless_market::request_builder::RequirementParams;
-use boundless_market::{Client, StandardStorageProvider, StorageProviderConfig};
+use boundless_market::{Client, StandardUploader, StorageUploaderConfig};
 use kailua_kona::journal::ProofJournal;
 use kailua_prover::current_time;
 use kailua_prover::profiling::{Profile, ProfiledReceipt};
@@ -47,9 +47,9 @@ pub async fn boundless(args: BoundlessArgs) -> anyhow::Result<()> {
         Client::builder()
             .with_private_key(PrivateKeySigner::random())
             .with_rpc_url(args.boundless_rpc_url.clone())
-            .with_storage_provider(Some(StandardStorageProvider::from_config(
-                &StorageProviderConfig::dev_mode()
-            )?))
+            .with_uploader(Some(
+                StandardUploader::from_config(&StorageUploaderConfig::dev_mode()).await?
+            ))
             .build()
             .await
             .context("ClientBuilder::build()")
@@ -57,7 +57,13 @@ pub async fn boundless(args: BoundlessArgs) -> anyhow::Result<()> {
     .await;
 
     let (request, _) = boundless_client
-        .fetch_proof_request(U256::from_str(args.request_id.as_str())?, None, None)
+        .fetch_proof_request(
+            U256::from_str(args.request_id.as_str())?,
+            None,
+            None,
+            None,
+            None,
+        )
         .await?;
 
     let req_params = RequirementParams::try_from(request.requirements.clone())

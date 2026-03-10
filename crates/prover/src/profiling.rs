@@ -1,6 +1,6 @@
 use crate::current_time;
 use crate::proof::{proof_id, proof_id_file_name, read_bincoded_file, save_to_file};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use bytemuck::NoUninit;
 use kailua_kona::executor::Execution;
 use kailua_kona::oracle::WitnessOracle;
@@ -38,6 +38,12 @@ pub struct Profile {
     pub cycles_system: Option<u64>,
     /// Total proving market costs
     pub boundless_cost: Option<U256>,
+    /// Market request id
+    pub boundless_request: Option<U256>,
+    /// Market prover address
+    pub boundless_prover: Option<Address>,
+    /// Address that locked the proof request
+    pub lock_holder: Option<Address>,
     /// Number of SNARK recursive verifications
     pub snarks: Option<u64>,
     /// Number of STARK recursive verifications
@@ -181,6 +187,21 @@ impl Profile {
         self
     }
 
+    pub fn with_boundless_request(mut self, boundless_request: U256) -> Self {
+        self.boundless_request = Some(boundless_request);
+        self
+    }
+
+    pub fn with_boundless_prover(mut self, boundless_prover: Address) -> Self {
+        self.boundless_prover = Some(boundless_prover);
+        self
+    }
+
+    pub fn with_lock_holder(mut self, lock_holder: Address) -> Self {
+        self.lock_holder = Some(lock_holder);
+        self
+    }
+
     pub fn with_start_time(mut self, time_started: u64) -> Self {
         self.time_started = Some(time_started);
         self
@@ -206,6 +227,61 @@ impl Profile {
         self.snarks.unwrap_or_default() + self.starks.unwrap_or_default() + 1
     }
 
+    pub async fn gas(&self) -> Option<u64> {
+        let Some(mut gas) = self.gas else { return None };
+        for proof_id in &self.children {
+            let file_name = proof_id_file_name(*proof_id);
+            if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
+            {
+                if let Some(child_value) = prior_receipt.1.gas {
+                    gas -= child_value;
+                }
+            }
+        }
+        if gas == 0 {
+            return None;
+        }
+        Some(gas)
+    }
+
+    pub async fn input_bytes(&self) -> Option<u64> {
+        let Some(mut input_bytes) = self.input_bytes else {
+            return None;
+        };
+        for proof_id in &self.children {
+            let file_name = proof_id_file_name(*proof_id);
+            if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
+            {
+                if let Some(child_value) = prior_receipt.1.input_bytes {
+                    input_bytes -= child_value;
+                }
+            }
+        }
+        if input_bytes == 0 {
+            return None;
+        }
+        Some(input_bytes)
+    }
+
+    pub async fn snarks(&self) -> Option<u64> {
+        let Some(mut snarks) = self.snarks else {
+            return None;
+        };
+        for proof_id in &self.children {
+            let file_name = proof_id_file_name(*proof_id);
+            if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
+            {
+                if let Some(child_value) = prior_receipt.1.snarks {
+                    snarks -= child_value;
+                }
+            }
+        }
+        if snarks == 0 {
+            return None;
+        }
+        Some(snarks)
+    }
+
     pub fn report_summary(&self) {
         info!(
             "Proved: {} blocks having {} transactions totaling {} gas with {} cycles over {} proofs in {}.",
@@ -221,11 +297,8 @@ impl Profile {
         );
     }
 
-    pub async fn to_csv(self) -> anyhow::Result<Vec<u8>> {
-        // Write CSV header row
-        let mut buffer = Vec::new();
-        let mut writer = csv::Writer::from_writer(&mut buffer);
-        writer.write_record([
+    pub fn write_csv_header<W: std::io::Write>(writer: &mut csv::Writer<W>) -> anyhow::Result<()> {
+        Ok(writer.write_record([
             "chain_id",
             "depth",
             "block_start",
@@ -242,6 +315,9 @@ impl Profile {
             "cycles_per_block",
             "cycles_per_tx",
             "cycles_per_gas",
+            "request_id",
+            "prover",
+            "lock_holder",
             "cost",
             "cost_per_block",
             "cost_per_tx",
@@ -251,7 +327,16 @@ impl Profile {
             "starks",
             "time_started",
             "time_finished",
-        ])?;
+        ])?)
+    }
+
+    pub async fn to_csv(self, with_header: bool) -> anyhow::Result<Vec<u8>> {
+        // Write CSV header row
+        let mut buffer = Vec::new();
+        let mut writer = csv::Writer::from_writer(&mut buffer);
+        if with_header {
+            Self::write_csv_header(&mut writer)?;
+        }
         // write profile rows
         let mut stack = vec![(self, 0u64)];
         while let Some((profile, depth)) = stack.pop() {
@@ -301,6 +386,18 @@ impl Profile {
                 cycles_per_tx.map(|c| c.to_string()).unwrap_or_default(),
                 cycles_per_gas.map(|c| c.to_string()).unwrap_or_default(),
                 profile
+                    .boundless_request
+                    .map(|r| format!("{r:x}"))
+                    .unwrap_or_default(),
+                profile
+                    .boundless_prover
+                    .map(|p| p.to_string())
+                    .unwrap_or_default(),
+                profile
+                    .lock_holder
+                    .map(|p| p.to_string())
+                    .unwrap_or_default(),
+                profile
                     .boundless_cost
                     .map(|b| b.to_string())
                     .unwrap_or_default(),
@@ -343,7 +440,7 @@ impl Profile {
             self.block_end,
             self.derivation,
         );
-        match self.to_csv().await {
+        match self.to_csv(true).await {
             Ok(data) => {
                 if let Err(err) = save_to_file(&data, None, &file_name).await {
                     error!("Failed to save profile to file {file_name}: {err:?}");

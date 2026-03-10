@@ -72,6 +72,9 @@ pub enum ProvingError {
         Option<Sender<CachedDriver>>,
     ),
 
+    #[error("ProvingTimeout error")]
+    ProvingTimeout,
+
     #[error("OtherError error: {0:?}")]
     OtherError(anyhow::Error),
 }

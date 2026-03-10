@@ -15,14 +15,19 @@
 use alloy::primitives::map::{Entry, HashMap};
 use alloy::primitives::{keccak256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
+use kailua_prover::current_time;
+use kailua_prover::profiling::{Profile, ProfiledReceipt};
+use kailua_prover::proof::{read_bincoded_file, save_to_file};
 use kailua_sync::args::SyncArgs;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, Span, Status, TraceContextExt, Tracer};
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::fs::OpenOptions;
 use std::process::Command;
-use tracing::{info, warn};
+use std::sync::{Arc, Mutex};
+use tracing::{error, info};
 
 /// Benchmark proving cost and performance
 #[derive(clap::Args, Debug, Clone)]
@@ -48,8 +53,15 @@ pub struct BenchArgs {
     pub bench_count: u64,
 
     /// Whether to select randomly instead of by highest txn count
-    #[clap(long, env)]
+    #[clap(long, env, default_value_t = false)]
     pub random_select: bool,
+    /// Whether to export a CSV file with benchmark results
+    #[clap(long, env, default_value_t = false)]
+    pub export_bench_csv: bool,
+
+    /// How many proofs to compute simultaneously
+    #[clap(long, env, default_value_t = 1)]
+    pub num_concurrent_provers: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -139,67 +151,140 @@ pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
     }
 
     // Benchmark top candidates
-    for _ in 0..args.bench_count {
-        let Some(CandidateBlock {
-            txn_count,
-            block_number,
-        }) = block_heap.pop()
-        else {
-            warn!("Ran out of candidates too early.");
-            break;
-        };
-        let end = block_number + args.bench_length;
-        info!("Processing blocks {block_number}-{end} with {txn_count} transactions.");
-        // Derive output file name
-        let version = risc0_zkvm::get_version()?;
-        let output_file_name =
-            format!("bench-risc0-{version}-{block_number}-{end}-{txn_count}.out");
-        let output_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&output_file_name)?;
-        // Pipe outputs to file
-        let verbosity_level = if verbosity > 0 {
-            format!("-{}", "v".repeat(verbosity as usize))
-        } else {
-            String::new()
-        };
-        let mut cmd = Command::new("just");
-        if risc0_zkvm::is_dev_mode() {
-            cmd.env("RISC0_DEV_MODE", "1");
-        }
-        let block_number = block_number.to_string();
-        let block_count = args.bench_length.to_string();
-        let data_dir = args.sync.data_dir.clone().unwrap();
-        cmd.args(vec![
-            "prove",
-            &block_number,
-            &block_count,
-            &args.sync.provider.eth_rpc_url,
-            &args.sync.provider.beacon_rpc_url,
-            &args.sync.provider.op_geth_url,
-            &args.sync.provider.op_node_url,
-            data_dir.to_str().unwrap(),
-            "debug",
-            &args.seq_window.to_string(),
-            &verbosity_level,
-        ]);
-        println!("Executing: {cmd:?}");
+    let profiles = Arc::new(Mutex::new(Vec::with_capacity(block_heap.len())));
+    let candidates = block_heap
+        .into_iter()
+        .take(args.bench_count as usize)
+        .collect::<Vec<_>>();
 
-        let mut sub_span = tracer.start_with_context("prove", &context);
-        let res = cmd.stdout(output_file).status();
-        if let Err(err) = &res {
-            sub_span.record_error(err);
-            Span::set_status(
-                &mut sub_span,
-                Status::error(format!("Fatal error: {err:?}")),
-            );
-        } else {
-            Span::set_status(&mut sub_span, Status::Ok);
-        }
-        res?;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(args.num_concurrent_provers as usize)
+        .build()?;
 
-        info!("Output written to {output_file_name}");
+    pool.install(|| {
+        candidates
+            .par_iter()
+            .with_max_len(1)
+            .map(
+                |&CandidateBlock {
+                     txn_count,
+                     block_number,
+                 }|
+                 -> anyhow::Result<()> {
+                    let end = block_number + args.bench_length;
+                    info!("Processing blocks {block_number}-{end} with {txn_count} transactions.");
+                    // Derive output file name
+                    let version = risc0_zkvm::get_version()?;
+                    let output_file_name =
+                        format!("bench-risc0-{version}-{block_number}-{end}-{txn_count}.out");
+                    // Pipe outputs to file
+                    let verbosity_level = if verbosity > 0 {
+                        format!("-{}", "v".repeat(verbosity as usize))
+                    } else {
+                        String::new()
+                    };
+                    let block_number_str = block_number.to_string();
+                    let block_count = args.bench_length.to_string();
+                    let data_dir = {
+                        let mut job_dir = args.sync.data_dir.clone().unwrap();
+                        job_dir.push(format!("bench-{block_number}-{end}"));
+                        job_dir
+                    };
+
+                    let mut sub_span = tracer.start_with_context("prove", &context);
+                    loop {
+                        let output_file = OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&output_file_name)?;
+                        let mut cmd = Command::new("just");
+                        cmd.args(vec![
+                            "prove",
+                            &block_number_str,
+                            &block_count,
+                            &args.sync.provider.eth_rpc_url,
+                            &args.sync.provider.beacon_rpc_url,
+                            &args.sync.provider.op_geth_url,
+                            &args.sync.provider.op_node_url,
+                            data_dir.to_str().unwrap(),
+                            "debug",
+                            &args.seq_window.to_string(),
+                            &verbosity_level,
+                        ]);
+                        println!("Executing: {cmd:?}");
+                        let res = cmd.stdout(output_file).status();
+                        if let Err(err) = &res {
+                            sub_span.record_error(err);
+                            Span::set_status(
+                                &mut sub_span,
+                                Status::error(format!("Fatal error: {err:?}")),
+                            );
+                        } else {
+                            Span::set_status(&mut sub_span, Status::Ok);
+                            break;
+                        }
+                    }
+                    info!("Output written to {output_file_name}");
+
+                    if args.export_bench_csv {
+                        // read the file in output_file_name
+                        let file_contents = std::fs::read_to_string(&output_file_name)?;
+                        // find the last occurrence of "Saved proof to file {file_name}" in file
+                        let file_name = file_contents
+                            .lines()
+                            .rev()
+                            .find(|line| line.contains("Saved proof to file "))
+                            .expect("Failed to find line.")
+                            .split_whitespace()
+                            .last()
+                            .expect("Failed to split line.");
+                        // read the file in file name using read_bincoded_file as a ProfiledReceipt instance
+                        let profiled_receipt = tokio::runtime::Runtime::new()
+                            .unwrap()
+                            .block_on(read_bincoded_file::<ProfiledReceipt>(None, file_name))?;
+
+                        // push the Profile into profiles
+                        profiles.lock().unwrap().push(profiled_receipt.1);
+
+                        info!("Read profile in {file_name}");
+                    }
+                    Ok(())
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+
+    let profiles = Arc::try_unwrap(profiles).unwrap().into_inner()?;
+
+    // Merge profile data
+    if args.export_bench_csv {
+        let file_name = format!(
+            "{}.{}.{}.{}.{}.{}.csv",
+            current_time(),
+            args.bench_start,
+            args.bench_length,
+            args.bench_range,
+            args.bench_count,
+            args.random_select
+        );
+        info!("Creating {file_name}");
+        // Write CSV header row
+        let mut buffer = Vec::new();
+        let mut writer = csv::Writer::from_writer(&mut buffer);
+        Profile::write_csv_header(&mut writer)?;
+        writer.flush()?;
+        drop(writer);
+        // Write profiles to CSV buffer
+        for profile in profiles {
+            buffer.append(&mut profile.to_csv(false).await?);
+        }
+        // Write to file
+        if let Err(err) = save_to_file(&buffer, None, &file_name).await {
+            error!("Failed to save bench profile to file {file_name}: {err:?}");
+        } else {
+            info!("Saved bench profile to {file_name}.");
+        }
     }
+
     Ok(())
 }

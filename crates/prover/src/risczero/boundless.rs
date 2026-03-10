@@ -29,14 +29,14 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
 use boundless_market::alloy::providers::Provider;
 use boundless_market::alloy::signers::local::PrivateKeySigner;
-use boundless_market::client::{Client, ClientError};
+use boundless_market::client::{Client, ClientError, FundingMode};
 use boundless_market::contracts::boundless_market::MarketError;
 use boundless_market::contracts::{
     Predicate, RequestError, RequestId, RequestStatus, Requirements,
 };
 use boundless_market::request_builder::{OfferParams, RequirementParams};
-use boundless_market::storage::{StorageProviderConfig, StorageProviderType};
-use boundless_market::{Deployment, GuestEnv, ProofRequest, StandardStorageProvider};
+use boundless_market::storage::{StorageUploaderConfig, StorageUploaderType};
+use boundless_market::{Deployment, GuestEnv, ProofRequest, StandardUploader};
 use bytemuck::NoUninit;
 use clap::Parser;
 use human_bytes::human_bytes;
@@ -62,7 +62,7 @@ pub struct BoundlessArgs {
     pub market: Option<MarketProviderConfig>,
     /// Storage provider for elf and input
     #[clap(flatten)]
-    pub storage: Option<StorageProviderConfig>,
+    pub storage: Option<StorageUploaderConfig>,
 
     /// Custom domain for file retrieval.
     /// Currently used to upload with a custom prefix and replace the download URL with this domain.
@@ -132,6 +132,23 @@ pub struct MarketProviderConfig {
     /// Whether to skip preflighting execution and assume a fixed cycle count.
     #[clap(long, env, required = false)]
     pub boundless_assume_cycle_count: Option<u64>,
+    /// Whether to skip preflighting execution and assume a fixed cycle count per gas.
+    #[clap(long, env, required = false)]
+    pub boundless_assume_cycles_per_gas: Option<u64>,
+    /// Whether to skip preflighting execution and assume a fixed cycle count per input byte.
+    #[clap(long, env, required = false)]
+    pub boundless_assume_cycles_per_byte: Option<u64>,
+    /// Whether to skip preflighting execution and assume a fixed cycle count per recursive snark.
+    #[clap(long, env, required = false)]
+    pub boundless_assume_cycles_per_snark: Option<u64>,
+
+    /// How much % to increase the price of the proving order by after it expires.
+    #[clap(long, env, required = false, default_value_t = 10)]
+    pub boundless_expired_price_inc_perc: u64,
+    /// How much % to increase the time allowed for the proving order by after it expires.
+    #[clap(long, env, required = false, default_value_t = 4)]
+    pub boundless_expired_time_inc_perc: u64,
+
     /// Starting price (wei) per cycle of the proving order
     #[clap(long, env, required = false, default_value = "200000000")]
     pub boundless_cycle_min_wei: U256,
@@ -181,12 +198,38 @@ pub struct MarketProviderConfig {
     /// Time in seconds between attempts to submit new orders
     #[clap(long, env, required = false, default_value_t = 12)]
     pub boundless_order_submission_cooldown: u64,
+
+    /// Funding mode for order submission.
+    /// Options: "never", "always", "available-balance", "below-threshold".
+    /// When "below-threshold", also set --boundless-order-funding-threshold.
+    #[clap(long, env, required = false, default_value = "never")]
+    pub boundless_order_funding_mode: String,
+
+    /// Threshold (wei) for below-threshold funding mode.
+    /// Only used when --boundless-order-funding-mode is "below-threshold".
+    #[clap(long, env, required = false)]
+    pub boundless_order_funding_threshold: Option<U256>,
 }
 
 impl MarketProviderConfig {
+    pub fn funding_mode(&self) -> FundingMode {
+        match self.boundless_order_funding_mode.as_str() {
+            "always" => FundingMode::Always,
+            "never" => FundingMode::Never,
+            "available-balance" => FundingMode::AvailableBalance,
+            "below-threshold" => FundingMode::BelowThreshold(
+                self.boundless_order_funding_threshold
+                    .expect("--boundless-order-funding-threshold required when funding mode is below-threshold"),
+            ),
+            other => panic!(
+                "Unknown funding mode: {other}. Valid options: never, always, available-balance, below-threshold"
+            ),
+        }
+    }
+
     pub fn to_arg_vec(
         &self,
-        storage_provider_config: &Option<StorageProviderConfig>,
+        storage_provider_config: &Option<StorageUploaderConfig>,
     ) -> Vec<String> {
         // RPC/Wallet args
         let mut proving_args = vec![
@@ -257,34 +300,46 @@ impl MarketProviderConfig {
             self.boundless_order_min_collateral.to_string(),
             String::from("--boundless-order-bid-delay-factor"),
             self.boundless_order_bid_delay_factor.to_string(),
-            String::from("--boundless-min-order-bid-delay"),
+            String::from("--boundless-order-min-bid-delay"),
             self.boundless_order_min_bid_delay.to_string(),
             String::from("--boundless-order-ramp-up-factor"),
             self.boundless_order_ramp_up_factor.to_string(),
-            String::from("--boundless-min-order-ramp-up"),
+            String::from("--boundless-order-min-ramp-up"),
             self.boundless_order_min_ramp_up.to_string(),
             String::from("--boundless-order-lock-timeout-factor"),
             self.boundless_order_lock_timeout_factor.to_string(),
-            String::from("--boundless-min-order-lock-timeout"),
+            String::from("--boundless-order-min-lock-timeout"),
             self.boundless_order_min_lock_timeout.to_string(),
             String::from("--boundless-order-expiry-factor"),
             self.boundless_order_expiry_factor.to_string(),
-            String::from("--boundless-min-order-expiry"),
+            String::from("--boundless-order-min-expiry"),
             self.boundless_order_min_expiry.to_string(),
             String::from("--boundless-order-check-interval"),
             self.boundless_order_check_interval.to_string(),
+            String::from("--boundless-enable-upload-caching"),
+            self.boundless_enable_upload_caching.to_string(),
+            String::from("--boundless-order-submission-cooldown"),
+            self.boundless_order_submission_cooldown.to_string(),
+            String::from("--boundless-order-funding-mode"),
+            self.boundless_order_funding_mode.clone(),
         ]);
+        if let Some(threshold) = &self.boundless_order_funding_threshold {
+            proving_args.extend(vec![
+                String::from("--boundless-order-funding-threshold"),
+                threshold.to_string(),
+            ]);
+        }
         // Storage provider args
         if let Some(storage_cfg) = storage_provider_config {
-            match &storage_cfg.storage_provider {
-                StorageProviderType::S3 => {
+            match &storage_cfg.storage_uploader {
+                StorageUploaderType::S3 => {
                     proving_args.extend(vec![
-                        String::from("--storage-provider"),
+                        String::from("--storage-uploader"),
                         String::from("s3"),
-                        String::from("--s3-access-key"),
-                        storage_cfg.s3_access_key.clone().unwrap(),
-                        String::from("--s3-secret-key"),
-                        storage_cfg.s3_secret_key.clone().unwrap(),
+                        String::from("--aws-access-key-id"),
+                        storage_cfg.aws_access_key_id.clone().unwrap(),
+                        String::from("--aws-secret-access-key"),
+                        storage_cfg.aws_secret_access_key.clone().unwrap(),
                         String::from("--s3-bucket"),
                         storage_cfg.s3_bucket.clone().unwrap(),
                         String::from("--s3-url"),
@@ -293,9 +348,9 @@ impl MarketProviderConfig {
                         storage_cfg.aws_region.clone().unwrap(),
                     ]);
                 }
-                StorageProviderType::Pinata => {
+                StorageUploaderType::Pinata => {
                     proving_args.extend(vec![
-                        String::from("--storage-provider"),
+                        String::from("--storage-uploader"),
                         String::from("pinata"),
                         String::from("--pinata-jwt"),
                         storage_cfg.pinata_jwt.clone().unwrap(),
@@ -313,9 +368,26 @@ impl MarketProviderConfig {
                         ]);
                     }
                 }
-                StorageProviderType::File => {
+                StorageUploaderType::Gcs => {
                     proving_args.extend(vec![
-                        String::from("--storage-provider"),
+                        String::from("--storage-uploader"),
+                        String::from("gcs"),
+                        String::from("--gcs-bucket"),
+                        storage_cfg.gcs_bucket.clone().unwrap(),
+                    ]);
+                    if let Some(gcs_url) = &storage_cfg.gcs_url {
+                        proving_args.extend(vec![String::from("--gcs-url"), gcs_url.to_string()]);
+                    }
+                    if let Some(gcs_credentials_json) = &storage_cfg.gcs_credentials_json {
+                        proving_args.extend(vec![
+                            String::from("--gcs-credentials-json"),
+                            gcs_credentials_json.clone(),
+                        ]);
+                    }
+                }
+                StorageUploaderType::File => {
+                    proving_args.extend(vec![
+                        String::from("--storage-uploader"),
                         String::from("file"),
                     ]);
                     if let Some(file_path) = &storage_cfg.file_path {
@@ -340,7 +412,7 @@ lazy_static! {
 #[allow(clippy::too_many_arguments)]
 pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     market: MarketProviderConfig,
-    storage: StorageProviderConfig,
+    storage: StorageUploaderConfig,
     r2_domain: Option<String>,
     image: (A, &[u8]),
     journal: Journal,
@@ -366,8 +438,9 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     };
 
     // Instantiate storage provider (used when R2 is not configured)
-    let storage_provider = StandardStorageProvider::from_config(&storage)
-        .context("StandardStorageProvider::from_config")
+    let storage_provider = StandardUploader::from_config(&storage)
+        .await
+        .context("StandardUploader::from_config")
         .map_err(ProvingError::OtherError)?;
 
     // Override deployment configuration if set
@@ -405,7 +478,8 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             .with_private_key(market.boundless_wallet_key.clone())
             .with_rpc_url(market.boundless_rpc_url.clone())
             .with_deployment(market_deployment.clone())
-            .with_storage_provider(Some(storage_provider.clone()))
+            .with_uploader(Some(storage_provider.clone()))
+            .with_funding_mode(market.funding_mode())
             .build()
             .await
             .context("ClientBuilder::build()")
@@ -425,8 +499,8 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
         .with_selector((Selector::groth16_latest() as u32).into());
 
     // Wait for a market request to be fulfilled
+    let mut attempt = 0;
     loop {
-        // todo: price increase / timing relaxation
         match request_proof(
             &market,
             &boundless_client,
@@ -440,9 +514,16 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             &requirements,
             profile.clone(),
             data_dir,
+            attempt,
         )
         .await
         {
+            Err(ProvingError::ProvingTimeout) => {
+                error!("(Retrying) Boundless request expired.");
+                sleep(Duration::from_secs(1)).await;
+                // increase price / relax timeouts on next attempt
+                attempt += 1;
+            }
             Err(ProvingError::OtherError(e)) => {
                 error!("(Retrying) Boundless request failed: {e:?}");
                 sleep(Duration::from_secs(1)).await;
@@ -477,11 +558,29 @@ pub async fn get_proof_request(
     request_id: U256,
 ) -> Option<ProofRequest> {
     loop {
+        // check if order exists
+        match boundless_client
+            .boundless_market
+            .get_status(request_id, None)
+            .await
+        {
+            Ok(_) => {}
+            Err(err) => {
+                // No request for nonce
+                if matches!(err, MarketError::RequestNotFound(..)) {
+                    break None;
+                }
+                // Some other error that needs us to retry
+                error!("get_status error: {err:?}");
+                sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        }
         // Bypass order stream check if not specified in config
         match market.boundless_order_stream_url.is_some() {
             true => {
                 match boundless_client
-                    .fetch_proof_request(request_id, None, None)
+                    .fetch_proof_request(request_id, None, None, None, None)
                     .await
                 {
                     Ok((req, _)) => break Some(req),
@@ -489,7 +588,7 @@ pub async fn get_proof_request(
                         // No request for nonce
                         if matches!(
                             err,
-                            ClientError::MarketError(MarketError::RequestNotFound(_))
+                            ClientError::MarketError(MarketError::RequestNotFound(..))
                         ) {
                             break None;
                         }
@@ -503,13 +602,13 @@ pub async fn get_proof_request(
             false => {
                 match boundless_client
                     .boundless_market
-                    .get_submitted_request(request_id, None)
+                    .get_submitted_request(request_id, None, None, None)
                     .await
                 {
                     Ok((req, _)) => break Some(req),
                     Err(err) => {
                         // No request for nonce
-                        if matches!(err, MarketError::RequestNotFound(_)) {
+                        if matches!(err, MarketError::RequestNotFound(..)) {
                             break None;
                         }
                         // Some other error that needs us to retry
@@ -651,8 +750,11 @@ pub async fn retrieve_proof(
                     return Err(ClientError::RequestError(RequestError::MissingRequirements));
                 };
 
-                // Find proving cost
-                let price_point = if retry_res_timeout!(
+                // Log request id
+                profile = profile.with_boundless_request(request_id);
+
+                // Find proving cost, prover address, and lock holder
+                let (price_point, prover, lock_holder) = if retry_res_timeout!(
                     15,
                     boundless_client
                         .boundless_market
@@ -661,26 +763,43 @@ pub async fn retrieve_proof(
                 )
                 .await
                 {
-                    retry_res_timeout!(
+                    let locked_event = retry_res_timeout!(
                         15,
                         boundless_client
                             .boundless_market
                             .query_request_locked_event(request_id, None, None)
                             .await
                     )
-                    .await
-                    .block_number
-                } else {
-                    retry_res_timeout!(
+                    .await;
+                    let fulfilled_event = retry_res_timeout!(
                         15,
                         boundless_client
                             .boundless_market
                             .query_request_fulfilled_event(request_id, None, None)
                             .await
                     )
-                    .await
-                    .block_number
+                    .await;
+                    (
+                        locked_event.block_number,
+                        fulfilled_event.event.prover,
+                        Some(locked_event.event.prover),
+                    )
+                } else {
+                    let event = retry_res_timeout!(
+                        15,
+                        boundless_client
+                            .boundless_market
+                            .query_request_fulfilled_event(request_id, None, None)
+                            .await
+                    )
+                    .await;
+                    (event.block_number, event.event.prover, None)
                 };
+                profile = profile.with_boundless_prover(prover);
+
+                if let Some(lock_holder) = lock_holder {
+                    profile = profile.with_lock_holder(lock_holder);
+                }
 
                 let timestamp = retry_res_timeout!(
                     15,
@@ -698,7 +817,7 @@ pub async fn retrieve_proof(
                 let (proof_request, _) = retry_res_timeout!(
                     15,
                     boundless_client
-                        .fetch_proof_request(request_id, None, None)
+                        .fetch_proof_request(request_id, None, None, None, None)
                         .await
                         .context("fetch_proof_request")
                 )
@@ -743,27 +862,39 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     requirements: &Requirements,
     profile: Profile,
     data_dir: Option<&PathBuf>,
+    attempt: u64,
 ) -> Result<ProfiledReceipt, ProvingError> {
     // Get cycle count
     let req_file_name = request_file_name(image.0, journal.clone());
     let request_cycles = match (
         market.boundless_assume_cycle_count,
+        (
+            market.boundless_assume_cycles_per_gas,
+            market.boundless_assume_cycles_per_byte,
+            market.boundless_assume_cycles_per_snark,
+        ),
         read_bincoded_file::<BoundlessRequest>(data_dir, &req_file_name).await,
     ) {
-        (_, Ok(request)) => {
-            // we sleep here so to avoid pinata api rate limits
-            sleep(Duration::from_secs(2)).await;
-            request
-        }
-        (Some(cycle_count), _) => {
-            // we sleep here so to avoid pinata api rate limits
-            sleep(Duration::from_secs(2)).await;
+        (_, _, Ok(request)) => request,
+        (Some(cycle_count), _, _) => BoundlessRequest {
+            total_cycle_count: cycle_count,
+            user_cycle_count: cycle_count,
+        },
+        (_, (Some(cycles_per_gas), Some(cycles_per_byte), Some(cycles_per_snark)), _) => {
+            let program_cycles = if let Some(gas) = profile.gas().await {
+                // This is a complete proof, or an execution-only proof
+                cycles_per_gas * gas
+            } else {
+                // This is a tail proof, i.e. L1 scanning only
+                cycles_per_byte * profile.input_bytes().await.unwrap()
+            };
+            let snark_cycles = cycles_per_snark * profile.snarks().await.unwrap_or_default();
             BoundlessRequest {
-                total_cycle_count: cycle_count,
-                user_cycle_count: cycle_count,
+                total_cycle_count: program_cycles + snark_cycles,
+                user_cycle_count: program_cycles + snark_cycles,
             }
         }
-        (None, Err(err)) => {
+        (None, _, Err(err)) => {
             warn!("Preflighting execution: {err:?}");
             let preflight_witness_slices = witness_slices.clone();
             let preflight_witness_frames = witness_frames.clone();
@@ -980,11 +1111,19 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
 
     let priced_cycles =
         U256::from((market.boundless_mega_cycle_min << 20).max(request_cycles.total_cycle_count));
-    let min_price = market.boundless_cycle_min_wei * priced_cycles;
-    let max_price = market.boundless_cycle_max_wei * priced_cycles;
+    let price_increase_numerator =
+        U256::from(100 + attempt * market.boundless_expired_price_inc_perc);
+    let min_price =
+        market.boundless_cycle_min_wei * priced_cycles * price_increase_numerator / U256::from(100);
+    let max_price =
+        market.boundless_cycle_max_wei * priced_cycles * price_increase_numerator / U256::from(100);
+
+    let time_increase_factor =
+        (attempt * market.boundless_expired_price_inc_perc) as f64 / 100.0 + 1.0;
     let timed_mega_cycles = market
         .boundless_mega_cycle_min
-        .max(request_cycles.total_cycle_count.div_ceil(1 << 20)) as f64;
+        .max(request_cycles.total_cycle_count.div_ceil(1 << 20)) as f64
+        * time_increase_factor;
     let bid_delay_time = market
         .boundless_order_min_bid_delay
         .max((market.boundless_order_bid_delay_factor * timed_mega_cycles) as u64);
@@ -1064,7 +1203,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     }
 
     // Wait for request fulfillment
-    retrieve_proof(
+    match retrieve_proof(
         boundless_client,
         request_id,
         image.0,
@@ -1073,8 +1212,14 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         profile,
     )
     .await
-    .context("retrieve_proof")
-    .map_err(|e| ProvingError::OtherError(anyhow!(e)))
+    {
+        Err(ClientError::MarketError(MarketError::RequestHasExpired(_))) => {
+            Err(ProvingError::ProvingTimeout)
+        }
+        result => result
+            .context("retrieve_proof")
+            .map_err(|e| ProvingError::OtherError(anyhow!(e))),
+    }
 }
 
 pub fn request_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> String {
@@ -1118,16 +1263,16 @@ pub struct R2Storage {
 
 impl R2Storage {
     pub async fn new(
-        storage_config: &StorageProviderConfig,
+        storage_config: &StorageUploaderConfig,
         r2_domain: &str,
     ) -> anyhow::Result<Self> {
         // Extract S3 configuration
         let access_key = storage_config
-            .s3_access_key
+            .aws_access_key_id
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("S3 access key required for R2"))?;
         let secret_key = storage_config
-            .s3_secret_key
+            .aws_secret_access_key
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("S3 secret key required for R2"))?;
         let bucket = storage_config

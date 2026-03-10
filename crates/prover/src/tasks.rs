@@ -341,8 +341,7 @@ pub async fn compute_fpvm_proof(
     let can_stitch_tail_proofs =
         args.proving.num_tail_blocks > 0 && !args.proving.skip_derivation_proof;
     let mut tail_proof_jobs = vec![];
-    if can_stitch_tail_proofs && streamed_witness_size > (args.proving.max_witness_size * 90) / 100
-    {
+    if can_stitch_tail_proofs && streamed_witness_size > args.proving.max_witness_size / 2 {
         let chain_providers =
             retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await).await;
         // Fetch earliest l1 block to start from
@@ -797,14 +796,6 @@ pub async fn compute_fpvm_proof(
             .expect("task_channel should not be closed");
     }
 
-    // Return execution proof count without stitching if derivation is not required
-    if args.proving.skip_derivation_proof {
-        warn!("Skipping stitching {dispatched_execution_proofs} execution proofs with derivation.");
-        return Err(ProvingError::SkippingDerivation(
-            dispatched_execution_proofs,
-        ));
-    }
-
     // Read result_pq for stitched executions and proofs
     let (execution_proofs, stitched_executions): (Vec<_>, Vec<_>) = execution_result_pq
         .into_sorted_vec()
@@ -816,6 +807,23 @@ pub async fn compute_fpvm_proof(
             )
         })
         .unzip();
+
+    // Return execution proof count without stitching if derivation is not required
+    if args.proving.skip_derivation_proof {
+        warn!("Skipping stitching {dispatched_execution_proofs} execution proofs with derivation.");
+        if args.proving.export_profile_csv {
+            for (_, profile) in execution_proofs {
+                profile.report_summary();
+                if args.proving.export_profile_csv {
+                    profile.save_csv_file().await;
+                }
+            }
+        }
+
+        return Err(ProvingError::SkippingDerivation(
+            dispatched_execution_proofs,
+        ));
+    }
 
     // process tail proving results
     let mut tail_preconditions = Vec::with_capacity(num_tail_proofs);
