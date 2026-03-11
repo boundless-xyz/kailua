@@ -333,14 +333,15 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
             tracer,
             "DisputeGameFactory::setImplementation",
             exec_safe_txn(
-                dispute_game_factory.setImplementation(KAILUA_GAME_TYPE, kailua_treasury_impl_addr),
+                dispute_game_factory
+                    .setImplementation_0(KAILUA_GAME_TYPE, kailua_treasury_impl_addr),
                 factory_owner_safe,
                 owner_address,
             )
         )?;
     } else {
         dispute_game_factory
-            .setImplementation(KAILUA_GAME_TYPE, kailua_treasury_impl_addr)
+            .setImplementation_0(KAILUA_GAME_TYPE, kailua_treasury_impl_addr)
             .transact_with_context(context.clone(), "DisputeGameFactory::setImplementation")
             .await
             .context("DisputeGameFactory::setImplementation")?;
@@ -533,14 +534,14 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
             "DisputeGameFactory::setImplementation",
             exec_safe_txn(
                 dispute_game_factory
-                    .setImplementation(KAILUA_GAME_TYPE, *kailua_game_contract.address()),
+                    .setImplementation_0(KAILUA_GAME_TYPE, *kailua_game_contract.address()),
                 factory_owner_safe,
                 owner_address,
             )
         )?;
     } else {
         dispute_game_factory
-            .setImplementation(KAILUA_GAME_TYPE, *kailua_game_contract.address())
+            .setImplementation_0(KAILUA_GAME_TYPE, *kailua_game_contract.address())
             .transact_with_context(context.clone(), "DisputeGameFactory::setImplementation")
             .await
             .context("DisputeGameFactory::setImplementation")?;
