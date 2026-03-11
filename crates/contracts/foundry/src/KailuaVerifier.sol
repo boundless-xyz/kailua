@@ -16,9 +16,9 @@
 pragma solidity 0.8.24;
 
 import "./KailuaLib.sol";
-import {ISemver} from "interfaces/universal/ISemver.sol";
-import {Duration} from "src/dispute/lib/Types.sol";
-import {IncorrectBondAmount, ClockNotExpired, NoCreditToClaim} from "src/dispute/lib/Errors.sol";
+import {ISemver} from "@optimism/interfaces/universal/ISemver.sol";
+import {Duration} from "@optimism/src/dispute/lib/Types.sol";
+import {IncorrectBondAmount, ClockNotExpired, NoCreditToClaim} from "@optimism/src/dispute/lib/Errors.sol";
 import {IRiscZeroVerifier} from "@risc0/IRiscZeroVerifier.sol";
 
 /// @notice Thrown when a target is invalid

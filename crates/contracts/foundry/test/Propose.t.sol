@@ -17,6 +17,30 @@ pragma solidity 0.8.24;
 
 import "./KailuaTest.t.sol";
 
+import {
+    IKailuaTournament,
+    AlreadyEliminated,
+    ProvenFaulty,
+    NotFactoryOwner,
+    UnknownGame,
+    NotProposed,
+    Blacklisted,
+    BlockNumberMismatch
+} from "../src/KailuaLib.sol";
+import {
+    NoCreditToClaim,
+    IncorrectBondAmount,
+    ClockNotExpired,
+    ClaimAlreadyResolved,
+    InvalidParent,
+    AlreadyInitialized,
+    UnexpectedRootClaim,
+    BadExtraData,
+    GameNotInProgress,
+    OutOfOrderResolution,
+    GameNotResolved
+} from "@optimism/src/dispute/lib/Errors.sol";
+
 contract ProposeTest is KailuaTest {
     KailuaTreasury treasury;
     KailuaGame game;

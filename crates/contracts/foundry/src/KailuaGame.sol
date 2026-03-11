@@ -15,21 +15,30 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.24;
 
-import "./KailuaLib.sol";
-import "./KailuaTournament.sol";
-import "./KailuaTreasury.sol";
-import "./KailuaVerifier.sol";
-import {IInitializable} from "interfaces/dispute/IInitializable.sol";
-import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
-import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
-import {GameStatus, GameType, Timestamp, Duration, Hash} from "src/dispute/lib/Types.sol";
+import {
+    IKailuaTreasury,
+    InvalidDuplicationCounter,
+    BlockNumberMismatch,
+    BlobHashMissing,
+    ProvenFaulty,
+    ProposalGapRemaining,
+    NotProven,
+    KailuaKZGLib
+} from "./KailuaLib.sol";
+import {KailuaTournament} from "./KailuaTournament.sol";
+import {KailuaTreasury} from "./KailuaTreasury.sol";
+import {KailuaVerifier} from "./KailuaVerifier.sol";
+import {IInitializable} from "@optimism/interfaces/dispute/IInitializable.sol";
+import {GameStatus} from "@optimism/interfaces/dispute/IDisputeGame.sol";
+import {IDisputeGameFactory, IDisputeGame} from "@optimism/interfaces/dispute/IDisputeGameFactory.sol";
+import {GameType, Timestamp, Duration, Hash} from "@optimism/src/dispute/lib/Types.sol";
 import {
     BadExtraData,
     GameNotInProgress,
     InvalidParent,
     OutOfOrderResolution,
     ClockNotExpired
-} from "src/dispute/lib/Errors.sol";
+} from "@optimism/src/dispute/lib/Errors.sol";
 
 contract KailuaGame is KailuaTournament {
     /// @notice Semantic version.
@@ -73,7 +82,6 @@ contract KailuaGame is KailuaTournament {
     // IInitializable implementation
     // ------------------------------
 
-    /// @inheritdoc IInitializable
     function initialize() external payable override {
         super.initializeInternal();
 
@@ -145,14 +153,12 @@ contract KailuaGame is KailuaTournament {
     // IDisputeGame implementation
     // ------------------------------
 
-    /// @inheritdoc IDisputeGame
     function extraData() external pure returns (bytes memory extraData_) {
         // The extra data starts at the second word within the cwia calldata and
         // is 24 bytes long.
         extraData_ = _getArgBytes(0x54, 0x18);
     }
 
-    /// @inheritdoc IDisputeGame
     function resolve() external returns (GameStatus status_) {
         // INVARIANT: Resolution cannot occur unless the game is currently in progress.
         if (status != GameStatus.IN_PROGRESS) {

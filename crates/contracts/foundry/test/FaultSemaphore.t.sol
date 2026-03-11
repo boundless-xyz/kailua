@@ -17,6 +17,15 @@ pragma solidity 0.8.24;
 
 import "./KailuaTest.t.sol";
 
+import {BadTarget} from "../src/KailuaVerifier.sol";
+import {IKailuaTournament, AlreadyEliminated, ProvenFaulty} from "../src/KailuaLib.sol";
+import {
+    NoCreditToClaim,
+    IncorrectBondAmount,
+    ClockNotExpired,
+    ClaimAlreadyResolved
+} from "@optimism/src/dispute/lib/Errors.sol";
+
 contract FaultSemaphoreTest is KailuaTest {
     KailuaTreasury treasury;
     KailuaGame game;

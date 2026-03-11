@@ -8,9 +8,9 @@ ffi = true
 evm_version = "cancun"
 solc_version = "0.8.24"
 remappings = [
-    # OP Stack v5 internal resolution
-    "src/=lib/optimism/packages/contracts-bedrock/src/",
-    "interfaces/=lib/optimism/packages/contracts-bedrock/interfaces/",
+    # OP Stack v5 internal resolution (src/ remapping required by OP interfaces)
+    "@optimism/src/=lib/optimism/packages/contracts-bedrock/src/",
+    "@optimism/interfaces/=lib/optimism/packages/contracts-bedrock/interfaces/",
     # OP Stack transitive dependencies
     "@openzeppelin/contracts/=lib/optimism/packages/contracts-bedrock/lib/openzeppelin-contracts/contracts/",
     "@openzeppelin/contracts-upgradeable/=lib/optimism/packages/contracts-bedrock/lib/openzeppelin-contracts-upgradeable/contracts/",
@@ -29,7 +29,10 @@ remappings = [
 ]
 
 [lint]
-# Solar linter cannot resolve the src/ remapping (conflicts with source directory)
+# Solar linter cannot resolve src/ remapping (conflicts with source directory name).
+# The src/ remapping is required because OP Stack v5 interfaces internally import
+# from "src/dispute/lib/Types.sol" etc., and our code must use the same path to
+# avoid duplicate type definitions.
 lint_on_build = false
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

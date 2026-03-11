@@ -15,13 +15,22 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.24;
 
-import "./KailuaLib.sol";
-import "./KailuaTournament.sol";
-import "./KailuaVerifier.sol";
-import {IInitializable} from "interfaces/dispute/IInitializable.sol";
-import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
-import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
-import {GameStatus, Claim, GameType, Timestamp, Duration} from "src/dispute/lib/Types.sol";
+import {
+    IKailuaTreasury,
+    Blacklisted,
+    NotProposed,
+    AlreadyEliminated,
+    KailuaPayLib,
+    NotFactoryOwner,
+    BlockNumberMismatch,
+    VanguardError
+} from "./KailuaLib.sol";
+import {KailuaTournament} from "./KailuaTournament.sol";
+import {KailuaVerifier} from "./KailuaVerifier.sol";
+import {IInitializable} from "@optimism/interfaces/dispute/IInitializable.sol";
+import {GameStatus, IDisputeGame} from "@optimism/interfaces/dispute/IDisputeGame.sol";
+import {IOptimismPortal2} from "@optimism/interfaces/L1/IOptimismPortal2.sol";
+import {Claim, GameType, Timestamp, Duration} from "@optimism/src/dispute/lib/Types.sol";
 import {
     BadExtraData,
     GameNotInProgress,
@@ -30,7 +39,7 @@ import {
     IncorrectBondAmount,
     NoCreditToClaim,
     GameNotResolved
-} from "src/dispute/lib/Errors.sol";
+} from "@optimism/src/dispute/lib/Errors.sol";
 
 contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     /// @notice Semantic version.
@@ -68,7 +77,6 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     // IInitializable implementation
     // ------------------------------
 
-    /// @inheritdoc IInitializable
     function initialize() external payable override {
         super.initializeInternal();
 

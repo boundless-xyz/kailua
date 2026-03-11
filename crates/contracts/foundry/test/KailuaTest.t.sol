@@ -19,17 +19,18 @@ import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {LibClone} from "@solady/utils/LibClone.sol";
-import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
-import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
-import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
-import {GameType, Claim, Hash, Timestamp, Duration, GameStatus} from "src/dispute/lib/Types.sol";
+import {IDisputeGame, GameStatus} from "@optimism/interfaces/dispute/IDisputeGame.sol";
+import {IDisputeGameFactory} from "@optimism/interfaces/dispute/IDisputeGameFactory.sol";
+import {IOptimismPortal2} from "@optimism/interfaces/L1/IOptimismPortal2.sol";
+import {GameType, Claim, Hash, Timestamp, Duration} from "@optimism/src/dispute/lib/Types.sol";
 import {RiscZeroMockVerifier} from "@risc0/test/RiscZeroMockVerifier.sol";
 import {ReceiptClaimLib} from "@risc0/IRiscZeroVerifier.sol";
 
-import "../src/KailuaLib.sol";
-import "../src/KailuaTournament.sol";
-import "../src/KailuaTreasury.sol";
-import "../src/KailuaGame.sol";
+import {KailuaKZGLib, AlreadyProven, NotProven, NoConflict, BlobHashMissing} from "../src/KailuaLib.sol";
+import {KailuaTournament} from "../src/KailuaTournament.sol";
+import {KailuaTreasury} from "../src/KailuaTreasury.sol";
+import {KailuaGame} from "../src/KailuaGame.sol";
+import {KailuaVerifier} from "../src/KailuaVerifier.sol";
 
 contract KailuaTest is Test {
     /// @dev Allows for the creation of clone proxies with immutable arguments.

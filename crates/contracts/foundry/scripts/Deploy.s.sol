@@ -3,11 +3,11 @@ pragma solidity 0.8.24;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
-import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
-import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
-import {IAnchorStateRegistry} from "interfaces/dispute/IAnchorStateRegistry.sol";
-import {GameType, Claim, Duration} from "src/dispute/lib/Types.sol";
+import {IDisputeGame} from "@optimism/interfaces/dispute/IDisputeGame.sol";
+import {IDisputeGameFactory} from "@optimism/interfaces/dispute/IDisputeGameFactory.sol";
+import {IOptimismPortal2} from "@optimism/interfaces/L1/IOptimismPortal2.sol";
+import {IAnchorStateRegistry} from "@optimism/interfaces/dispute/IAnchorStateRegistry.sol";
+import {GameType, Claim, Duration} from "@optimism/src/dispute/lib/Types.sol";
 import {IRiscZeroVerifier} from "@risc0/IRiscZeroVerifier.sol";
 import {RiscZeroVerifierRouter} from "@risc0/RiscZeroVerifierRouter.sol";
 import {RiscZeroGroth16Verifier} from "@risc0/groth16/RiscZeroGroth16Verifier.sol";

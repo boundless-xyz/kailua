@@ -16,6 +16,8 @@
 pragma solidity 0.8.24;
 
 import "./KailuaTest.t.sol";
+import {InvalidDataRemainder} from "../src/KailuaTournament.sol";
+import {InvalidDisputedClaimIndex, GameNotInProgress} from "@optimism/src/dispute/lib/Errors.sol";
 
 contract BlobDisputeTest is KailuaTest {
     KailuaTreasury treasury;

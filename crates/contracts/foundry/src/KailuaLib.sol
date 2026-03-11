@@ -15,8 +15,8 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.24;
 
-import {Timestamp} from "src/dispute/lib/Types.sol";
-import {BondTransferFailed} from "src/dispute/lib/Errors.sol";
+import {Timestamp} from "@optimism/src/dispute/lib/Types.sol";
+import {BondTransferFailed} from "@optimism/src/dispute/lib/Errors.sol";
 
 /// @notice Denotes the proven status of the game
 /// @custom:value NONE indicates that no proof has been submitted yet.

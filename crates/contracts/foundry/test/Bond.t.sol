@@ -16,6 +16,13 @@
 pragma solidity 0.8.24;
 
 import "./KailuaTest.t.sol";
+import {NotFactoryOwner} from "../src/KailuaLib.sol";
+import {
+    IncorrectBondAmount,
+    GameNotResolved,
+    NoCreditToClaim,
+    BondTransferFailed
+} from "@optimism/src/dispute/lib/Errors.sol";
 
 contract BondTest is KailuaTest {
     KailuaTreasury treasury;

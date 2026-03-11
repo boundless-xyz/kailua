@@ -18,10 +18,9 @@ pragma solidity 0.8.24;
 import "./KailuaLib.sol";
 import "./KailuaVerifier.sol";
 import {Clone} from "@solady/utils/Clone.sol";
-import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
-import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
-import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
-import {GameStatus, Claim, Hash, GameType, Timestamp, Duration} from "src/dispute/lib/Types.sol";
+import {GameStatus, IDisputeGame} from "@optimism/interfaces/dispute/IDisputeGame.sol";
+import {IDisputeGameFactory, IOptimismPortal2} from "@optimism/interfaces/L1/IOptimismPortal2.sol";
+import {Claim, Hash, GameType, Timestamp, Duration} from "@optimism/src/dispute/lib/Types.sol";
 import {
     AlreadyInitialized,
     GameNotInProgress,
@@ -29,7 +28,7 @@ import {
     InvalidDisputedClaimIndex,
     InvalidParent,
     GameNotResolved
-} from "src/dispute/lib/Errors.sol";
+} from "@optimism/src/dispute/lib/Errors.sol";
 
 /// @notice Thrown when a proposal contains invalid trailing data
 error InvalidDataRemainder();
