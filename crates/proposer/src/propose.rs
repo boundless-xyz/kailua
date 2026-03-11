@@ -181,7 +181,7 @@ pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()>
             }
         }
 
-        // Check latest safe l2 head
+        // Check the latest finalized L2 head.
         let proposal_block_number =
             canonical_tip.output_block_number + agent.deployment.blocks_per_proposal();
         if agent.cursor.last_output_index < canonical_tip.output_block_number {

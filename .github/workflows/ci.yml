@@ -23,6 +23,7 @@ env:
   SOLC_VERSION: 0.8.24
   RISC0_VERSION: 2.3.1
   RISC0_TOOLCHAIN_VERSION: 1.88.0
+  RUST_BACKTRACE: full
 
 jobs:
   cargo-fmt:
@@ -96,7 +97,7 @@ jobs:
         include:
           - os: Linux
             feature: default
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
@@ -105,7 +106,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 'ethereum-optimism/optimism'
-          ref: 'v1.9.1'
+          ref: 'v1.16.7'
           path: 'optimism'
           submodules: recursive
           fetch-depth: '1'
@@ -117,6 +118,30 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13.1'
+      - name: Install Kurtosis
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO=sudo
+          else
+            SUDO=
+          fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y jq
+          if ! command -v kurtosis >/dev/null 2>&1; then
+            echo "deb [trusted=yes] https://apt.fury.io/kurtosis-tech/ /" | $SUDO tee /etc/apt/sources.list.d/kurtosis.list
+            $SUDO apt-get update
+            $SUDO apt-get install -y kurtosis-cli
+          fi
+          docker version
+          kurtosis version
+      - name: Start Kurtosis engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          kurtosis engine start
+          kurtosis engine status
       - uses: risc0/risc0/.github/actions/rustup@main
       - uses: boundless-xyz/boundless/.github/actions/sccache@main
       - name: Install rzup

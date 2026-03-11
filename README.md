@@ -48,8 +48,9 @@ Kailua has undergone the following audits throughout its development:
 1. [rust](https://www.rust-lang.org/tools/install)
 2. [just](https://just.systems/man/en/)
 3. [docker](https://www.docker.com/)
-4. [svm](https://github.com/alloy-rs/svm-rs)
-5. [foundry](https://book.getfoundry.sh/getting-started/installation)
+4. [kurtosis](https://docs.kurtosis.com/install)
+5. [svm](https://github.com/alloy-rs/svm-rs)
+6. [foundry](https://book.getfoundry.sh/getting-started/installation)
 
 ## Proving Demo
 
@@ -66,15 +67,17 @@ You can test out Kailua's validity proving on a running chain through the follow
 You can deploy a local optimism devnet equipped with Kailua through the following commands:
 
 1. `just devnet-fetch`
-    * Fetches `v1.9.1` of the `optimism` monorepo.
+    * Fetches `v1.16.7` of the `optimism` monorepo.
 2. `just devnet-build`
-    * Builds the local cargo and foundry projects.
+    * Builds the local Kailua binaries.
+    * The OP Stack services themselves use prebuilt artifacts from the Optimism release pipeline.
 3. `just devnet-up`
-    * Starts a local OP Stack devnet using docker.
-    * Dumps the output into `devnetlog.txt` for inspection.
+    * Starts a local OP Stack devnet using Kurtosis.
+    * Writes the devnet descriptor to `devnet/kurtosis-devnet.json`.
+    * Dumps the deployment output into `devnet.log` for inspection.
 4. `just devnet-upgrade`
     * Upgrades the devnet to use the `KailuaGame` contract.
-    * Assumes the default values of the local optimism devnet, but can take parameters.
+    * Auto-discovers RPC endpoints and default keys from `devnet/kurtosis-devnet.json`, but can still take explicit overrides.
 5. `just devnet-propose`
     * Launches the Kailua proposer.
     * This runs the sequences, which periodically creates new `KailuaGame` instances.
@@ -92,8 +95,8 @@ You can deploy a local optimism devnet equipped with Kailua through the followin
     * Tests the validator's fault proving functionality.
     * Tests the proposer's canonical chain tracking functionality.
 9. After you're done:
-    * `just devnet-down` to stop the running docker containers.
-    * `just devnet-clean` to cleanup the docker volumes.
+    * `just devnet-down` to remove the running Kurtosis enclave.
+    * `just devnet-clean` to remove the local descriptor and logs.
 
 ## Questions, Feedback, and Collaborations
 

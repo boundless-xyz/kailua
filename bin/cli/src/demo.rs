@@ -271,7 +271,7 @@ pub async fn handle_blocks(
             .num_blocks_per_proof
             .saturating_sub(finalized_l2_number.saturating_sub(last_proven.unwrap()));
         if wait != last_wait {
-            info!("Waiting for {wait} more finalized L2 blocks to request a new proof.",);
+            info!("Waiting for {wait} more finalized L2 blocks to request a new proof.");
             last_wait = wait;
         }
         // report completed proofs

@@ -1,52 +1,102 @@
+registry:
+  op-geth: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:v1.101609.1
+  op-node: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.7
+  op-batcher: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.4
+  op-proposer: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-proposer:v1.16.0
+  op-deployer: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-deployer:v0.6.0-rc.3
+
 optimism_package:
-  participants:
-    - el_type: op-geth
-  network_params:
-    # Network name, used to enable syncing of alternative networks
-    # Defaults to "kurtosis"
-    network: "kurtosis"
-
-    # The network ID of the network.
-    # Must be unique for each network (if you run multiple networks)
-    # Defaults to "2151908"
-    network_id: "2151908"
-
-    # Seconds per slots
-    seconds_per_slot: 2
-
-    # Name of your rollup.
-    # Must be unique for each rollup (if you run multiple rollups)
-    # Defaults to "op-kurtosis"
-    name: "op-kurtosis"
-
-    # Triggering future forks in the network
-    # Fjord fork
-    # Defaults to 0 (genesis activation) - decimal value
-    # Offset is in seconds
-    fjord_time_offset: 0
-
-    # Granite fork
-    # Defaults to None - not activated - decimal value
-    # Offset is in seconds
-    granite_time_offset: 0
-
-    # Holocene fork
-    # Defaults to None - not activated - decimal value
-    # Offset is in seconds
-#    holocene_time_offset: ""
-
-    # Interop fork
-    # Defaults to None - not activated - decimal value
-    # Offset is in seconds
-#    interop_time_offset: ""
-
-  additional_services:
-    - blockscout
+  observability:
+    enabled: false
+  chains:
+    op-kurtosis:
+      participants:
+        node0:
+          el:
+            type: op-geth
+            log_level: ""
+            extra_env_vars: {}
+            extra_labels: {}
+            extra_params: []
+            tolerations: []
+            volume_size: 0
+            min_cpu: 0
+            max_cpu: 0
+            min_mem: 0
+            max_mem: 0
+          cl:
+            type: op-node
+            log_level: ""
+            extra_env_vars: {}
+            extra_labels: {}
+            extra_params: []
+            tolerations: []
+            volume_size: 0
+            min_cpu: 0
+            max_cpu: 0
+            min_mem: 0
+            max_mem: 0
+          mev_params:
+            image: ""
+            builder_host: ""
+            builder_port: ""
+      network_params:
+        network: "kurtosis"
+        network_id: "2151908"
+        seconds_per_slot: 2
+        fjord_time_offset: 0
+        granite_time_offset: 0
+        holocene_time_offset: 0
+        isthmus_time_offset: 0
+        jovian_time_offset: 0
+        fund_dev_accounts: true
+      batcher_params:
+        extra_params:
+          - --data-availability-type=calldata
+      proposer_params:
+        extra_params: []
+        game_type: 1
+        proposal_interval: 10m
+  challengers:
+    challenger:
+      enabled: true
+      image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-challenger:v1.9.0
+      participants: "*"
+      cannon_prestates_url: https://storage.googleapis.com/oplabs-network-data/proofs/op-program/cannon
+      cannon_trace_types:
+        - cannon
+        - permissioned
   op_contract_deployer_params:
-    image: ethpandaops/optimism-contract-deployer:develop
+    l1_artifacts_locator: embedded
+    l2_artifacts_locator: embedded
+    overrides:
+      faultGameAbsolutePrestate: 0x033c000916b4a88cfffeceddd6cf0f4be3897a89195941e5a7c3f8209b4dbb6e
+  faucet:
+    enabled: false
+  global_log_level: "info"
+  global_node_selectors: {}
+  global_tolerations: []
+  persistent: false
 ethereum_package:
+  participants:
+    - el_type: geth
+      el_image: ethereum/client-go:v1.16.9
+      el_extra_params:
+        - --gcmode=archive
+      cl_type: teku
+      cl_image: consensys/teku:25.7.1
+      el_volume_size: 16384
+      cl_volume_size: 8192
   network_params:
     preset: minimal
-  additional_services:
-    - dora
-    - blockscout
+    genesis_delay: 2
+    seconds_per_slot: 4
+    additional_preloaded_contracts: |
+      {
+        "0x4e59b44847b379578588920cA78FbF26c0B4956C": {
+          "balance": "0ETH",
+          "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3",
+          "storage": {},
+          "nonce": "1"
+        }
+      }

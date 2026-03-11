@@ -54,11 +54,15 @@ risc0-zkvm.workspace = true
 [dev-dependencies]
 kona-host.workspace = true
 lazy_static.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [features]
 devnet = [
     "kailua-proposer/devnet",
     "kailua-sync/devnet",
+    "kailua-validator/devnet",
 ]
 prove = [
     "kailua-prover/prove",
