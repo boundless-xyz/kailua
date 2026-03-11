@@ -79,6 +79,7 @@ async fn deploy_kailua_contracts(challenge_timeout: u64) -> anyhow::Result<()> {
         verifier_contract: None,
         challenge_timeout,
         proof_permit_timeout: 900,
+        proof_permit_delay: 12,
         deployer_signer: DeployerSignerArgs::from(
             "0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356".to_string(),
         ),
