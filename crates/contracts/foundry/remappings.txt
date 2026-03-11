@@ -9,6 +9,7 @@ safe-contracts/=lib/optimism/packages/contracts-bedrock/lib/safe-contracts/contr
 @rari-capital/solmate/=lib/optimism/packages/contracts-bedrock/lib/solmate/
 @lib-keccak/=lib/optimism/packages/contracts-bedrock/lib/lib-keccak/contracts/lib/
 @risc0/=lib/risc0-ethereum/contracts/src/
+openzeppelin/contracts/=lib/risc0-ethereum/lib/openzeppelin-contracts/contracts/
 openzeppelin/=lib/risc0-ethereum/lib/openzeppelin-contracts/
 forge-std/=lib/forge-std/src/
 kontrol-cheatcodes/=lib/optimism/packages/contracts-bedrock/lib/kontrol-cheatcodes/src/

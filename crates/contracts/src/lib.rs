@@ -43,53 +43,53 @@ sol!(
 sol!(
     #[sol(rpc)]
     IRiscZeroVerifier,
-    "foundry/out/FlatR0ImportV2.0.2.sol/IRiscZeroVerifier.json"
+    "foundry/out/IRiscZeroVerifier.sol/IRiscZeroVerifier.json"
 );
 
 sol!(
     #[sol(rpc)]
     RiscZeroVerifierRouter,
-    "foundry/out/FlatR0ImportV2.0.2.sol/RiscZeroVerifierRouter.json"
+    "foundry/out/RiscZeroVerifierRouter.sol/RiscZeroVerifierRouter.json"
 );
 
 sol!(
     #[sol(rpc)]
     RiscZeroGroth16Verifier,
-    "foundry/out/FlatR0ImportV2.0.2.sol/RiscZeroGroth16Verifier.json"
+    "foundry/out/RiscZeroGroth16Verifier.sol/RiscZeroGroth16Verifier.json"
 );
 
 sol!(
     #[sol(rpc)]
     RiscZeroMockVerifier,
-    "foundry/out/FlatR0ImportV2.0.2.sol/RiscZeroMockVerifier.json"
+    "foundry/out/RiscZeroMockVerifier.sol/RiscZeroMockVerifier.json"
 );
 
 sol!(
     #[sol(rpc)]
     OwnableUpgradeable,
-    "foundry/out/FlatOPImportV1.4.0.sol/OwnableUpgradeable.json"
+    "foundry/out/IOwnable.sol/IOwnable.json"
 );
 
 sol!(
     #[sol(rpc)]
     IDisputeGameFactory,
-    "foundry/out/FlatOPImportV1.4.0.sol/IDisputeGameFactory.json"
+    "foundry/out/IDisputeGameFactory.sol/IDisputeGameFactory.json"
 );
 
 sol!(
     #[sol(rpc)]
     Safe,
-    "foundry/out/FlatOPImportV1.4.0.sol/Safe.json"
+    "foundry/lib/optimism/packages/contracts-bedrock/snapshots/abi/GnosisSafe.json"
 );
 
 sol!(
     #[sol(rpc)]
     OptimismPortal2,
-    "foundry/out/FlatOPImportV1.4.0.sol/OptimismPortal2.json"
+    "foundry/out/IOptimismPortal2.sol/IOptimismPortal2.json"
 );
 
 sol!(
     #[sol(rpc)]
     SystemConfig,
-    "foundry/out/FlatOPImportV1.4.0.sol/SystemConfig.json"
+    "foundry/out/ISystemConfig.sol/ISystemConfig.json"
 );

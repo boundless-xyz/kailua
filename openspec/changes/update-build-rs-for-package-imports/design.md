@@ -4,12 +4,15 @@ The `crates/contracts/build.rs` compiles Solidity contracts via the `foundry_com
 
 After the migration from vendored flat files to git submodule dependencies with namespace-based remappings (`@optimism/`, `@risc0/`, `@solady/`, etc.), `cargo build -p kailua-contracts` fails because `solc` cannot resolve any `@`-prefixed import paths. `forge build` succeeds because the Forge CLI reads `foundry.toml` natively.
 
+After fixing that, the Rust crate still fails because `crates/contracts/src/lib.rs` references removed `FlatR0ImportV2.0.2.sol/...` and `FlatOPImportV1.4.0.sol/...` artifact JSON paths. The current Foundry layout emits dependency artifacts under source-based paths such as `foundry/out/IRiscZeroVerifier.sol/IRiscZeroVerifier.json`. Some Rust bindings only need ABI-only JSONs for runtime calls, while deployable contracts such as `RiscZeroVerifierRouter` and `RiscZeroGroth16Verifier` need bytecode-bearing artifacts in `foundry/out`.
+
 ## Goals / Non-Goals
 
 **Goals:**
 - Make `cargo build -p kailua-contracts` compile successfully with the new remapped imports
 - Keep `build.rs` in sync with `foundry.toml`/`remappings.txt` without duplicating remapping definitions
 - Ensure rebuilds trigger on remapping or dependency changes
+- Keep Rust `alloy::sol!` bindings aligned with the current Foundry artifact layout so ABI generation does not depend on removed vendor artifacts
 
 **Non-Goals:**
 - Parsing the full `foundry.toml` TOML structure (overkill for this fix)
@@ -35,7 +38,29 @@ After the migration from vendored flat files to git submodule dependencies with 
 
 **Rationale**: The current build.rs only watches `src` for changes. With git submodule dependencies, changes to remappings or library contents should also trigger recompilation. Watching `foundry/lib` covers submodule updates.
 
+### Decision 3: Point Rust bindings at the current artifact sources
+
+**Choice**:
+- Update `crates/contracts/src/lib.rs` to use `foundry/out/...` paths that exist in the package-based layout
+- Use interface or ABI-only JSONs for call-only bindings (`IOwnable`, `IOptimismPortal2`, `ISystemConfig`, `GnosisSafe`)
+- Add a small shim source file under `foundry/src/` that imports `RiscZeroVerifierRouter` and `RiscZeroGroth16Verifier` so Foundry emits deployable artifact JSONs for them
+
+**Alternatives considered**:
+- *Keep using removed `Flat*.sol` artifacts*: Impossible after vendor file removal
+- *Check in standalone generated artifacts just for Rust*: Adds generated-file churn and another drift source
+- *Point `alloy::sol!` directly at Solidity source files*: Does not provide the compiled artifact metadata/bytecode expected by deployable bindings
+
+**Rationale**: Rust bindings should follow the Foundry outputs that the project already generates. Call-only bindings can use ABI-only JSONs safely, while deployable bindings require bytecode-bearing `out/` artifacts. The shim import file is the smallest way to ensure those deployable artifacts are present during both `forge build` and `cargo build`.
+
+### Decision 4: Add an explicit `openzeppelin/contracts/` remapping for the RISC Zero dependency tree
+
+**Choice**: Add `openzeppelin/contracts/=lib/risc0-ethereum/lib/openzeppelin-contracts/contracts/` to both `foundry.toml` and `remappings.txt`.
+
+**Rationale**: The added RISC Zero Groth16 source imports `openzeppelin/contracts/...`. Forge resolves this dependency path successfully, but `foundry_compilers` needs the explicit remapping to resolve the same transitive import path during `cargo build`.
+
 ## Risks / Trade-offs
 
 - **[Risk] `remappings.txt` out of sync with `foundry.toml`** → Mitigation: `forge` regenerates `remappings.txt` on build. The `remappings.txt` is the canonical source that `forge` itself reads. Document that `forge build` should be run after changing `foundry.toml` remappings.
 - **[Risk] `foundry/lib` watch is coarse-grained** → Mitigation: Submodule updates are infrequent. False-positive rebuilds are cheap compared to missing a real change.
+- **[Risk] ABI-only bindings may expose fewer methods than concrete contract artifacts** → Mitigation: Use ABI-only JSONs only for call sites that need runtime methods, and keep deployable contracts on full `out/` artifacts.
+- **[Risk] Shim imports could pull in extra dependency compile work** → Mitigation: The shim imports only the two deployable RISC Zero contracts that Rust code needs and does not alter the project’s Solidity runtime behavior.

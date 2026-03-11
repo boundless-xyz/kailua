@@ -23,6 +23,7 @@ remappings = [
     # RISC Zero v3
     "@risc0/=lib/risc0-ethereum/contracts/src/",
     # RISC Zero internal resolution
+    "openzeppelin/contracts/=lib/risc0-ethereum/lib/openzeppelin-contracts/contracts/",
     "openzeppelin/=lib/risc0-ethereum/lib/openzeppelin-contracts/",
     # forge-std
     "forge-std/=lib/forge-std/src/",

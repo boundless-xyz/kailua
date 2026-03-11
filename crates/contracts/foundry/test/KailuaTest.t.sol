@@ -32,6 +32,9 @@ import {KailuaTreasury} from "../src/KailuaTreasury.sol";
 import {KailuaGame} from "../src/KailuaGame.sol";
 import {KailuaVerifier} from "../src/KailuaVerifier.sol";
 
+import {RiscZeroGroth16Verifier} from "@risc0/groth16/RiscZeroGroth16Verifier.sol";
+import {RiscZeroVerifierRouter} from "@risc0/RiscZeroVerifierRouter.sol";
+
 contract KailuaTest is Test {
     /// @dev Allows for the creation of clone proxies with immutable arguments.
     using LibClone for address;

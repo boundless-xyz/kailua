@@ -50,3 +50,21 @@ The build script SHALL declare `cargo:rerun-if-changed` directives for all input
 #### Scenario: Library directory change triggers rebuild
 - **WHEN** any file under `foundry/lib/` changes (e.g., submodule update)
 - **THEN** the next `cargo build` SHALL re-run the build script
+
+### Requirement: Rust ABI bindings reference the current Foundry artifact layout
+The Rust contract bindings in `crates/contracts/src/lib.rs` SHALL reference artifact JSON files that exist in the package-based Foundry layout.
+
+#### Scenario: Current artifact paths used for Rust bindings
+- **WHEN** `cargo build -p kailua-contracts` expands the `alloy::sol!` macros in `crates/contracts/src/lib.rs`
+- **THEN** each referenced JSON path SHALL exist under `foundry/out/` or an intentionally selected checked-in ABI snapshot path
+- **AND** the build SHALL NOT depend on removed `Flat*.sol` artifact files
+
+#### Scenario: Deployable RISC Zero artifacts are generated during project compilation
+- **WHEN** the Rust crate needs bindings for `RiscZeroVerifierRouter` or `RiscZeroGroth16Verifier`
+- **THEN** the Foundry project SHALL include source imports that cause those contracts to be emitted under `foundry/out/`
+- **AND** the resulting artifacts SHALL contain the bytecode required by deployable Rust bindings
+
+#### Scenario: RISC Zero transitive OpenZeppelin imports resolve
+- **WHEN** `foundry_compilers` compiles the imported `RiscZeroGroth16Verifier` source during `cargo build`
+- **THEN** the compiler SHALL resolve `openzeppelin/contracts/...` imports via an explicit remapping
+- **AND** compilation SHALL succeed without missing-file import errors
