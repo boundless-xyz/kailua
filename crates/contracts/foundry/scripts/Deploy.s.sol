@@ -3,8 +3,15 @@ pragma solidity 0.8.24;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import "../src/vendor/FlatOPImportV1.4.0.sol";
-import "../src/vendor/FlatR0ImportV2.0.2.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
+import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
+import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
+import {IAnchorStateRegistry} from "interfaces/dispute/IAnchorStateRegistry.sol";
+import {GameType, Claim, Duration} from "src/dispute/lib/Types.sol";
+import {IRiscZeroVerifier} from "@risc0/IRiscZeroVerifier.sol";
+import {RiscZeroVerifierRouter} from "@risc0/RiscZeroVerifierRouter.sol";
+import {RiscZeroGroth16Verifier} from "@risc0/groth16/RiscZeroGroth16Verifier.sol";
+import {KailuaVerifier} from "../src/KailuaVerifier.sol";
 import {KailuaTreasury} from "../src/KailuaTreasury.sol";
 import {KailuaGame} from "../src/KailuaGame.sol";
 
@@ -34,7 +41,7 @@ contract DeployScript is Script {
     uint256 participationBond = vm.envUint("PARTICIPATION_BOND");
     address vanguardAddress = vm.envAddress("VANGUARD_ADDRESS");
     Duration vanguardAdvantage = Duration.wrap(uint64(vm.envUint("VANGUARD_ADVANTAGE"))); // set
-    OptimismPortal2 optimismPortal = OptimismPortal2(payable(vm.envAddress("OPTIMISM_PORTAL")));
+    IOptimismPortal2 optimismPortal = IOptimismPortal2(vm.envAddress("OPTIMISM_PORTAL"));
 
     function run() public {
         vm.startBroadcast(deployerPrivateKey);
@@ -79,6 +86,6 @@ contract DeployScript is Script {
         dgf.setImplementation(gameType, game);
         // OPTIONAL
         treasury.assignVanguard(vanguardAddress, vanguardAdvantage);
-        optimismPortal.setRespectedGameType(gameType);
+        IAnchorStateRegistry(address(optimismPortal.anchorStateRegistry())).setRespectedGameType(gameType);
     }
 }

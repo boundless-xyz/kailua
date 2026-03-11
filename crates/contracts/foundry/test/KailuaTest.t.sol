@@ -18,8 +18,13 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 
-import "../src/vendor/FlatOPImportV1.4.0.sol";
-import "../src/vendor/FlatR0ImportV2.0.2.sol";
+import {LibClone} from "@solady/utils/LibClone.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
+import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
+import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
+import {GameType, Claim, Hash, Timestamp, Duration, GameStatus} from "src/dispute/lib/Types.sol";
+import {RiscZeroMockVerifier} from "@risc0/test/RiscZeroMockVerifier.sol";
+import {ReceiptClaimLib} from "@risc0/IRiscZeroVerifier.sol";
 
 import "../src/KailuaLib.sol";
 import "../src/KailuaTournament.sol";
@@ -30,8 +35,8 @@ contract KailuaTest is Test {
     /// @dev Allows for the creation of clone proxies with immutable arguments.
     using LibClone for address;
 
-    DisputeGameFactory factory;
-    OptimismPortal2 portal;
+    MockDisputeGameFactory factory;
+    MockOptimismPortal2 portal;
     RiscZeroMockVerifier zkvm;
     KailuaVerifier verifier;
 
@@ -44,13 +49,9 @@ contract KailuaTest is Test {
     );
 
     function setUp() public virtual {
-        // OP Stack
-        factory = DisputeGameFactory(address(new DisputeGameFactory()).clone());
-        factory.initialize(address(this));
-        portal = OptimismPortal2(payable(address(new OptimismPortal2(0, 0)).clone()));
-        portal.initialize(
-            factory, SystemConfig(address(0x0)), SuperchainConfig(address(0x0)), GameType.wrap(uint32(1337))
-        );
+        // OP Stack mocks
+        factory = new MockDisputeGameFactory(address(this));
+        portal = new MockOptimismPortal2(IDisputeGameFactory(address(factory)), GameType.wrap(uint32(1337)));
         vm.assertEq(address(portal.disputeGameFactory()), address(factory));
         // RISC Zero
         zkvm = new RiscZeroMockVerifier(bytes4(bytes32(uint256(0xFF))));
@@ -72,7 +73,7 @@ contract KailuaTest is Test {
             proposalOutputCount,
             outputBlockSpan,
             GameType.wrap(1337),
-            OptimismPortal2(payable(address(portal))),
+            IOptimismPortal2(payable(address(portal))),
             Claim.wrap(rootClaim),
             l2BlockNumber
         );
@@ -168,11 +169,114 @@ contract KailuaTest is Test {
         view
         returns (bool)
     {
-        return
-            KailuaKZGLib.verifyKZGBlobProof(KailuaKZGLib.versionedKZGHash(commitment), index, value, commitment, proof);
+        return KailuaKZGLib.verifyKZGBlobProof(
+            KailuaKZGLib.versionedKZGHash(commitment), index, value, commitment, proof
+        );
     }
 
     function modExp(uint256 exponent) external view returns (uint256) {
         return KailuaKZGLib.modExp(exponent);
+    }
+}
+
+/// @dev Mock DisputeGameFactory that replicates essential factory behavior for testing.
+///      Avoids importing concrete OP Stack v5 contracts (which require solc 0.8.15).
+contract MockDisputeGameFactory {
+    using LibClone for address;
+
+    address public owner;
+    mapping(GameType => IDisputeGame) public gameImpls;
+    mapping(GameType => uint256) public initBonds;
+
+    struct GameEntry {
+        GameType gameType;
+        Timestamp timestamp;
+        IDisputeGame proxy;
+    }
+
+    GameEntry[] internal _gameList;
+    mapping(bytes32 => IDisputeGame) internal _games;
+
+    constructor(address _owner) {
+        owner = _owner;
+    }
+
+    function setOwner(address _owner) external {
+        owner = _owner;
+    }
+
+    function gameCount() external view returns (uint256) {
+        return _gameList.length;
+    }
+
+    function games(GameType _gameType, Claim _rootClaim, bytes memory _extraData)
+        external
+        view
+        returns (IDisputeGame proxy_, Timestamp timestamp_)
+    {
+        bytes32 uuid = keccak256(abi.encode(_gameType, _rootClaim, _extraData));
+        proxy_ = _games[uuid];
+        // Find the timestamp from the game list
+        for (uint256 i = 0; i < _gameList.length; i++) {
+            if (address(_gameList[i].proxy) == address(proxy_)) {
+                timestamp_ = _gameList[i].timestamp;
+                break;
+            }
+        }
+    }
+
+    function gameAtIndex(uint256 _index)
+        external
+        view
+        returns (GameType gameType_, Timestamp timestamp_, IDisputeGame proxy_)
+    {
+        GameEntry storage entry = _gameList[_index];
+        gameType_ = entry.gameType;
+        timestamp_ = entry.timestamp;
+        proxy_ = entry.proxy;
+    }
+
+    function setImplementation(GameType _gameType, IDisputeGame _impl) external {
+        gameImpls[_gameType] = _impl;
+    }
+
+    function setInitBond(GameType _gameType, uint256 _initBond) external {
+        initBonds[_gameType] = _initBond;
+    }
+
+    function create(GameType _gameType, Claim _rootClaim, bytes calldata _extraData)
+        external
+        payable
+        returns (IDisputeGame proxy_)
+    {
+        IDisputeGame impl = gameImpls[_gameType];
+        require(address(impl) != address(0), "no impl");
+
+        // Clone with immutable args matching OP Stack layout:
+        // [creator(20) | rootClaim(32) | l1Head(32) | extraData...]
+        bytes memory data = abi.encodePacked(msg.sender, _rootClaim, blockhash(block.number - 1), _extraData);
+        proxy_ = IDisputeGame(address(impl).clone(data));
+        proxy_.initialize{value: msg.value}();
+
+        // Store the game (enforce uniqueness like the real factory)
+        bytes32 uuid = keccak256(abi.encode(_gameType, _rootClaim, _extraData));
+        require(address(_games[uuid]) == address(0), "GameAlreadyExists()");
+        _games[uuid] = proxy_;
+        _gameList.push(GameEntry(_gameType, Timestamp.wrap(uint64(block.timestamp)), proxy_));
+    }
+}
+
+/// @dev Mock OptimismPortal2 that implements the IOptimismPortal2 interface methods needed by Kailua.
+contract MockOptimismPortal2 {
+    IDisputeGameFactory public disputeGameFactory;
+    GameType public respectedGameType;
+
+    constructor(IDisputeGameFactory _factory, GameType _gameType) {
+        disputeGameFactory = _factory;
+        respectedGameType = _gameType;
+    }
+
+    function setRespectedGameType(GameType _gameType) external {
+        respectedGameType = _gameType;
     }
 }

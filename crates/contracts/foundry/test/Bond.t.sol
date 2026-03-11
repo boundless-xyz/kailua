@@ -100,8 +100,8 @@ contract BondTest is KailuaTest {
         );
         // Jump ahead
         vm.warp(
-            game.GENESIS_TIME_STAMP()
-                + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME() * 2
+            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
+                * 2
         );
         // Fail to reclaim bond with pending proposal
         vm.expectRevert(GameNotResolved.selector);
@@ -160,8 +160,8 @@ contract BondTest is KailuaTest {
 
         // Jump ahead
         vm.warp(
-            game.GENESIS_TIME_STAMP()
-                + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME() * 2
+            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
+                * 2
         );
 
         // Fail to reclaim bond with pending proposal
@@ -195,8 +195,8 @@ contract BondTest is KailuaTest {
 
         // Jump ahead
         vm.warp(
-            game.GENESIS_TIME_STAMP()
-                + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME() * 2
+            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
+                * 2
         );
 
         vm.deal(address(0x01), 1000);

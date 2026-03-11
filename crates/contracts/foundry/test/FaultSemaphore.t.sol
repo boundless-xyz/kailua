@@ -62,7 +62,9 @@ contract FaultSemaphoreTest is KailuaTest {
 
         // Succeed with required value
         uint256 bond = verifier.faultProofPermitBond(treasury);
-        verifier.acquireFaultProofPermit{value: bond}(proposal_128_0_parent, proposal_128_0_signature, 0, 0, address(this));
+        verifier.acquireFaultProofPermit{value: bond}(
+            proposal_128_0_parent, proposal_128_0_signature, 0, 0, address(this)
+        );
     }
 
     function test_onePermitDelayed() public {
@@ -102,14 +104,15 @@ contract FaultSemaphoreTest is KailuaTest {
         );
 
         // Accept fault proof
-        proposal_128_0.parentGame().proveOutputFault(
-            [address(this), address(proposal_128_0)],
-            [uint64(0), uint64(0)],
-            proof,
-            [proposal_128_0.parentGame().rootClaim().raw(), goodClaim],
-            KailuaKZGLib.hashToFe(proposal_128_0.rootClaim().raw()),
-            [new bytes[](0), new bytes[](0)]
-        );
+        proposal_128_0.parentGame()
+            .proveOutputFault(
+                [address(this), address(proposal_128_0)],
+                [uint64(0), uint64(0)],
+                proof,
+                [proposal_128_0.parentGame().rootClaim().raw(), goodClaim],
+                KailuaKZGLib.hashToFe(proposal_128_0.rootClaim().raw()),
+                [new bytes[](0), new bytes[](0)]
+            );
 
         // Ensure signature is unviable
         vm.assertFalse(proposal_128_0_parent.isViableSignature(proposal_128_0_signature));
@@ -183,14 +186,15 @@ contract FaultSemaphoreTest is KailuaTest {
 
         // Accept fault proof after permit activation
         vm.warp(block.timestamp + verifier.PERMIT_DELAY().raw());
-        proposal_128_0.parentGame().proveOutputFault(
-            [address(this), address(proposal_128_0)],
-            [uint64(0), uint64(0)],
-            proof,
-            [proposal_128_0.parentGame().rootClaim().raw(), goodClaim],
-            KailuaKZGLib.hashToFe(proposal_128_0.rootClaim().raw()),
-            [new bytes[](0), new bytes[](0)]
-        );
+        proposal_128_0.parentGame()
+            .proveOutputFault(
+                [address(this), address(proposal_128_0)],
+                [uint64(0), uint64(0)],
+                proof,
+                [proposal_128_0.parentGame().rootClaim().raw(), goodClaim],
+                KailuaKZGLib.hashToFe(proposal_128_0.rootClaim().raw()),
+                [new bytes[](0), new bytes[](0)]
+            );
 
         // Ensure signature is unviable
         vm.assertFalse(proposal_128_0_parent.isViableSignature(proposal_128_0_signature));
@@ -202,7 +206,9 @@ contract FaultSemaphoreTest is KailuaTest {
         );
 
         // Ensure Recipient is sole beneficiary
-        vm.assertEq(verifier.faultProofPermitBeneficiary(proposal_128_0_parent, proposal_128_0_signature), address(this));
+        vm.assertEq(
+            verifier.faultProofPermitBeneficiary(proposal_128_0_parent, proposal_128_0_signature), address(this)
+        );
 
         // Release after proving
         uint256 balance = address(this).balance;
@@ -222,7 +228,7 @@ contract FaultSemaphoreTest is KailuaTest {
         vm.assertEq(
             address(this).balance - balance,
             (treasury.participationBond() * treasury.ELIMINATION_SPLIT_PROVER_NUM())
-            / treasury.ELIMINATION_SPLIT_DENOM()
+                / treasury.ELIMINATION_SPLIT_DENOM()
         );
     }
 
@@ -257,11 +263,7 @@ contract FaultSemaphoreTest is KailuaTest {
                 uint64 underCountExpired = numExpiredPermits == 0 ? 0 : numExpiredPermits - 1;
                 // Give all permits the same starting time
                 verifier.acquireFaultProofPermit{value: permitBond}(
-                    proposal_128_0_parent,
-                    proposal_128_0_signature,
-                    underCountExpired,
-                    j,
-                    address(this)
+                    proposal_128_0_parent, proposal_128_0_signature, underCountExpired, j, address(this)
                 );
                 // Fail to release
                 vm.expectRevert(NotProven.selector);
@@ -322,20 +324,28 @@ contract FaultSemaphoreTest is KailuaTest {
         );
 
         // Accept fault proof
-        KailuaTournament(address(proposal_128_0_parent)).proveOutputFault(
-            [address(this), address(proposal_128_0)],
-            [uint64(0), uint64(0)],
-            proof,
-            [KailuaTournament(address(proposal_128_0_parent)).rootClaim().raw(), bytes32(uint256(proposal_128_0.rootClaim().raw()) + KailuaKZGLib.BLS_MODULUS)],
-            KailuaKZGLib.hashToFe(proposal_128_0.rootClaim().raw()),
-            [new bytes[](0), new bytes[](0)]
-        );
+        KailuaTournament(address(proposal_128_0_parent))
+            .proveOutputFault(
+                [address(this), address(proposal_128_0)],
+                [uint64(0), uint64(0)],
+                proof,
+                [
+                    KailuaTournament(address(proposal_128_0_parent)).rootClaim().raw(),
+                    bytes32(uint256(proposal_128_0.rootClaim().raw()) + KailuaKZGLib.BLS_MODULUS)
+                ],
+                KailuaKZGLib.hashToFe(proposal_128_0.rootClaim().raw()),
+                [new bytes[](0), new bytes[](0)]
+            );
 
         // Release after proving
         for (uint64 i = 0; i <= allExpiredPermits; i++) {
             uint256 initialHolderBalance = address(this).balance;
             verifier.releaseFaultProofPermit(
-                proposal_128_0_parent, proposal_128_0_signature, allExpiredPermits, allDelayedPermits, allExpiredPermits + i
+                proposal_128_0_parent,
+                proposal_128_0_signature,
+                allExpiredPermits,
+                allDelayedPermits,
+                allExpiredPermits + i
             );
             // Every claimant receives their bond back plus reward
             vm.assertEq(address(this).balance - initialHolderBalance, permitBond + permitBond / 2);
@@ -399,14 +409,15 @@ contract FaultSemaphoreTest is KailuaTest {
         vm.warp(block.timestamp + verifier.PERMIT_DURATION().raw() + 1);
 
         // Accept fault proof
-        proposal_128_0.parentGame().proveOutputFault(
-            [address(this), address(proposal_128_0)],
-            [uint64(0), uint64(0)],
-            proof,
-            [proposal_128_0.parentGame().rootClaim().raw(), goodClaim],
-            KailuaKZGLib.hashToFe(proposal_128_0.rootClaim().raw()),
-            [new bytes[](0), new bytes[](0)]
-        );
+        proposal_128_0.parentGame()
+            .proveOutputFault(
+                [address(this), address(proposal_128_0)],
+                [uint64(0), uint64(0)],
+                proof,
+                [proposal_128_0.parentGame().rootClaim().raw(), goodClaim],
+                KailuaKZGLib.hashToFe(proposal_128_0.rootClaim().raw()),
+                [new bytes[](0), new bytes[](0)]
+            );
 
         // Ensure signature is unviable
         vm.assertFalse(proposal_128_0_parent.isViableSignature(proposal_128_0_signature));
@@ -603,14 +614,15 @@ contract FaultSemaphoreTest is KailuaTest {
         );
 
         // Accept fault proof
-        proposal_128_0.parentGame().proveOutputFault(
-            [address(this), address(proposal_128_0)],
-            [uint64(1), uint64(0)],
-            proof,
-            [proposal_128_0.parentGame().rootClaim().raw(), proposal_128_0.rootClaim().raw()],
-            KailuaKZGLib.hashToFe(proposal_128_1.rootClaim().raw()),
-            [new bytes[](0), new bytes[](0)]
-        );
+        proposal_128_0.parentGame()
+            .proveOutputFault(
+                [address(this), address(proposal_128_0)],
+                [uint64(1), uint64(0)],
+                proof,
+                [proposal_128_0.parentGame().rootClaim().raw(), proposal_128_0.rootClaim().raw()],
+                KailuaKZGLib.hashToFe(proposal_128_1.rootClaim().raw()),
+                [new bytes[](0), new bytes[](0)]
+            );
 
         // Ensure validity proof time is recorded
         vm.assertEq(

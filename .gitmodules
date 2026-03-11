@@ -1,0 +1,6 @@
+[submodule "crates/contracts/foundry/lib/risc0-ethereum"]
+	path = crates/contracts/foundry/lib/risc0-ethereum
+	url = https://github.com/risc0/risc0-ethereum.git
+[submodule "crates/contracts/foundry/lib/optimism"]
+	path = crates/contracts/foundry/lib/optimism
+	url = https://github.com/ethereum-optimism/optimism.git

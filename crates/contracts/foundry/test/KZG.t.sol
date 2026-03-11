@@ -48,7 +48,7 @@ contract KZGTest is KailuaTest {
         );
     }
 
-    function test_verifyKZGBlobProof_0() public {
+    function test_verifyKZGBlobProof_0() public view {
         bytes memory commitment = abi.encodePacked(
             hex"c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
         );
@@ -60,7 +60,7 @@ contract KZGTest is KailuaTest {
         }
     }
 
-    function test_verifyKZGBlobProof_1() public {
+    function test_verifyKZGBlobProof_1() public view {
         bytes memory commitment = abi.encodePacked(
             hex"b7f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb"
         );
@@ -73,7 +73,7 @@ contract KZGTest is KailuaTest {
         }
     }
 
-    function test_verifyKZGBlobProof_2() public {
+    function test_verifyKZGBlobProof_2() public view {
         bytes memory commitment = abi.encodePacked(
             hex"a572cbea904d67468808c8eb50a9450c9721db309128012543902d0ac358a62ae28f75bb8f1c7c42c39a8c5529bf0f4e"
         );

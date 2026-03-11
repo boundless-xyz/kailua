@@ -17,7 +17,22 @@ pragma solidity 0.8.24;
 
 import "./KailuaLib.sol";
 import "./KailuaVerifier.sol";
-import "./vendor/FlatOPImportV1.4.0.sol";
+import {Clone} from "@solady/utils/Clone.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
+import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
+import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
+import {GameStatus, Claim, Hash, GameType, Timestamp, Duration} from "src/dispute/lib/Types.sol";
+import {
+    AlreadyInitialized,
+    GameNotInProgress,
+    ClaimAlreadyResolved,
+    InvalidDisputedClaimIndex,
+    InvalidParent,
+    GameNotResolved
+} from "src/dispute/lib/Errors.sol";
+
+/// @notice Thrown when a proposal contains invalid trailing data
+error InvalidDataRemainder();
 
 abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     // ------------------------------
@@ -43,10 +58,10 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     GameType public immutable GAME_TYPE;
 
     /// @notice The OptimismPortal2 instance
-    OptimismPortal2 public immutable OPTIMISM_PORTAL;
+    IOptimismPortal2 public immutable OPTIMISM_PORTAL;
 
     /// @notice The DisputeGameFactory instance
-    DisputeGameFactory public immutable DISPUTE_GAME_FACTORY;
+    IDisputeGameFactory public immutable DISPUTE_GAME_FACTORY;
 
     constructor(
         IKailuaTreasury _kailuaTreasury,
@@ -54,7 +69,7 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
         uint64 _proposalOutputCount,
         uint64 _outputBlockSpan,
         GameType _gameType,
-        OptimismPortal2 _optimismPortal
+        IOptimismPortal2 _optimismPortal
     ) {
         KAILUA_TREASURY = _kailuaTreasury;
         KAILUA_VERIFIER = _kailuaVerifier;
@@ -268,6 +283,11 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     /// @notice The l2BlockNumber of the claim's output root.
     function l2BlockNumber() public pure returns (uint256 l2BlockNumber_) {
         l2BlockNumber_ = uint256(_getArgUint64(0x54));
+    }
+
+    /// @inheritdoc IDisputeGame
+    function l2SequenceNumber() public pure returns (uint256 l2SequenceNumber_) {
+        l2SequenceNumber_ = l2BlockNumber();
     }
 
     /// @inheritdoc IDisputeGame

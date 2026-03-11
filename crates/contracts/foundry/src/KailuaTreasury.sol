@@ -18,7 +18,19 @@ pragma solidity 0.8.24;
 import "./KailuaLib.sol";
 import "./KailuaTournament.sol";
 import "./KailuaVerifier.sol";
-import "./vendor/FlatOPImportV1.4.0.sol";
+import {IInitializable} from "interfaces/dispute/IInitializable.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
+import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
+import {GameStatus, Claim, GameType, Timestamp, Duration} from "src/dispute/lib/Types.sol";
+import {
+    BadExtraData,
+    GameNotInProgress,
+    UnexpectedRootClaim,
+    BadAuth,
+    IncorrectBondAmount,
+    NoCreditToClaim,
+    GameNotResolved
+} from "src/dispute/lib/Errors.sol";
 
 contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     /// @notice Semantic version.
@@ -40,17 +52,12 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         uint64 _proposalOutputCount,
         uint64 _outputBlockSpan,
         GameType _gameType,
-        OptimismPortal2 _optimismPortal,
+        IOptimismPortal2 _optimismPortal,
         Claim _rootClaim,
         uint64 _l2BlockNumber
     )
         KailuaTournament(
-            KailuaTreasury(this),
-            _kailuaVerifier,
-            _proposalOutputCount,
-            _outputBlockSpan,
-            _gameType,
-            _optimismPortal
+            KailuaTreasury(this), _kailuaVerifier, _proposalOutputCount, _outputBlockSpan, _gameType, _optimismPortal
         )
     {
         ROOT_CLAIM = _rootClaim;
@@ -275,8 +282,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     }
 
     modifier onlyFactoryOwner() {
-        OwnableUpgradeable factoryContract = OwnableUpgradeable(address(DISPUTE_GAME_FACTORY));
-        if (msg.sender != factoryContract.owner()) revert NotFactoryOwner();
+        if (msg.sender != DISPUTE_GAME_FACTORY.owner()) revert NotFactoryOwner();
         _;
     }
 

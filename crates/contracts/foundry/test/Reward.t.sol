@@ -163,8 +163,8 @@ contract RewardTest is KailuaTest {
         KailuaTournament proposal_128_0 = propose(address(this), 128, uint64(anchor.gameIndex()));
 
         vm.warp(
-            game.GENESIS_TIME_STAMP()
-                + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME() * 2
+            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
+                * 2
         );
         KailuaTournament proposal_256_0 = propose(address(this), 256, uint64(proposal_128_0.gameIndex()));
 

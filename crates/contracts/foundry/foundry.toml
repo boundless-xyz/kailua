@@ -7,5 +7,29 @@ optimizer_runs = 10_000
 ffi = true
 evm_version = "cancun"
 solc_version = "0.8.24"
+remappings = [
+    # OP Stack v5 internal resolution
+    "src/=lib/optimism/packages/contracts-bedrock/src/",
+    "interfaces/=lib/optimism/packages/contracts-bedrock/interfaces/",
+    # OP Stack transitive dependencies
+    "@openzeppelin/contracts/=lib/optimism/packages/contracts-bedrock/lib/openzeppelin-contracts/contracts/",
+    "@openzeppelin/contracts-upgradeable/=lib/optimism/packages/contracts-bedrock/lib/openzeppelin-contracts-upgradeable/contracts/",
+    "@openzeppelin/contracts-v5/=lib/optimism/packages/contracts-bedrock/lib/openzeppelin-contracts-v5/contracts/",
+    "@solady/=lib/optimism/packages/contracts-bedrock/lib/solady/src/",
+    "@solady-v0.0.245/=lib/optimism/packages/contracts-bedrock/lib/solady-v0.0.245/src/",
+    "safe-contracts/=lib/optimism/packages/contracts-bedrock/lib/safe-contracts/contracts/",
+    "@rari-capital/solmate/=lib/optimism/packages/contracts-bedrock/lib/solmate/",
+    "@lib-keccak/=lib/optimism/packages/contracts-bedrock/lib/lib-keccak/contracts/lib/",
+    # RISC Zero v3
+    "@risc0/=lib/risc0-ethereum/contracts/src/",
+    # RISC Zero internal resolution
+    "openzeppelin/=lib/risc0-ethereum/lib/openzeppelin-contracts/",
+    # forge-std
+    "forge-std/=lib/forge-std/src/",
+]
+
+[lint]
+# Solar linter cannot resolve the src/ remapping (conflicts with source directory)
+lint_on_build = false
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

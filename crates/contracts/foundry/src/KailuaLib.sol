@@ -15,8 +15,8 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.24;
 
-import "./vendor/FlatOPImportV1.4.0.sol";
-import "./vendor/FlatR0ImportV2.0.2.sol";
+import {Timestamp} from "src/dispute/lib/Types.sol";
+import {BondTransferFailed} from "src/dispute/lib/Errors.sol";
 
 /// @notice Denotes the proven status of the game
 /// @custom:value NONE indicates that no proof has been submitted yet.
@@ -33,10 +33,6 @@ error Blacklisted(address source, address expected);
 // 0x9d3e7d24
 /// @notice Thrown when a child from an unknown source appends itself to a tournament
 error UnknownGame();
-
-// 0xc105260a
-/// @notice Thrown when pruning children of an unresolved parent
-error GameNotResolved();
 
 // 0x8b1dfa22
 /// @notice Thrown when eliminating an already removed child

@@ -156,8 +156,8 @@ contract BlobDisputeTest is KailuaTest {
         );
 
         vm.warp(
-            game.GENESIS_TIME_STAMP()
-                + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME() * 2
+            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
+                * 2
         );
 
         // Resolve
@@ -413,8 +413,8 @@ contract BlobDisputeTest is KailuaTest {
         );
 
         vm.warp(
-            game.GENESIS_TIME_STAMP()
-                + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME() * 2
+            game.GENESIS_TIME_STAMP() + game.PROPOSAL_OUTPUT_COUNT() * game.OUTPUT_BLOCK_SPAN() * game.L2_BLOCK_TIME()
+                * 2
         );
         vm.assertEq(treasury.lastResolved(), address(anchor));
         proposal_128_0.resolve();

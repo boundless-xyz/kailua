@@ -16,8 +16,13 @@
 pragma solidity 0.8.24;
 
 import "./KailuaLib.sol";
-import "./vendor/FlatOPImportV1.4.0.sol";
-import "./vendor/FlatR0ImportV2.0.2.sol";
+import {ISemver} from "interfaces/universal/ISemver.sol";
+import {Duration} from "src/dispute/lib/Types.sol";
+import {IncorrectBondAmount, ClockNotExpired, NoCreditToClaim} from "src/dispute/lib/Errors.sol";
+import {IRiscZeroVerifier} from "@risc0/IRiscZeroVerifier.sol";
+
+/// @notice Thrown when a target is invalid
+error BadTarget();
 
 contract KailuaVerifier is ISemver {
     /// @notice Semantic version.

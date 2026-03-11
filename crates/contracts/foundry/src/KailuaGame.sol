@@ -19,7 +19,17 @@ import "./KailuaLib.sol";
 import "./KailuaTournament.sol";
 import "./KailuaTreasury.sol";
 import "./KailuaVerifier.sol";
-import "./vendor/FlatOPImportV1.4.0.sol";
+import {IInitializable} from "interfaces/dispute/IInitializable.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
+import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
+import {GameStatus, GameType, Timestamp, Duration, Hash} from "src/dispute/lib/Types.sol";
+import {
+    BadExtraData,
+    GameNotInProgress,
+    InvalidParent,
+    OutOfOrderResolution,
+    ClockNotExpired
+} from "src/dispute/lib/Errors.sol";
 
 contract KailuaGame is KailuaTournament {
     /// @notice Semantic version.
