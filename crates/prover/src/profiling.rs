@@ -228,7 +228,7 @@ impl Profile {
     }
 
     pub async fn gas(&self) -> Option<u64> {
-        let Some(mut gas) = self.gas else { return None };
+        let mut gas = self.gas?;
         for proof_id in &self.children {
             let file_name = proof_id_file_name(*proof_id);
             if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
@@ -245,9 +245,7 @@ impl Profile {
     }
 
     pub async fn input_bytes(&self) -> Option<u64> {
-        let Some(mut input_bytes) = self.input_bytes else {
-            return None;
-        };
+        let mut input_bytes = self.input_bytes?;
         for proof_id in &self.children {
             let file_name = proof_id_file_name(*proof_id);
             if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
@@ -264,9 +262,7 @@ impl Profile {
     }
 
     pub async fn snarks(&self) -> Option<u64> {
-        let Some(mut snarks) = self.snarks else {
-            return None;
-        };
+        let mut snarks = self.snarks?;
         for proof_id in &self.children {
             let file_name = proof_id_file_name(*proof_id);
             if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await

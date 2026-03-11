@@ -229,7 +229,10 @@ where
     for request in precondition_validation_data.blob_fetch_requests() {
         blobs.push(
             *beacon
-                .get_and_validate_blobs(&request.block_ref, &[request.blob_hash.clone()])
+                .get_and_validate_blobs(
+                    &request.block_ref,
+                    std::slice::from_ref(&request.blob_hash),
+                )
                 .await
                 .unwrap()[0],
         );
@@ -559,8 +562,8 @@ mod tests {
         // fail to validate extra output roots
         let mut blobs = blobs[..1].to_vec();
         let blobs_fetch_requests = gen_blobs_requests(blobs.clone());
-        for i in 500 * 32..501 * 32 {
-            blobs[0][i] = !blobs[0][i];
+        for blob_byte in blobs[0].iter_mut().skip(500 * 32).take(32) {
+            *blob_byte = !*blob_byte;
         }
         let result = validate_proposal_precondition(
             ProposalPrecondition {
@@ -587,8 +590,8 @@ mod tests {
             // println!("Testing with {n} blobs");
             let mut blobs = gen_blobs(n);
             // Zero out the last half of the last blob
-            for i in m..BYTES_PER_BLOB {
-                blobs[n - 1][i] = 0;
+            for blob_byte in blobs[n - 1].iter_mut().skip(m) {
+                *blob_byte = 0;
             }
             // create remaining dummy data
             let blobs_fetch_requests = gen_blobs_requests(blobs.clone());

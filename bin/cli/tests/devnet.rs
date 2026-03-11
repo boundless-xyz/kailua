@@ -683,7 +683,7 @@ async fn prover() {
     let data_dir = tmp_dir.path().join("agent").to_path_buf();
     let provider = devnet.provider_args().unwrap();
     let sync = SyncArgs {
-        provider: provider,
+        provider,
         kailua_game_implementation: None,
         kailua_anchor_address: None,
         final_l2_block: Some(60),
