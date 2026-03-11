@@ -1,18 +1,18 @@
 
 pub const KAILUA_FPVM_KONA_ELF: &[u8] = include_bytes!("bin/kailua-fpvm-kona.bin");
 pub const KAILUA_FPVM_KONA_PATH: &str = "bin/kailua-fpvm-kona.bin";
-pub const KAILUA_FPVM_KONA_ID: [u32; 8] = [0x22FFA4C7, 0xBE2ED9C7, 0x4784B6C, 0x8255696F, 0x11457944, 0xE8E36585, 0xA1CF8BFF, 0x2ACBF97B];
+pub const KAILUA_FPVM_KONA_ID: [u32; 8] = [0x72C20E34, 0x6BDBE0F1, 0xCD77E418, 0x3866F8FA, 0xB8266D1B, 0x92FB0299, 0x1117788D, 0xC198DC28];
 
 #[cfg(feature = "eigen")]
 pub const KAILUA_FPVM_HOKULEA_ELF: &[u8] = include_bytes!("bin/kailua-fpvm-hokulea.bin");
 #[cfg(feature = "eigen")]
 pub const KAILUA_FPVM_HOKULEA_PATH: &str = "bin/kailua-fpvm-hokulea.bin";
 #[cfg(feature = "eigen")]
-pub const KAILUA_FPVM_HOKULEA_ID: [u32; 8] = [0xC0BBE097, 0xF1687616, 0x3D89DE6E, 0xB1AF997C, 0x5FB34C11, 0x4E03AD70, 0x6241B043, 0x8DCACE3E];
+pub const KAILUA_FPVM_HOKULEA_ID: [u32; 8] = [0xAE43BF06, 0xDAA7E999, 0xC07F54B9, 0xF1D30E41, 0x979E5B5B, 0x9F6B9A83, 0xF66C7560, 0x5EDECD1E];
 
 #[cfg(feature = "celestia")]
 pub const KAILUA_FPVM_HANA_ELF: &[u8] = include_bytes!("bin/kailua-fpvm-hana.bin");
 #[cfg(feature = "celestia")]
 pub const KAILUA_FPVM_HANA_PATH: &str = "bin/kailua-fpvm-hana.bin";
 #[cfg(feature = "celestia")]
-pub const KAILUA_FPVM_HANA_ID: [u32; 8] = [0xC1A45EBC, 0x160F66B6, 0x2097E233, 0x3EE196D8, 0x22700599, 0xD5ADFAEF, 0xA6F40AB5, 0x6BEF2182];
+pub const KAILUA_FPVM_HANA_ID: [u32; 8] = [0xB8A83D29, 0x414BD84E, 0xCE5CD0B5, 0x5E4D7077, 0x6E0F7E8C, 0xB8EBCC67, 0xBEC0BB90, 0xC1C8966A];

@@ -137,10 +137,10 @@ hana-oracle = { git = "https://github.com/celestiaorg/hana", rev = "5d98991ceb71
 bonsai-sdk = { version = "1.4.1", features = ["non_blocking"] }
 
 # RISC Zero
-risc0-build = { version = "3.0.4", features = ["unstable"] }
-risc0-circuit-recursion = "4.0.3"
+risc0-build = { version = "3.0.5", features = ["unstable"] }
+risc0-circuit-recursion = "4.0.4"
 risc0-ethereum-contracts = "3.0.1"
-risc0-zkvm = { version = "3.0.4", features = ["heap-embedded-alloc", "unstable"] }
+risc0-zkvm = { version = "3.0.5", features = ["heap-embedded-alloc", "unstable"] }
 
 # Boundless
 boundless-market = { version = "1.3.3", features = ["gcs", "s3"] }
