@@ -271,6 +271,7 @@ Optimism's Bedrock contracts <code>v1.4.0</code> and above.</p>
 <li><a href="https://www.rust-lang.org/tools/install">rust</a></li>
 <li><a href="https://just.systems/man/en/">just</a></li>
 <li><a href="https://www.docker.com/">docker</a></li>
+<li><a href="https://docs.kurtosis.com/install">kurtosis</a></li>
 <li><a href="https://github.com/alloy-rs/svm-rs">svm</a></li>
 <li><a href="https://book.getfoundry.sh/getting-started/installation">foundry</a></li>
 </ol>
@@ -294,24 +295,26 @@ Optimism's Bedrock contracts <code>v1.4.0</code> and above.</p>
 <ol>
 <li><code>just devnet-fetch</code>
 <ul>
-<li>Fetches <code>v1.9.1</code> of the <code>optimism</code> monorepo.</li>
+<li>Fetches <code>v1.16.7</code> of the <code>optimism</code> monorepo.</li>
 </ul>
 </li>
 <li><code>just devnet-build</code>
 <ul>
-<li>Builds the local cargo and foundry projects.</li>
+<li>Builds the local Kailua binaries.</li>
+<li>The OP Stack services themselves use prebuilt artifacts from the Optimism release pipeline.</li>
 </ul>
 </li>
 <li><code>just devnet-up</code>
 <ul>
-<li>Starts a local OP Stack devnet using docker.</li>
-<li>Dumps the output into <code>devnetlog.txt</code> for inspection.</li>
+<li>Starts a local OP Stack devnet using Kurtosis.</li>
+<li>Writes the devnet descriptor to <code>devnet/kurtosis-devnet.json</code>.</li>
+<li>Dumps the deployment output into <code>devnet.log</code> for inspection.</li>
 </ul>
 </li>
 <li><code>just devnet-upgrade</code>
 <ul>
 <li>Upgrades the devnet to use the <code>KailuaGame</code> contract.</li>
-<li>Assumes the default values of the local optimism devnet, but can take parameters.</li>
+<li>Auto-discovers RPC endpoints and default keys from <code>devnet/kurtosis-devnet.json</code>, but can still take explicit overrides.</li>
 </ul>
 </li>
 <li><code>just devnet-propose</code>
@@ -344,8 +347,8 @@ Optimism's Bedrock contracts <code>v1.4.0</code> and above.</p>
 </li>
 <li>After you're done:
 <ul>
-<li><code>just devnet-down</code> to stop the running docker containers.</li>
-<li><code>just devnet-clean</code> to cleanup the docker volumes.</li>
+<li><code>just devnet-down</code> to remove the running Kurtosis enclave.</li>
+<li><code>just devnet-clean</code> to remove the local descriptor and logs.</li>
 </ul>
 </li>
 </ol>
