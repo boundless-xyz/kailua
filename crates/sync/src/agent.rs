@@ -1141,9 +1141,6 @@ impl SyncAgent {
             )
             .await;
 
-        // Calculate expected payout
-        let payout = permit_counts._2 / U256::from(permit_counts._3);
-
         for (expiry, index) in permits.into_iter() {
             // Skip if unreleasable
             if expiry < proof_time {
@@ -1184,7 +1181,7 @@ impl SyncAgent {
             {
                 Ok(receipt) => {
                     info!(
-                        "Released proposal {} FP permit {index} for {payout} to {payout_recipient} (txn: {}).",
+                        "Released proposal {} FP permit {index} for {payout_recipient} (txn: {}).",
                         proposal.contract, receipt.transaction_hash
                     );
                     info!(
