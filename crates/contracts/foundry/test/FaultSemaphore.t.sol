@@ -109,7 +109,7 @@ contract FaultSemaphoreTest is KailuaTest {
             proposal_128_0.l1Head().raw(),
             proposal_128_0.parentGame().rootClaim().raw(),
             goodClaim,
-            uint64(proposal_128_0.l2BlockNumber())
+            uint64(proposal_128_0.l2SequenceNumber())
         );
 
         // Accept fault proof
@@ -190,7 +190,7 @@ contract FaultSemaphoreTest is KailuaTest {
             proposal_128_0.l1Head().raw(),
             proposal_128_0.parentGame().rootClaim().raw(),
             goodClaim,
-            uint64(proposal_128_0.l2BlockNumber())
+            uint64(proposal_128_0.l2SequenceNumber())
         );
 
         // Accept fault proof after permit activation
@@ -329,7 +329,7 @@ contract FaultSemaphoreTest is KailuaTest {
             proposal_128_0.l1Head().raw(),
             proposal_128_0.parentGame().rootClaim().raw(),
             bytes32(uint256(proposal_128_0.rootClaim().raw()) + KailuaKZGLib.BLS_MODULUS),
-            uint64(proposal_128_0.l2BlockNumber())
+            uint64(proposal_128_0.l2SequenceNumber())
         );
 
         // Accept fault proof
@@ -411,7 +411,7 @@ contract FaultSemaphoreTest is KailuaTest {
             proposal_128_0.l1Head().raw(),
             proposal_128_0.parentGame().rootClaim().raw(),
             goodClaim,
-            uint64(proposal_128_0.l2BlockNumber())
+            uint64(proposal_128_0.l2SequenceNumber())
         );
 
         // Fastforward to expiry
@@ -486,7 +486,7 @@ contract FaultSemaphoreTest is KailuaTest {
             proposal_128_0.l1Head().raw(),
             proposal_128_0.parentGame().rootClaim().raw(),
             proposal_128_0.rootClaim().raw(),
-            uint64(proposal_128_0.l2BlockNumber()),
+            uint64(proposal_128_0.l2SequenceNumber()),
             uint64(proposal_128_0.PROPOSAL_OUTPUT_COUNT()),
             uint64(proposal_128_0.OUTPUT_BLOCK_SPAN()),
             proposal_128_0.blobsHash()
@@ -535,7 +535,7 @@ contract FaultSemaphoreTest is KailuaTest {
             proposal_128_0.l1Head().raw(),
             proposal_128_0.parentGame().rootClaim().raw(),
             proposal_128_0.rootClaim().raw(),
-            uint64(proposal_128_0.l2BlockNumber()),
+            uint64(proposal_128_0.l2SequenceNumber()),
             uint64(proposal_128_0.PROPOSAL_OUTPUT_COUNT()),
             uint64(proposal_128_0.OUTPUT_BLOCK_SPAN()),
             proposal_128_0.blobsHash()
@@ -601,7 +601,7 @@ contract FaultSemaphoreTest is KailuaTest {
             proposal_128_0.l1Head().raw(),
             proposal_128_0.parentGame().rootClaim().raw(),
             proposal_128_0.rootClaim().raw(),
-            uint64(proposal_128_0.l2BlockNumber()),
+            uint64(proposal_128_0.l2SequenceNumber()),
             uint64(proposal_128_0.PROPOSAL_OUTPUT_COUNT()),
             uint64(proposal_128_0.OUTPUT_BLOCK_SPAN()),
             proposal_128_0.blobsHash()
@@ -619,7 +619,7 @@ contract FaultSemaphoreTest is KailuaTest {
             proposal_128_0.l1Head().raw(),
             proposal_128_0.parentGame().rootClaim().raw(),
             proposal_128_0.rootClaim().raw(),
-            uint64(proposal_128_0.l2BlockNumber())
+            uint64(proposal_128_0.l2SequenceNumber())
         );
 
         // Accept fault proof
