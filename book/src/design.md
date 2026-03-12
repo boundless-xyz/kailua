@@ -105,3 +105,68 @@ In this scenario, `B` can only be finalized once two proofs are submitted to res
 Proposal `C` can only be finalized once a proof resolves its dispute against `C'`, and its parent `B` is finalized.
 `D` has no contenders and can be finalized once its parent `C` is finalized.
 The timeout period for `E` had passed before `E'` was introduced, and therefore `E` can be finalized once its parent `D` is finalized.
+
+## Fault Proving Permits
+
+Kailua includes an optional permit system that allows provers to acquire exclusive rights to submit fault proofs for
+disputed proposals.
+A prover can lock collateral to gain an exclusive window during which only their proof submission earns the fault proof
+reward.
+
+```admonish note
+Permits are entirely optional. Fault proofs can be submitted without acquiring a permit, and the dispute will still
+be resolved. However, permit holders may receive preferential payouts.
+```
+
+### Permit Lifecycle
+
+Each permit goes through three phases determined by two time durations configured at contract deployment:
+a delay duration and a total permit duration.
+
+<div style="text-align: center;">
+
+```mermaid
+---
+title: Permit Lifecycle
+---
+graph LR
+    A[Acquired] -- delay elapsed --> B[Active]
+    B -- duration elapsed --> C[Expired]
+```
+
+</div>
+
+| Phase       | Description                                    | Guaranteed Reward? |
+|-------------|------------------------------------------------|--------------------|
+| **Delayed** | Permit has been acquired but is not yet active | No                 |
+| **Active**  | Permit is live and grants exclusive rights     | Yes                |
+| **Expired** | Permit has lapsed                              | No                 |
+
+### Collateral
+
+Acquiring a permit requires locking collateral proportional to the elimination reward.
+The collateral is returned when the permit is released after a proof is submitted.
+Active permit holders also receive a share of collateral from expired permits.
+
+The number of permits that can be issued for a given dispute is bounded: new permits can only be acquired at a rate
+that grows exponentially with the number of expired permits.
+This prevents any single party from monopolizing permits indefinitely while still allowing competitive acquisition.
+
+### Reward Distribution
+
+When a fault proof is submitted, the reward recipient for the proposer's collateral is determined as follows:
+
+1. **Exactly one permit exists and is active at proof time**: The permit holder receives the fault proof reward
+   instead of the prover.
+2. **Otherwise**: The prover who submitted the fault proof receives the reward as usual.
+
+When a permit holder releases their permit, the collateral payout depends on the state of all permits at proof time:
+
+1. **Active at proof time**: The holder receives their collateral back, plus an equal share of any expired permit
+   collateral.
+2. **Expired before proof time**: The holder's collateral is forfeited to the pool split among active holders.
+
+```admonish warning
+If a permit expires before the fault proof is submitted, the permit holder forfeits their collateral to the pool
+of active permit holders.
+```

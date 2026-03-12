@@ -76,6 +76,25 @@ The validator proving behavior can be customized through the following arguments
 * `max-validity-proving-delay`: The maximum amount of seconds to wait before starting to compute a validity proof (Default 0).
 * `clear-cache-data`: Whether to clear cache data after successful completion (Default false).
 
+### Fault Proving Permits
+The validator can optionally acquire [fault proving permits](design.md#fault-proving-permits) before generating
+fault proofs.
+* `fault-proving-permit`: Whether acquisition of permits before proving faults is skipped / optional / mandatory (Default `optional`).
+* `fault-proving-permit-expiry`: Minimum amount of time (seconds) left on a permit to consider it unexpired (Default 600).
+* `min-validity-proving-timestamp`: The minimum UNIX timestamp after which computed validity proofs can be submitted (Default 0).
+
+| Value | Behavior |
+|-------|----------|
+| `SKIPPED` | Never acquire permits |
+| `OPTIONAL` (default) | Acquire if available; proceed without if acquisition fails |
+| `MANDATORY` | Halt proving if permit cannot be acquired |
+
+```admonish tip
+For most operators, the default `OPTIONAL` policy is recommended.
+Use `MANDATORY` if you are the sole validator and want guaranteed exclusive rewards.
+Use `SKIPPED` if the permit system is deactivated for your deployment or you do not care about rewards being frontrun.
+```
+
 ### Alt DA
 The following additional parameters are required if an alternative DA method is used:
 * `eigenda-proxy-address`: URL of the EigenDA RPC endpoint.
