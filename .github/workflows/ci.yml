@@ -70,7 +70,7 @@ jobs:
       - name: Install Foundry toolchain
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
       - name: cargo clippy kailua
         run: cargo clippy --bin kailua-cli --locked -F devnet -- -D warnings
         env:
@@ -199,7 +199,7 @@ jobs:
       - name: Install Foundry toolchain
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
       - name: Install cargo-llvm-cov
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
@@ -227,7 +227,7 @@ jobs:
       - name: Install Foundry toolchain
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
       - name: Run forge fmt
         run:  forge fmt --check --root crates/contracts/foundry
 
@@ -251,7 +251,7 @@ jobs:
       - name: Install Foundry toolchain
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
       - name: Run forge test
         run:  forge test --root crates/contracts/foundry
 
@@ -279,7 +279,7 @@ jobs:
       - name: Install Foundry toolchain
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
       - name: Run forge coverage
         id: coverage
         run: |
