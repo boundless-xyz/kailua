@@ -43,6 +43,7 @@ Kailua has undergone the following audits throughout its development:
 * [2025 MAY 22](audits/veridise-250522.pdf)
 * [2025 JUN 16](audits/veridise-250616.pdf)
 * [2025 OCT 23](audits/veridise-251023.pdf)
+* [2026 FEB 12](audits/veridise-260212.pdf)
 
 ## Prerequisites
 1. [rust](https://www.rust-lang.org/tools/install)
