@@ -64,7 +64,7 @@ Rollups with alternative DA requirements are supported through the following com
 * `build/risczero/hokulea`: The zkVM binary for rollups on EigenDA.
 * `build/risczero/hana`: The zkVM binary for rollups on Celestia.
 * `crates/hokulea`: A wrapper crate around `kailua-kona` with Eigen DA support.
-* `crates/hokulea`: A wrapper crate around `kailua-kona` with Celestia DA support.
+* `crates/hana`: A wrapper crate around `kailua-kona` with Celestia DA support.
 
 ```admonish warning
 Celestia DA support is still an experimental work in progress with known liveness vulnerabilities.

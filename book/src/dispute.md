@@ -38,7 +38,8 @@ constructor(
   IRiscZeroVerifier _verifierContract,
   bytes32 _imageId,
   bytes32 _configHash,
-  Duration _permitDuration
+  Duration _permitDuration,
+  Duration _permitDelay
 )
 ```
 This contract verifies all Kailua proofs submitted to the dispute contracts and manages the collateral staked for
@@ -48,11 +49,12 @@ acquiring fault proving locks.
 
 Deployment of this contract is via the command below:
 ```shell
-forge create KailuaTreasury --constructor-args \
+forge create KailuaVerifier --constructor-args \
   [YOUR_RISC_ZERO_VERIFIER] \
   [YOUR_FPVM_IMAGE_ID] \
   [YOUR_ROLLUP_CONFIG_HASH] \
-  [YOUR_LOCK_EXPIRY_TIME]
+  [YOUR_LOCK_EXPIRY_TIME] \
+  [YOUR_LOCK_ACTIVATION_DELAY_TIME]
 ```
 
 Deploying the contract successfully should yield similar output to the following:

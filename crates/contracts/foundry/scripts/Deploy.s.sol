@@ -29,6 +29,7 @@ contract DeployScript is Script {
     IRiscZeroVerifier riscZeroVerifier = IRiscZeroVerifier(vm.envAddress("RISC_ZERO_VERIFIER"));
     bytes32 rollupConfigHash = vm.envBytes32("ROLLUP_CONFIG_HASH");
     Duration permitDuration = Duration.wrap(uint64(vm.envUint("PERMIT_DURATION")));
+    Duration permitDelay = Duration.wrap(uint64(vm.envUint("PERMIT_DELAY")));
     uint64 proposalOutputCount = uint64(vm.envUint("PROPOSAL_OUTPUT_COUNT"));
     uint64 outputBlockSpan = uint64(vm.envUint("OUTPUT_BLOCK_SPAN"));
     GameType gameType = GameType.wrap(uint32(vm.envUint("KAILUA_GAME_TYPE")));
@@ -59,7 +60,7 @@ contract DeployScript is Script {
         RiscZeroGroth16Verifier groth16Verifier = new RiscZeroGroth16Verifier(controlRoot, controlId);
         bytes4 groth16Selector = groth16Verifier.SELECTOR();
         router.addVerifier(groth16Selector, groth16Verifier);
-        return new KailuaVerifier(riscZeroVerifier, fpvmImageId, rollupConfigHash, permitDuration);
+        return new KailuaVerifier(riscZeroVerifier, fpvmImageId, rollupConfigHash, permitDuration, permitDelay);
     }
 
     function _6_2_disputeResolution(KailuaVerifier kailuaVerifier) public returns (KailuaTreasury, KailuaGame) {

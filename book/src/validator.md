@@ -28,6 +28,7 @@ The mandatory arguments specify the endpoints that the validator should use to r
 
 ### RPC Calls
 To fine-tune the interaction with the above endpoints, the following additional parameters can be specified:
+* `op-rpc-concurrency`: Number of concurrent RPC requests to allow (default: 64).
 * `op-rpc-delay`: Number of L2 blocks to delay observation by (default: 0).
 * `rpc-poll-interval`: Time (in seconds) between successive RPC polls (default: 6).
 * `op-node-timeout`: Timeout (seconds) for an OP-NODE RPC request (default: 5).
@@ -71,7 +72,7 @@ The validator proving behavior can be customized through the following arguments
 * `max-block-executions`: Maximum number of blocks to execute per single proof.
 * `num-tail-blocks`: Rate of growth of tail proofs in L1 blocks (Default 10).
 * `enable-experimental-witness-endpoint`: Enables the use of `debug_executePayload` to collect the execution witness from the execution layer.
-* `max-fault-proving-delay`: The maximum amount of seconds to wait before starting to compute a fault proof (Default 86400).
+* `max-fault-proving-delay`: The maximum amount of seconds to wait before starting to compute a fault proof (Default 900).
 * `max-validity-proving-delay`: The maximum amount of seconds to wait before starting to compute a validity proof (Default 0).
 * `clear-cache-data`: Whether to clear cache data after successful completion (Default false).
 
@@ -182,18 +183,31 @@ The following first set of parameters determine where/how requests are made:
 * `boundless-set-verifier-address`: The address of the RISC Zero verifier supporting aggregated proofs for order validation.
 * `boundless-market-address`: The address of the Boundless market contract.
 * `boundless-collateral-token-address`: Address of the stake collateral ERC-20 contract.
-* `boundless-lookback`: (Defaults to `5`) The number of previous proof requests to inspect for duplicates before making a new proof request.
+* `boundless-lookback`: (Defaults to `true`) Whether to inspect for duplicates before making a new proof request.
 * `boundless-assume-cycle-count`: Whether to skip preflighting execution and assume the given cycle count.
-* `boundless-cycle-min-wei`: (Defaults to `0`) Starting price (wei) per cycle of proving.
-* `boundless-cycle-max-wei`: (Defaults to `200000000`) Maximum price (wei) per cycle of proving.
-* `boundless-mega-cycle-collateral`: Collateral (ZKC) per megacycle of the proving order (Default 1000).
-* `boundless-order-bid-delay-factor`: Multiplier for delay before order price starts ramping up (Default 0.1)
-* `boundless-order-ramp-up-factor`: (Defaults to `0.25`) Multiplier for order price to ramp up to maximum.
+* `boundless-assume-cycles-per-gas`: Skip preflighting and assume a fixed cycle count per gas.
+* `boundless-assume-cycles-per-byte`: Skip preflighting and assume a fixed cycle count per input byte.
+* `boundless-assume-cycles-per-snark`: Skip preflighting and assume a fixed cycle count per recursive snark.
+* `boundless-expired-price-inc-perc`: Percentage to increase the price of a proving order by after it expires (Default 10).
+* `boundless-expired-time-inc-perc`: Percentage to increase the time allowed for a proving order by after it expires (Default 4).
+* `boundless-cycle-min-wei`: (Defaults to `200000000`) Starting price (wei) per cycle of proving.
+* `boundless-cycle-max-wei`: (Defaults to `600000000`) Maximum price (wei) per cycle of proving.
+* `boundless-mega-cycle-min`: Minimum megacycles per proving order (Default 250).
+* `boundless-mega-cycle-collateral`: Collateral (ZKC) per megacycle of the proving order (Default `2500000000000000`).
+* `boundless-order-min-collateral`: Minimum collateral (ZKC) per proving order (Default `5000000000000000000`).
+* `boundless-order-bid-delay-factor`: Multiplier for delay before order price starts ramping up (Default 0.5).
+* `boundless-order-min-bid-delay`: Minimum number of seconds to set as bid delay time (Default 120).
+* `boundless-order-ramp-up-factor`: (Defaults to `1.0`) Multiplier for order price to ramp up to maximum.
+* `boundless-order-min-ramp-up`: Minimum number of seconds to set as ramp up time (Default 600).
 * `boundless-order-lock-timeout-factor`: (Defaults to `3`) Multiplier for order fulfillment timeout after locking.
-* `boundless-order-expiry-factor`: (Defaults to `10`) Multiplier for order expiry timeout after creation.
+* `boundless-order-min-lock-timeout`: Minimum number of seconds to set as lock timeout time (Default 1200).
+* `boundless-order-expiry-factor`: (Defaults to `1.0`) Multiplier for order expiry timeout after creation.
+* `boundless-order-min-expiry`: Minimum number of seconds to set as expiry time (Default 900).
 * `boundless-order-check-interval`: (Defaults to `12`) Time in seconds between attempts to check order status.
 * `boundless-enable-upload-caching`: Whether to enable image/input upload caching.
 * `boundless-order-submission-cooldown`: Time in seconds between attempts to submit new orders (Default 12).
+* `boundless-order-funding-mode`: Funding mode for order submission. One of `never`, `always`, `available-balance`, or `below-threshold` (Default `never`).
+* `boundless-order-funding-threshold`: Threshold (wei) for `below-threshold` funding mode.
 
 ```admonish note
 Order timeouts are set by default to the number of megacycles in a proof request.
