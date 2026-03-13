@@ -10,24 +10,30 @@ test:
 
 test-deployable:
     #!/usr/bin/env bash
+    set -euo pipefail
+    PK=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    DEPLOYER=$(cast wallet address --private-key $PK)
+    DUMMY=0x0000000000000000000000000000000000000001
+    DUMMY32=0x0000000000000000000000000000000000000000000000000000000000000001
 
-    KTD_PORTAL=$(forge create OptimismPortal2 --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --broadcast --json --constructor-args \
-    0 0 | jq -r .deployedTo)
+    # Deploy mock OP Stack contracts
+    KTD_FACTORY=$(forge create test/KailuaTest.t.sol:MockDisputeGameFactory --private-key $PK --broadcast --json --constructor-args \
+      $DEPLOYER | jq -r .deployedTo)
+    KTD_PORTAL=$(forge create test/KailuaTest.t.sol:MockOptimismPortal2 --private-key $PK --broadcast --json --constructor-args \
+      $KTD_FACTORY 1337 | jq -r .deployedTo)
 
-    KTD_KAILUA_TREASURY=$(forge create KailuaTreasury --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --broadcast --json --constructor-args \
-                            0x0000000000000000000000000000000000000001 \
-                            0x01 \
-                            0x01 \
-                            0x01 \
-                            $KTD_PORTAL \
-                            0x0000000000000000000000000000000000000000000000000000000000000001 \
-                            0x01 | jq -r .deployedTo)
+    # Deploy KailuaVerifier behind Proxy
+    KTD_VERIFIER_IMPL=$(forge create src/KailuaVerifier.sol:KailuaVerifier --private-key $PK --broadcast --json --constructor-args \
+      $DUMMY $DUMMY32 $DUMMY32 200 100 | jq -r .deployedTo)
+    KTD_PROXY=$(forge create src/Proxy.sol:Proxy --private-key $PK --broadcast --json --constructor-args \
+      $DEPLOYER | jq -r .deployedTo)
+    cast send $KTD_PROXY "upgradeTo(address)" $KTD_VERIFIER_IMPL --private-key $PK
 
-    forge create KailuaGame --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --broadcast --constructor-args \
-      $KTD_KAILUA_TREASURY \
-      0x01 \
-      0x01 \
-      0x01
+    # Deploy KailuaTreasury and KailuaGame
+    KTD_KAILUA_TREASURY=$(forge create src/KailuaTreasury.sol:KailuaTreasury --private-key $PK --broadcast --json --constructor-args \
+      $KTD_PROXY 0x01 0x01 1337 $KTD_PORTAL $DUMMY32 0x01 | jq -r .deployedTo)
+    forge create src/KailuaGame.sol:KailuaGame --private-key $PK --broadcast --constructor-args \
+      $KTD_KAILUA_TREASURY 0x01 0x01 0x01
 
 coverage +ARGS="-vvv":
     forge coverage --no-match-coverage "(lib/|test/|src/Proxy.sol)" {{ARGS}}
