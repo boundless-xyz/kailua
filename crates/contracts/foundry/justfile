@@ -16,8 +16,6 @@ test-deployable:
 
     KTD_KAILUA_TREASURY=$(forge create KailuaTreasury --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --broadcast --json --constructor-args \
                             0x0000000000000000000000000000000000000001 \
-                            0x0000000000000000000000000000000000000000000000000000000000000001 \
-                            0x0000000000000000000000000000000000000000000000000000000000000001 \
                             0x01 \
                             0x01 \
                             0x01 \
@@ -27,7 +25,6 @@ test-deployable:
 
     forge create KailuaGame --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --broadcast --constructor-args \
       $KTD_KAILUA_TREASURY \
-      0x01 \
       0x01 \
       0x01 \
       0x01

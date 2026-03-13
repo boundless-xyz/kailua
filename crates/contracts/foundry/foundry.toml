@@ -6,7 +6,7 @@ optimizer = true
 optimizer_runs = 10_000
 ffi = true
 evm_version = "cancun"
-solc_version = "0.8.24"
+auto_detect_solc = true
 remappings = [
     # OP Stack v5 internal resolution (src/ remapping required by OP interfaces)
     "@optimism/src/=lib/optimism/packages/contracts-bedrock/src/",
