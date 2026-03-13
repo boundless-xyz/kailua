@@ -3,8 +3,7 @@ pragma solidity 0.8.24;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import {IDisputeGame} from "@optimism/interfaces/dispute/IDisputeGame.sol";
-import {IDisputeGameFactory} from "@optimism/interfaces/dispute/IDisputeGameFactory.sol";
+import {IDisputeGame, IDisputeGameFactory} from "@optimism/interfaces/dispute/IDisputeGameFactory.sol";
 import {IOptimismPortal2} from "@optimism/interfaces/L1/IOptimismPortal2.sol";
 import {IAnchorStateRegistry} from "@optimism/interfaces/dispute/IAnchorStateRegistry.sol";
 import {GameType, Claim, Duration} from "@optimism/src/dispute/lib/Types.sol";
@@ -43,7 +42,7 @@ contract DeployScript is Script {
     uint256 participationBond = vm.envUint("PARTICIPATION_BOND");
     address vanguardAddress = vm.envAddress("VANGUARD_ADDRESS");
     Duration vanguardAdvantage = Duration.wrap(uint64(vm.envUint("VANGUARD_ADVANTAGE"))); // set
-    IOptimismPortal2 optimismPortal = IOptimismPortal2(vm.envAddress("OPTIMISM_PORTAL"));
+    IOptimismPortal2 optimismPortal = IOptimismPortal2(payable(vm.envAddress("OPTIMISM_PORTAL")));
 
     function run() public {
         vm.startBroadcast(deployerPrivateKey);
@@ -92,7 +91,7 @@ contract DeployScript is Script {
         if (initialBond != 0) {
             dgf.setInitBond(gameType, 0);
         }
-        dgf.setImplementation(gameType, treasury);
+        dgf.setImplementation(gameType, IDisputeGame(address(treasury)));
         treasury.propose(outputRootClaim, abi.encodePacked(l2BlockNumber, treasury));
         // Call the games function on the dispute game factory to get the created game
         (IDisputeGame gameAddress,) = dgf.games(gameType, outputRootClaim, abi.encodePacked(l2BlockNumber, treasury));
@@ -101,7 +100,7 @@ contract DeployScript is Script {
 
     function _6_4_sequencingProposal(KailuaTreasury treasury, KailuaGame game) public {
         treasury.setParticipationBond(participationBond);
-        dgf.setImplementation(gameType, game);
+        dgf.setImplementation(gameType, IDisputeGame(address(game)));
         // OPTIONAL
         treasury.assignVanguard(vanguardAddress, vanguardAdvantage);
         IAnchorStateRegistry(address(optimismPortal.anchorStateRegistry())).setRespectedGameType(gameType);
