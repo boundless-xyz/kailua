@@ -285,7 +285,7 @@ jobs:
         run: |
           {
           echo 'COVERAGE<<EOF'
-          forge coverage --root crates/contracts/foundry --no-match-coverage "(src/vendor|test/)" | grep "% ("
+          forge coverage --root crates/contracts/foundry --no-match-coverage "(lib/|test/|src/Proxy.sol)" | grep "% ("
           echo EOF
           }  >> "$GITHUB_OUTPUT"
       - name: Report Coverage
