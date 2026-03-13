@@ -14,6 +14,7 @@
   - [Dispute Resolution](./dispute.md)
   - [State Anchoring](./treasury.md)
   - [Sequencing Proposal](./game.md)
+  - [FPVM Upgrade](./fpvm-upgrade.md)
 - [Off-chain](./operate.md)
   - [Proposer](./proposer.md)
   - [Validator](./validator.md)
