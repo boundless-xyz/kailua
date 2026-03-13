@@ -1,9 +1,9 @@
 ### Requirement: Deploy KailuaVerifier behind OP Stack Proxy
-The `_6_1_proofVerification()` function in `Deploy.s.sol` SHALL deploy KailuaVerifier as an implementation behind an OP Stack `Proxy` contract. The function SHALL return `KailuaVerifier(address(proxy))` so downstream deployment steps receive the proxy address.
+The `_6_1_proofVerification()` function in `Deploy.s.sol` SHALL deploy KailuaVerifier as an implementation behind a `Proxy` contract imported from local `src/Proxy.sol` (not from `@optimism/src/universal/Proxy.sol`). The function SHALL return `KailuaVerifier(address(proxy))` so downstream deployment steps receive the proxy address.
 
 #### Scenario: Standard deployment with RISC_ZERO_VERIFIER set
 - **WHEN** `Deploy.s.sol` is executed with `RISC_ZERO_VERIFIER` env var set
-- **THEN** the script deploys a KailuaVerifier implementation using the provided verifier address, deploys an OP Stack Proxy with the deployer as initial admin, calls `proxy.upgradeTo(implementation)`, transfers proxy admin, and returns the proxy address cast as KailuaVerifier
+- **THEN** the script deploys a KailuaVerifier implementation using the provided verifier address, deploys a Proxy with the deployer as initial admin, calls `proxy.upgradeTo(implementation)`, transfers proxy admin, and returns the proxy address cast as KailuaVerifier
 
 #### Scenario: Deployment without RISC_ZERO_VERIFIER
 - **WHEN** `Deploy.s.sol` is executed without `RISC_ZERO_VERIFIER` env var
@@ -37,3 +37,10 @@ During deployment, the deployer MUST be the initial proxy admin to call `upgrade
 #### Scenario: Router deployed when verifier not provided
 - **WHEN** `RISC_ZERO_VERIFIER` env var is not set
 - **THEN** `RiscZeroVerifierRouter` and `RiscZeroGroth16Verifier` are deployed, groth16 is registered in the router, and the router is used as the verifier
+
+### Requirement: UpgradeVerifier uses local Proxy import
+`UpgradeVerifier.s.sol` SHALL import `Proxy` from `../src/Proxy.sol` instead of `@optimism/src/universal/Proxy.sol`.
+
+#### Scenario: UpgradeVerifier compiles
+- **WHEN** `forge build` is run
+- **THEN** `UpgradeVerifier.s.sol` compiles without errors using the local Proxy import
