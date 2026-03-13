@@ -188,9 +188,9 @@ This process will require access to your rollup's 'Owner' and 'Guardian' wallets
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <p>The steps required to upgrade your on-chain rollup contracts to support Kailua are as follows:</p>
 <ol>
-<li>(Optional) Deploy a RISC Zero Verifier contract set.
+<li>Deploy a <code>KailuaVerifier</code> contract.
 <ul>
-<li>This can be skipped by using a pre-existing verifier contract.</li>
+<li>This requires an underlying <code>RISCZeroVerifierRouter</code>, which you can deploy yourself or use an existing <a href="https://dev.risczero.com/api/blockchain-integration/contracts/verifier#contract-addresses:~:text=Address-,RiscZeroVerifierRouter,-0x8EaB2D97Dfce405A1692a21b3ff3A172d593D319">deployment</a>.</li>
 </ul>
 </li>
 <li>Deploy a <code>KailuaTreasury</code> and a <code>KailuaGame</code> contract with your configuration.</li>
@@ -214,6 +214,18 @@ This process will require access to your rollup's 'Owner' and 'Guardian' wallets
 If the command does not yet support your configuration, you'll need to follow the manual steps in the next sub-sections.</p>
 </div>
 </div>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div class="admonition-title">
+<div id="admonition-warning-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-warning"></a>
+</div>
+<div>
+<p>This command will use the <code>KailuaVerifier</code> directly without deploying it behind a <code>Proxy</code>, making future updates to the
+Kailua configuration difficult.</p>
+</div>
+</div>
 <div id="admonition-hint" class="admonition admonish-tip" role="note" aria-labelledby="admonition-hint-title">
 <div class="admonition-title">
 <div id="admonition-hint-title">
@@ -231,10 +243,11 @@ If the command does not yet support your configuration, you'll need to follow th
 <tr><td style="text-align: left">RiscZeroVerifierRouter</td><td style="text-align: left">deploy</td><td style="text-align: right">800K</td><td></td></tr>
 <tr><td style="text-align: left">RiscZeroVerifierRouter</td><td style="text-align: left">addVerifier</td><td style="text-align: right">50K</td><td></td></tr>
 <tr><td style="text-align: left">RiscZeroGroth16Verifier</td><td style="text-align: left">deploy</td><td style="text-align: right">1,300K</td><td></td></tr>
-<tr><td style="text-align: left">RiscZeroMockVerifier</td><td style="text-align: left">deploy</td><td style="text-align: right">615K</td><td></td></tr>
-<tr><td style="text-align: left">KailuaTreasury</td><td style="text-align: left">deploy</td><td style="text-align: right">5,200K</td><td></td></tr>
+<tr><td style="text-align: left">RiscZeroMockVerifier</td><td style="text-align: left">deploy</td><td style="text-align: right">615K</td><td>Fake test proofs only</td></tr>
+<tr><td style="text-align: left">KailuaVerifier</td><td style="text-align: left">deploy</td><td style="text-align: right">1,337K</td><td></td></tr>
+<tr><td style="text-align: left">KailuaTreasury</td><td style="text-align: left">deploy</td><td style="text-align: right">4,560K</td><td></td></tr>
 <tr><td style="text-align: left">KailuaTreasury</td><td style="text-align: left">propose</td><td style="text-align: right">400K</td><td>1 blob</td></tr>
-<tr><td style="text-align: left">KailuaGame</td><td style="text-align: left">deploy</td><td style="text-align: right">5,000K</td><td></td></tr>
+<tr><td style="text-align: left">KailuaGame</td><td style="text-align: left">deploy</td><td style="text-align: right">4,200K</td><td></td></tr>
 <tr><td style="text-align: left">KailuaGame</td><td style="text-align: left">proveValidity</td><td style="text-align: right">375K</td><td>Groth16 proof</td></tr>
 <tr><td style="text-align: left">KailuaGame</td><td style="text-align: left">proveOutputFault</td><td style="text-align: right">415K</td><td>Groth16 + 1 KZG proofs</td></tr>
 <tr><td style="text-align: left">KailuaGame</td><td style="text-align: left">proveOutputFault</td><td style="text-align: right">470K</td><td>Groth16 + 2 KZG proofs</td></tr>
@@ -291,6 +304,7 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
       --collateral-amount [YOUR_COLLATERAL_AMOUNT] \
       --verifier-contract [RISC_ZERO_VERIFIER_ADDRESS] \
       --challenge-timeout [YOUR_CHALLENGE_PERIOD] \
+      --proof-permit-timeout [YOUR_FAULT_PROVING_LOCK_TIMEOUT]
 \
       --deployer-key [YOUR_DEPLOYER_KEY] \
       --owner-key [YOUR_OWNER_KEY] \
@@ -326,12 +340,12 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
 <li><code>proposal-output-count</code>: The number of intermediate output commitments published per proposal.</li>
 <li><code>output-block-span</code>: The number of rollup blocks each intermediate output commitment must cover.</li>
 </ul>
-<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div id="admonition-warning-1" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-1-title">
 <div class="admonition-title">
-<div id="admonition-warning-title">
+<div id="admonition-warning-1-title">
 <p>Warning</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-warning"></a>
+<a class="admonition-anchor-link" href="#admonition-warning-1"></a>
 </div>
 <div>
 <p>The sequencing state at the block <code>starting-block-number</code> as reported by the <code>op-node</code> will be finalized without delay.</p>
@@ -340,7 +354,7 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
 <h4 id="fault-proving"><a class="header" href="#fault-proving">Fault Proving</a></h4>
 <p>The next three parameters configure fault proving:</p>
 <ul>
-<li><code>collateral-amount</code>: The amount of collateral (in wei) a sequencer has to stake before publishing proposals.</li>
+<li><code>collateral-amount</code>: The amount of collateral (in wei) a proposer has to stake before publishing proposals.</li>
 <li><code>verifier-contract</code>: (Optional) The address of the existing RISC Zero verifier contract to use. If this argument is omitted, a new set of verifier contracts will be deployed.
 <ul>
 <li>If you wish to use an already existing verifier, you must provide this argument, even if the <code>config</code> command had located a verifier.</li>
@@ -348,6 +362,7 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
 </ul>
 </li>
 <li><code>challenge-timeout</code>: The timeout (in seconds) for a sequencing proposal to be contradicted.</li>
+<li><code>proof-permit-timeout</code>: The timeout (in seconds) after which a fault proving lock expires.</li>
 </ul>
 <h4 id="ethereum-transactions"><a class="header" href="#ethereum-transactions">Ethereum Transactions</a></h4>
 <p>The next three parameters are the private keys for the respective parent chain wallets:</p>

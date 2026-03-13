@@ -226,8 +226,8 @@ For more information, refer to <code>cast call --help</code>, and <code>cast sen
 </div>
 <h2 id="clear-dgf-kailua-bond"><a class="header" href="#clear-dgf-kailua-bond">Clear DGF Kailua Bond</a></h2>
 <p>Optimism's <code>DisputeGameFactory</code> is design to require a bond value for each sequencing proposal.
-The <code>KailuaTreasury</code> instead requires a constant bond value for a sequencer to make any number of proposals.
-To ensure that the Kailua sequencer operates as expected, we will need to set this value to zero for Kailua proposals
+The <code>KailuaTreasury</code> instead requires a constant bond value for a proposer to make any number of proposals.
+To ensure that the Kailua proposer operates as expected, we will need to set this value to zero for Kailua proposals
 if it is non-zero.
 You can check the value as follows:</p>
 <pre><code class="language-shell">cast call [YOUR_DISPUTE_GAME_FACTORY] \

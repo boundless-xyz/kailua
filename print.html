@@ -452,7 +452,73 @@ A crossmark indicates that the timeout period of the contradictory sibling propo
 Proposal <code>C</code> can only be finalized once a proof resolves its dispute against <code>C'</code>, and its parent <code>B</code> is finalized.
 <code>D</code> has no contenders and can be finalized once its parent <code>C</code> is finalized.
 The timeout period for <code>E</code> had passed before <code>E'</code> was introduced, and therefore <code>E</code> can be finalized once its parent <code>D</code> is finalized.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="project"><a class="header" href="#project">Project</a></h1>
+<h2 id="fault-proving-permits"><a class="header" href="#fault-proving-permits">Fault Proving Permits</a></h2>
+<p>Kailua includes an optional permit system that allows provers to acquire exclusive rights to submit fault proofs for
+disputed proposals.
+A prover can lock collateral to gain an exclusive window during which only their proof submission earns the fault proof
+reward.</p>
+<div id="admonition-note-2" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-2-title">
+<div class="admonition-title">
+<div id="admonition-note-2-title">
+<p>Note</p>
+</div>
+<a class="admonition-anchor-link" href="design.html#admonition-note-2"></a>
+</div>
+<div>
+<p>Permits are entirely optional. Fault proofs can be submitted without acquiring a permit, and the dispute will still
+be resolved. However, permit holders may receive preferential payouts.</p>
+</div>
+</div>
+<h3 id="permit-lifecycle"><a class="header" href="#permit-lifecycle">Permit Lifecycle</a></h3>
+<p>Each permit goes through three phases determined by two time durations configured at contract deployment:
+a delay duration and a total permit duration.</p>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Permit Lifecycle
+---
+graph LR
+    A[Acquired] -- delay elapsed --&gt; B[Active]
+    B -- duration elapsed --&gt; C[Expired]
+</pre>
+</div>
+<div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Description</th><th>Guaranteed Reward?</th></tr></thead><tbody>
+<tr><td><strong>Delayed</strong></td><td>Permit has been acquired but is not yet active</td><td>No</td></tr>
+<tr><td><strong>Active</strong></td><td>Permit is live and grants exclusive rights</td><td>Yes</td></tr>
+<tr><td><strong>Expired</strong></td><td>Permit has lapsed</td><td>No</td></tr>
+</tbody></table>
+</div>
+<h3 id="collateral"><a class="header" href="#collateral">Collateral</a></h3>
+<p>Acquiring a permit requires locking collateral proportional to the elimination reward.
+The collateral is returned when the permit is released after a proof is submitted.
+Active permit holders also receive a share of collateral from expired permits.</p>
+<p>The number of permits that can be issued for a given dispute is bounded: new permits can only be acquired at a rate
+that grows exponentially with the number of expired permits.
+This prevents any single party from monopolizing permits indefinitely while still allowing competitive acquisition.</p>
+<h3 id="reward-distribution"><a class="header" href="#reward-distribution">Reward Distribution</a></h3>
+<p>When a fault proof is submitted, the reward recipient for the proposer's collateral is determined as follows:</p>
+<ol>
+<li><strong>Exactly one permit exists and is active at proof time</strong>: The permit holder receives the fault proof reward
+instead of the prover.</li>
+<li><strong>Otherwise</strong>: The prover who submitted the fault proof receives the reward as usual.</li>
+</ol>
+<p>When a permit holder releases their permit, the collateral payout depends on the state of all permits at proof time:</p>
+<ol>
+<li><strong>Active at proof time</strong>: The holder receives their collateral back, plus an equal share of any expired permit
+collateral.</li>
+<li><strong>Expired before proof time</strong>: The holder's collateral is forfeited to the pool split among active holders.</li>
+</ol>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div class="admonition-title">
+<div id="admonition-warning-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="design.html#admonition-warning"></a>
+</div>
+<div>
+<p>If a permit expires before the fault proof is submitted, the permit holder forfeits their collateral to the pool
+of active permit holders.</p>
+</div>
+</div><div style="break-before: page; page-break-before: always;"></div><h1 id="project"><a class="header" href="#project">Project</a></h1>
 <p>Kailua's project structure is primarily as follows:</p>
 <pre><code>kailua                      // Root project directory
 ├── bin                     
@@ -494,8 +560,9 @@ The timeout period for <code>E</code> had passed before <code>E'</code> was intr
 <h2 id="contracts"><a class="header" href="#contracts">Contracts</a></h2>
 <p>The contracts directory is a foundry project comprised of the following main contracts:</p>
 <ul>
+<li><code>KailuaVerifier.sol</code>: Logic for verifying fault/validity proofs and fault proof locks.</li>
 <li><code>KailuaTournament.sol</code>: Logic for resolving disputes between contradictory proposals.</li>
-<li><code>KailuaTreasury.sol</code>: Logic for maintaining collateral and paying out provers for resolving disputes.</li>
+<li><code>KailuaTreasury.sol</code>: Logic for maintaining proposer collateral.</li>
 <li><code>KailuaGame.sol</code>: Logic for introducing new sequencing proposals.</li>
 <li><code>KailuaLib.sol</code>: Misc. utilities.</li>
 </ul>
@@ -513,7 +580,7 @@ The following project components work together to enable this functionality:</p>
 <li><code>build/risczero/hokulea</code>: The zkVM binary for rollups on EigenDA.</li>
 <li><code>build/risczero/hana</code>: The zkVM binary for rollups on Celestia.</li>
 <li><code>crates/hokulea</code>: A wrapper crate around <code>kailua-kona</code> with Eigen DA support.</li>
-<li><code>crates/hokulea</code>: A wrapper crate around <code>kailua-kona</code> with Celestia DA support.</li>
+<li><code>crates/hana</code>: A wrapper crate around <code>kailua-kona</code> with Celestia DA support.</li>
 </ul>
 <div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
 <div class="admonition-title">
@@ -579,12 +646,12 @@ parameters for your rollup instance:</p>
 <pre><code class="language-shell">kailua-cli config --op-node-url [YOUR_OP_NODE_URL] --op-geth-url [YOUR_OP_GETH_URL] --eth-rpc-url [YOUR_ETH_RPC_URL]
 </code></pre>
 <p>Running the above command against the respective Base mainnet endpoints should produce the following output:</p>
-<pre><code>RISC0_VERSION: 3.0.4
-KAILUA_FPVM_KONA_ID: 0xC7A4FF22C7D92EBE6C4B78046F695582447945118565E3E8FF8BCFA17BF9CB2A
+<pre><code>RISC0_VERSION: 3.0.5
+KAILUA_FPVM_KONA_ID: 0x340EC272F1E0DB6B18E477CDFAF866381B6D26B89902FB928D78171128DC98C1
 KAILUA_FPVM_KONA_ELF: 9.6 MiB
-KAILUA_FPVM_HOKULEA_ID: 0x97E0BBC0167668F16EDE893D7C99AFB1114CB35F70AD034E43B041623ECECA8D
-KAILUA_FPVM_HOKULEA_ELF: 10.8 MiB
-KAILUA_FPVM_HANA_ID: 0xBC5EA4C1B6660F1633E29720D896E13E99057022EFFAADD5B50AF4A68221EF6B
+KAILUA_FPVM_HOKULEA_ID: 0x06BF43AE99E9A7DAB9547FC0410ED3F15B5B9E97839A6B9F60756CF61ECDDE5E
+KAILUA_FPVM_HOKULEA_ELF: 10.9 MiB
+KAILUA_FPVM_HANA_ID: 0x293DA8B84ED84B41B5D05CCE77704D5E8C7E0F6E67CCEBB890BBC0BE6A96C8C1
 KAILUA_FPVM_HANA_ELF: 10.5 MiB
 CONTROL_ROOT: 0xA54DC85AC99F851C92D7C96D7318AF41DBE7C0194EDFCC37EB4D422A998C1F56
 CONTROL_ID: 0x04446E66D300EB7FB45C9726BB53C793DDA407A62E9601618BB43C5C14657AC0
@@ -656,7 +723,7 @@ commitment will determine your proposer's DA costs for using Kailua and your val
 <p>These commitments are published as Blobs, which means you should optimize your block span <code>S</code> to be <code>S = B * 4096 + 1</code>,
 where <code>B</code> is the number of blobs required for a single proposal transaction (Ethereum currently limits a single block to
 at most 6 blobs, i.e. <code>B &lt; 7</code>).</p>
-<p>Subsequently, combining <code>S</code> with your rollup's block time determines how often your sequencer has to publish a proposal
+<p>Subsequently, combining <code>S</code> with your rollup's block time determines how often your proposer has to publish a proposal
 to ensure the liveness of your chain.</p>
 <div id="admonition-example" class="admonition admonish-example" role="note" aria-labelledby="admonition-example-title">
 <div class="admonition-title">
@@ -673,13 +740,12 @@ per 2 hours and 15 minutes.</p>
 </div>
 </div>
 <h2 id="collateral-amount"><a class="header" href="#collateral-amount">Collateral Amount</a></h2>
-<p>The collateral requirements for a sequencer in Kailua come in the form of a fixed amount to be deposited, independent of
+<p>The collateral requirements for a proposer in Kailua come in the form of a fixed amount to be deposited, independent of
 how many sequencing proposals are in flight.
 This is because a malicious Kailua proposer, and any faulty sequencing proposals it has published, is eliminated using
 only a single fault proof.</p>
-<p>The prover who submitted that fault proof consequently gets compensated with the faulty sequencer's staked collateral.
-This collateral should at least cover the proving cost, but should also include a sizeable tip for the prover to
-incentivize proving priority.
+<p>The prover who submitted that fault proof consequently gets compensated with a portion of the faulty proposer's collateral.
+This portion should at least cover the proving cost, but should also include a sizeable incentive for the prover.
 Our estimates put a worst-case proving cost using Bonsai for a single (OP Mainnet) block at $100 USD.</p>
 <div id="admonition-example-1" class="admonition admonish-example" role="note" aria-labelledby="admonition-example-1-title">
 <div class="admonition-title">
@@ -772,6 +838,25 @@ The Vanguard still needs to lock up the necessary bond to make proposals.</p>
 </div>
 <p>This middleground enables rollups transitioning from a permissioned scheme to enjoy permissionless fault proofs in
 Kailua with an added safety net.</p>
+<h2 id="lock-timeout"><a class="header" href="#lock-timeout">Lock timeout</a></h2>
+<p>Fault provers can acquire a lock on a faulty proposal to reserve the right to claim a reward for disproving it.
+This lock requires an amount of collateral directly proportional to the proposer collateral.
+Every lock expires after a configured period of time, after which two new locks can be acquired in its place.
+This process ensures that the collateral required to acquire a lock stays constant, while the collateral acquired to
+indefinitely hold a lock without submitting a proof grows exponentially.
+Additionally, a lock does not prevent anyone from holding a proof, but only guarantees that the prover will be rewarded.</p>
+<div id="admonition-note-3" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-3-title">
+<div class="admonition-title">
+<div id="admonition-note-3-title">
+<p>Note</p>
+</div>
+<a class="admonition-anchor-link" href="parameters.html#admonition-note-3"></a>
+</div>
+<div>
+<p>Since fault proofs can be configured to cover a very small number of blocks, this lock timeout should be on the order
+of tens of minutes, if not an hour or two. Use your own judgement.</p>
+</div>
+</div>
 <div id="admonition-success" class="admonition admonish-success" role="note" aria-labelledby="admonition-success-title">
 <div class="admonition-title">
 <div id="admonition-success-title">
@@ -789,9 +874,9 @@ This process will require access to your rollup's 'Owner' and 'Guardian' wallets
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <p>The steps required to upgrade your on-chain rollup contracts to support Kailua are as follows:</p>
 <ol>
-<li>(Optional) Deploy a RISC Zero Verifier contract set.
+<li>Deploy a <code>KailuaVerifier</code> contract.
 <ul>
-<li>This can be skipped by using a pre-existing verifier contract.</li>
+<li>This requires an underlying <code>RISCZeroVerifierRouter</code>, which you can deploy yourself or use an existing <a href="https://dev.risczero.com/api/blockchain-integration/contracts/verifier#contract-addresses:~:text=Address-,RiscZeroVerifierRouter,-0x8EaB2D97Dfce405A1692a21b3ff3A172d593D319">deployment</a>.</li>
 </ul>
 </li>
 <li>Deploy a <code>KailuaTreasury</code> and a <code>KailuaGame</code> contract with your configuration.</li>
@@ -815,6 +900,18 @@ This process will require access to your rollup's 'Owner' and 'Guardian' wallets
 If the command does not yet support your configuration, you'll need to follow the manual steps in the next sub-sections.</p>
 </div>
 </div>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div class="admonition-title">
+<div id="admonition-warning-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="upgrade.html#admonition-warning"></a>
+</div>
+<div>
+<p>This command will use the <code>KailuaVerifier</code> directly without deploying it behind a <code>Proxy</code>, making future updates to the
+Kailua configuration difficult.</p>
+</div>
+</div>
 <div id="admonition-hint" class="admonition admonish-tip" role="note" aria-labelledby="admonition-hint-title">
 <div class="admonition-title">
 <div id="admonition-hint-title">
@@ -832,10 +929,11 @@ If the command does not yet support your configuration, you'll need to follow th
 <tr><td style="text-align: left">RiscZeroVerifierRouter</td><td style="text-align: left">deploy</td><td style="text-align: right">800K</td><td></td></tr>
 <tr><td style="text-align: left">RiscZeroVerifierRouter</td><td style="text-align: left">addVerifier</td><td style="text-align: right">50K</td><td></td></tr>
 <tr><td style="text-align: left">RiscZeroGroth16Verifier</td><td style="text-align: left">deploy</td><td style="text-align: right">1,300K</td><td></td></tr>
-<tr><td style="text-align: left">RiscZeroMockVerifier</td><td style="text-align: left">deploy</td><td style="text-align: right">615K</td><td></td></tr>
-<tr><td style="text-align: left">KailuaTreasury</td><td style="text-align: left">deploy</td><td style="text-align: right">5,200K</td><td></td></tr>
+<tr><td style="text-align: left">RiscZeroMockVerifier</td><td style="text-align: left">deploy</td><td style="text-align: right">615K</td><td>Fake test proofs only</td></tr>
+<tr><td style="text-align: left">KailuaVerifier</td><td style="text-align: left">deploy</td><td style="text-align: right">1,337K</td><td></td></tr>
+<tr><td style="text-align: left">KailuaTreasury</td><td style="text-align: left">deploy</td><td style="text-align: right">4,560K</td><td></td></tr>
 <tr><td style="text-align: left">KailuaTreasury</td><td style="text-align: left">propose</td><td style="text-align: right">400K</td><td>1 blob</td></tr>
-<tr><td style="text-align: left">KailuaGame</td><td style="text-align: left">deploy</td><td style="text-align: right">5,000K</td><td></td></tr>
+<tr><td style="text-align: left">KailuaGame</td><td style="text-align: left">deploy</td><td style="text-align: right">4,200K</td><td></td></tr>
 <tr><td style="text-align: left">KailuaGame</td><td style="text-align: left">proveValidity</td><td style="text-align: right">375K</td><td>Groth16 proof</td></tr>
 <tr><td style="text-align: left">KailuaGame</td><td style="text-align: left">proveOutputFault</td><td style="text-align: right">415K</td><td>Groth16 + 1 KZG proofs</td></tr>
 <tr><td style="text-align: left">KailuaGame</td><td style="text-align: left">proveOutputFault</td><td style="text-align: right">470K</td><td>Groth16 + 2 KZG proofs</td></tr>
@@ -892,6 +990,7 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
       --collateral-amount [YOUR_COLLATERAL_AMOUNT] \
       --verifier-contract [RISC_ZERO_VERIFIER_ADDRESS] \
       --challenge-timeout [YOUR_CHALLENGE_PERIOD] \
+      --proof-permit-timeout [YOUR_FAULT_PROVING_LOCK_TIMEOUT]
 \
       --deployer-key [YOUR_DEPLOYER_KEY] \
       --owner-key [YOUR_OWNER_KEY] \
@@ -927,12 +1026,12 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
 <li><code>proposal-output-count</code>: The number of intermediate output commitments published per proposal.</li>
 <li><code>output-block-span</code>: The number of rollup blocks each intermediate output commitment must cover.</li>
 </ul>
-<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div id="admonition-warning-1" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-1-title">
 <div class="admonition-title">
-<div id="admonition-warning-title">
+<div id="admonition-warning-1-title">
 <p>Warning</p>
 </div>
-<a class="admonition-anchor-link" href="upgrade.html#admonition-warning"></a>
+<a class="admonition-anchor-link" href="upgrade.html#admonition-warning-1"></a>
 </div>
 <div>
 <p>The sequencing state at the block <code>starting-block-number</code> as reported by the <code>op-node</code> will be finalized without delay.</p>
@@ -941,7 +1040,7 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
 <h4 id="fault-proving"><a class="header" href="#fault-proving">Fault Proving</a></h4>
 <p>The next three parameters configure fault proving:</p>
 <ul>
-<li><code>collateral-amount</code>: The amount of collateral (in wei) a sequencer has to stake before publishing proposals.</li>
+<li><code>collateral-amount</code>: The amount of collateral (in wei) a proposer has to stake before publishing proposals.</li>
 <li><code>verifier-contract</code>: (Optional) The address of the existing RISC Zero verifier contract to use. If this argument is omitted, a new set of verifier contracts will be deployed.
 <ul>
 <li>If you wish to use an already existing verifier, you must provide this argument, even if the <code>config</code> command had located a verifier.</li>
@@ -949,6 +1048,7 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
 </ul>
 </li>
 <li><code>challenge-timeout</code>: The timeout (in seconds) for a sequencing proposal to be contradicted.</li>
+<li><code>proof-permit-timeout</code>: The timeout (in seconds) after which a fault proving lock expires.</li>
 </ul>
 <h4 id="ethereum-transactions"><a class="header" href="#ethereum-transactions">Ethereum Transactions</a></h4>
 <p>The next three parameters are the private keys for the respective parent chain wallets:</p>
@@ -1182,7 +1282,7 @@ Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
 </div>
 </div>
 <p>Kailua's on-chain dispute mechanism is powered by its own custom contracts that define a novel ZK dispute game.
-Each rollup has to deploy its own pair of dispute resolution contracts, and this section will guide you through that
+Each rollup has to deploy its own set of dispute resolution contracts, and this section will guide you through that
 process.</p>
 <p>The commands below will be using Foundry's <code>forge</code> and <code>cast</code> utilities, which you should have installed as part of the
 foundry <a href="quickstart.html#prerequisites">prerequisite</a>.</p>
@@ -1212,26 +1312,60 @@ For more information, refer to <code>forge create --help</code>, <code>cast call
 </div>
 <div>
 <p>The parameters used to deploy the contracts below are immutable.
-Any changes will require redeployment of both the <code>KailuaGame</code> and <code>KailuaTreasury</code> contracts, along with a repetition of
-the steps in the latter sections.
-The same <code>KailuaTreasury</code> deployment <strong>should NOT</strong> be reused with multiple <code>KailuaGame</code> deployments, unless they were
-<strong>never</strong> used to publish a proposal (except for the last <code>KailuaGame</code> deployment used).</p>
+Any changes will require redeployment and reconfiguration.</p>
 </div>
 </div>
-<h2 id="kailuatreasury"><a class="header" href="#kailuatreasury">KailuaTreasury</a></h2>
-<pre><code class="language-solidity">constructor(
+<h2 id="kailuaverifier"><a class="header" href="#kailuaverifier"><code>KailuaVerifier</code></a></h2>
+<div id="admonition-tip" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-title">
+<div class="admonition-title">
+<div id="admonition-tip-title">
+<p>Tip</p>
+</div>
+<a class="admonition-anchor-link" href="dispute.html#admonition-tip"></a>
+</div>
+<div>
+<p>This contract can safely be deployed behind a proxy contract in order to allow for easy updates to the verification
+configuration.</p>
+</div>
+</div>
+```solidity
+constructor(
   IRiscZeroVerifier _verifierContract,
   bytes32 _imageId,
   bytes32 _configHash,
-  uint256 _proposalOutputCount,
-  uint256 _outputBlockSpan,
+  Duration _permitDuration,
+  Duration _permitDelay
+)
+```
+This contract verifies all Kailua proofs submitted to the dispute contracts and manages the collateral staked for
+acquiring fault proving locks.
+<h3 id="deployment-1"><a class="header" href="#deployment-1">Deployment</a></h3>
+<p>Deployment of this contract is via the command below:</p>
+<pre><code class="language-shell">forge create KailuaVerifier --constructor-args \
+  [YOUR_RISC_ZERO_VERIFIER] \
+  [YOUR_FPVM_IMAGE_ID] \
+  [YOUR_ROLLUP_CONFIG_HASH] \
+  [YOUR_LOCK_EXPIRY_TIME] \
+  [YOUR_LOCK_ACTIVATION_DELAY_TIME]
+</code></pre>
+<p>Deploying the contract successfully should yield similar output to the following:</p>
+<pre><code>Deployer: [YOUR_DEPLOYER_WALLET_ADDRESS]
+Deployed to: [YOUR_DEPLOYED_KAILUA_VERIFIER_CONTRACT]
+Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
+</code></pre>
+<p>Take note of the contract address since we'll need it later.</p>
+<h2 id="kailuatreasury"><a class="header" href="#kailuatreasury"><code>KailuaTreasury</code></a></h2>
+<pre><code class="language-solidity">constructor(
+  KailuaVerifier _kailuaVerifier,
+  uint64 _proposalOutputCount,
+  uint64 _outputBlockSpan,
   GameType _gameType,
   OptimismPortal2 _optimismPortal,
   Claim _rootClaim,
   uint64 _l2BlockNumber
 )
 </code></pre>
-<p>This contract stores the collateral bonds required for sequencers to publish their proposal, and also stores the first
+<p>This contract stores the collateral bonds required for proposers to publish their proposal, and also stores the first
 sequencing proposal for Kailua as a fault dispute game in your rollup.</p>
 <div id="admonition-note-2" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-2-title">
 <div class="admonition-title">
@@ -1252,23 +1386,21 @@ Then, you need to query your <code>op-node</code> for the <code>outputRoot</code
   "optimism_outputAtBlock" \
   $(cast 2h [YOUR_STARTING_L2_BLOCK_NUMBER])
 </code></pre>
-<div id="admonition-tip" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-title">
+<div id="admonition-tip-1" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-1-title">
 <div class="admonition-title">
-<div id="admonition-tip-title">
+<div id="admonition-tip-1-title">
 <p>Tip</p>
 </div>
-<a class="admonition-anchor-link" href="dispute.html#admonition-tip"></a>
+<a class="admonition-anchor-link" href="dispute.html#admonition-tip-1"></a>
 </div>
 <div>
 <p>You can quickly filter through the response for <code>outputRoot</code> by piping it to <code>jq -r .outputRoot</code></p>
 </div>
 </div>
-<h3 id="deployment-1"><a class="header" href="#deployment-1">Deployment</a></h3>
+<h3 id="deployment-2"><a class="header" href="#deployment-2">Deployment</a></h3>
 <p>Deployment of this contract is via the command below:</p>
 <pre><code class="language-shell">forge create KailuaTreasury --constructor-args \
-  [YOUR_RISC_ZERO_VERIFIER] \
-  [YOUR_FPVM_IMAGE_ID] \
-  [YOUR_ROLLUP_CONFIG_HASH] \
+  [YOUR_DEPLOYED_KAILUA_VERIFIER_CONTRACT] \
   [YOUR_PROPOSAL_OUTPUT_COUNT] \
   [YOUR_OUTPUT_BLOCK_SPAN] \
   [YOUR_KAILUA_GAME_TYPE] \
@@ -1282,12 +1414,12 @@ Deployed to: [YOUR_DEPLOYED_TREASURY_CONTRACT]
 Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
 </code></pre>
 <p>Take note of the contract address since we'll need it later.</p>
-<div id="admonition-tip-1" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-1-title">
+<div id="admonition-tip-2" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-2-title">
 <div class="admonition-title">
-<div id="admonition-tip-1-title">
+<div id="admonition-tip-2-title">
 <p>Tip</p>
 </div>
-<a class="admonition-anchor-link" href="dispute.html#admonition-tip-1"></a>
+<a class="admonition-anchor-link" href="dispute.html#admonition-tip-2"></a>
 </div>
 <div>
 <p>If your rollup <code>owner</code> account is controlled by a <code>Safe</code> contract, or some other multi-sig contract, you can use
@@ -1298,10 +1430,9 @@ Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
 </ul>
 </div>
 </div>
-<h2 id="kailuagame"><a class="header" href="#kailuagame">KailuaGame</a></h2>
+<h2 id="kailuagame"><a class="header" href="#kailuagame"><code>KailuaGame</code></a></h2>
 <pre><code class="language-solidity">constructor(
   IKailuaTreasury _kailuaTreasury,
-  IRiscZeroVerifier _verifierContract,
   uint256 _genesisTimeStamp,
   uint256 _l2BlockTime,
   Duration _maxClockDuration
@@ -1332,8 +1463,7 @@ Deployment is fairly similar to the treasury via the command below:</p>
 Deployed to: [YOUR_DEPLOYED_GAME_CONTRACT]
 Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
 </code></pre>
-<p>Note down this contract's address, we'll use it later.
-There is no configuration needed for this contract.</p>
+<p>Note down this contract's address, we'll use it later.</p>
 <div id="admonition-success" class="admonition admonish-success" role="note" aria-labelledby="admonition-success-title">
 <div class="admonition-title">
 <div id="admonition-success-title">
@@ -1342,7 +1472,7 @@ There is no configuration needed for this contract.</p>
 <a class="admonition-anchor-link" href="dispute.html#admonition-success"></a>
 </div>
 <div>
-<p>You now have two Kailua dispute resolution contracts tailored to your rollup and ZK verifier!</p>
+<p>You now have Kailua dispute resolution contracts tailored to your rollup and ZK verifier!</p>
 </div>
 </div>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="on-chain-state-anchoring"><a class="header" href="#on-chain-state-anchoring">On-chain State Anchoring</a></h1>
@@ -1389,8 +1519,8 @@ For more information, refer to <code>cast call --help</code>, and <code>cast sen
 </div>
 <h2 id="clear-dgf-kailua-bond"><a class="header" href="#clear-dgf-kailua-bond">Clear DGF Kailua Bond</a></h2>
 <p>Optimism's <code>DisputeGameFactory</code> is design to require a bond value for each sequencing proposal.
-The <code>KailuaTreasury</code> instead requires a constant bond value for a sequencer to make any number of proposals.
-To ensure that the Kailua sequencer operates as expected, we will need to set this value to zero for Kailua proposals
+The <code>KailuaTreasury</code> instead requires a constant bond value for a proposer to make any number of proposals.
+To ensure that the Kailua proposer operates as expected, we will need to set this value to zero for Kailua proposals
 if it is non-zero.
 You can check the value as follows:</p>
 <pre><code class="language-shell">cast call [YOUR_DISPUTE_GAME_FACTORY] \
@@ -1493,7 +1623,7 @@ This step is only to be done once in order to create a starting point for sequen
 </div>
 </div>
 <p>In this section you will be integrating the <code>KailuaGame</code> contract with your rollup's <code>DisputeGameFactory</code>.
-This will allow Kailua sequencers to submit new proposals!</p>
+This will allow Kailua proposers to submit new proposals!</p>
 <p>The commands below will be using Foundry's <code>cast</code> utility, which you should have installed as part of the
 foundry <a href="quickstart.html#prerequisites">prerequisite</a>.</p>
 <div id="admonition-note-1" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-1-title">
@@ -1523,7 +1653,7 @@ For more information, refer to <code>cast call --help</code>, and <code>cast sen
 </div>
 </div>
 <h2 id="set-collateral-requirement"><a class="header" href="#set-collateral-requirement">Set Collateral Requirement</a></h2>
-<p>Before allowing sequencing proposals past the anchor state, you'll need to set the bond value (in wei) required for sequencers.
+<p>Before allowing sequencing proposals past the anchor state, you'll need to set the bond value (in wei) required for proposers.
 This is done by calling the <code>setParticipationBond</code> function on the treasury contract using the <code>owner</code> wallet for your
 rollup.</p>
 <p>For example, if your bond value is 12 eth, first convert this to wei using <code>cast</code>:</p>
@@ -1837,6 +1967,7 @@ Node software other than <code>op-geth</code> is not as reliable for the necessa
 <h3 id="rpc-calls-1"><a class="header" href="#rpc-calls-1">RPC Calls</a></h3>
 <p>To fine-tune the interaction with the above endpoints, the following additional parameters can be specified:</p>
 <ul>
+<li><code>op-rpc-concurrency</code>: Number of concurrent RPC requests to allow (default: 64).</li>
 <li><code>op-rpc-delay</code>: Number of L2 blocks to delay observation by (default: 0).</li>
 <li><code>rpc-poll-interval</code>: Time (in seconds) between successive RPC polls (default: 6).</li>
 <li><code>op-node-timeout</code>: Timeout (seconds) for an OP-NODE RPC request (default: 5).</li>
@@ -1888,10 +2019,36 @@ This allows it to restart quickly.</p>
 <li><code>max-block-executions</code>: Maximum number of blocks to execute per single proof.</li>
 <li><code>num-tail-blocks</code>: Rate of growth of tail proofs in L1 blocks (Default 10).</li>
 <li><code>enable-experimental-witness-endpoint</code>: Enables the use of <code>debug_executePayload</code> to collect the execution witness from the execution layer.</li>
-<li><code>max-fault-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a fault proof (Default 86400).</li>
+<li><code>max-fault-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a fault proof (Default 900).</li>
 <li><code>max-validity-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a validity proof (Default 0).</li>
 <li><code>clear-cache-data</code>: Whether to clear cache data after successful completion (Default false).</li>
 </ul>
+<h3 id="fault-proving-permits-1"><a class="header" href="#fault-proving-permits-1">Fault Proving Permits</a></h3>
+<p>The validator can optionally acquire <a href="design.html#fault-proving-permits">fault proving permits</a> before generating
+fault proofs.</p>
+<ul>
+<li><code>fault-proving-permit</code>: Whether acquisition of permits before proving faults is skipped / optional / mandatory (Default <code>optional</code>).</li>
+<li><code>fault-proving-permit-expiry</code>: Minimum amount of time (seconds) left on a permit to consider it unexpired (Default 600).</li>
+<li><code>min-validity-proving-timestamp</code>: The minimum UNIX timestamp after which computed validity proofs can be submitted (Default 0).</li>
+</ul>
+<div class="table-wrapper"><table><thead><tr><th>Value</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>SKIPPED</code></td><td>Never acquire permits</td></tr>
+<tr><td><code>OPTIONAL</code> (default)</td><td>Acquire if available; proceed without if acquisition fails</td></tr>
+<tr><td><code>MANDATORY</code></td><td>Halt proving if permit cannot be acquired</td></tr>
+</tbody></table>
+</div><div id="admonition-tip-1" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-1-title">
+<div class="admonition-title">
+<div id="admonition-tip-1-title">
+<p>Tip</p>
+</div>
+<a class="admonition-anchor-link" href="validator.html#admonition-tip-1"></a>
+</div>
+<div>
+<p>For most operators, the default <code>OPTIONAL</code> policy is recommended.
+Use <code>MANDATORY</code> if you are the sole validator and want guaranteed exclusive rewards.
+Use <code>SKIPPED</code> if the permit system is deactivated for your deployment or you do not care about rewards being frontrun.</p>
+</div>
+</div>
 <h3 id="alt-da"><a class="header" href="#alt-da">Alt DA</a></h3>
 <p>The following additional parameters are required if an alternative DA method is used:</p>
 <ul>
@@ -1913,12 +2070,12 @@ This wallet can be specified directly as a private key or as an external AWS/GCP
 <li><code>validator-google-keyring</code>: GCP KMS Keyring Name</li>
 <li><code>validator-google-key-name</code>: GCP KMS Key name</li>
 </ul>
-<div id="admonition-tip-1" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-1-title">
+<div id="admonition-tip-2" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-2-title">
 <div class="admonition-title">
-<div id="admonition-tip-1-title">
+<div id="admonition-tip-2-title">
 <p>Tip</p>
 </div>
-<a class="admonition-anchor-link" href="validator.html#admonition-tip-1"></a>
+<a class="admonition-anchor-link" href="validator.html#admonition-tip-2"></a>
 </div>
 <div>
 <p><code>validator-key</code> can be replaced with the corresponding AWS/GCP parameters as described <a href="upgrade.html#kms-support">here</a>.</p>
@@ -2057,18 +2214,31 @@ These parameters can be passed in as CLI arguments or set as environment variabl
 <li><code>boundless-set-verifier-address</code>: The address of the RISC Zero verifier supporting aggregated proofs for order validation.</li>
 <li><code>boundless-market-address</code>: The address of the Boundless market contract.</li>
 <li><code>boundless-collateral-token-address</code>: Address of the stake collateral ERC-20 contract.</li>
-<li><code>boundless-lookback</code>: (Defaults to <code>5</code>) The number of previous proof requests to inspect for duplicates before making a new proof request.</li>
+<li><code>boundless-lookback</code>: (Defaults to <code>true</code>) Whether to inspect for duplicates before making a new proof request.</li>
 <li><code>boundless-assume-cycle-count</code>: Whether to skip preflighting execution and assume the given cycle count.</li>
-<li><code>boundless-cycle-min-wei</code>: (Defaults to <code>0</code>) Starting price (wei) per cycle of proving.</li>
-<li><code>boundless-cycle-max-wei</code>: (Defaults to <code>200000000</code>) Maximum price (wei) per cycle of proving.</li>
-<li><code>boundless-mega-cycle-collateral</code>: Collateral (ZKC) per megacycle of the proving order (Default 1000).</li>
-<li><code>boundless-order-bid-delay-factor</code>: Multiplier for delay before order price starts ramping up (Default 0.1)</li>
-<li><code>boundless-order-ramp-up-factor</code>: (Defaults to <code>0.25</code>) Multiplier for order price to ramp up to maximum.</li>
+<li><code>boundless-assume-cycles-per-gas</code>: Skip preflighting and assume a fixed cycle count per gas.</li>
+<li><code>boundless-assume-cycles-per-byte</code>: Skip preflighting and assume a fixed cycle count per input byte.</li>
+<li><code>boundless-assume-cycles-per-snark</code>: Skip preflighting and assume a fixed cycle count per recursive snark.</li>
+<li><code>boundless-expired-price-inc-perc</code>: Percentage to increase the price of a proving order by after it expires (Default 10).</li>
+<li><code>boundless-expired-time-inc-perc</code>: Percentage to increase the time allowed for a proving order by after it expires (Default 4).</li>
+<li><code>boundless-cycle-min-wei</code>: (Defaults to <code>200000000</code>) Starting price (wei) per cycle of proving.</li>
+<li><code>boundless-cycle-max-wei</code>: (Defaults to <code>600000000</code>) Maximum price (wei) per cycle of proving.</li>
+<li><code>boundless-mega-cycle-min</code>: Minimum megacycles per proving order (Default 250).</li>
+<li><code>boundless-mega-cycle-collateral</code>: Collateral (ZKC) per megacycle of the proving order (Default <code>2500000000000000</code>).</li>
+<li><code>boundless-order-min-collateral</code>: Minimum collateral (ZKC) per proving order (Default <code>5000000000000000000</code>).</li>
+<li><code>boundless-order-bid-delay-factor</code>: Multiplier for delay before order price starts ramping up (Default 0.5).</li>
+<li><code>boundless-order-min-bid-delay</code>: Minimum number of seconds to set as bid delay time (Default 120).</li>
+<li><code>boundless-order-ramp-up-factor</code>: (Defaults to <code>1.0</code>) Multiplier for order price to ramp up to maximum.</li>
+<li><code>boundless-order-min-ramp-up</code>: Minimum number of seconds to set as ramp up time (Default 600).</li>
 <li><code>boundless-order-lock-timeout-factor</code>: (Defaults to <code>3</code>) Multiplier for order fulfillment timeout after locking.</li>
-<li><code>boundless-order-expiry-factor</code>: (Defaults to <code>10</code>) Multiplier for order expiry timeout after creation.</li>
+<li><code>boundless-order-min-lock-timeout</code>: Minimum number of seconds to set as lock timeout time (Default 1200).</li>
+<li><code>boundless-order-expiry-factor</code>: (Defaults to <code>1.0</code>) Multiplier for order expiry timeout after creation.</li>
+<li><code>boundless-order-min-expiry</code>: Minimum number of seconds to set as expiry time (Default 900).</li>
 <li><code>boundless-order-check-interval</code>: (Defaults to <code>12</code>) Time in seconds between attempts to check order status.</li>
 <li><code>boundless-enable-upload-caching</code>: Whether to enable image/input upload caching.</li>
 <li><code>boundless-order-submission-cooldown</code>: Time in seconds between attempts to submit new orders (Default 12).</li>
+<li><code>boundless-order-funding-mode</code>: Funding mode for order submission. One of <code>never</code>, <code>always</code>, <code>available-balance</code>, or <code>below-threshold</code> (Default <code>never</code>).</li>
+<li><code>boundless-order-funding-threshold</code>: Threshold (wei) for <code>below-threshold</code> funding mode.</li>
 </ul>
 <div id="admonition-note-4" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-4-title">
 <div class="admonition-title">

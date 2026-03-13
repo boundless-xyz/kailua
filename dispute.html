@@ -195,7 +195,7 @@
 </div>
 </div>
 <p>Kailua's on-chain dispute mechanism is powered by its own custom contracts that define a novel ZK dispute game.
-Each rollup has to deploy its own pair of dispute resolution contracts, and this section will guide you through that
+Each rollup has to deploy its own set of dispute resolution contracts, and this section will guide you through that
 process.</p>
 <p>The commands below will be using Foundry's <code>forge</code> and <code>cast</code> utilities, which you should have installed as part of the
 foundry <a href="quickstart.html#prerequisites">prerequisite</a>.</p>
@@ -225,26 +225,60 @@ For more information, refer to <code>forge create --help</code>, <code>cast call
 </div>
 <div>
 <p>The parameters used to deploy the contracts below are immutable.
-Any changes will require redeployment of both the <code>KailuaGame</code> and <code>KailuaTreasury</code> contracts, along with a repetition of
-the steps in the latter sections.
-The same <code>KailuaTreasury</code> deployment <strong>should NOT</strong> be reused with multiple <code>KailuaGame</code> deployments, unless they were
-<strong>never</strong> used to publish a proposal (except for the last <code>KailuaGame</code> deployment used).</p>
+Any changes will require redeployment and reconfiguration.</p>
 </div>
 </div>
-<h2 id="kailuatreasury"><a class="header" href="#kailuatreasury">KailuaTreasury</a></h2>
-<pre><code class="language-solidity">constructor(
+<h2 id="kailuaverifier"><a class="header" href="#kailuaverifier"><code>KailuaVerifier</code></a></h2>
+<div id="admonition-tip" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-title">
+<div class="admonition-title">
+<div id="admonition-tip-title">
+<p>Tip</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-tip"></a>
+</div>
+<div>
+<p>This contract can safely be deployed behind a proxy contract in order to allow for easy updates to the verification
+configuration.</p>
+</div>
+</div>
+```solidity
+constructor(
   IRiscZeroVerifier _verifierContract,
   bytes32 _imageId,
   bytes32 _configHash,
-  uint256 _proposalOutputCount,
-  uint256 _outputBlockSpan,
+  Duration _permitDuration,
+  Duration _permitDelay
+)
+```
+This contract verifies all Kailua proofs submitted to the dispute contracts and manages the collateral staked for
+acquiring fault proving locks.
+<h3 id="deployment"><a class="header" href="#deployment">Deployment</a></h3>
+<p>Deployment of this contract is via the command below:</p>
+<pre><code class="language-shell">forge create KailuaVerifier --constructor-args \
+  [YOUR_RISC_ZERO_VERIFIER] \
+  [YOUR_FPVM_IMAGE_ID] \
+  [YOUR_ROLLUP_CONFIG_HASH] \
+  [YOUR_LOCK_EXPIRY_TIME] \
+  [YOUR_LOCK_ACTIVATION_DELAY_TIME]
+</code></pre>
+<p>Deploying the contract successfully should yield similar output to the following:</p>
+<pre><code>Deployer: [YOUR_DEPLOYER_WALLET_ADDRESS]
+Deployed to: [YOUR_DEPLOYED_KAILUA_VERIFIER_CONTRACT]
+Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
+</code></pre>
+<p>Take note of the contract address since we'll need it later.</p>
+<h2 id="kailuatreasury"><a class="header" href="#kailuatreasury"><code>KailuaTreasury</code></a></h2>
+<pre><code class="language-solidity">constructor(
+  KailuaVerifier _kailuaVerifier,
+  uint64 _proposalOutputCount,
+  uint64 _outputBlockSpan,
   GameType _gameType,
   OptimismPortal2 _optimismPortal,
   Claim _rootClaim,
   uint64 _l2BlockNumber
 )
 </code></pre>
-<p>This contract stores the collateral bonds required for sequencers to publish their proposal, and also stores the first
+<p>This contract stores the collateral bonds required for proposers to publish their proposal, and also stores the first
 sequencing proposal for Kailua as a fault dispute game in your rollup.</p>
 <div id="admonition-note-2" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-2-title">
 <div class="admonition-title">
@@ -265,23 +299,21 @@ Then, you need to query your <code>op-node</code> for the <code>outputRoot</code
   "optimism_outputAtBlock" \
   $(cast 2h [YOUR_STARTING_L2_BLOCK_NUMBER])
 </code></pre>
-<div id="admonition-tip" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-title">
+<div id="admonition-tip-1" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-1-title">
 <div class="admonition-title">
-<div id="admonition-tip-title">
+<div id="admonition-tip-1-title">
 <p>Tip</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-tip"></a>
+<a class="admonition-anchor-link" href="#admonition-tip-1"></a>
 </div>
 <div>
 <p>You can quickly filter through the response for <code>outputRoot</code> by piping it to <code>jq -r .outputRoot</code></p>
 </div>
 </div>
-<h3 id="deployment"><a class="header" href="#deployment">Deployment</a></h3>
+<h3 id="deployment-1"><a class="header" href="#deployment-1">Deployment</a></h3>
 <p>Deployment of this contract is via the command below:</p>
 <pre><code class="language-shell">forge create KailuaTreasury --constructor-args \
-  [YOUR_RISC_ZERO_VERIFIER] \
-  [YOUR_FPVM_IMAGE_ID] \
-  [YOUR_ROLLUP_CONFIG_HASH] \
+  [YOUR_DEPLOYED_KAILUA_VERIFIER_CONTRACT] \
   [YOUR_PROPOSAL_OUTPUT_COUNT] \
   [YOUR_OUTPUT_BLOCK_SPAN] \
   [YOUR_KAILUA_GAME_TYPE] \
@@ -295,12 +327,12 @@ Deployed to: [YOUR_DEPLOYED_TREASURY_CONTRACT]
 Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
 </code></pre>
 <p>Take note of the contract address since we'll need it later.</p>
-<div id="admonition-tip-1" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-1-title">
+<div id="admonition-tip-2" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-2-title">
 <div class="admonition-title">
-<div id="admonition-tip-1-title">
+<div id="admonition-tip-2-title">
 <p>Tip</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-tip-1"></a>
+<a class="admonition-anchor-link" href="#admonition-tip-2"></a>
 </div>
 <div>
 <p>If your rollup <code>owner</code> account is controlled by a <code>Safe</code> contract, or some other multi-sig contract, you can use
@@ -311,10 +343,9 @@ Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
 </ul>
 </div>
 </div>
-<h2 id="kailuagame"><a class="header" href="#kailuagame">KailuaGame</a></h2>
+<h2 id="kailuagame"><a class="header" href="#kailuagame"><code>KailuaGame</code></a></h2>
 <pre><code class="language-solidity">constructor(
   IKailuaTreasury _kailuaTreasury,
-  IRiscZeroVerifier _verifierContract,
   uint256 _genesisTimeStamp,
   uint256 _l2BlockTime,
   Duration _maxClockDuration
@@ -345,8 +376,7 @@ Deployment is fairly similar to the treasury via the command below:</p>
 Deployed to: [YOUR_DEPLOYED_GAME_CONTRACT]
 Transaction hash: [YOUR_DEPLOYMENT_TRANSACTION_HASH]
 </code></pre>
-<p>Note down this contract's address, we'll use it later.
-There is no configuration needed for this contract.</p>
+<p>Note down this contract's address, we'll use it later.</p>
 <div id="admonition-success" class="admonition admonish-success" role="note" aria-labelledby="admonition-success-title">
 <div class="admonition-title">
 <div id="admonition-success-title">
@@ -355,7 +385,7 @@ There is no configuration needed for this contract.</p>
 <a class="admonition-anchor-link" href="#admonition-success"></a>
 </div>
 <div>
-<p>You now have two Kailua dispute resolution contracts tailored to your rollup and ZK verifier!</p>
+<p>You now have Kailua dispute resolution contracts tailored to your rollup and ZK verifier!</p>
 </div>
 </div>
 

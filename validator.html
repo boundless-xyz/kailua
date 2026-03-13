@@ -223,6 +223,7 @@ Node software other than <code>op-geth</code> is not as reliable for the necessa
 <h3 id="rpc-calls"><a class="header" href="#rpc-calls">RPC Calls</a></h3>
 <p>To fine-tune the interaction with the above endpoints, the following additional parameters can be specified:</p>
 <ul>
+<li><code>op-rpc-concurrency</code>: Number of concurrent RPC requests to allow (default: 64).</li>
 <li><code>op-rpc-delay</code>: Number of L2 blocks to delay observation by (default: 0).</li>
 <li><code>rpc-poll-interval</code>: Time (in seconds) between successive RPC polls (default: 6).</li>
 <li><code>op-node-timeout</code>: Timeout (seconds) for an OP-NODE RPC request (default: 5).</li>
@@ -274,10 +275,36 @@ This allows it to restart quickly.</p>
 <li><code>max-block-executions</code>: Maximum number of blocks to execute per single proof.</li>
 <li><code>num-tail-blocks</code>: Rate of growth of tail proofs in L1 blocks (Default 10).</li>
 <li><code>enable-experimental-witness-endpoint</code>: Enables the use of <code>debug_executePayload</code> to collect the execution witness from the execution layer.</li>
-<li><code>max-fault-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a fault proof (Default 86400).</li>
+<li><code>max-fault-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a fault proof (Default 900).</li>
 <li><code>max-validity-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a validity proof (Default 0).</li>
 <li><code>clear-cache-data</code>: Whether to clear cache data after successful completion (Default false).</li>
 </ul>
+<h3 id="fault-proving-permits"><a class="header" href="#fault-proving-permits">Fault Proving Permits</a></h3>
+<p>The validator can optionally acquire <a href="design.html#fault-proving-permits">fault proving permits</a> before generating
+fault proofs.</p>
+<ul>
+<li><code>fault-proving-permit</code>: Whether acquisition of permits before proving faults is skipped / optional / mandatory (Default <code>optional</code>).</li>
+<li><code>fault-proving-permit-expiry</code>: Minimum amount of time (seconds) left on a permit to consider it unexpired (Default 600).</li>
+<li><code>min-validity-proving-timestamp</code>: The minimum UNIX timestamp after which computed validity proofs can be submitted (Default 0).</li>
+</ul>
+<div class="table-wrapper"><table><thead><tr><th>Value</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>SKIPPED</code></td><td>Never acquire permits</td></tr>
+<tr><td><code>OPTIONAL</code> (default)</td><td>Acquire if available; proceed without if acquisition fails</td></tr>
+<tr><td><code>MANDATORY</code></td><td>Halt proving if permit cannot be acquired</td></tr>
+</tbody></table>
+</div><div id="admonition-tip-1" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-1-title">
+<div class="admonition-title">
+<div id="admonition-tip-1-title">
+<p>Tip</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-tip-1"></a>
+</div>
+<div>
+<p>For most operators, the default <code>OPTIONAL</code> policy is recommended.
+Use <code>MANDATORY</code> if you are the sole validator and want guaranteed exclusive rewards.
+Use <code>SKIPPED</code> if the permit system is deactivated for your deployment or you do not care about rewards being frontrun.</p>
+</div>
+</div>
 <h3 id="alt-da"><a class="header" href="#alt-da">Alt DA</a></h3>
 <p>The following additional parameters are required if an alternative DA method is used:</p>
 <ul>
@@ -299,12 +326,12 @@ This wallet can be specified directly as a private key or as an external AWS/GCP
 <li><code>validator-google-keyring</code>: GCP KMS Keyring Name</li>
 <li><code>validator-google-key-name</code>: GCP KMS Key name</li>
 </ul>
-<div id="admonition-tip-1" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-1-title">
+<div id="admonition-tip-2" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-2-title">
 <div class="admonition-title">
-<div id="admonition-tip-1-title">
+<div id="admonition-tip-2-title">
 <p>Tip</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-tip-1"></a>
+<a class="admonition-anchor-link" href="#admonition-tip-2"></a>
 </div>
 <div>
 <p><code>validator-key</code> can be replaced with the corresponding AWS/GCP parameters as described <a href="upgrade.html#kms-support">here</a>.</p>
@@ -443,18 +470,31 @@ These parameters can be passed in as CLI arguments or set as environment variabl
 <li><code>boundless-set-verifier-address</code>: The address of the RISC Zero verifier supporting aggregated proofs for order validation.</li>
 <li><code>boundless-market-address</code>: The address of the Boundless market contract.</li>
 <li><code>boundless-collateral-token-address</code>: Address of the stake collateral ERC-20 contract.</li>
-<li><code>boundless-lookback</code>: (Defaults to <code>5</code>) The number of previous proof requests to inspect for duplicates before making a new proof request.</li>
+<li><code>boundless-lookback</code>: (Defaults to <code>true</code>) Whether to inspect for duplicates before making a new proof request.</li>
 <li><code>boundless-assume-cycle-count</code>: Whether to skip preflighting execution and assume the given cycle count.</li>
-<li><code>boundless-cycle-min-wei</code>: (Defaults to <code>0</code>) Starting price (wei) per cycle of proving.</li>
-<li><code>boundless-cycle-max-wei</code>: (Defaults to <code>200000000</code>) Maximum price (wei) per cycle of proving.</li>
-<li><code>boundless-mega-cycle-collateral</code>: Collateral (ZKC) per megacycle of the proving order (Default 1000).</li>
-<li><code>boundless-order-bid-delay-factor</code>: Multiplier for delay before order price starts ramping up (Default 0.1)</li>
-<li><code>boundless-order-ramp-up-factor</code>: (Defaults to <code>0.25</code>) Multiplier for order price to ramp up to maximum.</li>
+<li><code>boundless-assume-cycles-per-gas</code>: Skip preflighting and assume a fixed cycle count per gas.</li>
+<li><code>boundless-assume-cycles-per-byte</code>: Skip preflighting and assume a fixed cycle count per input byte.</li>
+<li><code>boundless-assume-cycles-per-snark</code>: Skip preflighting and assume a fixed cycle count per recursive snark.</li>
+<li><code>boundless-expired-price-inc-perc</code>: Percentage to increase the price of a proving order by after it expires (Default 10).</li>
+<li><code>boundless-expired-time-inc-perc</code>: Percentage to increase the time allowed for a proving order by after it expires (Default 4).</li>
+<li><code>boundless-cycle-min-wei</code>: (Defaults to <code>200000000</code>) Starting price (wei) per cycle of proving.</li>
+<li><code>boundless-cycle-max-wei</code>: (Defaults to <code>600000000</code>) Maximum price (wei) per cycle of proving.</li>
+<li><code>boundless-mega-cycle-min</code>: Minimum megacycles per proving order (Default 250).</li>
+<li><code>boundless-mega-cycle-collateral</code>: Collateral (ZKC) per megacycle of the proving order (Default <code>2500000000000000</code>).</li>
+<li><code>boundless-order-min-collateral</code>: Minimum collateral (ZKC) per proving order (Default <code>5000000000000000000</code>).</li>
+<li><code>boundless-order-bid-delay-factor</code>: Multiplier for delay before order price starts ramping up (Default 0.5).</li>
+<li><code>boundless-order-min-bid-delay</code>: Minimum number of seconds to set as bid delay time (Default 120).</li>
+<li><code>boundless-order-ramp-up-factor</code>: (Defaults to <code>1.0</code>) Multiplier for order price to ramp up to maximum.</li>
+<li><code>boundless-order-min-ramp-up</code>: Minimum number of seconds to set as ramp up time (Default 600).</li>
 <li><code>boundless-order-lock-timeout-factor</code>: (Defaults to <code>3</code>) Multiplier for order fulfillment timeout after locking.</li>
-<li><code>boundless-order-expiry-factor</code>: (Defaults to <code>10</code>) Multiplier for order expiry timeout after creation.</li>
+<li><code>boundless-order-min-lock-timeout</code>: Minimum number of seconds to set as lock timeout time (Default 1200).</li>
+<li><code>boundless-order-expiry-factor</code>: (Defaults to <code>1.0</code>) Multiplier for order expiry timeout after creation.</li>
+<li><code>boundless-order-min-expiry</code>: Minimum number of seconds to set as expiry time (Default 900).</li>
 <li><code>boundless-order-check-interval</code>: (Defaults to <code>12</code>) Time in seconds between attempts to check order status.</li>
 <li><code>boundless-enable-upload-caching</code>: Whether to enable image/input upload caching.</li>
 <li><code>boundless-order-submission-cooldown</code>: Time in seconds between attempts to submit new orders (Default 12).</li>
+<li><code>boundless-order-funding-mode</code>: Funding mode for order submission. One of <code>never</code>, <code>always</code>, <code>available-balance</code>, or <code>below-threshold</code> (Default <code>never</code>).</li>
+<li><code>boundless-order-funding-threshold</code>: Threshold (wei) for <code>below-threshold</code> funding mode.</li>
 </ul>
 <div id="admonition-note-4" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-4-title">
 <div class="admonition-title">

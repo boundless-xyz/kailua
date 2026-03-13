@@ -282,7 +282,73 @@ A crossmark indicates that the timeout period of the contradictory sibling propo
 Proposal <code>C</code> can only be finalized once a proof resolves its dispute against <code>C'</code>, and its parent <code>B</code> is finalized.
 <code>D</code> has no contenders and can be finalized once its parent <code>C</code> is finalized.
 The timeout period for <code>E</code> had passed before <code>E'</code> was introduced, and therefore <code>E</code> can be finalized once its parent <code>D</code> is finalized.</p>
-
+<h2 id="fault-proving-permits"><a class="header" href="#fault-proving-permits">Fault Proving Permits</a></h2>
+<p>Kailua includes an optional permit system that allows provers to acquire exclusive rights to submit fault proofs for
+disputed proposals.
+A prover can lock collateral to gain an exclusive window during which only their proof submission earns the fault proof
+reward.</p>
+<div id="admonition-note-2" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-2-title">
+<div class="admonition-title">
+<div id="admonition-note-2-title">
+<p>Note</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-note-2"></a>
+</div>
+<div>
+<p>Permits are entirely optional. Fault proofs can be submitted without acquiring a permit, and the dispute will still
+be resolved. However, permit holders may receive preferential payouts.</p>
+</div>
+</div>
+<h3 id="permit-lifecycle"><a class="header" href="#permit-lifecycle">Permit Lifecycle</a></h3>
+<p>Each permit goes through three phases determined by two time durations configured at contract deployment:
+a delay duration and a total permit duration.</p>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Permit Lifecycle
+---
+graph LR
+    A[Acquired] -- delay elapsed --&gt; B[Active]
+    B -- duration elapsed --&gt; C[Expired]
+</pre>
+</div>
+<div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Description</th><th>Guaranteed Reward?</th></tr></thead><tbody>
+<tr><td><strong>Delayed</strong></td><td>Permit has been acquired but is not yet active</td><td>No</td></tr>
+<tr><td><strong>Active</strong></td><td>Permit is live and grants exclusive rights</td><td>Yes</td></tr>
+<tr><td><strong>Expired</strong></td><td>Permit has lapsed</td><td>No</td></tr>
+</tbody></table>
+</div>
+<h3 id="collateral"><a class="header" href="#collateral">Collateral</a></h3>
+<p>Acquiring a permit requires locking collateral proportional to the elimination reward.
+The collateral is returned when the permit is released after a proof is submitted.
+Active permit holders also receive a share of collateral from expired permits.</p>
+<p>The number of permits that can be issued for a given dispute is bounded: new permits can only be acquired at a rate
+that grows exponentially with the number of expired permits.
+This prevents any single party from monopolizing permits indefinitely while still allowing competitive acquisition.</p>
+<h3 id="reward-distribution"><a class="header" href="#reward-distribution">Reward Distribution</a></h3>
+<p>When a fault proof is submitted, the reward recipient for the proposer's collateral is determined as follows:</p>
+<ol>
+<li><strong>Exactly one permit exists and is active at proof time</strong>: The permit holder receives the fault proof reward
+instead of the prover.</li>
+<li><strong>Otherwise</strong>: The prover who submitted the fault proof receives the reward as usual.</li>
+</ol>
+<p>When a permit holder releases their permit, the collateral payout depends on the state of all permits at proof time:</p>
+<ol>
+<li><strong>Active at proof time</strong>: The holder receives their collateral back, plus an equal share of any expired permit
+collateral.</li>
+<li><strong>Expired before proof time</strong>: The holder's collateral is forfeited to the pool split among active holders.</li>
+</ol>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div class="admonition-title">
+<div id="admonition-warning-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-warning"></a>
+</div>
+<div>
+<p>If a permit expires before the fault proof is submitted, the permit holder forfeits their collateral to the pool
+of active permit holders.</p>
+</div>
+</div>
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">

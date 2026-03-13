@@ -195,7 +195,7 @@
 </div>
 </div>
 <p>In this section you will be integrating the <code>KailuaGame</code> contract with your rollup's <code>DisputeGameFactory</code>.
-This will allow Kailua sequencers to submit new proposals!</p>
+This will allow Kailua proposers to submit new proposals!</p>
 <p>The commands below will be using Foundry's <code>cast</code> utility, which you should have installed as part of the
 foundry <a href="quickstart.html#prerequisites">prerequisite</a>.</p>
 <div id="admonition-note-1" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-1-title">
@@ -225,7 +225,7 @@ For more information, refer to <code>cast call --help</code>, and <code>cast sen
 </div>
 </div>
 <h2 id="set-collateral-requirement"><a class="header" href="#set-collateral-requirement">Set Collateral Requirement</a></h2>
-<p>Before allowing sequencing proposals past the anchor state, you'll need to set the bond value (in wei) required for sequencers.
+<p>Before allowing sequencing proposals past the anchor state, you'll need to set the bond value (in wei) required for proposers.
 This is done by calling the <code>setParticipationBond</code> function on the treasury contract using the <code>owner</code> wallet for your
 rollup.</p>
 <p>For example, if your bond value is 12 eth, first convert this to wei using <code>cast</code>:</p>

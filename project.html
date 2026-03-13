@@ -224,8 +224,9 @@
 <h2 id="contracts"><a class="header" href="#contracts">Contracts</a></h2>
 <p>The contracts directory is a foundry project comprised of the following main contracts:</p>
 <ul>
+<li><code>KailuaVerifier.sol</code>: Logic for verifying fault/validity proofs and fault proof locks.</li>
 <li><code>KailuaTournament.sol</code>: Logic for resolving disputes between contradictory proposals.</li>
-<li><code>KailuaTreasury.sol</code>: Logic for maintaining collateral and paying out provers for resolving disputes.</li>
+<li><code>KailuaTreasury.sol</code>: Logic for maintaining proposer collateral.</li>
 <li><code>KailuaGame.sol</code>: Logic for introducing new sequencing proposals.</li>
 <li><code>KailuaLib.sol</code>: Misc. utilities.</li>
 </ul>
@@ -243,7 +244,7 @@ The following project components work together to enable this functionality:</p>
 <li><code>build/risczero/hokulea</code>: The zkVM binary for rollups on EigenDA.</li>
 <li><code>build/risczero/hana</code>: The zkVM binary for rollups on Celestia.</li>
 <li><code>crates/hokulea</code>: A wrapper crate around <code>kailua-kona</code> with Eigen DA support.</li>
-<li><code>crates/hokulea</code>: A wrapper crate around <code>kailua-kona</code> with Celestia DA support.</li>
+<li><code>crates/hana</code>: A wrapper crate around <code>kailua-kona</code> with Celestia DA support.</li>
 </ul>
 <div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
 <div class="admonition-title">

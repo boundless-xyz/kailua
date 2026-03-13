@@ -209,7 +209,7 @@ commitment will determine your proposer's DA costs for using Kailua and your val
 <p>These commitments are published as Blobs, which means you should optimize your block span <code>S</code> to be <code>S = B * 4096 + 1</code>,
 where <code>B</code> is the number of blobs required for a single proposal transaction (Ethereum currently limits a single block to
 at most 6 blobs, i.e. <code>B &lt; 7</code>).</p>
-<p>Subsequently, combining <code>S</code> with your rollup's block time determines how often your sequencer has to publish a proposal
+<p>Subsequently, combining <code>S</code> with your rollup's block time determines how often your proposer has to publish a proposal
 to ensure the liveness of your chain.</p>
 <div id="admonition-example" class="admonition admonish-example" role="note" aria-labelledby="admonition-example-title">
 <div class="admonition-title">
@@ -226,13 +226,12 @@ per 2 hours and 15 minutes.</p>
 </div>
 </div>
 <h2 id="collateral-amount"><a class="header" href="#collateral-amount">Collateral Amount</a></h2>
-<p>The collateral requirements for a sequencer in Kailua come in the form of a fixed amount to be deposited, independent of
+<p>The collateral requirements for a proposer in Kailua come in the form of a fixed amount to be deposited, independent of
 how many sequencing proposals are in flight.
 This is because a malicious Kailua proposer, and any faulty sequencing proposals it has published, is eliminated using
 only a single fault proof.</p>
-<p>The prover who submitted that fault proof consequently gets compensated with the faulty sequencer's staked collateral.
-This collateral should at least cover the proving cost, but should also include a sizeable tip for the prover to
-incentivize proving priority.
+<p>The prover who submitted that fault proof consequently gets compensated with a portion of the faulty proposer's collateral.
+This portion should at least cover the proving cost, but should also include a sizeable incentive for the prover.
 Our estimates put a worst-case proving cost using Bonsai for a single (OP Mainnet) block at $100 USD.</p>
 <div id="admonition-example-1" class="admonition admonish-example" role="note" aria-labelledby="admonition-example-1-title">
 <div class="admonition-title">
@@ -325,6 +324,25 @@ The Vanguard still needs to lock up the necessary bond to make proposals.</p>
 </div>
 <p>This middleground enables rollups transitioning from a permissioned scheme to enjoy permissionless fault proofs in
 Kailua with an added safety net.</p>
+<h2 id="lock-timeout"><a class="header" href="#lock-timeout">Lock timeout</a></h2>
+<p>Fault provers can acquire a lock on a faulty proposal to reserve the right to claim a reward for disproving it.
+This lock requires an amount of collateral directly proportional to the proposer collateral.
+Every lock expires after a configured period of time, after which two new locks can be acquired in its place.
+This process ensures that the collateral required to acquire a lock stays constant, while the collateral acquired to
+indefinitely hold a lock without submitting a proof grows exponentially.
+Additionally, a lock does not prevent anyone from holding a proof, but only guarantees that the prover will be rewarded.</p>
+<div id="admonition-note-3" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-3-title">
+<div class="admonition-title">
+<div id="admonition-note-3-title">
+<p>Note</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-note-3"></a>
+</div>
+<div>
+<p>Since fault proofs can be configured to cover a very small number of blocks, this lock timeout should be on the order
+of tens of minutes, if not an hour or two. Use your own judgement.</p>
+</div>
+</div>
 <div id="admonition-success" class="admonition admonish-success" role="note" aria-labelledby="admonition-success-title">
 <div class="admonition-title">
 <div id="admonition-success-title">
