@@ -287,9 +287,34 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
     .await
     .context("KailuaVerifier::deploy")?;
     info!("KailuaVerifier::deploy: {} gas", receipt.gas_used);
-    let verifier_contract_address = receipt
+    let verifier_impl_address = receipt
         .contract_address
         .ok_or_else(|| anyhow!("KailuaVerifier not deployed"))?;
+
+    // Deploy Proxy with deployer as initial admin
+    let deployer_address = deployer_wallet.default_signer().address();
+    let receipt = Proxy::deploy_builder(&deployer_provider, deployer_address)
+        .transact_with_context(context.clone(), "Proxy::deploy")
+        .await
+        .context("Proxy::deploy")?;
+    info!("Proxy::deploy: {} gas", receipt.gas_used);
+    let proxy_address = receipt
+        .contract_address
+        .ok_or_else(|| anyhow!("Proxy not deployed"))?;
+    let proxy = Proxy::new(proxy_address, &deployer_provider);
+
+    // Set implementation and transfer admin to DGF owner
+    proxy
+        .upgradeTo(verifier_impl_address)
+        .transact_with_context(context.clone(), "Proxy::upgradeTo")
+        .await
+        .context("Proxy::upgradeTo")?;
+    proxy
+        .changeAdmin(factory_owner_address)
+        .transact_with_context(context.clone(), "Proxy::changeAdmin")
+        .await
+        .context("Proxy::changeAdmin")?;
+    let verifier_contract_address = proxy_address;
 
     // Deploy KailuaTreasury contract
     let root_claim = await_tel!(

@@ -5,7 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {Duration} from "@optimism/src/dispute/lib/Types.sol";
 import {IRiscZeroVerifier} from "@risc0/IRiscZeroVerifier.sol";
-import {Proxy} from "@optimism/src/universal/Proxy.sol";
+import {Proxy} from "../src/Proxy.sol";
 import {KailuaVerifier} from "../src/KailuaVerifier.sol";
 
 contract UpgradeVerifierScript is Script {

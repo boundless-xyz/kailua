@@ -66,6 +66,12 @@ sol!(
 
 sol!(
     #[sol(rpc)]
+    Proxy,
+    "foundry/out/Proxy.sol/Proxy.json"
+);
+
+sol!(
+    #[sol(rpc)]
     OwnableUpgradeable,
     "foundry/out/IOwnable.sol/IOwnable.json"
 );

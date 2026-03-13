@@ -11,7 +11,7 @@ import {GameType, Claim, Duration} from "@optimism/src/dispute/lib/Types.sol";
 import {IRiscZeroVerifier} from "@risc0/IRiscZeroVerifier.sol";
 import {RiscZeroVerifierRouter} from "@risc0/RiscZeroVerifierRouter.sol";
 import {RiscZeroGroth16Verifier} from "@risc0/groth16/RiscZeroGroth16Verifier.sol";
-import {Proxy} from "@optimism/src/universal/Proxy.sol";
+import {Proxy} from "../src/Proxy.sol";
 import {KailuaVerifier} from "../src/KailuaVerifier.sol";
 import {KailuaTreasury} from "../src/KailuaTreasury.sol";
 import {KailuaGame} from "../src/KailuaGame.sol";
