@@ -31,9 +31,8 @@ contract ProxyUpgradeTest is KailuaTest {
         super.setUp();
 
         // Deploy v1 KailuaVerifier implementation
-        KailuaVerifier verifierImpl = new KailuaVerifier(
-            zkvm, V1_IMAGE_ID, V1_CONFIG_HASH, V1_PERMIT_DURATION, V1_PERMIT_DELAY
-        );
+        KailuaVerifier verifierImpl =
+            new KailuaVerifier(zkvm, V1_IMAGE_ID, V1_CONFIG_HASH, V1_PERMIT_DURATION, V1_PERMIT_DELAY);
 
         // Deploy proxy with test contract as admin, set implementation
         proxy = new Proxy(address(this));
@@ -55,9 +54,7 @@ contract ProxyUpgradeTest is KailuaTest {
     }
 
     function _deployV2() internal returns (KailuaVerifier) {
-        KailuaVerifier v2 = new KailuaVerifier(
-            zkvm, V2_IMAGE_ID, V2_CONFIG_HASH, V2_PERMIT_DURATION, V2_PERMIT_DELAY
-        );
+        KailuaVerifier v2 = new KailuaVerifier(zkvm, V2_IMAGE_ID, V2_CONFIG_HASH, V2_PERMIT_DURATION, V2_PERMIT_DELAY);
         proxy.upgradeTo(address(v2));
         return v2;
     }
@@ -99,9 +96,7 @@ contract ProxyUpgradeTest is KailuaTest {
     }
 
     function testNonAdminCannotUpgrade() public {
-        KailuaVerifier v2 = new KailuaVerifier(
-            zkvm, V2_IMAGE_ID, V2_CONFIG_HASH, V2_PERMIT_DURATION, V2_PERMIT_DELAY
-        );
+        KailuaVerifier v2 = new KailuaVerifier(zkvm, V2_IMAGE_ID, V2_CONFIG_HASH, V2_PERMIT_DURATION, V2_PERMIT_DELAY);
 
         // Non-admin call to upgradeTo gets proxied to implementation, which reverts
         vm.prank(address(0xdead));
@@ -113,10 +108,7 @@ contract ProxyUpgradeTest is KailuaTest {
         KailuaVerifier v = KailuaVerifier(address(proxy));
 
         // Compute a permit key for a dummy proposal
-        bytes32 permitKey = v.faultProofPermitKey(
-            anchor,
-            bytes32(uint256(0x1234))
-        );
+        bytes32 permitKey = v.faultProofPermitKey(anchor, bytes32(uint256(0x1234)));
 
         // Verify no permits exist yet via countExpiredPermits (handles empty arrays)
         (uint64 expired, uint64 delayed, uint256 expiredColl, uint64 active) =
@@ -128,8 +120,7 @@ contract ProxyUpgradeTest is KailuaTest {
         _deployV2();
 
         // Permits storage is still accessible through the same proxy (same storage)
-        (expired, delayed, expiredColl, active) =
-            v.countExpiredPermits(permitKey, 0, 0, uint64(block.timestamp));
+        (expired, delayed, expiredColl, active) = v.countExpiredPermits(permitKey, 0, 0, uint64(block.timestamp));
         assertEq(expired, 0);
         assertEq(active, 0);
 
