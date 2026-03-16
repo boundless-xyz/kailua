@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Sequencing Proposal - The Kailua Book</title>
+        <title>FPVM Upgrade - The Kailua Book</title>
 
 
         <!-- Custom HTML head -->
@@ -148,7 +148,7 @@
                         <a href="https://github.com/boundless-xyz/kailua" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/boundless-xyz/kailua/edit/main/book/src/game.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                        <a href="https://github.com/boundless-xyz/kailua/edit/main/book/src/fpvm-upgrade.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -182,142 +182,87 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="on-chain-sequencing-proposal"><a class="header" href="#on-chain-sequencing-proposal">On-chain Sequencing Proposal</a></h1>
-<div id="admonition-note" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-title">
+                        <h1 id="fpvm-upgrade"><a class="header" href="#fpvm-upgrade">FPVM Upgrade</a></h1>
+<p>This section describes how to upgrade the <code>KailuaVerifier</code> contract behind a proxy to a new implementation, for example when the FPVM image ID changes.</p>
+<h2 id="architecture"><a class="header" href="#architecture">Architecture</a></h2>
+<p>When Kailua is deployed using <code>Deploy.s.sol</code>, the <code>KailuaVerifier</code> contract is placed behind an OP Stack <a href="https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/universal/Proxy.sol">Proxy</a> (EIP-1967).</p>
+<p>The proxy address is what <code>KailuaTreasury</code> and <code>KailuaGame</code> reference. Upgrading the implementation behind the proxy changes the FPVM image ID and other configuration values without redeploying any downstream contracts.</p>
+<div id="admonition-info" class="admonition admonish-info" role="note" aria-labelledby="admonition-info-title">
 <div class="admonition-title">
-<div id="admonition-note-title">
-<p>Note</p>
+<div id="admonition-info-title">
+<p>Info</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-note"></a>
+<a class="admonition-anchor-link" href="#admonition-info"></a>
 </div>
 <div>
-<p>If you've successfully performed fast-track migration, you do not need to follow the steps on this page.</p>
+<p>The <code>faultProofPermits</code> mapping lives in proxy storage and is preserved across upgrades.
+Configuration values (<code>FPVM_IMAGE_ID</code>, <code>RISC_ZERO_VERIFIER</code>, <code>ROLLUP_CONFIG_HASH</code>, <code>PERMIT_DURATION</code>, <code>PERMIT_DELAY</code>) are Solidity immutables embedded in each implementation's bytecode and change when the implementation changes.</p>
 </div>
 </div>
-<p>In this section you will be integrating the <code>KailuaGame</code> contract with your rollup's <code>DisputeGameFactory</code>.
-This will allow Kailua proposers to submit new proposals!</p>
-<p>The commands below will be using Foundry's <code>cast</code> utility, which you should have installed as part of the
-foundry <a href="quickstart.html#prerequisites">prerequisite</a>.</p>
-<div id="admonition-note-1" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-1-title">
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<ol>
+<li>Access to the proxy admin private key. By default, the proxy admin is the <code>DisputeGameFactory</code> owner.</li>
+<li>The address of the deployed <code>KailuaVerifier</code> proxy (<code>KAILUA_VERIFIER_PROXY</code>).</li>
+<li>The new parameter values to change (e.g. <code>FPVM_IMAGE_ID</code>). Any parameters not specified will be read from the current implementation.</li>
+</ol>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
 <div class="admonition-title">
-<div id="admonition-note-1-title">
-<p>Note</p>
+<div id="admonition-warning-title">
+<p>Warning</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-note-1"></a>
+<a class="admonition-anchor-link" href="#admonition-warning"></a>
 </div>
 <div>
-<p>The below foundry commands expect both a parameter that determines the wallet to use and the rpc endpoint of the parent
-chain.
-You will have to add these two parameters manually to every command below.
-For more information, refer to <code>cast call --help</code>, and <code>cast send --help</code></p>
+<p>The <code>upgradeTo</code> call must be sent by the proxy admin. If the admin is a multisig or Safe, you will need to route the transaction through the appropriate signing workflow.</p>
 </div>
 </div>
-<div id="admonition-tip" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-title">
-<div class="admonition-title">
-<div id="admonition-tip-title">
-<p>Tip</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-tip"></a>
-</div>
-<div>
-<p>If your rollup <code>owner</code> account is controlled by a <code>Safe</code> contract, or some other multi-sig contract, you can use
-<code>cast calldata</code> to get the necessary input that your wallet contract should forward.</p>
-</div>
-</div>
-<h2 id="set-collateral-requirement"><a class="header" href="#set-collateral-requirement">Set Collateral Requirement</a></h2>
-<p>Before allowing sequencing proposals past the anchor state, you'll need to set the bond value (in wei) required for proposers.
-This is done by calling the <code>setParticipationBond</code> function on the treasury contract using the <code>owner</code> wallet for your
-rollup.</p>
-<p>For example, if your bond value is 12 eth, first convert this to wei using <code>cast</code>:</p>
-<pre><code class="language-shell">cast to-wei 12
+<h2 id="running-the-upgrade"><a class="header" href="#running-the-upgrade">Running the Upgrade</a></h2>
+<p>Change your working directory to <code>crates/contracts/foundry</code>:</p>
+<pre><code class="language-shell">cd crates/contracts/foundry
 </code></pre>
-<pre><code>12000000000000000000
+<p>Set the required environment variables:</p>
+<pre><code class="language-shell">export PRIVATE_KEY=[PROXY_ADMIN_PRIVATE_KEY]
+export KAILUA_VERIFIER_PROXY=[DEPLOYED_PROXY_ADDRESS]
 </code></pre>
-<p>Then, configure the bond as follows using the rollup <code>owner</code> wallet:</p>
-<pre><code class="language-shell">cast send \
-  [YOUR_DEPLOYED_TREASURY_CONTRACT] \
-  "setParticipationBond(uint256 amount)" \
-  12000000000000000000
+<p>Set only the parameters you want to change. Any omitted parameters will be read from the current implementation:</p>
+<pre><code class="language-shell"># Example: upgrading only the FPVM image ID
+export FPVM_IMAGE_ID=[NEW_FPVM_IMAGE_ID]
 </code></pre>
-<h2 id="set-kailuagame-implementation"><a class="header" href="#set-kailuagame-implementation">Set KailuaGame Implementation</a></h2>
-<p>The next step is to update the implementation for the Kailua game type stored in the <code>DisputeGameFactory</code> contract to
-point towards the <code>KailuaGame</code> contract deployed previously.
-This can be done as follows using your <code>owner</code> wallet:</p>
-<pre><code class="language-shell">cast send [YOUR_DISPUTE_GAME_FACTORY] \
-  "setImplementation(uint32, address)" \
-  [YOUR_KAILUA_GAME_TYPE] \
-  [YOUR_DEPLOYED_GAME_CONTRACT]
+<p>The full set of optional parameters is:</p>
+<ul>
+<li><code>FPVM_IMAGE_ID</code>: The RISC Zero image ID of the fault proof program.</li>
+<li><code>RISC_ZERO_VERIFIER</code>: The address of the RISC Zero verifier contract.</li>
+<li><code>ROLLUP_CONFIG_HASH</code>: The hash of the rollup configuration.</li>
+<li><code>PERMIT_DURATION</code>: The duration (in seconds) after which a fault proof permit expires.</li>
+<li><code>PERMIT_DELAY</code>: The duration (in seconds) after which a fault proof permit becomes active.</li>
+</ul>
+<p>Run the upgrade script:</p>
+<pre><code class="language-shell">forge script UpgradeVerifierScript --rpc-url [YOUR_ETH_RPC_URL] --broadcast
 </code></pre>
-<div id="admonition-success" class="admonition admonish-success" role="note" aria-labelledby="admonition-success-title">
-<div class="admonition-title">
-<div id="admonition-success-title">
-<p>Success</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-success"></a>
-</div>
-<div>
-<p>You have now enabled Kailua sequencing proposals to be published!</p>
-</div>
-</div>
-<h2 id="designate-vanguard-optional"><a class="header" href="#designate-vanguard-optional">Designate Vanguard (Optional)</a></h2>
-<p>To assign a Vanguard, you'll need to call <code>assignVanguard</code> on the anchoring game instance you created.
-This can be done as follows using your <code>owner</code> wallet:</p>
-<pre><code class="language-shell">cast send [YOUR_GAME_INSTANCE_ADDRESS] \
-  "assignVanguard(address, uint64)" \
-  [YOUR_VANGUARD_ADDRESS] \
-  [YOUR_VANGUARD_ADVANTAGE]
+<h2 id="verification"><a class="header" href="#verification">Verification</a></h2>
+<p>After the upgrade, verify the new implementation's values through the proxy:</p>
+<pre><code class="language-shell"># Check the new FPVM image ID
+cast call [KAILUA_VERIFIER_PROXY] "FPVM_IMAGE_ID() returns (bytes32)" --rpc-url [YOUR_ETH_RPC_URL]
+
+# Check the RISC Zero verifier address
+cast call [KAILUA_VERIFIER_PROXY] "RISC_ZERO_VERIFIER() returns (address)" --rpc-url [YOUR_ETH_RPC_URL]
+
+# Check the rollup config hash
+cast call [KAILUA_VERIFIER_PROXY] "ROLLUP_CONFIG_HASH() returns (bytes32)" --rpc-url [YOUR_ETH_RPC_URL]
+
+# Check the version
+cast call [KAILUA_VERIFIER_PROXY] "version() returns (string)" --rpc-url [YOUR_ETH_RPC_URL]
 </code></pre>
-<div id="admonition-success-1" class="admonition admonish-success" role="note" aria-labelledby="admonition-success-1-title">
-<div class="admonition-title">
-<div id="admonition-success-1-title">
-<p>Success</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-success-1"></a>
-</div>
-<div>
-<p>You have now designated a Vanguard for Kailua sequencing proposals!</p>
-</div>
-</div>
-<h2 id="enable-withdrawals-optional"><a class="header" href="#enable-withdrawals-optional">Enable Withdrawals (Optional)</a></h2>
-<p>To enable your users to perform withdrawals using Kailua sequencing proposals, you will need to call
-<code>setRespectedGameType</code> on your <code>OptimismPortal2</code> contract using your <code>guardian</code> wallet.</p>
-<div id="admonition-bug" class="admonition admonish-bug" role="note" aria-labelledby="admonition-bug-title">
-<div class="admonition-title">
-<div id="admonition-bug-title">
-<p>Bug</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-bug"></a>
-</div>
-<div>
-<p>This action may cause your optimism <code>op-proposer</code> agent to crash.
-However, you will later run the Kailua proposer agent for sequencing anyway.</p>
-</div>
-</div>
-<pre><code class="language-shell">cast send [YOUR_OPTIMISM_PORTAL] \
-  "setRespectedGameType(uint32)" \
-  [YOUR_KAILUA_GAME_TYPE]
-</code></pre>
-<div id="admonition-success-2" class="admonition admonish-success" role="note" aria-labelledby="admonition-success-2-title">
-<div class="admonition-title">
-<div id="admonition-success-2-title">
-<p>Success</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-success-2"></a>
-</div>
-<div>
-<p>You have now enabled withdrawals using resolved (finalized) Kailua sequencing proposals!</p>
-</div>
-</div>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="treasury.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="game.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="fpvm-upgrade.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="operate.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -327,11 +272,11 @@ However, you will later run the Kailua proposer agent for sequencing anyway.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="treasury.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="game.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="fpvm-upgrade.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="operate.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
