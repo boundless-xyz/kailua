@@ -33,7 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          fetch-depth: 1
+          fetch-tags: false
+          show-progress: false
+          submodules: false
+      - name: Shallow submodules
+        run: git submodule update --init --recursive --depth 1
 
       - uses: docker/login-action@v3
         with:
