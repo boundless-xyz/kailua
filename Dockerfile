@@ -61,8 +61,12 @@ RUN set -e; \
     if [ -n "$BUILD_FEATURES" ]; then FEATURES="$FEATURES,$BUILD_FEATURES"; fi; \
     cargo chef cook --jobs ${CARGO_BUILD_JOBS} --release -p kailua-cli --features $FEATURES --recipe-path recipe.json
 
-# Copy real sources — only workspace crates recompile from here.
-COPY . .
+# Copy only workspace source directories and the lock file so that unrelated
+# file changes (README, CI configs, scripts, etc.) do not invalidate this layer.
+COPY Cargo.lock ./
+COPY bin/ bin/
+COPY build/ build/
+COPY crates/ crates/
 
 RUN set -e; \
     FEATURES="disable-dev-mode,prove"; \
