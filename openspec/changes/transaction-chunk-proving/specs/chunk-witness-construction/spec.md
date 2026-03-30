@@ -1,8 +1,8 @@
 ## ADDED Requirements
 
-### Requirement: Host computes per-transaction EvmState traces via TracingEvmFactory
+### Requirement: Host computes per-transaction tx-body EvmState traces via TracingEvmFactory
 
-The host-side pre-execution SHALL use `TracingEvmFactory` to capture per-transaction `EvmState` (the `HashMap<Address, Account>` from `ResultAndState.state`) during `build_block()`. Each trace entry corresponds to one transaction and contains all accounts and storage slots that the transaction accessed (read or wrote).
+The host-side pre-execution SHALL use `TracingEvmFactory` to capture per-transaction `EvmState` (the `HashMap<Address, Account>` from `ResultAndState.state`) during `build_block()`'s ordered transaction-body execution. Each trace entry corresponds to one ordered block transaction and contains all accounts and storage slots that the transaction accessed (read or wrote). Block-level prelude and epilogue state transitions are handled outside this trace sequence.
 
 #### Scenario: trace count matches transaction count
 - **WHEN** a block with N transactions is pre-executed on the host
@@ -11,6 +11,10 @@ The host-side pre-execution SHALL use `TracingEvmFactory` to capture per-transac
 #### Scenario: trace contains original and present values
 - **WHEN** a transaction reads storage slot S at address A
 - **THEN** the trace entry for that transaction includes `(A, S)` with `original_value` (pre-block trie value) and `present_value` (value after this transaction)
+
+#### Scenario: prelude and epilogue do not create extra trace entries
+- **WHEN** the host applies once-per-block prelude and epilogue logic around the transaction body
+- **THEN** those state transitions do not add extra entries to the per-transaction trace buffer
 
 ### Requirement: Host groups transactions into chunks
 
@@ -28,22 +32,36 @@ The host SHALL group a block's transactions into sequential, non-overlapping chu
 - **WHEN** a block has 5 transactions and `max_txs_per_chunk = 100`
 - **THEN** 1 chunk is created containing all 5 transactions (effectively monolithic)
 
-### Requirement: Host constructs minimal flat state witness per chunk
+### Requirement: Host constructs chunk-start flat state witnesses from boundary snapshots
 
-For each chunk, the host SHALL compute the minimal `Cache` (accounts + storage + contracts + block_hashes) that the chunk's transactions will access. The algorithm SHALL:
-1. Track cumulative writes from all prior chunks.
-2. For each transaction in the chunk, identify external reads: (addr, slot) pairs that are not written by a prior transaction within the same chunk.
-3. For each external read: if a prior chunk wrote to that (addr, slot), use the prior chunk's written value. Otherwise, use the `original_value` from the trace (pre-block trie value).
-4. Include all contracts (bytecodes) referenced by the chunk's transactions.
-5. Include all block_hashes referenced by the chunk's transactions.
+For each chunk, the host SHALL compute a chunk-start `Cache` snapshot derived from the post-prelude boundary state immediately before that chunk executes. The witness MAY prune addresses and storage slots that the chunk cannot access, but for every included address it SHALL carry the full chunk-start `DbAccount` metadata (`AccountInfo` and `account_state`) in addition to the required storage slots. The algorithm SHALL:
+1. Materialize the post-prelude flat state once.
+2. Track a boundary state across chunks by applying all prior chunks' account-level and storage-level writes.
+3. For each chunk, identify the externally needed addresses, storage slots, contracts, and block hashes for that chunk.
+4. For each needed address, load its full chunk-start `DbAccount` snapshot from the current boundary state, including nonce, balance, code hash, existence / cleared / destroyed state, and any other `AccountInfo` fields.
+5. For each needed storage slot, use the value from the chunk-start boundary state. If a prior chunk wrote the slot, use the carried-forward value; otherwise, use the post-prelude trie value.
+6. Include all contracts (bytecodes) referenced by the chunk's transactions.
+7. Include all block_hashes referenced by the chunk's transactions.
 
-#### Scenario: first chunk reads from pre-block state
-- **WHEN** chunk_0 reads storage slot S at address A and no prior chunk exists
-- **THEN** the witness includes `(A, S) -> original_value` from the pre-block trie
+#### Scenario: first chunk reads from post-prelude state
+- **WHEN** `chunk_0` reads state and no prior chunk exists
+- **THEN** the witness includes the chunk-start boundary values from the post-prelude flat state
 
 #### Scenario: later chunk reads prior chunk's write
 - **WHEN** chunk_0 writes slot S at address A to value V, and chunk_1 reads slot S at address A
 - **THEN** chunk_1's witness includes `(A, S) -> V` (chunk_0's written value, not the pre-block value)
+
+#### Scenario: later chunk sees prior chunk's account metadata changes
+- **WHEN** chunk_0 changes an address's nonce, balance, code hash, or existence state, and chunk_1 accesses that address
+- **THEN** chunk_1's witness includes the updated chunk-start `DbAccount` snapshot from after chunk_0
+
+#### Scenario: later chunk sees prior chunk's contract creation
+- **WHEN** chunk_0 creates a contract at address A and chunk_1 calls or inspects A
+- **THEN** chunk_1's witness includes A as an existing account with the created code hash and bytecode from the chunk-start boundary state
+
+#### Scenario: later chunk sees prior chunk's selfdestruct or cleared state
+- **WHEN** chunk_0 selfdestructs or clears account A and chunk_1 accesses A
+- **THEN** chunk_1's witness includes A's updated `account_state` from the chunk-start boundary state rather than the original trie state
 
 #### Scenario: intra-chunk write satisfies later read
 - **WHEN** tx_0 in chunk_1 writes slot S, and tx_2 in chunk_1 reads slot S
@@ -51,7 +69,7 @@ For each chunk, the host SHALL compute the minimal `Cache` (accounts + storage +
 
 #### Scenario: witness completeness
 - **WHEN** a chunk witness is constructed and provided to the chunk guest
-- **THEN** no PanicDB fallback is triggered during execution (all required state is present)
+- **THEN** no PanicDB fallback is triggered during execution (all required account metadata, storage values, contracts, and block hashes are present)
 
 ### Requirement: Host constructs EVM state accumulators per chunk
 

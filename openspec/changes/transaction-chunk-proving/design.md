@@ -30,7 +30,7 @@ The guest programs (`kailua-fpvm-kona`, `kailua-fpvm-hana`, `kailua-fpvm-hokulea
 
 ### Decision 1: Custom EvmFactory for state tracing (not vendored modifications)
 
-**Choice**: Create `TracingEvmFactory` + `TracingOpEvm` that wrap `OpEvmFactory`/`OpEvm`, intercepting `transact_raw()` to clone per-transaction `EvmState`.
+**Choice**: Create `TracingEvmFactory` + `TracingOpEvm` that wrap `OpEvmFactory`/`OpEvm`, intercepting `transact_raw()` to clone per-transaction `EvmState` for the ordered block transaction body only.
 
 **Alternatives considered**:
 - *Modify `build_block()` to accept a state hook* (~10 lines in kona fork): Simpler but modifies vendored code.
@@ -38,7 +38,7 @@ The guest programs (`kailua-fpvm-kona`, `kailua-fpvm-hana`, `kailua-fpvm-hokulea
 - *Two-pass execution (execute then re-execute with tracing)*: Wasteful — `execute_block` builds a new block, not a replay.
 - *Database wrapper intercepting `commit()`*: Type-level complications with the Inspector generic parameter.
 
-**Rationale**: The `EvmFactory` is a generic parameter throughout `KonaExecutor<P, H, Evm>` and `StatelessL2Builder<P, H, Evm>`. Replacing it requires only changing `CachedExecutor::new()` generics — the vendored code's generic plumbing carries our factory through unchanged. The `Evm` trait has 8 methods; only `transact_raw()` needs interception (a `.clone()` on the result state).
+**Rationale**: The `EvmFactory` is a generic parameter throughout `KonaExecutor<P, H, Evm>` and `StatelessL2Builder<P, H, Evm>`. Replacing it requires only changing `CachedExecutor::new()` generics — the vendored code's generic plumbing carries our factory through unchanged. The `Evm` trait has 8 methods; only `transact_raw()` needs interception for chunk tracing (a `.clone()` on the result state). `transact_system_call()` remains a transparent delegation because block-level prelude and epilogue are handled outside chunk proving and outside the chunk trace buffer.
 
 ### Decision 2: Reuse ProofJournal for chunk proofs (not a new journal type)
 
@@ -95,6 +95,24 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 **Choice**: The `TracingEvmFactory` captures traces during the normal `build_block()` execution — one pass, not two.
 
 **Rationale**: `execute_block()` builds a new block from transactions on top of current state. There's no prior result to "replay." The `TracingOpEvm` wrapper adds a single `.clone()` per transaction to capture `ResultAndState.state`. This runs only on the host (the guest uses the block cache), so the overhead is trivial relative to proving time.
+
+### Decision 8: Chunk proofs cover only the block transaction body
+
+**Choice**: Block-level prelude and epilogue execute outside chunk proving altogether. The chunk chain starts from the post-prelude flat state and ends at the post-last-transaction, pre-epilogue flat state.
+
+**Rationale**: The current OP block executor applies once-per-block side effects outside the transaction loop. Replaying those effects in every chunk would break equivalence with monolithic execution. By moving them outside the chunk chain, chunk proofs become a clean proof of the ordered transaction body only, while the aggregation proof preserves exact once-per-block semantics.
+
+### Decision 9: Chunk witnesses are boundary snapshots with full account metadata
+
+**Choice**: For every address that a chunk may need, the witness carries the chunk-start `DbAccount` boundary snapshot (`AccountInfo`, `account_state`, and required storage slots), not only carried-forward storage values.
+
+**Rationale**: Cross-chunk correctness depends on more than storage slots. Later chunks may depend on sender nonce/balance changes, account existence, code hash transitions, contract creation, and selfdestruct state from earlier chunks. revm's flat `Cache` can represent those transitions directly, so the witness construction algorithm should track chunk boundaries at the account level and prune only unused addresses or slots.
+
+### Decision 10: The trace buffer represents only the ordered transaction body
+
+**Choice**: The tracing buffer is defined as one entry per ordered block transaction in execution order. Prelude and epilogue state transitions are materialized separately as part of the once-per-block aggregation flow and are not appended to the chunk trace buffer.
+
+**Rationale**: Chunk witnesses are built from tx-body boundaries. Keeping the trace buffer aligned to the ordered transaction list makes chunk partitioning deterministic and keeps `tx_start`/`tx_count` indexed against the same sequence used by the prover, guest, and aggregator.
 
 ## Risks / Trade-offs
 

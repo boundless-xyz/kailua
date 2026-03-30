@@ -1,8 +1,8 @@
 ## ADDED Requirements
 
-### Requirement: TracingOpEvm wraps OpEvm and captures per-transaction EvmState
+### Requirement: TracingOpEvm wraps OpEvm and captures tx-body EvmState
 
-The system SHALL provide a `TracingOpEvm<DB, I>` struct that wraps `OpEvm<DB, I, PrecompilesMap>` and implements the `Evm` trait. The `transact_raw()` method SHALL clone `ResultAndState.state` into a shared trace buffer before returning. All other `Evm` trait methods SHALL delegate to the inner `OpEvm` without modification.
+The system SHALL provide a `TracingOpEvm<DB, I>` struct that wraps `OpEvm<DB, I, PrecompilesMap>` and implements the `Evm` trait. The `transact_raw()` method SHALL clone `ResultAndState.state` into a shared trace buffer before returning. The trace buffer represents only the ordered block transaction body used for chunk proving. Block-level prelude and epilogue state transitions are handled separately and SHALL NOT append extra entries to the chunk trace buffer. All other `Evm` trait methods SHALL delegate to the inner `OpEvm` without modification.
 
 #### Scenario: transact_raw captures state on success
 - **WHEN** `TracingOpEvm::transact_raw(tx)` is called and the inner EVM returns `Ok(ResultAndState { result, state })`
@@ -11,6 +11,10 @@ The system SHALL provide a `TracingOpEvm<DB, I>` struct that wraps `OpEvm<DB, I,
 #### Scenario: transact_raw propagates errors without capturing
 - **WHEN** `TracingOpEvm::transact_raw(tx)` is called and the inner EVM returns `Err(e)`
 - **THEN** the error is returned unmodified and no entry is added to the trace buffer
+
+#### Scenario: transact_system_call does not append tx-body traces
+- **WHEN** `TracingOpEvm::transact_system_call(...)` is called for block-level prelude or epilogue work
+- **THEN** the call is delegated to the inner `OpEvm`, and no entry is appended to the chunk trace buffer
 
 #### Scenario: delegation methods are transparent
 - **WHEN** any `Evm` trait method other than `transact_raw()` is called on `TracingOpEvm`
@@ -28,9 +32,9 @@ The system SHALL provide a `TracingEvmFactory` struct that implements `EvmFactor
 - **WHEN** `TracingEvmFactory::create_evm_with_inspector(db, env, inspector)` is called
 - **THEN** it creates an `OpEvm` via the inner `OpEvmFactory::create_evm_with_inspector(db, env, inspector)` and wraps it in `TracingOpEvm` with the shared trace buffer
 
-#### Scenario: trace buffer accumulates across transactions within a block
+#### Scenario: trace buffer accumulates across tx-body transactions within a block
 - **WHEN** a block with N transactions is executed using a `TracingEvmFactory`-produced EVM
-- **THEN** the trace buffer contains exactly N entries, one per transaction, in execution order
+- **THEN** the trace buffer contains exactly N entries, one per ordered block transaction, in execution order, and block-level prelude / epilogue work does not add extra entries
 
 ### Requirement: CachedExecutor accepts generic EvmFactory
 

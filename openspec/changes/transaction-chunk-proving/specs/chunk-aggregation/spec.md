@@ -1,8 +1,8 @@
 ## ADDED Requirements
 
-### Requirement: Block aggregation loads initial state from trie into memory DB
+### Requirement: Block aggregation loads trie state and applies prelude once before chunk verification
 
-The block aggregation mode SHALL load the required state from the state trie (via TrieDB/preimage oracles, as done in current block execution) and populate a `Cache` structure. The SHA256 of this initial cache is `initial_db_hash`. The initial EVM state accumulators SHALL be zeroed, producing `initial_evm_hash`.
+The block aggregation mode SHALL load the required state from the state trie (via TrieDB/preimage oracles, as done in current block execution), populate a `Cache` structure, and apply the block-level prelude exactly once before verifying any chunks. The SHA256 of the resulting post-prelude cache is `initial_db_hash`. The initial tx-body EVM state accumulators SHALL be zeroed, producing `initial_evm_hash`.
 
 #### Scenario: initial state is Merkle-verified
 - **WHEN** the block aggregation proof loads state from the trie
@@ -11,6 +11,10 @@ The block aggregation mode SHALL load the required state from the state trie (vi
 #### Scenario: initial_db_hash matches chunk_0's pre_db_hash
 - **WHEN** chunk_0 was proven with `pre_db_hash = H`
 - **THEN** the block aggregation computes `initial_db_hash == H`
+
+#### Scenario: prelude is not replayed inside chunks
+- **WHEN** block aggregation verifies the chunk chain
+- **THEN** the prelude has already been applied exactly once before `chunk_0`, and no chunk verification step replays it
 
 ### Requirement: Block aggregation verifies chunk proof chain
 
@@ -39,19 +43,24 @@ For each chunk `i` in order (0 to N-1), the block aggregation proof SHALL:
 - **WHEN** chunk `i` is verified with `post_evm_hash_i`
 - **THEN** chunk `i+1`'s expected `pre_evm_state_hash` is `post_evm_hash_i`
 
-### Requirement: Block aggregation verifies final state and computes trie root
+### Requirement: Block aggregation verifies post-transaction state, applies epilogue once, and computes trie root
 
 After all chunks are verified, the block aggregation proof SHALL:
-1. Load the full final `Cache` from the witness.
-2. Verify `SHA256(final_cache) == current_db_hash` (matches last chunk's post_db_hash).
+1. Load the full post-transaction-body `Cache` from the witness.
+2. Verify `SHA256(post_tx_cache) == current_db_hash` (matches the last chunk's `post_db_hash`).
 3. Load the full final EVM state from the witness.
-4. Verify `SHA256(final_evm_state) == current_evm_hash` (matches last chunk's post_evm_hash).
-5. Diff `final_cache` against `initial_cache` to produce a `BundleState`.
-6. Compute `state_root = trie_db.state_root(&bundle)` — the single trie computation for the block.
+4. Verify `SHA256(final_evm_state) == current_evm_hash` (matches the last chunk's `post_evm_hash`).
+5. Apply the block-level epilogue exactly once to `post_tx_cache`.
+6. Diff the epilogue-adjusted final cache against the initial trie state to produce a `BundleState`.
+7. Compute `state_root = trie_db.state_root(&bundle)` — the single trie computation for the block.
 
-#### Scenario: final cache hash mismatch causes failure
-- **WHEN** `SHA256(final_cache) != current_db_hash`
+#### Scenario: post-transaction cache hash mismatch causes failure
+- **WHEN** `SHA256(post_tx_cache) != current_db_hash`
 - **THEN** the block aggregation proof fails
+
+#### Scenario: epilogue runs exactly once after the chunk chain
+- **WHEN** the final chunk has been verified
+- **THEN** the aggregation proof applies the epilogue exactly once before computing the final trie diff and header
 
 #### Scenario: state root matches monolithic execution
 - **WHEN** a block is proven via chunking
