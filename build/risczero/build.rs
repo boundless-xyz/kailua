@@ -59,8 +59,8 @@ fn main() {
 
             std::collections::HashMap::from([
                 ("kailua-fpvm-kona", guest_options.clone()),
-                ("kailua-fpvm-hokulea", guest_options.clone()),
-                ("kailua-fpvm-hana", guest_options.clone()),
+                // ("kailua-fpvm-hokulea", guest_options.clone()),
+                // ("kailua-fpvm-hana", guest_options.clone()),
             ])
         });
     }
