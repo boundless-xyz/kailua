@@ -20,6 +20,18 @@ The system SHALL provide a `TracingOpEvm<DB, I>` struct that wraps `OpEvm<DB, I,
 - **WHEN** any `Evm` trait method other than `transact_raw()` is called on `TracingOpEvm`
 - **THEN** the call is delegated to the inner `OpEvm` and the result is returned unmodified
 
+### Requirement: TracingOpEvm implements Deref and DerefMut to OpContext
+
+`TracingOpEvm<DB, I>` SHALL implement `Deref<Target = OpContext<DB>>` and `DerefMut<Target = OpContext<DB>>` by delegating to the inner `OpEvm`'s `ctx()` and `ctx_mut()` public inherent methods. This is required because `OpBlockExecutor` accesses EVM fields (block env, cfg, database) through Deref, not through the `Evm` trait.
+
+#### Scenario: Deref-based field access works
+- **WHEN** `OpBlockExecutor` accesses `self.evm.block()`, `self.evm.cfg`, or `self.evm.db_mut()` via Deref on a `TracingOpEvm`
+- **THEN** the access resolves to the inner `OpContext<DB>` fields identically to `OpEvm`
+
+#### Scenario: mutable Deref-based access works
+- **WHEN** `OpBlockExecutor` calls `self.evm.db_mut().commit(state)` or `self.evm.db_mut().set_state_clear_flag(flag)` via DerefMut
+- **THEN** the mutation applies to the inner `OpContext<DB>` database
+
 ### Requirement: TracingEvmFactory wraps OpEvmFactory and injects TracingOpEvm
 
 The system SHALL provide a `TracingEvmFactory` struct that implements `EvmFactory` with `type Evm<DB, I> = TracingOpEvm<DB, I>`. The factory SHALL hold a shared `Arc<Mutex<Vec<EvmState>>>` trace buffer that is passed to each `TracingOpEvm` it creates.

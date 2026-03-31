@@ -4,13 +4,21 @@
 
 The block aggregation mode SHALL load the required state from the state trie (via TrieDB/preimage oracles, as done in current block execution), populate a `Cache` structure, and apply the block-level prelude exactly once before verifying any chunks. The SHA256 of the resulting post-prelude cache is `initial_db_hash`. The initial tx-body EVM state accumulators SHALL be zeroed, producing `initial_evm_hash`.
 
+#### Scenario: prelude uses public BlockExecutor API
+- **WHEN** the block aggregation applies the prelude
+- **THEN** it calls `BlockExecutor::apply_pre_execution_changes()` on an `OpBlockExecutor` created via `OpBlockExecutorFactory::create_executor()`, using the public trait method
+
+#### Scenario: executor is dropped after prelude to release state borrow
+- **WHEN** the prelude completes
+- **THEN** the executor is dropped, releasing the `&mut State` borrow so the aggregation can hash the post-prelude state and manipulate it directly
+
 #### Scenario: initial state is Merkle-verified
 - **WHEN** the block aggregation proof loads state from the trie
 - **THEN** each account and storage value is verified against the state trie's Merkle proofs (existing TrieDB behavior)
 
-#### Scenario: initial_db_hash matches chunk_0's pre_db_hash
-- **WHEN** chunk_0 was proven with `pre_db_hash = H`
-- **THEN** the block aggregation computes `initial_db_hash == H`
+#### Scenario: initial_db_hash uses canonical normalization of CacheState
+- **WHEN** chunk_0 was proven with `pre_db_hash = H` using `Cache` (from `CacheDB`)
+- **THEN** the block aggregation computes `initial_db_hash == H` from `CacheState` (from `State<TrieDB>`) via the canonical normalization that maps both representations to the same hash
 
 #### Scenario: prelude is not replayed inside chunks
 - **WHEN** block aggregation verifies the chunk chain
@@ -58,9 +66,17 @@ After all chunks are verified, the block aggregation proof SHALL:
 - **WHEN** `SHA256(post_tx_cache) != current_db_hash`
 - **THEN** the block aggregation proof fails
 
+#### Scenario: epilogue uses public standalone functions
+- **WHEN** the aggregation applies the epilogue
+- **THEN** it calls `post_block_balance_increments()` (public from `alloy_evm::block::state_changes`) and `State::increment_balances()` (public on `State<DB>`) rather than using `OpBlockExecutor::finish()`, which expects the executor to have processed transactions
+
 #### Scenario: epilogue runs exactly once after the chunk chain
 - **WHEN** the final chunk has been verified
 - **THEN** the aggregation proof applies the epilogue exactly once before computing the final trie diff and header
+
+#### Scenario: BundleState constructed from diff with empty reverts
+- **WHEN** the aggregation constructs a `BundleState` for trie root computation
+- **THEN** it diffs the initial (post-prelude) and final (post-epilogue) states, creates `BundleAccount` entries with `original_info`/`info`/`storage` changes, and leaves `reverts` empty (trie_db.state_root only reads forward state)
 
 #### Scenario: state root matches monolithic execution
 - **WHEN** a block is proven via chunking

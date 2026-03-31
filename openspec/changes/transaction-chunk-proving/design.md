@@ -114,6 +114,58 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 **Rationale**: Chunk witnesses are built from tx-body boundaries. Keeping the trace buffer aligned to the ordered transaction list makes chunk partitioning deterministic and keeps `tx_start`/`tx_count` indexed against the same sequence used by the prover, guest, and aggregator.
 
+### Decision 11: TracingOpEvm must implement Deref/DerefMut to OpContext
+
+**Choice**: `TracingOpEvm<DB, I>` implements `Deref<Target = OpContext<DB>>` and `DerefMut` by delegating to `self.inner.ctx()` / `self.inner.ctx_mut()`, which are public inherent methods on `OpEvm`.
+
+**Rationale**: `OpBlockExecutor` accesses EVM fields through `Deref`, not through the `Evm` trait. Every access like `self.evm.block()`, `self.evm.db_mut()`, `self.evm.cfg` resolves via `Deref<Target = OpContext<DB>>`. Without this impl, the block executor cannot access block environment or database state. This is a hidden requirement not visible from the `Evm` trait definition alone.
+
+### Decision 12: Aggregation prelude/epilogue uses public BlockExecutor and standalone functions
+
+**Choice**: The aggregation proof applies prelude via the public `BlockExecutor::apply_pre_execution_changes()` trait method, then drops the executor to release the state borrow. After chunk verification and state application, epilogue is applied manually using the public standalone functions `post_block_balance_increments()` and `State::increment_balances()`.
+
+**Alternatives considered**:
+- *Using `finish()` for epilogue*: `finish()` bundles balance increments with receipt/gas assembly and expects the executor to have processed transactions. Since the aggregation proof verifies chunks instead of executing transactions, the executor's internal receipt list is empty, making `finish()` produce incorrect results.
+- *Calling `apply_post_execution_changes()` (trait method)*: This is a separate post-execution system call hook from alloy-evm's base trait. Currently a no-op for OP-Stack blocks but may gain future hardfork logic. Should be called for forward compatibility.
+
+**Rationale**: `apply_pre_execution_changes()` is already used independently in op-reth's payload builder and flashblocks worker. The balance increment functions are public imports from `alloy_evm::block::state_changes`. This gives us clean prelude/epilogue separation without modifying vendored code. The aggregation flow becomes:
+1. Create executor → `apply_pre_execution_changes()` (prelude)
+2. Drop executor (release state borrow)
+3. Hash post-prelude state → `initial_db_hash`
+4. Verify chunk hash chain
+5. Load final state from witness, apply diff to State
+6. Apply `post_block_balance_increments()` + `increment_balances()` (epilogue)
+7. `state.merge_transitions()` → `take_bundle()` → `trie_db.state_root(&bundle)`
+8. Build header manually using public `compute_receipts_root()`, `ordered_trie_with_encoder()`
+
+### Decision 13: Canonical state hashing normalizes CacheState and Cache to a common representation
+
+**Choice**: Both the aggregation proof (which uses `State<TrieDB>` internally, storing `CacheState` with `CacheAccount`/`AccountStatus`) and chunk proofs (which use `CacheDB<PanicDB>`, storing `Cache` with `DbAccount`/`AccountState`) hash state through a shared canonical encoding that normalizes both representations to the same byte layout before SHA256.
+
+**Rationale**: `CacheState` uses `CacheAccount { account: Option<PlainAccount>, status: AccountStatus }` while `Cache` uses `DbAccount { info: AccountInfo, account_state: AccountState, storage }`. These contain the same logical data in different wrapper types. `AccountStatus` (richer enum: Loaded, Changed, Destroyed, DestroyedChanged, etc.) maps to `AccountState` (simpler: None, Touched, StorageCleared, NotExisting) for hashing purposes. The canonical encoding is defined over logical account data (nonce, balance, code_hash, existence, storage) so both representations produce identical hashes for the same logical state.
+
+### Decision 14: Cache serialization uses rkyv-compatible mirror types
+
+**Choice**: Define rkyv-serializable mirror types (`SerializableCache`, `SerializableDbAccount`, etc.) in Kailua code that can be constructed from revm's `Cache`/`CacheState` and converted back. Use these for chunk witness serialization within the `Witness` struct.
+
+**Alternatives considered**:
+- *Enable serde on revm types and use bincode*: Breaks consistency with the rest of the Witness struct which uses rkyv. Mixed serialization formats add complexity.
+- *Implement rkyv traits on foreign revm types*: Orphan rule prevents this without newtype wrappers.
+
+**Rationale**: revm's `Cache`, `DbAccount`, `AccountInfo`, and `Bytecode` derive `serde::{Serialize, Deserialize}` (feature-gated) but have no rkyv support. Since the existing `Witness` struct uses rkyv throughout, mirror types maintain consistency. The conversion is mechanical (field-by-field copy) and tested via round-trip tests.
+
+### Decision 15: BundleState constructed from Cache diff with empty reverts
+
+**Choice**: The aggregation proof constructs a `BundleState` by diffing the initial (post-prelude) and final (post-chunks + epilogue) Cache snapshots. For each changed account: `BundleAccount { info: final_info, original_info: initial_info, storage: changed_slots, status: Changed }`. Reverts are left empty.
+
+**Rationale**: `trie_db.state_root(&bundle)` only reads forward state (`bundle.state()`, `account.info`, `storage.present_value`). It does not access `reverts`. Empty reverts are safe for state root computation. This avoids the complexity of constructing per-transaction revert records.
+
+### Decision 16: Header construction replicates EIP-1559 extra_data encoding
+
+**Choice**: The aggregation proof builds the block header manually using public APIs (`compute_receipts_root()`, `ordered_trie_with_encoder()`, `trie_db.state_root()`, `trie_db.get_trie_account()` for withdrawal root, `alloy_primitives::logs_bloom()`). The `extra_data` field requires replicating the `pub(crate)` functions `encode_holocene_eip_1559_params` and `encode_jovian_eip_1559_params` (~40 lines).
+
+**Rationale**: All header fields except `extra_data` can be computed from public APIs. The EIP-1559 encoding functions are `pub(crate)` in kona-executor, requiring ~40 lines of replication. This is the only vendored logic that must be mirrored. It must be kept in sync with upstream hardfork changes — a maintenance cost accepted as the price of zero vendored modifications.
+
 ## Risks / Trade-offs
 
 **[Risk] Chunk witness size may exceed monolithic witness for overlapping state access** → Mitigation: The total witness across all chunks may duplicate state that multiple chunks read. This is acceptable per design constraints. The `max_txs_per_chunk` parameter allows tuning the parallelism/witness-size trade-off.
@@ -129,3 +181,11 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 **[Trade-off] Double execution on host for blocks with chunking** → The `TracingEvmFactory` runs the block once with tracing. This is the same cost as today's monolithic pre-execution, plus the `.clone()` overhead per transaction. No additional execution pass.
 
 **[Trade-off] Increased proof count** → A block with N chunks produces N+1 proofs (N chunks + 1 aggregation) instead of 1. Proof composition via `env::verify()` adds recursive verification overhead. This is acceptable because the chunk proofs run in parallel, reducing wall-clock time.
+
+**[Risk] CacheState/Cache representation mismatch** → Mitigation: The aggregation proof uses `State<TrieDB>` (CacheState/CacheAccount/AccountStatus) while chunk proofs use `CacheDB<PanicDB>` (Cache/DbAccount/AccountState). A canonical normalization layer maps both to the same byte encoding before hashing. Round-trip tests must verify hash equivalence for identical logical state across both representations.
+
+**[Risk] EIP-1559 extra_data encoding drift** → Mitigation: ~40 lines of EIP-1559 encoding logic replicated from `pub(crate)` kona-executor utils. Must be updated when upstream adds new hardfork-specific encoding. Tracked as a known maintenance surface.
+
+**[Risk] `apply_post_execution_changes()` may gain future logic** → Mitigation: Currently a no-op for OP-Stack but is a public trait method on `BlockExecutor`. The aggregation flow should call it (via the executor, before dropping it) for forward compatibility with future hardforks that add post-execution system calls.
+
+**[Risk] rkyv mirror types for Cache must stay synchronized** → Mitigation: Mirror types (`SerializableCache`, etc.) must exactly match revm's `Cache` field layout. revm version upgrades that change `Cache`, `DbAccount`, or `AccountInfo` fields will require mirror type updates. Pin revm version and add compile-time assertions where possible.

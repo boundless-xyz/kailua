@@ -10,7 +10,7 @@ The chunk proving mode SHALL execute only a subset of a block's ordered transact
 
 #### Scenario: missing state causes panic
 - **WHEN** a transaction in the chunk attempts to read a storage slot not present in the CacheDB cache
-- **THEN** the PanicDB fallback is triggered and the guest panics
+- **THEN** the PanicDB fallback is triggered and the guest panics (note: revm's `EmptyDB` returns defaults instead of panicking, so a custom `PanicDB` implementing `DatabaseRef` with `type Error = Infallible` is required)
 
 #### Scenario: system transactions handled like regular transactions
 - **WHEN** a chunk includes system deposit transactions (L1 info deposit, etc.)

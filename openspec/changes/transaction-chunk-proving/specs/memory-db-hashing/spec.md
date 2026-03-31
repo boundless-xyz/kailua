@@ -1,12 +1,24 @@
 ## ADDED Requirements
 
-### Requirement: Deterministic canonical hash of revm Cache structure
+### Requirement: Canonical state normalization across revm representations
 
-The system SHALL provide a function that computes a deterministic SHA256 hash of revm's `Cache` structure covering ALL fields: `accounts` (with `AccountInfo`, `storage`, and `AccountState` per account), `contracts` (code_hash to bytecode mapping), and `block_hashes` (block number to hash mapping). The hash SHALL be computed over a canonical byte encoding with sorted iteration order.
+The system SHALL provide a canonical normalization layer that produces identical byte encodings from both revm's `Cache` (from `CacheDB`, using `DbAccount`/`AccountState`) and `CacheState` (from `State`, using `CacheAccount`/`PlainAccount`/`AccountStatus`). The normalization SHALL map `AccountStatus` values to their `AccountState` equivalents (`Loaded`→`None`, `Changed`→`Touched`, `Destroyed`→`StorageCleared`, `InMemoryChange`→`Touched`, etc.) and extract account data (nonce, balance, code_hash, storage) uniformly from both `DbAccount` and `PlainAccount`.
 
-#### Scenario: identical Cache produces identical hash
-- **WHEN** two `Cache` instances contain the same accounts, storage, contracts, and block_hashes
-- **THEN** their hashes are identical regardless of insertion order
+#### Scenario: Cache and CacheState with same logical state produce identical hashes
+- **WHEN** a `Cache` and a `CacheState` represent the same accounts, storage, contracts, and block_hashes
+- **THEN** the canonical hash of both representations is identical
+
+#### Scenario: AccountStatus to AccountState mapping is deterministic
+- **WHEN** an account has `AccountStatus::Changed` in `CacheState`
+- **THEN** it normalizes to `AccountState::Touched` for hashing
+
+### Requirement: Deterministic canonical hash of normalized state
+
+The system SHALL provide a function that computes a deterministic SHA256 hash from the normalized state representation, covering ALL fields: `accounts` (with `AccountInfo`, `storage`, and normalized account state per account), `contracts` (code_hash to bytecode mapping), and `block_hashes` (block number to hash mapping). The hash SHALL be computed over a canonical byte encoding with sorted iteration order.
+
+#### Scenario: identical state produces identical hash
+- **WHEN** two state representations contain the same accounts, storage, contracts, and block_hashes
+- **THEN** their hashes are identical regardless of insertion order or source representation
 
 #### Scenario: any account change produces different hash
 - **WHEN** a single account's nonce, balance, code_hash, storage slot, or account_state differs
@@ -20,8 +32,8 @@ The system SHALL provide a function that computes a deterministic SHA256 hash of
 - **WHEN** a block_hash entry is added, removed, or modified
 - **THEN** the hash differs
 
-#### Scenario: empty Cache has a well-defined hash
-- **WHEN** a `Cache` with zero accounts, zero contracts, and zero block_hashes is hashed
+#### Scenario: empty state has a well-defined hash
+- **WHEN** a state with zero accounts, zero contracts, and zero block_hashes is hashed
 - **THEN** the result is a deterministic, non-zero SHA256 value
 
 ### Requirement: Canonical byte encoding for Cache hashing

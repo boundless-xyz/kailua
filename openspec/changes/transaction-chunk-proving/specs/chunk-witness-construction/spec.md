@@ -71,6 +71,18 @@ For each chunk, the host SHALL compute a chunk-start `Cache` snapshot derived fr
 - **WHEN** a chunk witness is constructed and provided to the chunk guest
 - **THEN** no PanicDB fallback is triggered during execution (all required account metadata, storage values, contracts, and block hashes are present)
 
+### Requirement: Chunk witness uses rkyv-serializable mirror types
+
+The chunk witness `Cache` state SHALL be serialized using rkyv-compatible mirror types (`SerializableCache`, `SerializableDbAccount`, etc.) since revm's native `Cache`, `DbAccount`, `AccountInfo`, and `Bytecode` types support serde but not rkyv. Conversion between mirror types and native revm types SHALL be lossless and round-trip tested.
+
+#### Scenario: round-trip serialization preserves state
+- **WHEN** a `Cache` is converted to `SerializableCache`, serialized with rkyv, deserialized, and converted back to `Cache`
+- **THEN** the resulting `Cache` is logically identical to the original (same accounts, storage, contracts, block_hashes)
+
+#### Scenario: canonical hash is preserved across serialization
+- **WHEN** a `Cache` is round-tripped through `SerializableCache` and back
+- **THEN** the canonical hash of the original and the round-tripped `Cache` are identical
+
 ### Requirement: Host constructs EVM state accumulators per chunk
 
 For each chunk, the host SHALL compute the pre-chunk and post-chunk EVM state accumulators (cumulative_gas_used, da_footprint_used, blob_gas_used, logs_bloom, receipts) from the per-transaction traces and the block execution result.
