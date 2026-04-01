@@ -2,11 +2,17 @@
 
 ### Requirement: Canonical state normalization across revm representations
 
-The system SHALL provide a canonical normalization layer that produces identical byte encodings from both revm's `Cache` (from `CacheDB`, using `DbAccount`/`AccountState`) and `CacheState` plus `State.block_hashes` (from `State`, using `CacheAccount`/`PlainAccount`/`AccountStatus`). The normalization SHALL map `AccountStatus` values to their `AccountState` equivalents for HASHING ONLY (`Loaded`→`None`, `Changed`→`Touched`, `Destroyed`→`StorageCleared`, `InMemoryChange`→`Touched`, etc.) and extract account data (nonce, balance, code_hash, storage) uniformly from both `DbAccount` and `PlainAccount`.
+The system SHALL provide a canonical normalization layer that produces identical byte encodings from both revm's `Cache` (from `CacheDB`, using `DbAccount`/`AccountState`) and a state-backed effective flat view derived from `CacheState` plus `State.block_hashes` (from `State`, using `CacheAccount`/`PlainAccount`/`AccountStatus`). The normalization SHALL map `AccountStatus` values to their `AccountState` equivalents for HASHING ONLY (`Loaded`→`None`, `Changed`→`Touched`, `Destroyed`→`StorageCleared`, `InMemoryChange`→`Touched`, etc.) and extract account data (nonce, balance, code_hash, storage) uniformly from both `DbAccount` and `PlainAccount`.
+
+When execution starts from a preloaded `CacheDB` base cache (for example chunk proving with `State<CacheDB<PanicDB>>`), the canonical post-state hash SHALL be computed from the effective flat state obtained by overlaying the projected final `CacheState` and final `State.block_hashes` onto the initial `Cache`, rather than from bare `CacheState` alone. When there is no hidden preloaded `Cache` layer beneath `State` (for example direct trie-backed aggregation state), the live `CacheState` plus `State.block_hashes` is itself the effective flat view.
 
 #### Scenario: Cache and CacheState with same logical state produce identical hashes
 - **WHEN** a `Cache` and a `CacheState` represent the same accounts, storage, contracts, and block_hashes
 - **THEN** the canonical hash of both representations is identical
+
+#### Scenario: state-backed post-state hashing preserves untouched preloaded entries
+- **WHEN** execution begins from an initial `Cache`, some witness entries are never touched, and the final live state is represented by `CacheState` plus `State.block_hashes`
+- **THEN** the canonical post-state hash is computed from the effective flat state formed by overlaying the final live projection onto the initial `Cache`, so untouched preloaded entries still contribute to the hash
 
 #### Scenario: AccountStatus to AccountState mapping is deterministic
 - **WHEN** an account has `AccountStatus::Changed` in `CacheState`

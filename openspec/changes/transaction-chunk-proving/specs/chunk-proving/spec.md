@@ -42,7 +42,7 @@ The chunk guest SHALL compute the SHA256 hash of the canonical execution-relevan
 
 #### Scenario: post_db_hash reflects modified state
 - **WHEN** all chunk transactions have executed and committed their state changes
-- **THEN** `post_db_hash = SHA256(canonical_encode(cache))` reflects the modified cache
+- **THEN** `post_db_hash` reflects the effective post-transaction flat state, computed by hashing the canonical `Cache` view of that state; if execution ran on top of a preloaded `CacheDB` base cache, this canonical view includes untouched witness entries by overlaying the final live `CacheState` projection and block hashes onto the initial witness `Cache`
 
 #### Scenario: chunk_0 pre_db_hash is post-prelude
 - **WHEN** `chunk_0` is proven
