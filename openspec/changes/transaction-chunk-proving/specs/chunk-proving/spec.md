@@ -2,11 +2,15 @@
 
 ### Requirement: Chunk guest executes only the transaction body against CacheDB with PanicDB fallback
 
-The chunk proving mode SHALL execute only a subset of a block's ordered transaction body against a `CacheDB<PanicDB>` (or equivalent in-memory DB backed by a panicking fallback). The witness MUST include the ordered chunk transactions and the full block execution context needed to instantiate the same EVM / executor environment as monolithic execution. The witness cache for `chunk_0` represents the post-prelude block state, and the final chunk stops at the post-last-transaction, pre-epilogue state. All required state MUST be pre-loaded in the cache. If any transaction reads state not present in the cache, the guest SHALL panic.
+The chunk proving mode SHALL execute only a subset of a block's ordered transaction body against a `CacheDB<PanicDB>` (or equivalent in-memory DB backed by a panicking fallback). The witness MUST include the ordered chunk transactions and the full block execution context needed to instantiate the same EVM / executor environment as monolithic execution. The witness cache for `chunk_0` represents the post-prelude block state, and the final chunk stops at the post-last-transaction, pre-epilogue state. All required state MUST be pre-loaded in the cache. If any transaction reads state not present in the cache, the guest SHALL panic. Before computing `pre_db_hash` or executing any transaction, the guest SHALL validate every cached contract entry against its `code_hash` key (for example `bytecode.hash_slow() == code_hash`) and fail on mismatch.
 
 #### Scenario: all state present, execution succeeds
 - **WHEN** the chunk witness contains all accounts and storage slots that the chunk's transactions will access
 - **THEN** all transactions execute successfully and the chunk proof completes
+
+#### Scenario: malformed witness contract is rejected before execution
+- **WHEN** the chunk witness contains a cached contract whose bytecode does not hash to its `code_hash` key
+- **THEN** the guest fails before hashing or executing the chunk
 
 #### Scenario: missing state causes panic
 - **WHEN** a transaction in the chunk attempts to read a storage slot not present in the CacheDB cache
