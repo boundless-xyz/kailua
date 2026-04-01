@@ -1,8 +1,8 @@
 ## ADDED Requirements
 
-### Requirement: TracingOpEvm wraps OpEvm and captures tx-body EvmState
+### Requirement: TracingOpEvm wraps an inner Evm and captures tx-body EvmState
 
-The system SHALL provide a `TracingOpEvm<DB, I>` struct that wraps `OpEvm<DB, I, PrecompilesMap>` and implements the `Evm` trait. The `transact_raw()` method SHALL clone `ResultAndState.state` into a shared trace buffer before returning. The trace buffer represents only the ordered block transaction body used for chunk proving. Block-level prelude and epilogue state transitions are handled separately and SHALL NOT append extra entries to the chunk trace buffer. All other `Evm` trait methods SHALL delegate to the inner `OpEvm` without modification.
+The system SHALL provide a generic `TracingOpEvm<E: Evm>` struct that wraps an inner `E: Evm` and implements the `Evm` trait. In this change, `TracingEvmFactory` instantiates it as `TracingOpEvm<OpEvm<DB, I, PrecompilesMap>>`. The `transact_raw()` method SHALL clone `ResultAndState.state` into a shared trace buffer before returning. The trace buffer represents only the ordered block transaction body used for chunk proving. Block-level prelude and epilogue state transitions are handled separately and SHALL NOT append extra entries to the chunk trace buffer. All other `Evm` trait methods SHALL delegate to the inner EVM without modification.
 
 #### Scenario: transact_raw captures state on success
 - **WHEN** `TracingOpEvm::transact_raw(tx)` is called and the inner EVM returns `Ok(ResultAndState { result, state })`
@@ -20,21 +20,21 @@ The system SHALL provide a `TracingOpEvm<DB, I>` struct that wraps `OpEvm<DB, I,
 - **WHEN** any `Evm` trait method other than `transact_raw()` is called on `TracingOpEvm`
 - **THEN** the call is delegated to the inner `OpEvm` and the result is returned unmodified
 
-### Requirement: TracingOpEvm implements Deref and DerefMut to OpContext
+### Requirement: TracingOpEvm uses pure Evm trait delegation (no Deref required)
 
-`TracingOpEvm<DB, I>` SHALL implement `Deref<Target = OpContext<DB>>` and `DerefMut<Target = OpContext<DB>>` by delegating to the inner `OpEvm`'s `ctx()` and `ctx_mut()` public inherent methods. This is required because `OpBlockExecutor` accesses EVM fields (block env, cfg, database) through Deref, not through the `Evm` trait.
+`TracingOpEvm<E: Evm>` SHALL wrap any `E: Evm` and implement the `Evm` trait by delegating all 8 required methods. The block executor accesses `self.evm.block()` and `self.evm.db_mut()` through `Evm` trait default methods (which call `components()`/`components_mut()`), not through `Deref`. This follows the proven `CustomEvm` wrapper pattern in `op-reth/examples/custom-node/src/evm/alloy.rs`.
 
-#### Scenario: Deref-based field access works
-- **WHEN** `OpBlockExecutor` accesses `self.evm.block()`, `self.evm.cfg`, or `self.evm.db_mut()` via Deref on a `TracingOpEvm`
-- **THEN** the access resolves to the inner `OpContext<DB>` fields identically to `OpEvm`
+#### Scenario: block executor field access works via trait methods
+- **WHEN** `OpBlockExecutor` accesses `self.evm.block()` or `self.evm.db_mut()` on a `TracingOpEvm`
+- **THEN** the access resolves through the `Evm` trait's `block()` and `db_mut()` default methods, which delegate to `components()`/`components_mut()` on the inner EVM
 
-#### Scenario: mutable Deref-based access works
-- **WHEN** `OpBlockExecutor` calls `self.evm.db_mut().commit(state)` or `self.evm.db_mut().set_state_clear_flag(flag)` via DerefMut
-- **THEN** the mutation applies to the inner `OpContext<DB>` database
+#### Scenario: transact() calls transact_raw() through trait default
+- **WHEN** `OpBlockExecutor` calls `self.evm.transact(tx_env)` (the provided default method)
+- **THEN** it internally calls `self.transact_raw(tx.into_tx_env())`, which dispatches to `TracingOpEvm::transact_raw()` and captures the state
 
 ### Requirement: TracingEvmFactory wraps OpEvmFactory and injects TracingOpEvm
 
-The system SHALL provide a `TracingEvmFactory` struct that implements `EvmFactory` with `type Evm<DB, I> = TracingOpEvm<DB, I>`. The factory SHALL hold a shared `Arc<Mutex<Vec<EvmState>>>` trace buffer that is passed to each `TracingOpEvm` it creates.
+The system SHALL provide a `TracingEvmFactory` struct that implements `EvmFactory` with `type Evm<DB, I> = TracingOpEvm<OpEvm<DB, I, PrecompilesMap>>`. The factory SHALL hold a shared `Arc<Mutex<Vec<EvmState>>>` trace buffer that is passed to each `TracingOpEvm` it creates.
 
 #### Scenario: create_evm produces TracingOpEvm
 - **WHEN** `TracingEvmFactory::create_evm(db, env)` is called

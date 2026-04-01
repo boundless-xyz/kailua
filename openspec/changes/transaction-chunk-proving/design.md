@@ -114,11 +114,14 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 **Rationale**: Chunk witnesses are built from tx-body boundaries. Keeping the trace buffer aligned to the ordered transaction list makes chunk partitioning deterministic and keeps `tx_start`/`tx_count` indexed against the same sequence used by the prover, guest, and aggregator.
 
-### Decision 11: TracingOpEvm must implement Deref/DerefMut to OpContext
+### Decision 11: TracingOpEvm wraps any E: Evm via pure trait delegation
 
-**Choice**: `TracingOpEvm<DB, I>` implements `Deref<Target = OpContext<DB>>` and `DerefMut` by delegating to `self.inner.ctx()` / `self.inner.ctx_mut()`, which are public inherent methods on `OpEvm`.
+**Choice**: `TracingOpEvm<E: Evm>` wraps any `E: Evm` and implements the `Evm` trait by delegating all 8 required methods. A proven `CustomEvm` wrapper pattern exists in `op-reth/examples/custom-node/src/evm/alloy.rs` that follows this exact approach without `Deref`.
 
-**Rationale**: `OpBlockExecutor` accesses EVM fields through `Deref`, not through the `Evm` trait. Every access like `self.evm.block()`, `self.evm.db_mut()`, `self.evm.cfg` resolves via `Deref<Target = OpContext<DB>>`. Without this impl, the block executor cannot access block environment or database state. This is a hidden requirement not visible from the `Evm` trait definition alone.
+**Alternatives considered**:
+- *Deref/DerefMut to OpContext*: Would work but is unnecessary. The block executor's field accesses (`self.evm.block()`, `self.evm.db_mut()`) resolve through `Evm` trait default methods (which call `components()`/`components_mut()`), not through `Deref`. Adding Deref ties TracingOpEvm to OpContext specifically, reducing generality.
+
+**Rationale**: The `Evm` trait provides `db()` and `db_mut()` as defaults that delegate to `components()`/`components_mut()`. The block executor uses these trait methods. The wrapper only needs to implement the 8 required methods — 7 pure delegations plus `transact_raw()` with the state clone intercept. The `transact()` default method (which the block executor actually calls) internally calls `self.transact_raw()`, so our override is always invoked.
 
 ### Decision 12: Aggregation uses public BlockExecutor for prelude, explicit tx-body materialization, and standalone epilogue helpers
 
@@ -164,7 +167,19 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 **Rationale**: `trie_db.state_root(&bundle)` only reads forward state, but it still depends on the bundle's lifecycle/status semantics to decide when to delete account leaves and how to treat wiped storage. A naïve `status = Changed` diff can produce the wrong trie root for selfdestruct, contract creation, or destroy-and-recreate cases. Empty reverts are still safe because state root computation never reads them.
 
-### Decision 16: Header construction replicates EIP-1559 extra_data encoding
+### Decision 16: State.cache is lazy — post-state hash requires overlay onto CacheDB base
+
+**Choice**: When computing `post_db_hash` after chunk execution on `State<CacheDB<PanicDB>>`, the hash is taken over the effective flat state: `CacheDB.cache` (the pre-loaded witness, which is never mutated during execution) overlaid with `State.cache` (which contains all accounts/slots that were accessed — both read-only and modified). Unaccessed witness entries in `CacheDB.cache` remain part of the committed state.
+
+**Rationale**: `State<DB>` starts with an empty `CacheState` and lazily loads entries from the underlying `CacheDB` on first access. After execution, `State.cache` contains all *accessed* accounts (both modified and read-only, with `AccountStatus::Loaded` vs `AccountStatus::Changed` distinguishing them). But accounts pre-loaded in `CacheDB.cache` that were *never accessed* by any transaction are only in `CacheDB.cache`. Hashing `State.cache` alone would miss them. The overlay recipe is: start with `CacheDB.cache`, then for each entry in `State.cache`, overwrite the corresponding `CacheDB.cache` entry with the `State.cache` version (which reflects modifications). This produces the complete post-execution state.
+
+### Decision 17: Block hashes populated in CacheDB.cache — State loads lazily
+
+**Choice**: For chunk witnesses, block hashes are stored in `CacheDB.cache.block_hashes`. `State.block_hashes` (a separate `BTreeMap`) starts empty and lazily loads from `CacheDB` when `BLOCKHASH` opcodes execute. The canonical state hash includes block hashes from the overlay (same as accounts: CacheDB base + State overrides).
+
+**Rationale**: `State` and `CacheDB` maintain independent block hash caches. `State.block_hash(number)` checks `State.block_hashes` first, then calls `self.database.block_hash(number)` (which goes to `CacheDB.cache.block_hashes`, then `PanicDB`). Populating `CacheDB.cache.block_hashes` is sufficient — `State` will load them lazily. The canonical hash must account for both sources in the overlay.
+
+### Decision 18: Header construction replicates EIP-1559 extra_data encoding
 
 **Choice**: The aggregation proof builds the block header manually using public APIs (`compute_receipts_root()`, `ordered_trie_with_encoder()`, `trie_db.state_root()`, `trie_db.get_trie_account()` for withdrawal root, `alloy_primitives::logs_bloom()`). The `extra_data` field requires replicating the `pub(crate)` functions `encode_holocene_eip_1559_params` and `encode_jovian_eip_1559_params` (~40 lines).
 
