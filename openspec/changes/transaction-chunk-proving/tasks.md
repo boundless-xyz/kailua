@@ -1,9 +1,9 @@
 ## 1. Precondition: chunk_trace field
 
-- [ ] 1.1 Add `pub chunk_trace: B256` field to `Precondition` struct in `crates/kona/src/precondition/mod.rs` with `#[rkyv(with = B256Def)]` annotation. Add `.chunk(chunk_trace: B256) -> Self` builder method. Ensure `Default` still produces all-zero fields.
-- [ ] 1.2 Extend `Digestible` implementation: when `chunk_trace` is non-zero, assert all other fields are zero, return `Digest::from_bytes(chunk_trace.0)`. Existing execution-only and derivation/proposal branches remain unchanged.
-- [ ] 1.3 Add unit tests for `Precondition::digest()`: chunk-only mode, execution-only mode (unchanged), derivation/proposal mode (unchanged), mixed-field assertion panics (chunk_trace + execution_trace, chunk_trace + derivation_cache, etc.), default is all-zero.
-- [ ] 1.4 Run existing `kailua-kona` test suite — verify zero regressions from the new field. Fix any rkyv serialization tests that depend on `Precondition` byte layout.
+- [x] 1.1 Add `pub chunk_trace: B256` field to `Precondition` struct in `crates/kona/src/precondition/mod.rs` with `#[rkyv(with = B256Def)]` annotation. Add `.chunk(chunk_trace: B256) -> Self` builder method. Ensure `Default` still produces all-zero fields.
+- [x] 1.2 Extend `Digestible` implementation: when `chunk_trace` is non-zero, assert all other fields are zero, return `Digest::from_bytes(chunk_trace.0)`. Existing execution-only and derivation/proposal branches remain unchanged.
+- [x] 1.3 Add unit tests for `Precondition::digest()`: chunk-only mode, execution-only mode (unchanged), derivation/proposal mode (unchanged), mixed-field assertion panics (chunk_trace + execution_trace, chunk_trace + derivation_cache, etc.), default is all-zero.
+- [x] 1.4 Run existing `kailua-kona` test suite — verify zero regressions from the new field. Fix any rkyv serialization tests that depend on `Precondition` byte layout.
 
 ## 2. Memory DB canonical hashing and state normalization
 

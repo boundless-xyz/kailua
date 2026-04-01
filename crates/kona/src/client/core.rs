@@ -480,6 +480,7 @@ pub mod tests {
                         .unwrap_or_default()
                 })
                 .unwrap_or_default(),
+            chunk_trace: Default::default(),
         };
         assert_eq!(precondition.digest(), expected_precondition.digest(),);
 

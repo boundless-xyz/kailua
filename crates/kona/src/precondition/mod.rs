@@ -45,6 +45,9 @@ pub struct Precondition {
     /// Derivation pipeline trace whose continuity is a precondition
     #[rkyv(with = B256Def)]
     pub derivation_trace: B256,
+    /// Chunk trace commitment for transaction chunk proving
+    #[rkyv(with = B256Def)]
+    pub chunk_trace: B256,
 }
 
 impl Precondition {
@@ -63,10 +66,23 @@ impl Precondition {
         self.proposal_blobs = proposal_blobs;
         self
     }
+
+    pub fn chunk(mut self, chunk_trace: B256) -> Self {
+        self.chunk_trace = chunk_trace;
+        self
+    }
 }
 
 impl Digestible for Precondition {
     fn digest(&self) -> Digest {
+        // Chunk-only precondition
+        if !self.chunk_trace.is_zero() {
+            assert!(self.proposal_blobs.is_zero());
+            assert!(self.execution_trace.is_zero());
+            assert!(self.derivation_cache.is_zero());
+            assert!(self.derivation_trace.is_zero());
+            return Digest::from_bytes(self.chunk_trace.0);
+        }
         // Execution-only precondition
         if !self.execution_trace.is_zero() {
             assert!(self.proposal_blobs.is_zero());
@@ -100,5 +116,109 @@ pub fn merge_precondition_hashes(left: B256, right: B256) -> B256 {
     match (left, right) {
         (B256::ZERO, B256::ZERO) => B256::ZERO,
         (a, b) => B256::new([a.0, b.0].concat().digest().into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn non_zero_hash(byte: u8) -> B256 {
+        B256::new([byte; 32])
+    }
+
+    #[test]
+    fn default_is_all_zero() {
+        let p = Precondition::default();
+        assert!(p.proposal_blobs.is_zero());
+        assert!(p.execution_trace.is_zero());
+        assert!(p.derivation_cache.is_zero());
+        assert!(p.derivation_trace.is_zero());
+        assert!(p.chunk_trace.is_zero());
+    }
+
+    #[test]
+    fn chunk_builder_sets_only_chunk_trace() {
+        let h = non_zero_hash(0xAA);
+        let p = Precondition::default().chunk(h);
+        assert_eq!(p.chunk_trace, h);
+        assert!(p.proposal_blobs.is_zero());
+        assert!(p.execution_trace.is_zero());
+        assert!(p.derivation_cache.is_zero());
+        assert!(p.derivation_trace.is_zero());
+    }
+
+    #[test]
+    fn chunk_only_digest() {
+        let h = non_zero_hash(0xBB);
+        let p = Precondition::default().chunk(h);
+        assert_eq!(p.digest(), Digest::from_bytes(h.0));
+    }
+
+    #[test]
+    fn execution_only_digest_unchanged() {
+        let h = non_zero_hash(0xCC);
+        let p = Precondition::default().execution(h);
+        assert_eq!(p.digest(), Digest::from_bytes(h.0));
+    }
+
+    #[test]
+    fn derivation_proposal_digest_unchanged() {
+        let a = non_zero_hash(0x01);
+        let b = non_zero_hash(0x02);
+        let c = non_zero_hash(0x03);
+        let p = Precondition::default().derivation(a, b).proposal(c);
+        let expected = combine_precondition_hashes(merge_precondition_hashes(a, b), c);
+        assert_eq!(p.digest(), Digest::from_bytes(expected.0));
+    }
+
+    #[test]
+    #[should_panic]
+    fn chunk_trace_with_execution_trace_panics() {
+        let p = Precondition {
+            chunk_trace: non_zero_hash(0x01),
+            execution_trace: non_zero_hash(0x02),
+            ..Default::default()
+        };
+        p.digest();
+    }
+
+    #[test]
+    #[should_panic]
+    fn chunk_trace_with_proposal_blobs_panics() {
+        let p = Precondition {
+            chunk_trace: non_zero_hash(0x01),
+            proposal_blobs: non_zero_hash(0x02),
+            ..Default::default()
+        };
+        p.digest();
+    }
+
+    #[test]
+    #[should_panic]
+    fn chunk_trace_with_derivation_cache_panics() {
+        let p = Precondition {
+            chunk_trace: non_zero_hash(0x01),
+            derivation_cache: non_zero_hash(0x02),
+            ..Default::default()
+        };
+        p.digest();
+    }
+
+    #[test]
+    #[should_panic]
+    fn chunk_trace_with_derivation_trace_panics() {
+        let p = Precondition {
+            chunk_trace: non_zero_hash(0x01),
+            derivation_trace: non_zero_hash(0x02),
+            ..Default::default()
+        };
+        p.digest();
+    }
+
+    #[test]
+    fn all_zero_digest_is_zero() {
+        let p = Precondition::default();
+        assert_eq!(p.digest(), Digest::from_bytes(B256::ZERO.0));
     }
 }
