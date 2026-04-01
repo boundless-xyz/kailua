@@ -112,7 +112,7 @@ The resulting `BlockBuildingOutcome` SHALL be identical to what monolithic execu
 The `CachedExecutor` SHALL support a chunk aggregation path alongside the existing cache-hit and direct-execution paths. When chunk data is available for a block, the executor SHALL perform chunk verification and aggregation instead of monolithic execution.
 
 #### Scenario: executor selects chunk path when data is present
-- **WHEN** `execute_payload(attributes)` is called and chunk data exists for the current block
+- **WHEN** `execute_payload(attributes)` is called, the block is not already in the cache, and chunk data exists for the current block
 - **THEN** the executor runs chunk aggregation (not monolithic execution)
 
 #### Scenario: executor falls back to monolithic when no chunk data

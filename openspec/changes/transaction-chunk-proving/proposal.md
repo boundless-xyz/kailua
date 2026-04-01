@@ -11,7 +11,7 @@ By decomposing block execution into independently provable transaction chunks, w
 - **Chunk proving mode**: A guest execution mode that operates on a flat in-memory state (`CacheDB<PanicDB>`) rather than a full state trie. Executes only a configured subset of the block's ordered transaction body against the post-prelude state and emits a standard `ProofJournal` with `l1_head = 0xFF..FF` as the chunk sentinel.
 - **Block aggregation mode**: A CachedExecutor path that applies block-level prelude once before chunk verification, verifies chunk proof receipts, chains memory DB and EVM state hashes for continuity, applies block-level epilogue once after the final chunk, and produces a standard `BlockBuildingOutcome` — identical to monolithic execution output.
 - **Chunk witness construction**: Host-side logic that uses per-transaction traces to compute chunk-start flat state witnesses from boundary snapshots, carrying forward full account metadata and storage dependencies between chunks.
-- **Prover integration**: New `max_txs_per_chunk` configuration parameter. When set, the prover activates chunk decomposition for blocks, dispatches chunk proofs in parallel, collects receipts, and assembles the aggregation witness.
+- **Prover integration**: New positive `max_txs_per_chunk` configuration parameter. When set to a value smaller than a block's transaction count, the prover activates chunk decomposition for that block, dispatches chunk proofs in parallel, collects receipts, and assembles the aggregation witness. Otherwise the prover stays on the existing monolithic path.
 - **Memory DB hashing**: Deterministic SHA256 hashing of revm's `Cache` structure (accounts, contracts, block_hashes) for pre/post chunk state commitments.
 - **EVM state hashing**: Deterministic SHA256 hashing of cross-chunk accumulators (cumulative gas, DA footprint, blob gas, logs bloom, receipts) with pre/post continuity chaining.
 
@@ -38,4 +38,4 @@ _(none — chunking is transparent to existing block stitching, derivation, and 
 - **`build/risczero/*/src/main.rs`**: Guest entry points gain chunk execution mode routing.
 - **Vendored code (`optimism/rust/`)**: No changes.
 - **External dependencies**: No new dependencies. Uses existing revm `CacheDB`, `Cache`, `PanicDB` (or equivalent empty DB that panics on reads).
-- **Backward compatibility**: Fully backward compatible. `max_txs_per_chunk = usize::MAX` (default) disables chunking entirely. Existing proofs, stitching, and fault proof games are unaffected.
+- **Backward compatibility**: Fully backward compatible. `max_txs_per_chunk = usize::MAX` (default) disables chunking entirely, and values greater than or equal to the block transaction count also stay on the monolithic path. Existing proofs, stitching, and fault proof games are unaffected.

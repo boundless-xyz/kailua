@@ -18,7 +18,7 @@ The host-side pre-execution SHALL use `TracingEvmFactory` to capture per-transac
 
 ### Requirement: Host groups transactions into chunks
 
-The host SHALL group a block's transactions into sequential, non-overlapping chunks based on `max_txs_per_chunk`. The last chunk may have fewer transactions. All transactions in the block MUST be covered by exactly one chunk.
+When chunk proving is active for a block, the host SHALL group that block's transactions into sequential, non-overlapping chunks based on a positive `max_txs_per_chunk`. The last chunk may have fewer transactions. All transactions in the block MUST be covered by exactly one chunk.
 
 #### Scenario: even division
 - **WHEN** a block has 12 transactions and `max_txs_per_chunk = 4`
@@ -28,9 +28,25 @@ The host SHALL group a block's transactions into sequential, non-overlapping chu
 - **WHEN** a block has 10 transactions and `max_txs_per_chunk = 4`
 - **THEN** 3 chunks are created: [tx_0..tx_3], [tx_4..tx_7], [tx_8..tx_9]
 
-#### Scenario: single chunk when max >= block size
-- **WHEN** a block has 5 transactions and `max_txs_per_chunk = 100`
-- **THEN** 1 chunk is created containing all 5 transactions (effectively monolithic)
+#### Scenario: grouping helper can return one full-block range
+- **WHEN** the grouping helper is invoked directly for a block with 5 transactions and `max_txs_per_chunk = 100`
+- **THEN** it returns 1 range containing all 5 transactions, even though prover dispatch would keep this block on the monolithic path
+
+### Requirement: Chunk witness carries execution inputs in addition to state
+
+For each chunk, the host SHALL include in the witness:
+- the ordered transactions belonging to that chunk, in the same order used for `tx_hash`
+- the block execution context needed to instantiate the same EVM / executor environment as monolithic execution
+
+This context SHALL include all block-level fields needed by chunk execution, such as the block environment and any `OpBlockExecutionCtx` inputs used by the executor.
+
+#### Scenario: guest can compute tx_hash from the witness
+- **WHEN** the chunk guest proves a chunk
+- **THEN** it computes `tx_hash` from the transactions carried directly in the witness rather than reconstructing them from global block state
+
+#### Scenario: guest can reconstruct the monolithic execution environment
+- **WHEN** the chunk guest initializes the EVM and executor
+- **THEN** it does so from the block execution context carried in the witness, matching the corresponding monolithic block execution inputs
 
 ### Requirement: Host constructs chunk-start flat state witnesses from boundary snapshots
 

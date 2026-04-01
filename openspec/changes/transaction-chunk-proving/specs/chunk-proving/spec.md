@@ -2,7 +2,7 @@
 
 ### Requirement: Chunk guest executes only the transaction body against CacheDB with PanicDB fallback
 
-The chunk proving mode SHALL execute only a subset of a block's ordered transaction body against a `CacheDB<PanicDB>` (or equivalent in-memory DB backed by a panicking fallback). The witness cache for `chunk_0` represents the post-prelude block state, and the final chunk stops at the post-last-transaction, pre-epilogue state. All required state MUST be pre-loaded in the cache. If any transaction reads state not present in the cache, the guest SHALL panic.
+The chunk proving mode SHALL execute only a subset of a block's ordered transaction body against a `CacheDB<PanicDB>` (or equivalent in-memory DB backed by a panicking fallback). The witness MUST include the ordered chunk transactions and the full block execution context needed to instantiate the same EVM / executor environment as monolithic execution. The witness cache for `chunk_0` represents the post-prelude block state, and the final chunk stops at the post-last-transaction, pre-epilogue state. All required state MUST be pre-loaded in the cache. If any transaction reads state not present in the cache, the guest SHALL panic.
 
 #### Scenario: all state present, execution succeeds
 - **WHEN** the chunk witness contains all accounts and storage slots that the chunk's transactions will access
@@ -23,6 +23,10 @@ The chunk proving mode SHALL execute only a subset of a block's ordered transact
 #### Scenario: final chunk stops before epilogue
 - **WHEN** the last chunk completes execution
 - **THEN** its `post_db_hash` and `post_evm_state_hash` describe the post-last-transaction, pre-epilogue state, and the chunk guest does not apply the epilogue
+
+#### Scenario: witness carries the execution inputs needed by the guest
+- **WHEN** a chunk proof is executed
+- **THEN** the witness provides both the ordered chunk transactions and the block execution context needed to execute them and compute `tx_hash`
 
 #### Scenario: state-clear semantics still match monolithic execution
 - **WHEN** the chunk guest skips block-level prelude replay

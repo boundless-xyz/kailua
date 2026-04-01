@@ -2,7 +2,7 @@
 
 ### Requirement: max_txs_per_chunk configuration parameter
 
-The prover SHALL accept a `max_txs_per_chunk: usize` argument with a default value of `usize::MAX` (chunking disabled). When set to a value less than the number of transactions in a block, the prover SHALL activate transaction chunk proving for that block.
+The prover SHALL accept a positive `max_txs_per_chunk: usize` argument with a default value of `usize::MAX` (chunking disabled). `max_txs_per_chunk = 0` is invalid and MUST be rejected before proving begins. When set to a value less than the number of transactions in a block, the prover SHALL activate transaction chunk proving for that block.
 
 #### Scenario: default disables chunking
 - **WHEN** `max_txs_per_chunk` is not specified
@@ -12,9 +12,13 @@ The prover SHALL accept a `max_txs_per_chunk: usize` argument with a default val
 - **WHEN** `max_txs_per_chunk = 4` and a block has 10 transactions
 - **THEN** the prover creates 3 chunks ([0..3], [4..7], [8..9]) and proves them
 
-#### Scenario: value >= block tx count produces single chunk
+#### Scenario: value >= block tx count stays monolithic
 - **WHEN** `max_txs_per_chunk = 100` and a block has 5 transactions
-- **THEN** the prover creates 1 chunk (effectively monolithic) but still goes through the chunk proving path
+- **THEN** the prover keeps the existing monolithic proving path for that block and does not activate chunk proving
+
+#### Scenario: zero is rejected
+- **WHEN** `max_txs_per_chunk = 0`
+- **THEN** the prover returns a configuration error instead of attempting chunk construction
 
 ### Requirement: Prover dispatches chunk proofs in parallel
 
