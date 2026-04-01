@@ -55,7 +55,7 @@ pub fn normalize_account_status(
 }
 
 /// Encodes an `AccountState` as a single canonical byte for hashing.
-fn account_state_byte(state: &AccountState) -> u8 {
+pub fn account_state_byte(state: &AccountState) -> u8 {
     match state {
         AccountState::NotExisting => 0,
         AccountState::None => 1,

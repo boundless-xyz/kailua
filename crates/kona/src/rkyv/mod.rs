@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod chunking;
 pub mod driver;
 pub mod execution;
 pub mod kzg;

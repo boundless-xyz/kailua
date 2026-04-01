@@ -101,7 +101,12 @@ The chunk witness `Cache` state SHALL be serialized using rkyv-compatible mirror
 
 ### Requirement: Host constructs EVM state accumulators per chunk
 
-For each chunk, the host SHALL compute the pre-chunk and post-chunk EVM state accumulators (cumulative_gas_used, da_footprint_used, blob_gas_used, logs_bloom, receipts) from the per-transaction traces and the block execution result.
+For each chunk, the host SHALL compute the pre-chunk and post-chunk EVM state accumulators (cumulative_gas_used, da_footprint_used, blob_gas_used, logs_bloom, receipts) from the per-transaction traces, explicit per-transaction metadata for fields not derivable from `EvmState` alone, and the block execution result.
+
+The per-transaction metadata SHALL include, at minimum:
+- exact `BLOCKHASH` reads performed by the tx body
+- per-transaction `da_footprint_used` delta
+- per-transaction `blob_gas_used` delta
 
 #### Scenario: first chunk starts with zero accumulators
 - **WHEN** chunk_0's EVM state is constructed
@@ -110,3 +115,15 @@ For each chunk, the host SHALL compute the pre-chunk and post-chunk EVM state ac
 #### Scenario: accumulator continuity between chunks
 - **WHEN** chunk_0 ends with cumulative_gas_used=500000
 - **THEN** chunk_1's pre-chunk cumulative_gas_used is 500000
+
+#### Scenario: absent account is materialized explicitly
+- **WHEN** a chunk touches an address that is absent at the chunk-start boundary state
+- **THEN** the witness includes that address as an explicit `NotExisting` account entry rather than omitting it
+
+#### Scenario: first chunk includes code for a pre-existing called contract
+- **WHEN** chunk_0 calls a pre-existing contract whose bytecode was not yet populated in the post-prelude cache's contract map
+- **THEN** the witness includes that contract bytecode using tx-body execution metadata from the tracing run
+
+#### Scenario: tx-body block hash reads are witness inputs
+- **WHEN** a transaction performs a `BLOCKHASH` read that was not already present in the post-prelude cache
+- **THEN** the host provides that block hash in the chunk witness using explicit per-transaction block-hash metadata so the guest does not fall through to `PanicDB`

@@ -20,6 +20,8 @@
 pub mod blobs;
 /// Structures for representing divided proving workloads.
 pub mod boot;
+/// Transaction chunk proving support.
+pub mod chunk;
 /// Procedures for securely generating and combining stateless Kona client execution traces.
 pub mod client;
 /// Procedures for generating secure cryptographic commitments to rollup configuration settings.
