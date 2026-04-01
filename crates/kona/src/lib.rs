@@ -26,6 +26,8 @@ pub mod client;
 pub mod config;
 /// Implementation for caching support in derivation.
 pub mod driver;
+/// Tracing EVM wrapper for capturing per-transaction state changes.
+pub mod evm;
 /// Implementation for an execution engine with caching support.
 pub mod executor;
 /// A tightly packed representation for extended execution trace results.

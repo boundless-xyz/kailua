@@ -34,7 +34,7 @@ The system SHALL provide a generic `TracingOpEvm<E: Evm>` struct that wraps an i
 
 ### Requirement: TracingEvmFactory wraps OpEvmFactory and injects TracingOpEvm
 
-The system SHALL provide a `TracingEvmFactory` struct that implements `EvmFactory` with `type Evm<DB, I> = TracingOpEvm<OpEvm<DB, I, PrecompilesMap>>`. The factory SHALL hold a shared `Arc<Mutex<Vec<EvmState>>>` trace buffer that is passed to each `TracingOpEvm` it creates.
+The system SHALL provide a `TracingEvmFactory` struct that implements `EvmFactory` with `type Evm<DB, I> = TracingOpEvm<OpEvm<DB, I, PrecompilesMap>>`. The factory SHALL hold a shared `Arc<Mutex<Vec<EvmState>>>` trace buffer that is passed to each `TracingOpEvm` it creates, and expose a `take_traces()` helper that atomically drains that shared buffer at the end of each block execution.
 
 #### Scenario: create_evm produces TracingOpEvm
 - **WHEN** `TracingEvmFactory::create_evm(db, env)` is called
@@ -47,6 +47,10 @@ The system SHALL provide a `TracingEvmFactory` struct that implements `EvmFactor
 #### Scenario: trace buffer accumulates across tx-body transactions within a block
 - **WHEN** a block with N transactions is executed using a `TracingEvmFactory`-produced EVM
 - **THEN** the trace buffer contains exactly N entries, one per ordered block transaction, in execution order, and block-level prelude / epilogue work does not add extra entries
+
+#### Scenario: take_traces establishes a per-block boundary
+- **WHEN** block execution finishes and the host calls `TracingEvmFactory::take_traces()`
+- **THEN** it receives exactly the traces accumulated for that block and the shared buffer is reset to empty before the next block execution begins
 
 ### Requirement: CachedExecutor accepts generic EvmFactory
 

@@ -110,9 +110,9 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 ### Decision 10: The trace buffer represents only the ordered transaction body
 
-**Choice**: The tracing buffer is defined as one entry per ordered block transaction in execution order. Prelude and epilogue state transitions are materialized separately as part of the once-per-block aggregation flow and are not appended to the chunk trace buffer.
+**Choice**: The tracing buffer is defined as one entry per ordered block transaction in execution order. Prelude and epilogue state transitions are materialized separately as part of the once-per-block aggregation flow and are not appended to the chunk trace buffer. The host drains the shared tracing buffer via `TracingEvmFactory::take_traces()` at the end of each block execution, establishing an explicit per-block boundary.
 
-**Rationale**: Chunk witnesses are built from tx-body boundaries. Keeping the trace buffer aligned to the ordered transaction list makes chunk partitioning deterministic and keeps `tx_start`/`tx_count` indexed against the same sequence used by the prover, guest, and aggregator.
+**Rationale**: Chunk witnesses are built from tx-body boundaries. Keeping the trace buffer aligned to the ordered transaction list makes chunk partitioning deterministic and keeps `tx_start`/`tx_count` indexed against the same sequence used by the prover, guest, and aggregator. Because `KonaExecutor` clones the EVM factory into new builders, the drain step is necessary to prevent stale traces from prior block executions from accumulating in the shared `Arc<Mutex<Vec<EvmState>>>`.
 
 ### Decision 11: TracingOpEvm wraps any E: Evm via pure trait delegation
 
