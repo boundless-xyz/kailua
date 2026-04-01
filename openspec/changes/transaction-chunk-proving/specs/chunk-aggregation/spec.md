@@ -51,20 +51,25 @@ For each chunk `i` in order (0 to N-1), the block aggregation proof SHALL:
 - **WHEN** chunk `i` is verified with `post_evm_hash_i`
 - **THEN** chunk `i+1`'s expected `pre_evm_state_hash` is `post_evm_hash_i`
 
-### Requirement: Block aggregation verifies post-transaction state, applies epilogue once, and computes trie root
+### Requirement: Block aggregation materializes verified tx-body state, applies epilogue once, and computes trie root
 
 After all chunks are verified, the block aggregation proof SHALL:
 1. Load the full post-transaction-body `Cache` from the witness.
 2. Verify `SHA256(post_tx_cache) == current_db_hash` (matches the last chunk's `post_db_hash`).
 3. Load the full final EVM state from the witness.
 4. Verify `SHA256(final_evm_state) == current_evm_hash` (matches the last chunk's `post_evm_hash`).
-5. Apply the block-level epilogue exactly once to `post_tx_cache`.
-6. Diff the epilogue-adjusted final cache against the initial trie state to produce a `BundleState`.
-7. Compute `state_root = trie_db.state_root(&bundle)` — the single trie computation for the block.
+5. Materialize the verified tx-body transition before epilogue, either by constructing a `BundleState` from the post-prelude → post-transaction boundary snapshots or by equivalently applying that verified transition into a fresh `State`.
+6. Ensure the constructed transition preserves account lifecycle semantics (create, destroy, storage-cleared / recreate) instead of collapsing all modified accounts to `Changed`.
+7. Apply the block-level epilogue exactly once on top of the verified post-transaction state.
+8. Compute `state_root = trie_db.state_root(&bundle)` — the single trie computation for the block.
 
 #### Scenario: post-transaction cache hash mismatch causes failure
 - **WHEN** `SHA256(post_tx_cache) != current_db_hash`
 - **THEN** the block aggregation proof fails
+
+#### Scenario: verified post-transaction state is materialized before root computation
+- **WHEN** the aggregation has verified the last chunk hash
+- **THEN** it incorporates the verified tx-body state transition before epilogue and before trie-root computation, so the final root reflects prelude + tx body + epilogue
 
 #### Scenario: epilogue uses public standalone functions
 - **WHEN** the aggregation applies the epilogue
@@ -76,7 +81,7 @@ After all chunks are verified, the block aggregation proof SHALL:
 
 #### Scenario: BundleState constructed from diff with empty reverts
 - **WHEN** the aggregation constructs a `BundleState` for trie root computation
-- **THEN** it diffs the initial (post-prelude) and final (post-epilogue) states, creates `BundleAccount` entries with `original_info`/`info`/`storage` changes, and leaves `reverts` empty (trie_db.state_root only reads forward state)
+- **THEN** it diffs the initial (post-prelude) and final states, creates `BundleAccount` entries with accurate lifecycle semantics (`InMemoryChange`, `Destroyed`, `DestroyedChanged`, etc.) plus the required storage changes / zeroings, and leaves `reverts` empty (trie_db.state_root only reads forward state)
 
 #### Scenario: state root matches monolithic execution
 - **WHEN** a block is proven via chunking

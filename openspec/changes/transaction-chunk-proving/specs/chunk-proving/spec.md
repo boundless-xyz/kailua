@@ -24,9 +24,13 @@ The chunk proving mode SHALL execute only a subset of a block's ordered transact
 - **WHEN** the last chunk completes execution
 - **THEN** its `post_db_hash` and `post_evm_state_hash` describe the post-last-transaction, pre-epilogue state, and the chunk guest does not apply the epilogue
 
+#### Scenario: state-clear semantics still match monolithic execution
+- **WHEN** the chunk guest skips block-level prelude replay
+- **THEN** it still configures the state-clear flag from the same block / hardfork predicate used by monolithic execution, rather than hardcoding `without_state_clear()`
+
 ### Requirement: Chunk guest computes pre/post memory DB hashes
 
-The chunk guest SHALL compute the SHA256 hash of the `Cache` structure before executing any transactions (`pre_db_hash`) and after executing all transactions (`post_db_hash`), using the canonical encoding defined in memory-db-hashing.
+The chunk guest SHALL compute the SHA256 hash of the canonical execution-relevant memory DB state before executing any transactions (`pre_db_hash`) and after executing all transactions (`post_db_hash`), using the canonical encoding defined in memory-db-hashing.
 
 #### Scenario: pre_db_hash reflects loaded chunk-start state
 - **WHEN** the chunk guest loads the memory DB from the witness

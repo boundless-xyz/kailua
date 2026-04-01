@@ -84,11 +84,11 @@ The guest programs (`kailua-fpvm-kona`, `kailua-fpvm-hana`, `kailua-fpvm-hokulea
 
 The aggregation proof never re-executes transactions — it only verifies hash chains and chunk receipts.
 
-### Decision 6: Memory DB hash covers the complete Cache structure
+### Decision 6: Memory DB hash covers the execution-relevant flat state and excludes logs
 
-**Choice**: The deterministic SHA256 hash includes accounts (info + storage + account_state), contracts (code_hash + bytecode), and block_hashes. Nothing is excluded from the hash.
+**Choice**: The deterministic SHA256 hash includes accounts (info + storage + account_state), contracts (code_hash + bytecode), and block_hashes. `Cache.logs` is intentionally excluded.
 
-**Rationale**: Assuming any field is irrelevant creates a subtle attack surface. The full Cache hash is the only safe commitment.
+**Rationale**: The chunk chain uses the memory DB hash to commit the execution-relevant flat state that must carry across chunk boundaries. `Cache.logs` is not read by later execution and is already committed by the EVM accumulator hash through ordered receipts and logs bloom. Excluding it avoids redundant commitments while keeping the state hash aligned between `CacheDB<PanicDB>` and `State<TrieDB>`.
 
 ### Decision 7: Single-pass host execution with tracing
 
@@ -120,23 +120,24 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 **Rationale**: `OpBlockExecutor` accesses EVM fields through `Deref`, not through the `Evm` trait. Every access like `self.evm.block()`, `self.evm.db_mut()`, `self.evm.cfg` resolves via `Deref<Target = OpContext<DB>>`. Without this impl, the block executor cannot access block environment or database state. This is a hidden requirement not visible from the `Evm` trait definition alone.
 
-### Decision 12: Aggregation prelude/epilogue uses public BlockExecutor and standalone functions
+### Decision 12: Aggregation uses public BlockExecutor for prelude, explicit tx-body materialization, and standalone epilogue helpers
 
-**Choice**: The aggregation proof applies prelude via the public `BlockExecutor::apply_pre_execution_changes()` trait method, then drops the executor to release the state borrow. After chunk verification and state application, epilogue is applied manually using the public standalone functions `post_block_balance_increments()` and `State::increment_balances()`.
+**Choice**: The aggregation proof applies the prelude via the public `BlockExecutor::apply_pre_execution_changes()` trait method, snapshots the resulting post-prelude state, verifies the chunk hash chain, then explicitly materializes the verified tx-body transition before applying the epilogue. The epilogue itself is applied with the public standalone functions `post_block_balance_increments()` and `State::increment_balances()`.
 
 **Alternatives considered**:
 - *Using `finish()` for epilogue*: `finish()` bundles balance increments with receipt/gas assembly and expects the executor to have processed transactions. Since the aggregation proof verifies chunks instead of executing transactions, the executor's internal receipt list is empty, making `finish()` produce incorrect results.
-- *Calling `apply_post_execution_changes()` (trait method)*: This is a separate post-execution system call hook from alloy-evm's base trait. Currently a no-op for OP-Stack blocks but may gain future hardfork logic. Should be called for forward compatibility.
+- *Hash-checking `post_tx_cache` without materializing it*: This leaves the live `State` at the post-prelude state, so the final trie root would omit all tx-body writes.
 
-**Rationale**: `apply_pre_execution_changes()` is already used independently in op-reth's payload builder and flashblocks worker. The balance increment functions are public imports from `alloy_evm::block::state_changes`. This gives us clean prelude/epilogue separation without modifying vendored code. The aggregation flow becomes:
+**Rationale**: `apply_pre_execution_changes()` is already used independently in op-reth's payload builder and flashblocks worker. The balance increment functions are public imports from `alloy_evm::block::state_changes`. The aggregation flow becomes:
 1. Create executor → `apply_pre_execution_changes()` (prelude)
-2. Drop executor (release state borrow)
+2. Snapshot the post-prelude state and drop the executor (release the state borrow)
 3. Hash post-prelude state → `initial_db_hash`
 4. Verify chunk hash chain
-5. Load final state from witness, apply diff to State
-6. Apply `post_block_balance_increments()` + `increment_balances()` (epilogue)
-7. `state.merge_transitions()` → `take_bundle()` → `trie_db.state_root(&bundle)`
-8. Build header manually using public `compute_receipts_root()`, `ordered_trie_with_encoder()`
+5. Load the verified `post_tx_cache` / `final_evm_state`
+6. Construct and materialize the tx-body transition from post-prelude → post-transaction state
+7. Apply `post_block_balance_increments()` + `increment_balances()` on top of the verified post-transaction state
+8. Merge tx-body + epilogue transitions into the final `BundleState`
+9. `trie_db.state_root(&bundle)` and build the header manually using public `compute_receipts_root()`, `ordered_trie_with_encoder()`
 
 ### Decision 13: Canonical state hashing normalizes CacheState and Cache to a common representation
 
@@ -154,11 +155,14 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 **Rationale**: revm's `Cache`, `DbAccount`, `AccountInfo`, and `Bytecode` derive `serde::{Serialize, Deserialize}` (feature-gated) but have no rkyv support. Since the existing `Witness` struct uses rkyv throughout, mirror types maintain consistency. The conversion is mechanical (field-by-field copy) and tested via round-trip tests.
 
-### Decision 15: BundleState constructed from Cache diff with empty reverts
+### Decision 15: BundleState is derived from boundary snapshots while preserving lifecycle semantics
 
-**Choice**: The aggregation proof constructs a `BundleState` by diffing the initial (post-prelude) and final (post-chunks + epilogue) Cache snapshots. For each changed account: `BundleAccount { info: final_info, original_info: initial_info, storage: changed_slots, status: Changed }`. Reverts are left empty.
+**Choice**: The aggregation proof constructs the tx-body `BundleState` from the post-prelude and verified post-transaction boundary snapshots. Reverts remain empty, but the forward state MUST preserve the correct `BundleAccount` lifecycle semantics instead of collapsing everything to `Changed`. In particular:
+- created-from-nonexistent accounts use creation semantics (for example `InMemoryChange`)
+- destroyed accounts use destroyed semantics
+- storage-cleared / recreated accounts preserve storage-wipe semantics and include zero-valued slots for wiped pre-existing storage when needed for trie correctness
 
-**Rationale**: `trie_db.state_root(&bundle)` only reads forward state (`bundle.state()`, `account.info`, `storage.present_value`). It does not access `reverts`. Empty reverts are safe for state root computation. This avoids the complexity of constructing per-transaction revert records.
+**Rationale**: `trie_db.state_root(&bundle)` only reads forward state, but it still depends on the bundle's lifecycle/status semantics to decide when to delete account leaves and how to treat wiped storage. A naïve `status = Changed` diff can produce the wrong trie root for selfdestruct, contract creation, or destroy-and-recreate cases. Empty reverts are still safe because state root computation never reads them.
 
 ### Decision 16: Header construction replicates EIP-1559 extra_data encoding
 
@@ -182,10 +186,10 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 **[Trade-off] Increased proof count** → A block with N chunks produces N+1 proofs (N chunks + 1 aggregation) instead of 1. Proof composition via `env::verify()` adds recursive verification overhead. This is acceptable because the chunk proofs run in parallel, reducing wall-clock time.
 
-**[Risk] CacheState/Cache representation mismatch** → Mitigation: The aggregation proof uses `State<TrieDB>` (CacheState/CacheAccount/AccountStatus) while chunk proofs use `CacheDB<PanicDB>` (Cache/DbAccount/AccountState). A canonical normalization layer maps both to the same byte encoding before hashing. Round-trip tests must verify hash equivalence for identical logical state across both representations.
+**[Risk] CacheState/Cache representation mismatch** → Mitigation: The aggregation proof uses `State<TrieDB>` (CacheState/CacheAccount/AccountStatus) while chunk proofs use `CacheDB<PanicDB>` (Cache/DbAccount/AccountState). A canonical normalization layer maps both to the same byte encoding before hashing. This normalization is HASH-ONLY; bundle construction must still preserve the richer lifecycle semantics. Round-trip tests must verify hash equivalence for identical logical state across both representations.
 
 **[Risk] EIP-1559 extra_data encoding drift** → Mitigation: ~40 lines of EIP-1559 encoding logic replicated from `pub(crate)` kona-executor utils. Must be updated when upstream adds new hardfork-specific encoding. Tracked as a known maintenance surface.
 
-**[Risk] `apply_post_execution_changes()` may gain future logic** → Mitigation: Currently a no-op for OP-Stack but is a public trait method on `BlockExecutor`. The aggregation flow should call it (via the executor, before dropping it) for forward compatibility with future hardforks that add post-execution system calls.
+**[Risk] Tx-body bundle construction can miss storage-wipe edge cases** → Mitigation: Tests must cover account creation, selfdestruct, and destroy-and-recreate flows, including wiped inherited storage. The diff algorithm should derive bundle statuses from both boundary snapshots and the final `account_state`, not from a flat “changed vs unchanged” test.
 
 **[Risk] rkyv mirror types for Cache must stay synchronized** → Mitigation: Mirror types (`SerializableCache`, etc.) must exactly match revm's `Cache` field layout. revm version upgrades that change `Cache`, `DbAccount`, or `AccountInfo` fields will require mirror type updates. Pin revm version and add compile-time assertions where possible.

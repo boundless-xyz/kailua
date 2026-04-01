@@ -2,7 +2,7 @@
 
 ### Requirement: Canonical state normalization across revm representations
 
-The system SHALL provide a canonical normalization layer that produces identical byte encodings from both revm's `Cache` (from `CacheDB`, using `DbAccount`/`AccountState`) and `CacheState` (from `State`, using `CacheAccount`/`PlainAccount`/`AccountStatus`). The normalization SHALL map `AccountStatus` values to their `AccountState` equivalents (`Loaded`→`None`, `Changed`→`Touched`, `Destroyed`→`StorageCleared`, `InMemoryChange`→`Touched`, etc.) and extract account data (nonce, balance, code_hash, storage) uniformly from both `DbAccount` and `PlainAccount`.
+The system SHALL provide a canonical normalization layer that produces identical byte encodings from both revm's `Cache` (from `CacheDB`, using `DbAccount`/`AccountState`) and `CacheState` plus `State.block_hashes` (from `State`, using `CacheAccount`/`PlainAccount`/`AccountStatus`). The normalization SHALL map `AccountStatus` values to their `AccountState` equivalents for HASHING ONLY (`Loaded`→`None`, `Changed`→`Touched`, `Destroyed`→`StorageCleared`, `InMemoryChange`→`Touched`, etc.) and extract account data (nonce, balance, code_hash, storage) uniformly from both `DbAccount` and `PlainAccount`.
 
 #### Scenario: Cache and CacheState with same logical state produce identical hashes
 - **WHEN** a `Cache` and a `CacheState` represent the same accounts, storage, contracts, and block_hashes
@@ -14,7 +14,7 @@ The system SHALL provide a canonical normalization layer that produces identical
 
 ### Requirement: Deterministic canonical hash of normalized state
 
-The system SHALL provide a function that computes a deterministic SHA256 hash from the normalized state representation, covering ALL fields: `accounts` (with `AccountInfo`, `storage`, and normalized account state per account), `contracts` (code_hash to bytecode mapping), and `block_hashes` (block number to hash mapping). The hash SHALL be computed over a canonical byte encoding with sorted iteration order.
+The system SHALL provide a function that computes a deterministic SHA256 hash from the normalized state representation, covering the execution-relevant flat state fields: `accounts` (with `AccountInfo`, `storage`, and normalized account state per account), `contracts` (code_hash to bytecode mapping), and `block_hashes` (block number to hash mapping). `Cache.logs` is intentionally EXCLUDED because logs are already committed by the EVM accumulator hash through ordered receipts and logs bloom. The hash SHALL be computed over a canonical byte encoding with sorted iteration order.
 
 #### Scenario: identical state produces identical hash
 - **WHEN** two state representations contain the same accounts, storage, contracts, and block_hashes
@@ -31,6 +31,10 @@ The system SHALL provide a function that computes a deterministic SHA256 hash fr
 #### Scenario: block_hash change produces different hash
 - **WHEN** a block_hash entry is added, removed, or modified
 - **THEN** the hash differs
+
+#### Scenario: log-only change does not affect state hash
+- **WHEN** only `Cache.logs` changes while accounts, contracts, and block_hashes remain identical
+- **THEN** the canonical state hash is unchanged because logs are committed separately via the EVM accumulator
 
 #### Scenario: empty state has a well-defined hash
 - **WHEN** a state with zero accounts, zero contracts, and zero block_hashes is hashed
