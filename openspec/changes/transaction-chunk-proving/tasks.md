@@ -30,9 +30,9 @@
 
 ## 4. CachedExecutor EvmFactory generics
 
-- [ ] 4.1 Modify `CachedExecutor::new()` in `crates/kona/src/executor.rs`: change the specialized `impl` block from `CachedExecutor<KonaExecutor<'a, P, H, OpEvmFactory>>` to accept a generic `Evm: EvmFactory + Send + Sync + Clone + Debug` parameter, becoming `CachedExecutor<KonaExecutor<'a, P, H, Evm>>`. Pass the factory through to `KonaExecutor::new()`.
-- [ ] 4.2 Update all call sites of `CachedExecutor::new()` in `crates/kona/src/client/core.rs` to pass `OpEvmFactory::default()` explicitly (preserving current behavior).
-- [ ] 4.3 Run existing `test_cached_executor` and all `kailua-kona` tests — verify identical behavior. The refactor must be purely mechanical with no behavior change.
+- [x] 4.1 Modify `CachedExecutor::new()` in `crates/kona/src/executor.rs`: change the specialized `impl` block from `CachedExecutor<KonaExecutor<'a, P, H, OpEvmFactory>>` to accept a generic `Evm: EvmFactory + Send + Sync + Clone + Debug` parameter, becoming `CachedExecutor<KonaExecutor<'a, P, H, Evm>>`. Pass the factory through to `KonaExecutor::new()`.
+- [x] 4.2 Update all call sites of `CachedExecutor::new()` in `crates/kona/src/client/core.rs` to pass `OpEvmFactory::default()` explicitly (preserving current behavior).
+- [x] 4.3 Run existing `test_cached_executor` and all `kailua-kona` tests — verify identical behavior. The refactor must be purely mechanical with no behavior change.
 
 ## 5. Chunk witness construction (host-side)
 

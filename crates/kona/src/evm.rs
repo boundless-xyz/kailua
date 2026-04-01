@@ -83,10 +83,7 @@ impl<E: Evm> Evm for TracingOpEvm<E> {
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         let result = self.inner.transact_raw(tx)?;
-        self.traces
-            .lock()
-            .unwrap()
-            .push(result.state.clone());
+        self.traces.lock().unwrap().push(result.state.clone());
         Ok(result)
     }
 
@@ -129,7 +126,7 @@ impl<E: Evm> Evm for TracingOpEvm<E> {
 /// traces during `build_block()`. In the guest, callers use `OpEvmFactory` directly (zero
 /// tracing overhead). The shared buffer must be drained with [`take_traces`](Self::take_traces)
 /// after each block so traces from prior executions do not accumulate.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TracingEvmFactory {
     inner: OpEvmFactory,
     traces: Arc<Mutex<Vec<EvmState>>>,
@@ -201,15 +198,14 @@ mod tests {
     use alloy_primitives::{address, TxKind, U256};
 
     fn test_env() -> EvmEnv<OpSpecId> {
-        let mut block_env = BlockEnv::default();
-        block_env.number = U256::from(1);
+        let block_env = BlockEnv {
+            number: U256::from(1),
+            ..Default::default()
+        };
         let mut cfg_env = CfgEnv::default();
         cfg_env.chain_id = 1;
         cfg_env.spec = OpSpecId::BEDROCK;
-        EvmEnv {
-            block_env,
-            cfg_env,
-        }
+        EvmEnv { block_env, cfg_env }
     }
 
     fn make_transfer(
@@ -255,8 +251,14 @@ mod tests {
 
         let traces = factory.take_traces();
         assert_eq!(traces.len(), 1, "should have exactly one trace entry");
-        assert!(traces[0].contains_key(&sender), "trace should contain sender");
-        assert!(traces[0].contains_key(&recipient), "trace should contain recipient");
+        assert!(
+            traces[0].contains_key(&sender),
+            "trace should contain sender"
+        );
+        assert!(
+            traces[0].contains_key(&recipient),
+            "trace should contain recipient"
+        );
     }
 
     #[test]
@@ -285,8 +287,14 @@ mod tests {
 
         let traces = factory.take_traces();
         assert_eq!(traces.len(), 2, "should have two trace entries");
-        assert!(traces[0].contains_key(&recipient1), "first trace should contain recipient1");
-        assert!(traces[1].contains_key(&recipient2), "second trace should contain recipient2");
+        assert!(
+            traces[0].contains_key(&recipient1),
+            "first trace should contain recipient1"
+        );
+        assert!(
+            traces[1].contains_key(&recipient2),
+            "second trace should contain recipient2"
+        );
     }
 
     #[test]
@@ -301,7 +309,11 @@ mod tests {
         let _ = evm.transact_system_call(caller, contract, Bytes::new());
 
         let traces = factory.take_traces();
-        assert_eq!(traces.len(), 0, "system_call should not append to trace buffer");
+        assert_eq!(
+            traces.len(),
+            0,
+            "system_call should not append to trace buffer"
+        );
     }
 
     #[test]
@@ -319,10 +331,17 @@ mod tests {
         );
 
         let result = evm.transact_raw(tx);
-        assert!(result.is_err(), "transaction from unfunded account should fail");
+        assert!(
+            result.is_err(),
+            "transaction from unfunded account should fail"
+        );
 
         let traces = factory.take_traces();
-        assert_eq!(traces.len(), 0, "failed transaction should not append to trace buffer");
+        assert_eq!(
+            traces.len(),
+            0,
+            "failed transaction should not append to trace buffer"
+        );
     }
 
     #[test]
@@ -359,7 +378,11 @@ mod tests {
             .unwrap();
 
         let traces = factory.take_traces();
-        assert_eq!(traces.len(), 1, "take_traces should return the accumulated block traces");
+        assert_eq!(
+            traces.len(),
+            1,
+            "take_traces should return the accumulated block traces"
+        );
         assert!(
             cloned_factory.take_traces().is_empty(),
             "take_traces should drain the shared buffer for all factory clones"

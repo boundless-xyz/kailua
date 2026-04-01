@@ -251,6 +251,7 @@ where
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider.clone(),
+            OpEvmFactory::default(),
             execution_trace,
         );
 

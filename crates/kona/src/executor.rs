@@ -17,7 +17,7 @@ use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
-use alloy_op_evm::OpEvmFactory;
+use alloy_evm::EvmFactory;
 use alloy_primitives::{Sealed, B256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
@@ -71,18 +71,30 @@ pub struct CachedExecutor<E: Executor + Send + Sync + Debug> {
     pub collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
 }
 
-impl<'a, P, H> CachedExecutor<KonaExecutor<'a, P, H, OpEvmFactory>>
+impl<'a, P, H, Evm> CachedExecutor<KonaExecutor<'a, P, H, Evm>>
 where
     P: TrieDBProvider + Send + Sync + Clone + Debug,
     H: TrieHinter + Send + Sync + Clone + Debug,
+    Evm: EvmFactory<
+            Spec = alloy_evm::op_revm::OpSpecId,
+            BlockEnv = alloy_evm::revm::context::BlockEnv,
+        > + Send
+        + Sync
+        + Clone
+        + Debug
+        + 'static,
+    Evm::Tx: alloy_evm::FromTxWithEncoded<op_alloy_consensus::OpTxEnvelope>
+        + alloy_evm::FromRecoveredTx<op_alloy_consensus::OpTxEnvelope>
+        + alloy_op_evm::block::OpTxEnv,
 {
     pub fn new(
         execution_cache: Vec<Arc<Execution>>,
         rollup_config: &'a RollupConfig,
         trie_provider: P,
         trie_hinter: H,
+        evm_factory: Evm,
         collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
-    ) -> CachedExecutor<KonaExecutor<'a, P, H, OpEvmFactory>> {
+    ) -> CachedExecutor<KonaExecutor<'a, P, H, Evm>> {
         CachedExecutor {
             cache: {
                 // The cache elements will be popped from first to last
@@ -94,7 +106,7 @@ where
                 rollup_config,
                 trie_provider,
                 trie_hinter,
-                OpEvmFactory::default(),
+                evm_factory,
                 None,
             ),
             collection_target,
