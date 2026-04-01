@@ -150,7 +150,7 @@ pub struct MarketProviderConfig {
         required = false,
         conflicts_with = "boundless_legacy_pricing"
     )]
-    pub boundless_min_price_per_cycle: Option<String>,
+    pub boundless_min_price_per_cycle: Option<Amount>,
     /// Maximum price per cycle (e.g., "0.00001 USD", "0.0000001 ETH").
     /// If unset, the SDK default (~100 Kwei/cycle, 99th percentile) is used.
     #[clap(
@@ -159,10 +159,10 @@ pub struct MarketProviderConfig {
         required = false,
         conflicts_with = "boundless_legacy_pricing"
     )]
-    pub boundless_max_price_per_cycle: Option<String>,
+    pub boundless_max_price_per_cycle: Option<Amount>,
     /// Hard cap on total order price (e.g., "0.5 ETH", "100 USD"). Safety mechanism.
     #[clap(long, env, required = false)]
-    pub boundless_max_price_cap: Option<String>,
+    pub boundless_max_price_cap: Option<Amount>,
 
     /// How much % to increase the price of the proving order by after it expires.
     #[clap(long, env, required = false, default_value_t = 10)]
@@ -406,17 +406,20 @@ impl MarketProviderConfig {
         if let Some(ref min_price) = self.boundless_min_price_per_cycle {
             proving_args.extend(vec![
                 String::from("--boundless-min-price-per-cycle"),
-                min_price.clone(),
+                min_price.to_string(),
             ]);
         }
         if let Some(ref max_price) = self.boundless_max_price_per_cycle {
             proving_args.extend(vec![
                 String::from("--boundless-max-price-per-cycle"),
-                max_price.clone(),
+                max_price.to_string(),
             ]);
         }
         if let Some(ref cap) = self.boundless_max_price_cap {
-            proving_args.extend(vec![String::from("--boundless-max-price-cap"), cap.clone()]);
+            proving_args.extend(vec![
+                String::from("--boundless-max-price-cap"),
+                cap.to_string(),
+            ]);
         }
         if self.boundless_legacy_pricing {
             proving_args.extend(vec![
@@ -617,26 +620,11 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             .with_uploader(Some(storage_provider.clone()))
             .with_funding_mode(market.funding_mode())
             .config_offer_layer(|config| {
-                // Set per-cycle price overrides if provided; otherwise SDK uses market prices or built-in defaults.
                 if let Some(ref min_price) = market.boundless_min_price_per_cycle {
-                    if let Ok(amount) = Amount::parse(min_price, None) {
-                        config.min_price_per_cycle(amount);
-                    } else {
-                        tracing::warn!(
-                            "Failed to parse --boundless-min-price-per-cycle '{}', using SDK default",
-                            min_price
-                        );
-                    }
+                    config.min_price_per_cycle(min_price.clone());
                 }
                 if let Some(ref max_price) = market.boundless_max_price_per_cycle {
-                    if let Ok(amount) = Amount::parse(max_price, None) {
-                        config.max_price_per_cycle(amount);
-                    } else {
-                        tracing::warn!(
-                            "Failed to parse --boundless-max-price-per-cycle '{}', using SDK default",
-                            max_price
-                        );
-                    }
+                    config.max_price_per_cycle(max_price.clone());
                 }
                 config
             })
@@ -1374,17 +1362,13 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     }
 
     // Apply max_price_cap safety (both paths)
-    if let Some(ref cap_str) = market.boundless_max_price_cap {
-        if let Ok(cap) = Amount::parse(cap_str, None) {
-            if request.offer.maxPrice > cap.value {
-                warn!(
-                    "maxPrice {} exceeds cap {}, capping",
-                    request.offer.maxPrice, cap_str
-                );
-                request.offer.maxPrice = cap.value;
-            }
-        } else {
-            warn!("Failed to parse --boundless-max-price-cap '{}'", cap_str);
+    if let Some(ref cap) = market.boundless_max_price_cap {
+        if request.offer.maxPrice > cap.value {
+            warn!(
+                "maxPrice {} exceeds cap {}, capping",
+                request.offer.maxPrice, cap
+            );
+            request.offer.maxPrice = cap.value;
         }
     }
 
