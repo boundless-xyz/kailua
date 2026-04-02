@@ -56,11 +56,13 @@ This context SHALL include all block-level fields needed by chunk execution, suc
 
 For each chunk, the host SHALL provide the **full cumulative cache** at the chunk boundary — not a filtered subset. This is required for hash chain continuity: the chunk guest computes `pre_db_hash` from its witness cache and `post_db_hash` from the post-execution state; for the chain `post_db_hash[i] == pre_db_hash[i+1]` to hold, chunk i+1's witness cache must be exactly chunk i's post-state.
 
+The core state-advancement functions `apply_trace_to_cache()` and `account_state_from_evm_status()` live in `kailua-kona` (`crates/kona/src/precondition/chunking.rs`) because they are shared between host-side witness construction and guest-side chunk verification (the `ChunkExecutor` uses them to apply merged state deltas during aggregation).
+
 The algorithm SHALL:
 1. Materialize the post-prelude flat state once.
 2. Pre-populate the cumulative cache with all accounts, contracts, and block hashes that any chunk in the block will access, determined by scanning all per-transaction traces and metadata. Addresses absent from the post-prelude cache are inserted as `NotExisting`. Pre-existing contract bytecodes and block hashes from all transactions are inserted upfront.
 3. For each chunk, clone the full cumulative cache as the chunk's witness.
-4. After each chunk, advance the cumulative cache by applying that chunk's traces (account info, storage, contracts, lifecycle state).
+4. After each chunk, advance the cumulative cache by applying that chunk's traces via `apply_trace_to_cache()` (account info, storage, contracts, lifecycle state).
 
 #### Scenario: first chunk reads from post-prelude state
 - **WHEN** `chunk_0` reads state and no prior chunk exists

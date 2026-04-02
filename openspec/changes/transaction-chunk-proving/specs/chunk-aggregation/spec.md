@@ -1,124 +1,120 @@
 ## ADDED Requirements
 
-### Requirement: Block aggregation loads trie state and applies prelude once before chunk verification
+### Requirement: Chunk struct represents a proven transaction chunk (analogous to Execution)
 
-The block aggregation mode SHALL load the required state from the state trie (via TrieDB/preimage oracles, as done in current block execution), populate a `Cache` structure, and apply the block-level prelude exactly once before verifying any chunks. The SHA256 of the resulting post-prelude cache is `initial_db_hash`. The initial tx-body EVM state accumulators SHALL be zeroed, producing `initial_evm_hash`.
+**Crate:** `kailua-kona` (`crates/kona/src/executor.rs`, co-located with `Execution`)
 
-#### Scenario: prelude uses public BlockExecutor API
-- **WHEN** the block aggregation applies the prelude
-- **THEN** it calls `BlockExecutor::apply_pre_execution_changes()` on an `OpBlockExecutor` created via `OpBlockExecutorFactory::create_executor()`, using the public trait method
+The system SHALL define a `Chunk` struct that represents a proven transaction chunk, analogous to `Execution` for blocks. Fields:
 
-#### Scenario: executor is dropped after prelude to release state borrow
-- **WHEN** the prelude completes
-- **THEN** the executor is dropped, releasing the `&mut State` borrow so the aggregation can hash the post-prelude state and manipulate it directly
+- `agreed_db: B256` — pre-chunk DB state hash
+- `agreed_evm: B256` — pre-chunk EVM accumulator hash
+- `tx_count: u16` — number of transactions in this chunk
+- `tx_hash: B256` — hash of the chunk's transactions (for matching and proof verification)
+- `results: Vec<ResultAndState>` — full per-transaction execution results (gas, logs, output, state changes)
+- `evm_state: EvmAccumulatorState` — post-chunk EVM accumulator state
+- `claimed_db: B256` — post-chunk DB state hash
+- `claimed_evm: B256` — post-chunk EVM accumulator hash
 
-#### Scenario: initial state is Merkle-verified
-- **WHEN** the block aggregation proof loads state from the trie
-- **THEN** each account and storage value is verified against the state trie's Merkle proofs (existing TrieDB behavior)
+Each `ResultAndState` entry contains the complete per-transaction `ExecutionResult` and `EvmState` (state diff), identical to what the EVM would have returned during monolithic execution. The block executor processes these through its normal commit path.
 
-#### Scenario: initial_db_hash uses canonical normalization of CacheState
-- **WHEN** chunk_0 was proven with `pre_db_hash = H` using `Cache` (from `CacheDB`)
-- **THEN** the block aggregation computes `initial_db_hash == H` from `CacheState` (from `State<TrieDB>`) via the canonical normalization that maps both representations to the same hash
+#### Scenario: Chunk mirrors Execution pattern
+- **WHEN** a `Chunk` is instantiated
+- **THEN** it carries pre-state commitments (`agreed_db`, `agreed_evm`), outputs (`results`, `evm_state`), and post-state commitments (`claimed_db`, `claimed_evm`) — analogous to `Execution`'s `agreed_output`, `artifacts`, `claimed_output`
 
-#### Scenario: prelude is not replayed inside chunks
-- **WHEN** block aggregation verifies the chunk chain
-- **THEN** the prelude has already been applied exactly once before `chunk_0`, and no chunk verification step replays it
+#### Scenario: results length matches tx_count
+- **WHEN** a `Chunk` is constructed
+- **THEN** `results.len() == tx_count as usize`
 
-### Requirement: Block aggregation verifies chunk proof chain
+### Requirement: ChunkingEvm wraps inner Evm and returns pre-computed results (analogous to TracingOpEvm)
 
-For each chunk `i` in order (0 to N-1), the block aggregation proof SHALL:
-1. Load `tx_count_i`, `post_db_hash_i`, and `post_evm_state_i` from the witness.
-2. Compute `tx_hash_i` from the block's transactions at the current offset.
-3. Compute `pre_evm_state_hash_i` from `current_evm_state`.
-4. Compute `chunk_trace_i = SHA256(tx_hash_i || current_db_hash || post_db_hash_i || pre_evm_state_hash_i || post_evm_hash_i)`.
-5. Construct the expected `ProofJournal` for chunk `i` using `chunk_trace_i`.
-6. Verify the chunk's receipt via `verify_stitching_journal()`.
-7. Advance: `current_db_hash = post_db_hash_i`, `current_evm_state = post_evm_state_i`, `offset += tx_count_i`.
+**Crate:** `kailua-kona`
 
-#### Scenario: all chunks verified in order
-- **WHEN** a block has 3 chunks with valid receipts
-- **THEN** chunks 0, 1, 2 are verified in sequence, each advancing the current hash state
+The system SHALL provide a `ChunkingEvm<E: Evm>` struct that wraps an inner `E: Evm` and implements the `Evm` trait. It is instantiated with a `Vec<Chunk>` (reversed, popped from end) and tracks the current transaction index. The `ChunkingEvmFactory` produces `ChunkingEvm<OpEvm<...>>` instances, following the same factory pattern as `TracingEvmFactory`.
 
-#### Scenario: chunk receipt mismatch causes failure
-- **WHEN** chunk `i`'s receipt does not match the expected ProofJournal
-- **THEN** `verify_stitching_journal()` fails (panics in zkVM)
+- `transact_raw()`: If the next chunk is active (or a new chunk starts at this tx index), return the next pre-computed `ResultAndState` from the chunk's `results`. The block executor's normal commit path applies `result.state` to `State<TrieDB>`. If no chunk is active and no pending chunk matches, delegate to the inner EVM for actual execution.
+- `transact_system_call()`: Always delegates to the inner EVM without modification (prelude and epilogue run normally).
+- All other `Evm` trait methods: Delegate to the inner EVM.
 
-#### Scenario: memory DB hash continuity
-- **WHEN** chunk `i` is verified with `post_db_hash_i`
-- **THEN** chunk `i+1`'s expected `pre_db_hash` is `post_db_hash_i`
+This serves both roles with the same code:
+- **Chunk proving** (empty chunk vec): all `transact_raw()` calls delegate to the inner EVM (normal execution).
+- **Chunk aggregation** (populated chunk vec): all `transact_raw()` calls return pre-computed results.
 
-#### Scenario: EVM state hash continuity
-- **WHEN** chunk `i` is verified with `post_evm_hash_i`
-- **THEN** chunk `i+1`'s expected `pre_evm_state_hash` is `post_evm_hash_i`
+#### Scenario: transact_raw returns pre-computed result during aggregation
+- **WHEN** a chunk is active and `transact_raw()` is called
+- **THEN** the next `ResultAndState` from `chunk.results` is returned without invoking the inner EVM
+- **AND** the block executor commits `result.state` to `State<TrieDB>` through its normal path
 
-### Requirement: Block aggregation materializes verified tx-body state, applies epilogue once, and computes trie root
+#### Scenario: transact_system_call delegates to inner EVM
+- **WHEN** `transact_system_call()` is called during prelude or epilogue
+- **THEN** the call delegates to the inner `OpEvm`, executing normally against `State<TrieDB>`
 
-After all chunks are verified, the block aggregation proof SHALL:
-1. Load the full post-transaction-body `Cache` from the witness.
-2. Verify `SHA256(post_tx_cache) == current_db_hash` (matches the last chunk's `post_db_hash`).
-3. Load the full final EVM state from the witness.
-4. Verify `SHA256(final_evm_state) == current_evm_hash` (matches the last chunk's `post_evm_hash`).
-5. Materialize the verified tx-body transition before epilogue, either by constructing a `BundleState` from the post-prelude → post-transaction boundary snapshots or by equivalently applying that verified transition into a fresh `State`.
-6. Ensure the constructed transition preserves account lifecycle semantics (create, destroy, storage-cleared / recreate) instead of collapsing all modified accounts to `Changed`.
-7. Apply the block-level epilogue exactly once on top of the verified post-transaction state.
-8. Compute `state_root = trie_db.state_root(&bundle)` — the single trie computation for the block.
+#### Scenario: empty chunk vec delegates all transact_raw to inner
+- **WHEN** ChunkingEvm has no chunks
+- **THEN** all `transact_raw()` calls delegate to the inner EVM (chunk proving mode)
 
-#### Scenario: post-transaction cache hash mismatch causes failure
-- **WHEN** `SHA256(post_tx_cache) != current_db_hash`
-- **THEN** the block aggregation proof fails
+#### Scenario: state remains consistent between system calls and chunk results
+- **WHEN** the block executor commits `ResultAndState.state` from a pre-computed result
+- **THEN** subsequent `transact_system_call()` calls (epilogue) see the updated state in `State<TrieDB>` because the EVM shares the same state reference
 
-#### Scenario: verified post-transaction state is materialized before root computation
-- **WHEN** the aggregation has verified the last chunk hash
-- **THEN** it incorporates the verified tx-body state transition before epilogue and before trie-root computation, so the final root reflects prelude + tx body + epilogue
+### Requirement: Chunk receipts are verified upfront in the stitching layer (like execution proofs)
 
-#### Scenario: epilogue uses public standalone functions
-- **WHEN** the aggregation applies the epilogue
-- **THEN** it calls `post_block_balance_increments()` (public from `alloy_evm::block::state_changes`) and `State::increment_balances()` (public on `State<DB>`) rather than using `OpBlockExecutor::finish()`, which expects the executor to have processed transactions
+**Crate:** `kailua-kona` (`crates/kona/src/client/stitching.rs`)
 
-#### Scenario: epilogue runs exactly once after the chunk chain
-- **WHEN** the final chunk has been verified
-- **THEN** the aggregation proof applies the epilogue exactly once before computing the final trie diff and header
+Chunk proof receipts SHALL be verified upfront by a `stitch_chunks()` function in `run_stitching_client()`, following the same pattern as `stitch_executions()`. This runs AFTER `run_core_client()` returns (which used the chunk data trusting it), and alongside the existing execution and boot info stitching. The `ChunkingEvm` does NOT verify receipts during `transact_raw()` — it trusts the chunk data because the stitching layer has already verified the receipts.
 
-#### Scenario: BundleState constructed from diff with empty reverts
-- **WHEN** the aggregation constructs a `BundleState` for trie root computation
-- **THEN** it diffs the initial (post-prelude) and final states, creates `BundleAccount` entries with accurate lifecycle semantics (`InMemoryChange`, `Destroyed`, `DestroyedChanged`, etc.) plus the required storage changes / zeroings, and leaves `reverts` empty (trie_db.state_root only reads forward state)
+For each block's chunks, `stitch_chunks()` SHALL:
+1. Verify hash chain continuity: `chunk[i].agreed_db == chunk[i-1].claimed_db` and `chunk[i].agreed_evm == chunk[i-1].claimed_evm`.
+2. For each chunk, compute `chunk_trace = compute_chunk_trace(chunk.tx_hash, chunk.agreed_db, chunk.claimed_db, chunk.agreed_evm, chunk.claimed_evm)`.
+3. Construct the expected `ProofJournal` using `chunk_trace` as precondition, `l1_head = 0xFF..FF`, and the block's `config_hash`, `fpvm_image_id`, `payout_recipient`, `agreed_l2_output_root`, `claimed_l2_block_number` from `BootInfo`.
+4. Call `verify_stitching_journal()` for each chunk.
 
-#### Scenario: state root matches monolithic execution
-- **WHEN** a block is proven via chunking
-- **THEN** the computed `state_root` is identical to what monolithic execution would produce
+#### Scenario: stitch_chunks follows stitch_executions pattern
+- **WHEN** `run_stitching_client()` completes
+- **THEN** it calls `stitch_chunks()` alongside `stitch_executions()` and `stitch_boot_info()`, using the same `proven_fpvm_journals` set
 
-### Requirement: Block aggregation produces standard BlockBuildingOutcome
+#### Scenario: ChunkingEvm trusts chunk data
+- **WHEN** `ChunkingEvm::transact_raw()` returns a pre-computed result
+- **THEN** it does not independently verify the chunk proof (receipt verification was done upfront)
 
-The block aggregation proof SHALL construct a `BlockBuildingOutcome` (sealed header + execution result) using:
-- `state_root` from the trie computation
-- `receipts_root` from `compute_receipts_root()` using the final EVM state's receipts
-- `gas_used` from the final EVM state's `cumulative_gas_used`
-- `logs_bloom` from the final EVM state
-- `blob_gas_used` from the final EVM state
-- All other header fields from the payload attributes (same as `seal_block()`)
+#### Scenario: hash chain break causes verification failure
+- **WHEN** `chunk[i].agreed_db != chunk[i-1].claimed_db`
+- **THEN** `stitch_chunks()` panics (invalid chunk chain)
 
-The resulting `BlockBuildingOutcome` SHALL be identical to what monolithic execution produces.
+#### Scenario: ProofJournal fields come from BootInfo
+- **WHEN** `stitch_chunks()` reconstructs the expected ProofJournal for a chunk
+- **THEN** it uses `config_hash`, `fpvm_image_id`, `payout_recipient`, `agreed_l2_output_root`, `claimed_l2_block_number` from the `BootInfo` returned by `run_core_client()`
 
-#### Scenario: block-level ProofJournal is standard
-- **WHEN** the block aggregation emits its ProofJournal
-- **THEN** it is a standard block-level ProofJournal (not a chunk journal) with a real `l1_head` or `0x00..00` (execution-only), identical to monolithic execution
+### Requirement: Trie root provides ultimate correctness guarantee
+
+During chunk aggregation, correctness is assured by two complementary verification layers:
+
+1. **Hash chain + receipt verification** (in `stitch_chunks()`): Verifies internal consistency between chunks — each chunk's proof was valid and the chain is continuous.
+2. **Trie root computation** (in block executor): The per-tx `ResultAndState` instances are committed to `State<TrieDB>` through the normal block executor path. `state_root = trie_db.state_root(&bundle)` is computed inside the proof. If any chunk's state changes were incorrect, the trie root would differ from monolithic execution, producing an invalid block proof.
+
+The aggregation proof does NOT need to compute flat cache hashes from the trie or compare them against chunk hashes. The flat cache hash chain verifies inter-chunk consistency; the trie root verifies global correctness.
+
+#### Scenario: wrong chunk data produces wrong trie root
+- **WHEN** a chunk's `ResultAndState` instances do not match what monolithic execution would produce
+- **THEN** the trie root computed by `State<TrieDB>` differs from the correct value, and the block proof is invalid
+
+#### Scenario: chunk proofs + trie root jointly guarantee correctness
+- **WHEN** all chunk receipts are verified and the trie root matches monolithic execution
+- **THEN** the block proof is valid and the state transition is correct
+
+### Requirement: Block aggregation integrates with CachedExecutor via ChunkingEvmFactory
+
+The `CachedExecutor` SHALL support chunk aggregation by accepting a `ChunkingEvmFactory` (constructed with chunk data) instead of `OpEvmFactory`. When chunks are present for blocks in the execution range, the caller provides `ChunkingEvmFactory` to `CachedExecutor::new()`. The factory produces `ChunkingEvm` instances that return pre-computed results during block execution.
+
+The existing `CachedExecutor` logic (cache-hit precedence, collection target, fallback) remains unchanged. The chunk aggregation is transparent at the executor level — it happens inside the EVM layer.
+
+#### Scenario: CachedExecutor with ChunkingEvmFactory
+- **WHEN** `CachedExecutor::new()` is called with `ChunkingEvmFactory` (which wraps `OpEvmFactory` + chunk data)
+- **THEN** block execution uses `ChunkingEvm` instances that return pre-computed results for chunked transactions
+
+#### Scenario: cache hit still takes precedence
+- **WHEN** a block is in the execution cache AND has chunk data
+- **THEN** the cache hit path returns the cached `BlockBuildingOutcome` (chunks are not consumed)
 
 #### Scenario: transparent to block stitching
-- **WHEN** a chunk-aggregated block is stitched with other blocks via `stitch_executions()` or `stitch_boot_info()`
+- **WHEN** a chunk-aggregated block is stitched with other blocks
 - **THEN** the stitching succeeds identically to monolithic blocks — chunking is invisible at the stitching layer
-
-### Requirement: Block aggregation integrates with CachedExecutor
-
-The `CachedExecutor` SHALL support a chunk aggregation path alongside the existing cache-hit and direct-execution paths. When chunk data is available for a block, the executor SHALL perform chunk verification and aggregation instead of monolithic execution.
-
-#### Scenario: executor selects chunk path when data is present
-- **WHEN** `execute_payload(attributes)` is called, the block is not already in the cache, and chunk data exists for the current block
-- **THEN** the executor runs chunk aggregation (not monolithic execution)
-
-#### Scenario: executor falls back to monolithic when no chunk data
-- **WHEN** `execute_payload(attributes)` is called and no chunk data exists
-- **THEN** the executor follows the existing cache-hit or direct-execution path (unchanged)
-
-#### Scenario: executor still supports block cache hit
-- **WHEN** `execute_payload(attributes)` is called and the block is in the cache
-- **THEN** the cache hit takes precedence over chunk aggregation (existing behavior, unchanged)

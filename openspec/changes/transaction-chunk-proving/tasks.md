@@ -44,49 +44,50 @@
 - [x] 5.5 Add unit tests for `build_chunk_witnesses` in `crates/prover/src/chunk.rs`: single-chunk block (witness == post-prelude state), two-chunk block where chunk_1 reads chunk_0's storage write, same sender in chunk_0 and chunk_1 requiring nonce/balance carry-forward, contract creation in chunk_0 observed in chunk_1, selfdestruct in chunk_0 observed in chunk_1, contract bytecode inclusion, block_hash inclusion, EVM accumulator continuity between chunks.
 - [x] 5.6 Run full `kailua-kona` test suite — verify zero regressions.
 
-## 6. Chunk proving guest mode
+## 6. Chunk struct, PanicDB, and rkyv wrappers
 
-- [ ] 6.1 Implement `run_chunk_proof(witness: ChunkWitnessData) -> ProofJournal` in `kailua-kona` (guest-side) that: (a) converts `SerializableCache` → `Cache`, validates every cached contract entry against its `code_hash` key, and builds `CacheDB<PanicDB>` by setting `cache_db.cache = cache`, (b) computes pre_db_hash using canonical hash, (c) sets up the EVM and executor from `witness.block_context`, (d) wraps `CacheDB<PanicDB>` in `State::builder().with_database(...).with_bundle_update().build()`, then sets the state-clear flag from the same block / hardfork predicate used by monolithic execution, (e) does NOT call `apply_pre_execution_changes()` — prelude is handled by the aggregation proof, (f) executes exactly `witness.transactions` in order, (g) computes `tx_hash` from `witness.transactions`, (h) computes `post_db_hash` from the effective post-state view (overlaying the final live `CacheState` projection and block hashes onto the initial witness `Cache` so untouched witness entries remain committed, while clearing inherited base data for deleted / storage-cleared overlays), computes post_evm_state_hash, (i) computes chunk_trace, (j) returns ProofJournal with chunk sentinel. Note: `EmptyDB` returns defaults (not panics), so `PanicDB` is required.
-- [ ] 6.2 Define `PanicDB` struct implementing both `Database` and `DatabaseRef` traits (4 methods each: `basic`/`basic_ref`, `storage`/`storage_ref`, `code_by_hash`/`code_by_hash_ref`, `block_hash`/`block_hash_ref`) that panics on all methods with descriptive error messages including the requested address/slot. Use `type Error = Infallible`. `CacheDB<PanicDB>` requires `PanicDB: DatabaseRef`.
+- [ ] 6.1a Define `Chunk` struct in `crates/kona/src/executor.rs` (co-located with `Execution`). Fields: `agreed_db: B256`, `agreed_evm: B256`, `tx_count: u16`, `tx_hash: B256`, `results: Vec<ResultAndState>` (full per-tx execution results), `evm_state: EvmAccumulatorState`, `claimed_db: B256`, `claimed_evm: B256`. `results.len() == tx_count`.
+- [ ] 6.1b Implement rkyv `ArchiveWith` wrappers for `ResultAndState` and its nested types in `crates/kona/src/rkyv/chunking.rs`: `ResultAndStateRkyv` (wrapping `ResultAndState<OpHaltReason>`), `ExecutionResultRkyv`, `EvmStateRkyv` (for `HashMap<Address, Account>`), `AccountRkyv` (for `Account` with `AccountInfo`, `AccountStatus` bitflags, `HashMap<U256, EvmStorageSlot>`). Add round-trip tests for each wrapper covering success/revert/halt variants, account lifecycle states, and storage slot values.
+- [ ] 6.2 Define `PanicDB` struct in `kailua-kona` implementing `DatabaseRef` trait (4 methods: `basic_ref`, `storage_ref`, `code_by_hash_ref`, `block_hash_ref`) that panics on all methods with descriptive error messages including the requested address/slot. Use `type Error = Infallible`. `CacheDB<PanicDB>` requires `PanicDB: DatabaseRef`. Note: `EmptyDB` returns defaults (not panics), so `PanicDB` is required for chunk proving.
 - [ ] 6.3 Add unit tests for `PanicDB`: each method panics with expected message.
-- [ ] 6.4 Add integration test for `run_chunk_proof`: construct a ChunkWitnessData for a known set of simple transactions (transfers, storage writes), execute, verify the returned ProofJournal has correct sentinel values and the precondition_hash matches manual computation of chunk_trace.
-- [ ] 6.5 Add integration test: multi-chunk block. Build witnesses for 2 chunks of the same block. Execute both. Verify post_db_hash of chunk_0 matches pre_db_hash in chunk_1's witness. Verify post_evm_hash of chunk_0 matches pre_evm_hash of chunk_1.
-- [ ] 6.6 Add test: missing state in witness triggers PanicDB. Construct a ChunkWitnessData that is intentionally incomplete. Verify the chunk proof panics.
-- [ ] 6.6a Add test: malformed contract bytecode in the witness cache is rejected before hashing / execution.
-- [ ] 6.7 Run full `kailua-kona` test suite — verify zero regressions.
+- [ ] 6.4 Add rkyv round-trip tests for `Chunk`: verify serialization/deserialization preserves all fields including the per-tx `ResultAndState` entries.
+- [ ] 6.5 Run full `kailua-kona` test suite — verify zero regressions.
 
-## 7. Chunk aggregation in CachedExecutor
+## 7. Chunk execution-only mode in run_core_client
 
-- [ ] 7.1 Define `BlockChunkData` struct in `kailua-kona` (guest-side): `chunks: Vec<ChunkMetadata>` where `ChunkMetadata { tx_count: u16, post_db_hash: B256, post_evm_state: EvmAccumulatorState }`. Define `BlockChunkWitness { post_tx_cache: SerializableCache, final_evm_state: EvmAccumulatorState, chunk_data: Vec<ChunkMetadata> }`.
-- [ ] 7.2 Implement the aggregation flow in `verify_and_aggregate_chunks(...)`:
-  (a) Create `State<TrieDB>`, EVM, executor via `OpBlockExecutorFactory`.
-  (b) Call `executor.apply_pre_execution_changes()` — prelude runs (beacon root, blockhashes, Canyon deployer).
-  (c) Drop executor to release the `&mut state` borrow.
-  (d) Hash the post-prelude state (via CacheState normalization) → `initial_db_hash`. Hash zeroed EVM accumulators → `initial_evm_hash`.
-  (e) For each chunk: load `(tx_count, post_db_hash, post_evm_state)` from witness, compute `tx_hash` and `chunk_trace`, construct expected `ProofJournal`, verify via `verify_stitching_journal()`, advance hash chain.
-  (f) Load `post_tx_cache` from witness (`SerializableCache` → `Cache`), verify `hash == current_db_hash`. Load `final_evm_state`, verify `hash == current_evm_hash`.
-  (g) Construct a tx-body `BundleState` (or equivalently materialized state transition) from the post-prelude snapshot and verified `post_tx_cache`, preserving accurate `BundleAccount` lifecycle semantics and storage-wipe behavior instead of forcing every changed account to `Changed`.
-  (h) Materialize that verified tx-body transition before epilogue, then apply epilogue manually: `post_block_balance_increments()` (public fn from `alloy_evm::block::state_changes`) → `state.increment_balances()` (public on `State<DB>`), or equivalently extend the final bundle with the epilogue transitions.
-  (i) `state.merge_transitions(BundleRetention::Reverts)` / `take_bundle()` or the equivalent combined bundle construction → `trie_db.state_root(&bundle)`.
-  (j) Build header manually: `compute_receipts_root()` (public), `ordered_trie_with_encoder()` (public), `logs_bloom()` (public). Replicate EIP-1559 `extra_data` encoding (~40 lines from `pub(crate)` kona-executor utils). Construct `BlockBuildingOutcome`.
-- [ ] 7.3 Add unit tests for `verify_and_aggregate_chunks`: single chunk (trivial aggregation), two chunks with correct hash chain, hash mismatch between chunks causes failure, post-transaction cache hash mismatch causes failure, final evm state hash mismatch causes failure, verified tx-body state is materialized before root computation, prelude is applied exactly once, epilogue is applied exactly once. Add lifecycle tests for account creation, selfdestruct, and destroy-and-recreate/storage-wipe cases. Verify the produced `BlockBuildingOutcome` (state_root, receipts_root, gas_used) matches monolithic execution.
-- [ ] 7.4 Add `CachedExecutor` fields: `tx_chunk_witnesses: Vec<BlockChunkWitness>` and `proven_journals: Option<Arc<HashSet<Digest>>>` (guest-only, behind `#[cfg(target_os = "zkvm")]` or generic). Extend `execute_payload()` so the existing block-cache hit keeps its current precedence, chunk aggregation is checked next, and direct monolithic execution remains the fallback.
-- [ ] 7.5 Add integration test: construct a CachedExecutor with chunk data for a known block. Call `execute_payload()`. Verify the returned `BlockBuildingOutcome` matches monolithic execution output (same state_root, receipts_root, gas_used, logs_bloom).
-- [ ] 7.6 Run full `kailua-kona` test suite — verify zero regressions.
+- [ ] 7.1 Add `chunk_witness: Option<ChunkWitnessData>` field to `Witness` in `crates/kona/src/witness.rs`. Add rkyv serialization with `Default` producing `None`. Thread it through `run_stateless_client()` → `run_stitching_client()` → `run_core_client()` as a new parameter.
+- [ ] 7.2 Add the chunk execution-only branch in `run_core_client()` (`crates/kona/src/client/core.rs`): when `boot.l1_head == B256::from([0xFF; 32])`, enter chunk mode. Extract `ChunkWitnessData` from the parameter (panic if `None`).
+- [ ] 7.3 Implement the chunk execution flow within the new branch:
+  (a) Validate every cached contract entry against its `code_hash` key via `validate_cached_contracts()`.
+  (b) Build `CacheDB<PanicDB>` from `witness.cache`.
+  (c) Compute `pre_db_hash` and `pre_evm_hash` from the witness state.
+  (d) Wrap in `State::builder().with_database(cache_db).with_bundle_update().build()`, set state-clear flag from block/hardfork predicate.
+  (e) Execute exactly `witness.transactions` in order (no prelude, no epilogue).
+  (f) Compute `tx_hash` from `witness.transactions`.
+  (g) Compute `post_db_hash` from the effective post-state view (overlay final `CacheState` onto initial witness `Cache`), compute `post_evm_hash`.
+  (h) Compute `chunk_trace = compute_chunk_trace(tx_hash, pre_db_hash, post_db_hash, pre_evm_hash, post_evm_hash)`.
+  (i) Return `(boot, Precondition::default().chunk(chunk_trace))`.
+- [ ] 7.4 Add integration test: construct a `ChunkWitnessData` for known simple transactions (transfers, storage writes), run chunk mode, verify the returned `ProofJournal` has `l1_head == 0xFF..FF` and `precondition_hash` matches manual computation of `chunk_trace`.
+- [ ] 7.5 Add integration test: multi-chunk block. Build witnesses for 2 chunks. Execute both in chunk mode. Verify `post_db_hash` of chunk_0 matches `pre_db_hash` of chunk_1's witness.
+- [ ] 7.6 Add test: missing state in witness triggers PanicDB panic. Add test: malformed contract bytecode is rejected before hashing/execution.
+- [ ] 7.7 Run full `kailua-kona` test suite — verify zero regressions.
 
-## 8. Witness struct and guest entry point changes
+## 8. ChunkingEvm, ChunkingEvmFactory, and chunk aggregation
 
-- [ ] 8.1 Add explicit guest routing fields to `Witness` in `crates/kona/src/witness.rs`: `execution_mode: WitnessExecutionMode` (an enum with at least `BlockExecution` and `ChunkExecution`, defaulting to `BlockExecution`), `chunk_witness: Option<ChunkWitnessData>`, and `tx_chunk_witnesses: Vec<BlockChunkWitness>`. Add rkyv serialization for the enum and new fields while keeping backward compatibility via defaults.
-- [ ] 8.2 Verify existing witness serialization/deserialization tests pass with the new field defaulting to empty. Add test for round-trip with non-empty chunk data.
-- [ ] 8.3 Modify `run_core_client()` in `crates/kona/src/client/core.rs` to thread `tx_chunk_witnesses` and `proven_journals` into `CachedExecutor` construction when chunk aggregation data is present in the witness.
-- [ ] 8.4 Add chunk execution mode routing in guest entry points (`build/risczero/*/src/main.rs`): when `witness.execution_mode == WitnessExecutionMode::ChunkExecution`, require `witness.chunk_witness.is_some()` and call `run_chunk_proof(witness.chunk_witness.unwrap())`; otherwise run the normal block path.
-- [ ] 8.5 Run full `kailua-kona` test suite and existing guest integration tests — verify zero regressions.
+- [ ] 8.1 Define `ChunkingEvm<E: Evm>` in `kailua-kona` (analogous to `TracingOpEvm`). Wraps inner `E: Evm`, holds a chunk vec (reversed, popped from end) and current tx index. `transact_raw()`: if a chunk is active, return the next pre-computed `ResultAndState` from `chunk.results`; if a new chunk starts at the current tx index, pop it and return the first result; otherwise delegate to inner EVM. `transact_system_call()`: always delegates to inner (prelude/epilogue run normally). All other `Evm` trait methods delegate to inner.
+- [ ] 8.2 Define `ChunkingEvmFactory` (analogous to `TracingEvmFactory`). Implements `EvmFactory` with `type Evm<DB, I> = ChunkingEvm<OpEvm<DB, I, PrecompilesMap>>`. Holds per-block chunk data. Both `create_evm` and `create_evm_with_inspector` delegate to `OpEvmFactory` then wrap in `ChunkingEvm`.
+- [ ] 8.3 Add `chunks: Vec<Vec<Chunk>>` field to `Witness` (one inner vec per block, empty by default). Thread through `run_stateless_client()` → `run_stitching_client()` → `run_core_client()`. When chunk data is present, construct `ChunkingEvmFactory` instead of `OpEvmFactory` for `CachedExecutor::new()`.
+- [ ] 8.4 Implement `stitch_chunks()` in `crates/kona/src/client/stitching.rs` (analogous to `stitch_executions()`). Called in `run_stitching_client()` after `run_core_client()` returns. For each block's chunks: verify hash chain continuity (`chunk[i].agreed_db == chunk[i-1].claimed_db`), compute `chunk_trace`, construct expected `ProofJournal` (using `config_hash`, `fpvm_image_id`, `payout_recipient`, `agreed_l2_output_root`, `claimed_l2_block_number` from `BootInfo`), call `verify_stitching_journal()`.
+- [ ] 8.5 Add unit tests for `ChunkingEvm`: pre-computed results returned in order, system calls delegate to inner, empty chunk vec delegates all transact_raw to inner, tx index tracking is correct across chunks.
+- [ ] 8.6 Add unit tests for `stitch_chunks()`: valid chain passes, hash chain break panics, receipt mismatch panics.
+- [ ] 8.7 Add integration test: construct a block with known transactions, create `Chunk` entries with correct `ResultAndState` instances and hashes, run through `CachedExecutor` with `ChunkingEvmFactory`. Verify the produced `BlockBuildingOutcome` (state_root, receipts_root, gas_used) matches monolithic execution output.
+- [ ] 8.8 Run full `kailua-kona` test suite — verify zero regressions.
 
 ## 9. Prover-side chunk dispatch
 
 - [ ] 9.1 Add `max_txs_per_chunk: usize` field to `ProvingArgs` in `crates/prover/src/args.rs` with default `usize::MAX`, `#[clap(long)]`, and validation that rejects `0`.
-- [ ] 9.2 In `crates/prover/src/tasks.rs`, add chunk dispatch logic: only when `0 < max_txs_per_chunk < block_tx_count`, pre-execute with `TracingOpEvmFactory` (from `crate::evm`), apply the block prelude once to obtain the post-prelude flat cache, call `build_chunk_witnesses()` (from `crate::chunk`), dispatch chunk proof jobs in parallel via `seek_proof()`, collect receipts. Otherwise keep the existing monolithic proving path for that block. Both `TracingOpEvmFactory` and `build_chunk_witnesses` are now local to `kailua-prover`.
-- [ ] 9.3 After chunk receipts are collected, assemble the `BlockChunkWitness` for the aggregation proof: initial trie preimages + chunk metadata + post-transaction cache + final evm state + chunk receipts appended to `stitched_proofs`.
+- [ ] 9.2 In `crates/prover/src/tasks.rs`, add chunk dispatch logic: only when `0 < max_txs_per_chunk < block_tx_count`, pre-execute with `TracingEvmFactory` (from `crate::evm`), call `build_chunk_witnesses()` (from `crate::chunk`), construct `Chunk` entries with merged state deltas from the per-transaction traces, dispatch chunk proof jobs in parallel via `seek_proof()`, collect receipts. Otherwise keep the existing monolithic proving path for that block.
+- [ ] 9.3 After chunk receipts are collected, assemble the chunk data for the aggregation proof: `Vec<Chunk>` entries with state deltas and hashes, plus chunk proof receipts appended to `stitched_proofs`.
 - [ ] 9.4 Add integration test: mock a block with known transactions, set `max_txs_per_chunk`, verify chunk witnesses are constructed correctly and chunk proofs are dispatched.
 - [ ] 9.5 Add integration test: verify that `max_txs_per_chunk = usize::MAX` produces identical behavior to the current code (no chunking path activated).
 

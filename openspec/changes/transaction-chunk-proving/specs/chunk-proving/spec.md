@@ -1,8 +1,26 @@
 ## ADDED Requirements
 
+### Requirement: Chunk execution-only mode in run_core_client triggered by l1_head sentinel
+
+**Crate:** `kailua-kona` (`crates/kona/src/client/core.rs`)
+
+The `run_core_client()` function SHALL support a chunk execution-only mode, activated when `boot.l1_head == B256::from([0xFF; 32])`. This is a third branch alongside the existing execution-only mode (`l1_head == 0x00..00`) and the derivation + execution mode (any real L1 hash). The chunk witness flows through the existing pipeline: `Witness.chunk_witness` → `run_stateless_client()` → `run_stitching_client()` → `run_core_client()`.
+
+#### Scenario: l1_head sentinel selects chunk mode
+- **WHEN** `run_core_client()` is called and `boot.l1_head == 0xFF..FF`
+- **THEN** it enters the chunk execution-only branch (not derivation, not execution-only)
+
+#### Scenario: chunk witness required in chunk mode
+- **WHEN** chunk mode is activated
+- **THEN** a `ChunkWitnessData` must be available from the witness (panic otherwise)
+
+#### Scenario: chunk mode returns chunk precondition
+- **WHEN** chunk execution completes
+- **THEN** `run_core_client()` returns `(boot, Precondition::default().chunk(chunk_trace))`
+
 ### Requirement: Chunk guest executes only the transaction body against CacheDB with PanicDB fallback
 
-The chunk proving mode SHALL execute only a subset of a block's ordered transaction body against a `CacheDB<PanicDB>` (or equivalent in-memory DB backed by a panicking fallback). The witness MUST include the ordered chunk transactions and the full block execution context needed to instantiate the same EVM / executor environment as monolithic execution. The witness cache for `chunk_0` represents the post-prelude block state, and the final chunk stops at the post-last-transaction, pre-epilogue state. All required state MUST be pre-loaded in the cache. If any transaction reads state not present in the cache, the guest SHALL panic. Before computing `pre_db_hash` or executing any transaction, the guest SHALL validate every cached contract entry against its `code_hash` key (for example `bytecode.hash_slow() == code_hash`) and fail on mismatch.
+The chunk execution-only mode SHALL execute only a subset of a block's ordered transaction body against a `CacheDB<PanicDB>` (or equivalent in-memory DB backed by a panicking fallback). The witness MUST include the ordered chunk transactions and the full block execution context needed to instantiate the same EVM / executor environment as monolithic execution. The witness cache for `chunk_0` represents the post-prelude block state, and the final chunk stops at the post-last-transaction, pre-epilogue state. All required state MUST be pre-loaded in the cache. If any transaction reads state not present in the cache, the guest SHALL panic. Before computing `pre_db_hash` or executing any transaction, the guest SHALL validate every cached contract entry against its `code_hash` key (for example `bytecode.hash_slow() == code_hash`) and fail on mismatch.
 
 #### Scenario: all state present, execution succeeds
 - **WHEN** the chunk witness contains all accounts and storage slots that the chunk's transactions will access

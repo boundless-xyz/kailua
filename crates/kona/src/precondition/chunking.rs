@@ -14,8 +14,8 @@
 
 use alloy_evm::revm::database::in_memory_db::{AccountState, Cache, DbAccount};
 use alloy_evm::revm::database::states::cache::CacheState;
-use alloy_evm::revm::primitives::HashMap;
-use alloy_evm::revm::state::{AccountInfo, Bytecode};
+use alloy_evm::revm::primitives::{HashMap, KECCAK_EMPTY};
+use alloy_evm::revm::state::{AccountInfo, AccountStatus, Bytecode, EvmState};
 use alloy_primitives::{Address, Bloom, B256, U256};
 use op_alloy_consensus::OpReceiptEnvelope;
 use risc0_zkvm::sha::rust_crypto::{Digest, Sha256};
@@ -80,6 +80,61 @@ fn hash_account(hasher: &mut Sha256, addr: &Address, acct: &DbAccount) {
     for (slot, value) in &sorted_storage {
         hasher.update(slot.to_be_bytes::<32>());
         hasher.update(value.to_be_bytes::<32>());
+    }
+}
+
+/// Maps the bitflags-based [`AccountStatus`] (from `EvmState` traces) to the enum-based
+/// [`AccountState`] (from `Cache`/`CacheDB`).
+///
+/// This is used by both host-side witness construction and guest-side chunk verification
+/// when applying merged state deltas to advance the cumulative cache.
+pub fn account_state_from_evm_status(status: AccountStatus) -> AccountState {
+    if status.intersects(AccountStatus::SelfDestructed | AccountStatus::Created) {
+        AccountState::StorageCleared
+    } else if status.contains(AccountStatus::Touched) {
+        AccountState::Touched
+    } else {
+        AccountState::None
+    }
+}
+
+/// Applies a single transaction's [`EvmState`] trace (or a merged state delta) to a
+/// cumulative [`Cache`], updating account info, storage, lifecycle state, and contract
+/// bytecodes.
+///
+/// This is used by both host-side witness construction (advancing the cumulative cache
+/// through each chunk's traces) and guest-side chunk verification (applying the merged
+/// state delta from a [`Chunk`] proof to advance state during aggregation).
+pub fn apply_trace_to_cache(cache: &mut Cache, trace: &EvmState) {
+    for (addr, account) in trace {
+        let db_account = cache.accounts.entry(*addr).or_insert_with(|| DbAccount {
+            info: AccountInfo::default(),
+            account_state: AccountState::NotExisting,
+            storage: Default::default(),
+        });
+
+        db_account.info = account.info.clone();
+        db_account.account_state = account_state_from_evm_status(account.status);
+
+        // For created/self-destructed accounts, clear inherited storage
+        if account
+            .status
+            .intersects(AccountStatus::SelfDestructed | AccountStatus::Created)
+        {
+            db_account.storage.clear();
+        }
+
+        // Overlay storage changes
+        for (slot, evm_slot) in &account.storage {
+            db_account.storage.insert(*slot, evm_slot.present_value);
+        }
+
+        // Update contracts if code is present
+        if let Some(code) = &account.info.code {
+            if account.info.code_hash != KECCAK_EMPTY {
+                cache.contracts.insert(account.info.code_hash, code.clone());
+            }
+        }
     }
 }
 
