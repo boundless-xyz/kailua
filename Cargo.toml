@@ -143,8 +143,7 @@ risc0-ethereum-contracts = "3.0.1"
 risc0-zkvm = { version = "3.0.5", features = ["heap-embedded-alloc", "unstable"] }
 
 # Boundless
-# TODO: Switch to crates.io release once boundless-market 1.4.0 is published (expected imminently).
-boundless-market = { git = "https://github.com/boundless-xyz/boundless.git", branch = "release-1.4", features = ["gcs", "s3"] }
+boundless-market = { version = "1.4", features = ["gcs", "s3"] }
 
 # STEEL
 risc0-steel = { git = "https://github.com/boundless-xyz/steel.git", tag = "v2.4.2" }
