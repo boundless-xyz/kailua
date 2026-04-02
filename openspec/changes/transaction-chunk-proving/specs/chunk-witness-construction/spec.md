@@ -18,6 +18,8 @@ The host-side pre-execution SHALL use `TracingEvmFactory` to capture per-transac
 
 ### Requirement: Host groups transactions into chunks
 
+**Crate:** `kailua-prover` (host-only construction logic in `crates/prover/src/chunk.rs`)
+
 When chunk proving is active for a block, the host SHALL group that block's transactions into sequential, non-overlapping chunks based on a positive `max_txs_per_chunk`. The last chunk may have fewer transactions. All transactions in the block MUST be covered by exactly one chunk.
 
 #### Scenario: even division
@@ -49,6 +51,8 @@ This context SHALL include all block-level fields needed by chunk execution, suc
 - **THEN** it does so from the block execution context carried in the witness, matching the corresponding monolithic block execution inputs
 
 ### Requirement: Host constructs chunk-start flat state witnesses as full cumulative cache snapshots
+
+**Crate:** `kailua-prover` (host-only construction logic in `crates/prover/src/chunk.rs`)
 
 For each chunk, the host SHALL provide the **full cumulative cache** at the chunk boundary — not a filtered subset. This is required for hash chain continuity: the chunk guest computes `pre_db_hash` from its witness cache and `post_db_hash` from the post-execution state; for the chain `post_db_hash[i] == pre_db_hash[i+1]` to hold, chunk i+1's witness cache must be exactly chunk i's post-state.
 
@@ -87,6 +91,8 @@ The algorithm SHALL:
 - **THEN** no PanicDB fallback is triggered during execution (all required account metadata, storage values, contracts, and block hashes are present in the full cumulative cache)
 
 ### Requirement: Chunk witness uses rkyv serialization
+
+**Crate:** The `ChunkWitnessData` struct definition with rkyv annotations lives in `kailua-kona` (`crates/kona/src/witness.rs`), co-located with the `Witness` struct. The rkyv `ArchiveWith` wrappers live in `kailua-kona` (`crates/kona/src/rkyv/chunking.rs`). Host-side witness construction lives in `kailua-prover` (`crates/prover/src/chunk.rs`).
 
 The chunk witness SHALL serialize foreign types without native rkyv support using `ArchiveWith` wrappers that decompose each type into a tuple of rkyv-native types (`CacheRkyv` for `Cache`, `BlockEnvRkyv` for `BlockEnv`, `OpBlockExecutionCtxRkyv` for `OpBlockExecutionCtx`). Types owned by the crate (`EvmAccumulatorState`) SHALL derive rkyv traits directly, using `#[rkyv(with = ...)]` for individual fields that lack rkyv support (e.g. `OpReceiptEnvelope` via RLP encoding composed with `rkyv::with::Map`). Conversion between archived and native types SHALL be lossless and round-trip tested.
 

@@ -19,10 +19,15 @@ use kailua_kona::executor::Execution;
 use std::time::SystemTime;
 
 pub mod args;
+/// Host-side chunk witness construction.
+pub mod chunk;
+
 pub mod channel;
 pub mod client;
 pub mod config;
 pub mod driver;
+/// Tracing EVM wrapper for capturing per-transaction state changes.
+pub mod evm;
 #[cfg(feature = "celestia")]
 pub mod hana;
 #[cfg(feature = "eigen")]

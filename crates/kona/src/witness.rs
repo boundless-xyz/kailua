@@ -18,8 +18,13 @@ use crate::driver::CachedDriver;
 use crate::executor::Execution;
 use crate::oracle::vec::VecOracle;
 use crate::oracle::WitnessOracle;
+use crate::precondition::chunking::EvmAccumulatorState;
 use crate::precondition::Precondition;
+use crate::rkyv::chunking::{BlockEnvRkyv, CacheRkyv, OpBlockExecutionCtxRkyv};
 use crate::rkyv::primitives::{AddressDef, B256Def};
+use alloy_evm::revm::context::BlockEnv;
+use alloy_evm::revm::database::Cache;
+use alloy_op_evm::OpBlockExecutionCtx;
 use alloy_primitives::{Address, B256};
 use std::fmt::Debug;
 
@@ -78,6 +83,35 @@ impl Witness<VecOracle> {
         cloned_with_arc.stream_witness = cloned_with_arc.stream_witness.deep_clone();
         cloned_with_arc
     }
+}
+
+/// Witness data for proving a single transaction chunk within a block.
+///
+/// Contains the pre-chunk state snapshot, transaction data, and metadata
+/// required for the chunk prover to re-execute the chunk in isolation.
+#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct ChunkWitnessData {
+    pub block_number: u64,
+    pub chunk_index: u16,
+    pub total_chunks: u16,
+    pub tx_start: u16,
+    pub tx_count: u16,
+    pub transactions: Vec<Vec<u8>>,
+    #[rkyv(with = BlockEnvRkyv)]
+    pub block_env: BlockEnv,
+    #[rkyv(with = OpBlockExecutionCtxRkyv)]
+    pub op_block_ctx: OpBlockExecutionCtx,
+    #[rkyv(with = CacheRkyv)]
+    pub cache: Cache,
+    pub evm_state: EvmAccumulatorState,
+    #[rkyv(with = B256Def)]
+    pub agreed_l2_output_root: B256,
+    #[rkyv(with = B256Def)]
+    pub config_hash: B256,
+    #[rkyv(with = B256Def)]
+    pub fpvm_image_id: B256,
+    #[rkyv(with = AddressDef)]
+    pub payout_recipient: Address,
 }
 
 #[cfg(test)]

@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transaction chunk proving support.
+//! Host-side chunk witness construction.
 //!
 //! This module provides utilities for splitting block transactions into independently
-//! provable chunks and constructing the witnesses needed for chunk proving and aggregation.
+//! provable chunks and constructing the [`ChunkWitnessData`] instances needed for chunk
+//! proving. The [`ChunkWitnessData`] type itself lives in `kailua-kona` (shared with
+//! the guest); this module contains only the host-side construction logic.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -28,9 +30,8 @@ use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use op_alloy_consensus::OpReceiptEnvelope;
 
-use crate::precondition::chunking::EvmAccumulatorState;
-use crate::rkyv::chunking::{BlockEnvRkyv, CacheRkyv, OpBlockExecutionCtxRkyv};
-use crate::rkyv::primitives::{AddressDef, B256Def};
+use kailua_kona::precondition::chunking::EvmAccumulatorState;
+use kailua_kona::witness::ChunkWitnessData;
 
 /// Groups `tx_count` transactions into sequential, non-overlapping chunks of at most
 /// `max_txs_per_chunk` transactions each. The last chunk may have fewer transactions.
@@ -47,35 +48,6 @@ pub fn group_transactions_into_chunks(
         .step_by(max_txs_per_chunk)
         .map(|start| start..tx_count.min(start + max_txs_per_chunk))
         .collect()
-}
-
-/// Witness data for proving a single transaction chunk within a block.
-///
-/// Contains the pre-chunk state snapshot, transaction data, and metadata
-/// required for the chunk prover to re-execute the chunk in isolation.
-#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub struct ChunkWitness {
-    pub block_number: u64,
-    pub chunk_index: u16,
-    pub total_chunks: u16,
-    pub tx_start: u16,
-    pub tx_count: u16,
-    pub transactions: Vec<Vec<u8>>,
-    #[rkyv(with = BlockEnvRkyv)]
-    pub block_env: BlockEnv,
-    #[rkyv(with = OpBlockExecutionCtxRkyv)]
-    pub op_block_ctx: OpBlockExecutionCtx,
-    #[rkyv(with = CacheRkyv)]
-    pub cache: Cache,
-    pub evm_state: EvmAccumulatorState,
-    #[rkyv(with = B256Def)]
-    pub agreed_l2_output_root: B256,
-    #[rkyv(with = B256Def)]
-    pub config_hash: B256,
-    #[rkyv(with = B256Def)]
-    pub fpvm_image_id: B256,
-    #[rkyv(with = AddressDef)]
-    pub payout_recipient: Address,
 }
 
 /// Per-transaction metadata needed during chunk witness construction that is not recoverable
@@ -205,7 +177,7 @@ fn accumulate_receipt(
     state.receipts.push(receipt.clone());
 }
 
-/// Builds [`ChunkWitness`] instances for each transaction chunk in a block.
+/// Builds [`ChunkWitnessData`] instances for each transaction chunk in a block.
 ///
 /// For each chunk, this function:
 /// 1. Clones the full cumulative cache state as the chunk's pre-state snapshot
@@ -233,7 +205,7 @@ pub fn build_chunk_witnesses(
     config_hash: B256,
     fpvm_image_id: B256,
     payout_recipient: Address,
-) -> Vec<ChunkWitness> {
+) -> Vec<ChunkWitnessData> {
     assert_eq!(traces.len(), block_txs.len());
     assert_eq!(tx_meta.len(), block_txs.len());
     assert_eq!(traces.len(), receipts.len());
@@ -248,7 +220,7 @@ pub fn build_chunk_witnesses(
     for (chunk_idx, chunk_range) in chunks.iter().enumerate() {
         let chunk_cache = cumulative_cache.clone();
 
-        witnesses.push(ChunkWitness {
+        witnesses.push(ChunkWitnessData {
             block_number: block_env.number.to::<u64>(),
             chunk_index: chunk_idx as u16,
             total_chunks,
@@ -416,7 +388,8 @@ mod tests {
 
     #[test]
     fn block_env_rkyv_round_trip() {
-        use crate::{from_bytes_with, to_bytes_with};
+        use kailua_kona::rkyv::chunking::BlockEnvRkyv;
+        use kailua_kona::{from_bytes_with, to_bytes_with};
 
         let env = BlockEnv {
             number: U256::from(42),
@@ -447,7 +420,8 @@ mod tests {
 
     #[test]
     fn op_block_ctx_rkyv_round_trip() {
-        use crate::{from_bytes_with, to_bytes_with};
+        use kailua_kona::rkyv::chunking::OpBlockExecutionCtxRkyv;
+        use kailua_kona::{from_bytes_with, to_bytes_with};
 
         let ctx = OpBlockExecutionCtx {
             parent_hash: B256::repeat_byte(0xBB),
@@ -956,7 +930,7 @@ mod tests {
 
     #[test]
     fn hash_chain_continuity_across_chunks() {
-        use crate::precondition::chunking::hash_cache;
+        use kailua_kona::precondition::chunking::hash_cache;
 
         let addr = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
         let slot = U256::from(1);
