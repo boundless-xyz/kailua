@@ -17,11 +17,10 @@
 //! This module provides utilities for splitting block transactions into independently
 //! provable chunks and constructing the witnesses needed for chunk proving and aggregation.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use alloy_evm::revm::context::BlockEnv;
-use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
 use alloy_evm::revm::database::in_memory_db::{AccountState, Cache, DbAccount};
 use alloy_evm::revm::primitives::KECCAK_EMPTY;
 use alloy_evm::revm::state::{AccountInfo, AccountStatus, EvmState};
@@ -30,7 +29,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use op_alloy_consensus::OpReceiptEnvelope;
 
 use crate::precondition::chunking::EvmAccumulatorState;
-use crate::rkyv::chunking::{CacheRkyv, EvmAccumulatorStateRkyv};
+use crate::rkyv::chunking::{BlockEnvRkyv, CacheRkyv, OpBlockExecutionCtxRkyv};
 use crate::rkyv::primitives::{AddressDef, B256Def};
 
 /// Groups `tx_count` transactions into sequential, non-overlapping chunks of at most
@@ -50,82 +49,6 @@ pub fn group_transactions_into_chunks(
         .collect()
 }
 
-/// Block execution context required by chunk proving.
-///
-/// Captures the fields from [`BlockEnv`] and [`OpBlockExecutionCtx`] needed to
-/// reconstruct the execution environment inside the chunk prover.
-#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub struct ChunkBlockContext {
-    // BlockEnv fields
-    pub number: u64,
-    #[rkyv(with = AddressDef)]
-    pub beneficiary: Address,
-    pub timestamp: u64,
-    pub gas_limit: u64,
-    pub basefee: u64,
-    #[rkyv(with = rkyv::with::Map<B256Def>)]
-    pub prevrandao: Option<B256>,
-    pub blob_excess_gas: Option<u64>,
-    pub blob_gasprice: Option<u128>,
-    // OpBlockExecutionCtx fields
-    #[rkyv(with = B256Def)]
-    pub parent_hash: B256,
-    #[rkyv(with = rkyv::with::Map<B256Def>)]
-    pub parent_beacon_block_root: Option<B256>,
-    pub extra_data: Vec<u8>,
-}
-
-impl ChunkBlockContext {
-    /// Creates a `ChunkBlockContext` from the revm block environment and OP execution context.
-    pub fn new(block_env: &BlockEnv, ctx: &OpBlockExecutionCtx) -> Self {
-        Self {
-            number: block_env.number.to::<u64>(),
-            beneficiary: block_env.beneficiary,
-            timestamp: block_env.timestamp.to::<u64>(),
-            gas_limit: block_env.gas_limit,
-            basefee: block_env.basefee,
-            prevrandao: block_env.prevrandao,
-            blob_excess_gas: block_env
-                .blob_excess_gas_and_price
-                .as_ref()
-                .map(|b| b.excess_blob_gas),
-            blob_gasprice: block_env
-                .blob_excess_gas_and_price
-                .as_ref()
-                .map(|b| b.blob_gasprice),
-            parent_hash: ctx.parent_hash,
-            parent_beacon_block_root: ctx.parent_beacon_block_root,
-            extra_data: ctx.extra_data.to_vec(),
-        }
-    }
-
-    /// Reconstructs a [`BlockEnv`] from this context.
-    pub fn to_block_env(&self) -> BlockEnv {
-        BlockEnv {
-            number: U256::from(self.number),
-            beneficiary: self.beneficiary,
-            timestamp: U256::from(self.timestamp),
-            gas_limit: self.gas_limit,
-            basefee: self.basefee,
-            difficulty: U256::ZERO,
-            prevrandao: self.prevrandao,
-            blob_excess_gas_and_price: self.blob_excess_gas.map(|excess| BlobExcessGasAndPrice {
-                excess_blob_gas: excess,
-                blob_gasprice: self.blob_gasprice.unwrap_or(0),
-            }),
-        }
-    }
-
-    /// Reconstructs an [`OpBlockExecutionCtx`] from this context.
-    pub fn to_op_block_execution_ctx(&self) -> OpBlockExecutionCtx {
-        OpBlockExecutionCtx {
-            parent_hash: self.parent_hash,
-            parent_beacon_block_root: self.parent_beacon_block_root,
-            extra_data: Bytes::from(self.extra_data.clone()),
-        }
-    }
-}
-
 /// Witness data for proving a single transaction chunk within a block.
 ///
 /// Contains the pre-chunk state snapshot, transaction data, and metadata
@@ -138,10 +61,12 @@ pub struct ChunkWitness {
     pub tx_start: u16,
     pub tx_count: u16,
     pub transactions: Vec<Vec<u8>>,
-    pub block_context: ChunkBlockContext,
+    #[rkyv(with = BlockEnvRkyv)]
+    pub block_env: BlockEnv,
+    #[rkyv(with = OpBlockExecutionCtxRkyv)]
+    pub op_block_ctx: OpBlockExecutionCtx,
     #[rkyv(with = CacheRkyv)]
     pub cache: Cache,
-    #[rkyv(with = EvmAccumulatorStateRkyv)]
     pub evm_state: EvmAccumulatorState,
     #[rkyv(with = B256Def)]
     pub agreed_l2_output_root: B256,
@@ -214,82 +139,45 @@ fn apply_trace_to_cache(cache: &mut Cache, trace: &EvmState) {
     }
 }
 
-/// Builds a filtered [`Cache`] containing only the state that a chunk's transactions
-/// will access, as determined by the chunk's traces.
-fn build_chunk_cache(
-    cumulative: &Cache,
-    chunk_traces: &[EvmState],
-    chunk_meta: &[ChunkTxMeta],
+/// Pre-populates the cumulative cache with all accounts, contracts, and block hashes
+/// that any chunk in the block will access. Addresses absent from the post-prelude cache
+/// are inserted as [`AccountState::NotExisting`]. This ensures every chunk's witness
+/// carries the full cumulative state at its boundary, which is required for hash chain
+/// continuity (`post_db_hash[i] == pre_db_hash[i+1]`).
+fn prepare_cumulative_cache(
+    post_prelude_cache: &Cache,
+    all_traces: &[EvmState],
+    all_tx_meta: &[ChunkTxMeta],
 ) -> Cache {
-    // Collect all addresses and storage slots accessed by this chunk
-    let mut needed_addrs: HashSet<Address> = HashSet::new();
-    let mut needed_slots: HashMap<Address, HashSet<U256>> = HashMap::new();
-    let mut needed_block_hashes: BTreeMap<U256, B256> = BTreeMap::new();
-    let mut trace_contracts = HashMap::new();
-    for trace in chunk_traces {
+    let mut cache = post_prelude_cache.clone();
+
+    for trace in all_traces {
         for (addr, account) in trace {
-            needed_addrs.insert(*addr);
-            let slots = needed_slots.entry(*addr).or_default();
-            for slot in account.storage.keys() {
-                slots.insert(*slot);
-            }
+            // Ensure every accessed address exists (NotExisting for absent)
+            cache
+                .accounts
+                .entry(*addr)
+                .or_insert_with(DbAccount::new_not_existing);
+
+            // Pre-populate contract bytecodes from traces (pre-existing, not Created)
             if account.info.code_hash != KECCAK_EMPTY
                 && !account.status.contains(AccountStatus::Created)
             {
                 if let Some(code) = &account.info.code {
-                    trace_contracts
+                    cache
+                        .contracts
                         .entry(account.info.code_hash)
                         .or_insert_with(|| code.clone());
                 }
             }
         }
     }
-    for meta in chunk_meta {
+
+    // Pre-populate all block hashes from tx metadata
+    for meta in all_tx_meta {
         for (num, hash) in &meta.block_hashes {
-            needed_block_hashes.insert(*num, *hash);
+            cache.block_hashes.entry(*num).or_insert(*hash);
         }
-    }
-
-    let mut cache = Cache {
-        accounts: Default::default(),
-        contracts: Default::default(),
-        logs: Vec::new(),
-        block_hashes: needed_block_hashes.into_iter().collect(),
-    };
-
-    // Populate accounts from cumulative state
-    for addr in &needed_addrs {
-        if let Some(db_account) = cumulative.accounts.get(addr) {
-            let mut account = db_account.clone();
-            // Filter storage to only slots this chunk accesses
-            if let Some(slots) = needed_slots.get(addr) {
-                account.storage.retain(|k, _| slots.contains(k));
-            } else {
-                account.storage.clear();
-            }
-            // Include contract bytecode if account has code
-            if db_account.info.code_hash != KECCAK_EMPTY {
-                if let Some(code) = cumulative
-                    .contracts
-                    .get(&db_account.info.code_hash)
-                    .or(db_account.info.code.as_ref())
-                {
-                    cache
-                        .contracts
-                        .insert(db_account.info.code_hash, code.clone());
-                }
-            }
-            cache.accounts.insert(*addr, account);
-        } else {
-            cache.accounts.insert(*addr, DbAccount::new_not_existing());
-        }
-    }
-
-    // Include any additional contract bytecode surfaced by the tx-body traces (for example
-    // pre-existing contracts first called in chunk 0 whose bytecode was not preloaded into the
-    // post-prelude cache's contracts map).
-    for (code_hash, code) in trace_contracts {
-        cache.contracts.entry(code_hash).or_insert(code);
     }
 
     cache
@@ -320,10 +208,12 @@ fn accumulate_receipt(
 /// Builds [`ChunkWitness`] instances for each transaction chunk in a block.
 ///
 /// For each chunk, this function:
-/// 1. Captures the cumulative cache state as the chunk's pre-state snapshot
-/// 2. Filters the snapshot to include only state the chunk's transactions access
-/// 3. Records the EVM accumulator state at the chunk boundary
-/// 4. Advances the cumulative state through the chunk's traces for the next chunk
+/// 1. Clones the full cumulative cache state as the chunk's pre-state snapshot
+/// 2. Records the EVM accumulator state at the chunk boundary
+/// 3. Advances the cumulative state through the chunk's traces for the next chunk
+///
+/// Each chunk receives the **full** cumulative cache (not a filtered subset) so that
+/// `hash(chunk_i post-state) == hash(chunk_{i+1} pre-state)` — the hash chain invariant.
 ///
 /// # Panics
 ///
@@ -336,7 +226,8 @@ pub fn build_chunk_witnesses(
     block_txs: &[Bytes],
     receipts: &[OpReceiptEnvelope],
     max_txs_per_chunk: usize,
-    block_context: ChunkBlockContext,
+    block_env: &BlockEnv,
+    op_block_ctx: &OpBlockExecutionCtx,
     evm_state_after_prelude: EvmAccumulatorState,
     agreed_l2_output_root: B256,
     config_hash: B256,
@@ -350,20 +241,15 @@ pub fn build_chunk_witnesses(
     let chunks = group_transactions_into_chunks(block_txs.len(), max_txs_per_chunk);
     let total_chunks = chunks.len() as u16;
 
-    let mut cumulative_cache = post_prelude_cache.clone();
+    let mut cumulative_cache = prepare_cumulative_cache(post_prelude_cache, traces, tx_meta);
     let mut cumulative_evm_state = evm_state_after_prelude;
     let mut witnesses = Vec::with_capacity(chunks.len());
 
     for (chunk_idx, chunk_range) in chunks.iter().enumerate() {
-        // Build this chunk's filtered cache from the current cumulative state
-        let chunk_cache = build_chunk_cache(
-            &cumulative_cache,
-            &traces[chunk_range.clone()],
-            &tx_meta[chunk_range.clone()],
-        );
+        let chunk_cache = cumulative_cache.clone();
 
         witnesses.push(ChunkWitness {
-            block_number: block_context.number,
+            block_number: block_env.number.to::<u64>(),
             chunk_index: chunk_idx as u16,
             total_chunks,
             tx_start: chunk_range.start as u16,
@@ -372,7 +258,8 @@ pub fn build_chunk_witnesses(
                 .iter()
                 .map(|tx| tx.to_vec())
                 .collect(),
-            block_context: block_context.clone(),
+            block_env: block_env.clone(),
+            op_block_ctx: op_block_ctx.clone(),
             cache: chunk_cache,
             evm_state: cumulative_evm_state.clone(),
             agreed_l2_output_root,
@@ -401,6 +288,7 @@ pub fn build_chunk_witnesses(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
     use alloy_evm::revm::state::{Account, Bytecode, EvmStorageSlot};
     use alloy_primitives::{address, map::HashMap};
     use op_alloy_consensus::OpTxType;
@@ -499,19 +387,24 @@ mod tests {
         OpReceiptEnvelope::from_parts(true, cumulative_gas, vec![], OpTxType::Legacy, None, None)
     }
 
-    fn default_block_context() -> ChunkBlockContext {
-        ChunkBlockContext {
-            number: 100,
+    fn default_block_env() -> BlockEnv {
+        BlockEnv {
+            number: U256::from(100),
             beneficiary: Address::ZERO,
-            timestamp: 1000,
+            timestamp: U256::from(1000),
             gas_limit: 30_000_000,
             basefee: 1,
+            difficulty: U256::ZERO,
             prevrandao: None,
-            blob_excess_gas: None,
-            blob_gasprice: None,
+            blob_excess_gas_and_price: None,
+        }
+    }
+
+    fn default_op_block_ctx() -> OpBlockExecutionCtx {
+        OpBlockExecutionCtx {
             parent_hash: B256::ZERO,
             parent_beacon_block_root: None,
-            extra_data: Vec::new(),
+            extra_data: Bytes::new(),
         }
     }
 
@@ -519,11 +412,13 @@ mod tests {
         vec![ChunkTxMeta::default(); count]
     }
 
-    // -- ChunkBlockContext tests --
+    // -- BlockEnv / OpBlockExecutionCtx rkyv round-trip tests --
 
     #[test]
-    fn block_context_round_trip() {
-        let block_env = BlockEnv {
+    fn block_env_rkyv_round_trip() {
+        use crate::{from_bytes_with, to_bytes_with};
+
+        let env = BlockEnv {
             number: U256::from(42),
             beneficiary: address!("0x1111111111111111111111111111111111111111"),
             timestamp: U256::from(1234),
@@ -536,46 +431,34 @@ mod tests {
                 blob_gasprice: 42,
             }),
         };
+        let bytes = to_bytes_with!(BlockEnvRkyv, &env);
+        let deser = from_bytes_with!(BlockEnvRkyv, BlockEnv, &bytes);
+        assert_eq!(deser.number, env.number);
+        assert_eq!(deser.beneficiary, env.beneficiary);
+        assert_eq!(deser.timestamp, env.timestamp);
+        assert_eq!(deser.gas_limit, env.gas_limit);
+        assert_eq!(deser.basefee, env.basefee);
+        assert_eq!(deser.prevrandao, env.prevrandao);
+        assert_eq!(
+            deser.blob_excess_gas_and_price,
+            env.blob_excess_gas_and_price
+        );
+    }
+
+    #[test]
+    fn op_block_ctx_rkyv_round_trip() {
+        use crate::{from_bytes_with, to_bytes_with};
+
         let ctx = OpBlockExecutionCtx {
             parent_hash: B256::repeat_byte(0xBB),
             parent_beacon_block_root: Some(B256::repeat_byte(0xCC)),
             extra_data: Bytes::from_static(&[1, 2, 3]),
         };
-
-        let chunk_ctx = ChunkBlockContext::new(&block_env, &ctx);
-        let restored_env = chunk_ctx.to_block_env();
-        let restored_ctx = chunk_ctx.to_op_block_execution_ctx();
-
-        assert_eq!(restored_env.number, block_env.number);
-        assert_eq!(restored_env.beneficiary, block_env.beneficiary);
-        assert_eq!(restored_env.timestamp, block_env.timestamp);
-        assert_eq!(restored_env.gas_limit, block_env.gas_limit);
-        assert_eq!(restored_env.basefee, block_env.basefee);
-        assert_eq!(restored_env.prevrandao, block_env.prevrandao);
-        assert_eq!(
-            restored_env.blob_excess_gas_and_price,
-            block_env.blob_excess_gas_and_price
-        );
-        assert_eq!(restored_ctx.parent_hash, ctx.parent_hash);
-        assert_eq!(
-            restored_ctx.parent_beacon_block_root,
-            ctx.parent_beacon_block_root
-        );
-        assert_eq!(restored_ctx.extra_data, ctx.extra_data);
-    }
-
-    #[test]
-    fn block_context_rkyv_round_trip() {
-        // ChunkBlockContext derives rkyv directly, test round-trip
-        let ctx = default_block_context();
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&ctx)
-            .unwrap()
-            .to_vec();
-        let deser: ChunkBlockContext =
-            rkyv::from_bytes::<ChunkBlockContext, rkyv::rancor::Error>(&bytes).unwrap();
-        assert_eq!(deser.number, ctx.number);
-        assert_eq!(deser.timestamp, ctx.timestamp);
-        assert_eq!(deser.gas_limit, ctx.gas_limit);
+        let bytes = to_bytes_with!(OpBlockExecutionCtxRkyv, &ctx);
+        let deser = from_bytes_with!(OpBlockExecutionCtxRkyv, OpBlockExecutionCtx, &bytes);
+        assert_eq!(deser.parent_hash, ctx.parent_hash);
+        assert_eq!(deser.parent_beacon_block_root, ctx.parent_beacon_block_root);
+        assert_eq!(deser.extra_data, ctx.extra_data);
     }
 
     // -- build_chunk_witnesses tests --
@@ -610,7 +493,8 @@ mod tests {
             &txs,
             &receipts,
             100, // all in one chunk
-            default_block_context(),
+            &default_block_env(),
+            &default_op_block_ctx(),
             EvmAccumulatorState::default(),
             B256::ZERO,
             B256::ZERO,
@@ -646,11 +530,9 @@ mod tests {
             .accounts
             .insert(addr, make_db_account(0, 1000, vec![(slot, U256::from(0))]));
 
-        // Tx 0 (chunk 0): writes slot 42 = 999
         let trace0: EvmState = [(addr, make_account(1, 900, vec![(slot, U256::from(999))]))]
             .into_iter()
             .collect();
-        // Tx 1 (chunk 1): reads slot 42 (should see 999)
         let trace1: EvmState = [(addr, make_account(2, 800, vec![(slot, U256::from(999))]))]
             .into_iter()
             .collect();
@@ -664,8 +546,9 @@ mod tests {
             &post_prelude,
             &txs,
             &receipts,
-            1, // 1 tx per chunk
-            default_block_context(),
+            1,
+            &default_block_env(),
+            &default_op_block_ctx(),
             EvmAccumulatorState::default(),
             B256::ZERO,
             B256::ZERO,
@@ -674,18 +557,12 @@ mod tests {
         );
 
         assert_eq!(witnesses.len(), 2);
-
-        // Chunk 0: pre-state from post_prelude (slot=0)
-        let w0 = &witnesses[0];
         assert_eq!(
-            w0.cache.accounts.get(&addr).unwrap().storage[&slot],
+            witnesses[0].cache.accounts.get(&addr).unwrap().storage[&slot],
             U256::from(0)
         );
-
-        // Chunk 1: pre-state carries forward chunk 0's write (slot=999)
-        let w1 = &witnesses[1];
         assert_eq!(
-            w1.cache.accounts.get(&addr).unwrap().storage[&slot],
+            witnesses[1].cache.accounts.get(&addr).unwrap().storage[&slot],
             U256::from(999)
         );
     }
@@ -704,11 +581,9 @@ mod tests {
             .accounts
             .insert(sender, make_db_account(5, 10000, vec![]));
 
-        // Tx 0 (chunk 0): sender nonce 5→6, balance 10000→9000
         let trace0: EvmState = [(sender, make_account(6, 9000, vec![]))]
             .into_iter()
             .collect();
-        // Tx 1 (chunk 1): sender nonce 6→7, balance 9000→8000
         let trace1: EvmState = [(sender, make_account(7, 8000, vec![]))]
             .into_iter()
             .collect();
@@ -723,7 +598,8 @@ mod tests {
             &txs,
             &receipts,
             1,
-            default_block_context(),
+            &default_block_env(),
+            &default_op_block_ctx(),
             EvmAccumulatorState::default(),
             B256::ZERO,
             B256::ZERO,
@@ -731,12 +607,10 @@ mod tests {
             Address::ZERO,
         );
 
-        // Chunk 0: nonce=5, balance=10000
         let w0_acct = witnesses[0].cache.accounts.get(&sender).unwrap();
         assert_eq!(w0_acct.info.nonce, 5);
         assert_eq!(w0_acct.info.balance, U256::from(10000));
 
-        // Chunk 1: nonce=6, balance=9000 (carried forward from chunk 0)
         let w1_acct = witnesses[1].cache.accounts.get(&sender).unwrap();
         assert_eq!(w1_acct.info.nonce, 6);
         assert_eq!(w1_acct.info.balance, U256::from(9000));
@@ -759,7 +633,6 @@ mod tests {
             .accounts
             .insert(creator, make_db_account(0, 10000, vec![]));
 
-        // Tx 0 (chunk 0): creates contract
         let mut created_account = make_account(1, 0, vec![]);
         created_account.info.code_hash = code_hash;
         created_account.info.code = Some(code.clone());
@@ -771,7 +644,6 @@ mod tests {
         .into_iter()
         .collect();
 
-        // Tx 1 (chunk 1): calls the contract
         let mut call_account = make_account(1, 0, vec![]);
         call_account.info.code_hash = code_hash;
         call_account.info.code = Some(code.clone());
@@ -792,7 +664,8 @@ mod tests {
             &txs,
             &receipts,
             1,
-            default_block_context(),
+            &default_block_env(),
+            &default_op_block_ctx(),
             EvmAccumulatorState::default(),
             B256::ZERO,
             B256::ZERO,
@@ -800,7 +673,6 @@ mod tests {
             Address::ZERO,
         );
 
-        // Chunk 0: contract is explicit non-existence pre-state
         assert_eq!(
             witnesses[0]
                 .cache
@@ -810,13 +682,11 @@ mod tests {
                 .account_state,
             AccountState::NotExisting
         );
-        assert!(!witnesses[0].cache.contracts.contains_key(&code_hash));
 
         // Chunk 1: contract carried forward from chunk 0
         let w1_contract = witnesses[1].cache.accounts.get(&contract).unwrap();
         assert_eq!(w1_contract.info.code_hash, code_hash);
         assert_eq!(w1_contract.account_state, AccountState::StorageCleared);
-        // Contract bytecode included
         assert!(witnesses[1].cache.contracts.contains_key(&code_hash));
         assert_eq!(
             witnesses[1]
@@ -844,12 +714,9 @@ mod tests {
             .accounts
             .insert(addr, make_db_account(1, 5000, vec![(slot, U256::from(42))]));
 
-        // Tx 0 (chunk 0): self-destructs the account
         let mut destroyed = make_account(1, 0, vec![]);
         destroyed.status = AccountStatus::SelfDestructed | AccountStatus::Touched;
         let trace0: EvmState = [(addr, destroyed)].into_iter().collect();
-
-        // Tx 1 (chunk 1): touches the same address
         let trace1: EvmState = [(addr, make_account(0, 0, vec![]))].into_iter().collect();
 
         let txs = vec![Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02])];
@@ -862,7 +729,8 @@ mod tests {
             &txs,
             &receipts,
             1,
-            default_block_context(),
+            &default_block_env(),
+            &default_op_block_ctx(),
             EvmAccumulatorState::default(),
             B256::ZERO,
             B256::ZERO,
@@ -870,7 +738,6 @@ mod tests {
             Address::ZERO,
         );
 
-        // Chunk 0: pre-state has the account (storage not included since trace has no slot access)
         assert!(witnesses[0].cache.accounts.contains_key(&addr));
         assert_eq!(
             witnesses[0]
@@ -882,7 +749,6 @@ mod tests {
             AccountState::Touched
         );
 
-        // Chunk 1: account is StorageCleared, storage wiped
         let w1_acct = witnesses[1].cache.accounts.get(&addr).unwrap();
         assert_eq!(w1_acct.account_state, AccountState::StorageCleared);
         assert!(w1_acct.storage.is_empty());
@@ -916,7 +782,8 @@ mod tests {
             &txs,
             &receipts,
             100,
-            default_block_context(),
+            &default_block_env(),
+            &default_op_block_ctx(),
             EvmAccumulatorState::default(),
             B256::ZERO,
             B256::ZERO,
@@ -977,7 +844,8 @@ mod tests {
             &txs,
             &receipts,
             1,
-            default_block_context(),
+            &default_block_env(),
+            &default_op_block_ctx(),
             base_evm,
             B256::ZERO,
             B256::ZERO,
@@ -985,11 +853,9 @@ mod tests {
             Address::ZERO,
         );
 
-        // Chunk 0: starts with base EVM state
         assert_eq!(witnesses[0].evm_state.cumulative_gas_used, 10000);
         assert!(witnesses[0].evm_state.receipts.is_empty());
 
-        // Chunk 1: accumulated through chunk 0's receipt
         assert_eq!(witnesses[1].evm_state.cumulative_gas_used, 21000);
         assert_eq!(witnesses[1].evm_state.da_footprint_used, 500);
         assert_eq!(witnesses[1].evm_state.blob_gas_used, 131072);
@@ -1015,7 +881,8 @@ mod tests {
             &txs,
             &receipts,
             1,
-            default_block_context(),
+            &default_block_env(),
+            &default_op_block_ctx(),
             EvmAccumulatorState::default(),
             B256::ZERO,
             B256::ZERO,
@@ -1067,7 +934,8 @@ mod tests {
             &txs,
             &receipts,
             1,
-            default_block_context(),
+            &default_block_env(),
+            &default_op_block_ctx(),
             EvmAccumulatorState::default(),
             B256::ZERO,
             B256::ZERO,
@@ -1083,6 +951,69 @@ mod tests {
                 .unwrap()
                 .original_bytes(),
             code.original_bytes()
+        );
+    }
+
+    #[test]
+    fn hash_chain_continuity_across_chunks() {
+        use crate::precondition::chunking::hash_cache;
+
+        let addr = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let slot = U256::from(1);
+
+        let mut post_prelude = Cache {
+            accounts: Default::default(),
+            contracts: Default::default(),
+            logs: Vec::new(),
+            block_hashes: Default::default(),
+        };
+        post_prelude
+            .accounts
+            .insert(addr, make_db_account(0, 10000, vec![(slot, U256::from(0))]));
+
+        // Tx 0 (chunk 0): writes slot 1 = 42, nonce 0→1, balance 10000→9000
+        let trace0: EvmState = [(addr, make_account(1, 9000, vec![(slot, U256::from(42))]))]
+            .into_iter()
+            .collect();
+        // Tx 1 (chunk 1): writes slot 1 = 99, nonce 1→2, balance 9000→8000
+        let trace1: EvmState = [(addr, make_account(2, 8000, vec![(slot, U256::from(99))]))]
+            .into_iter()
+            .collect();
+
+        let txs = vec![Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02])];
+        let receipts = vec![make_receipt(21000), make_receipt(42000)];
+
+        let witnesses = build_chunk_witnesses(
+            &[trace0.clone(), trace1],
+            &default_tx_meta(2),
+            &post_prelude,
+            &txs,
+            &receipts,
+            1,
+            &default_block_env(),
+            &default_op_block_ctx(),
+            EvmAccumulatorState::default(),
+            B256::ZERO,
+            B256::ZERO,
+            B256::ZERO,
+            Address::ZERO,
+        );
+
+        assert_eq!(witnesses.len(), 2);
+
+        // Simulate what the chunk 0 guest would compute as post_db_hash:
+        // Start with chunk 0's witness cache, apply chunk 0's trace, hash the result.
+        let mut chunk0_post_cache = witnesses[0].cache.clone();
+        apply_trace_to_cache(&mut chunk0_post_cache, &trace0);
+        let chunk0_post_hash = hash_cache(&chunk0_post_cache);
+
+        // Chunk 1's pre_db_hash is just the hash of its witness cache.
+        let chunk1_pre_hash = hash_cache(&witnesses[1].cache);
+
+        // Hash chain invariant: post_db_hash[0] == pre_db_hash[1]
+        assert_eq!(
+            chunk0_post_hash, chunk1_pre_hash,
+            "hash chain broken: chunk 0 post-hash != chunk 1 pre-hash"
         );
     }
 }

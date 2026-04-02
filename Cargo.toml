@@ -75,7 +75,7 @@ alloy-eips = { version = "1.1.2", default-features = false, features = ["kzg"] }
 alloy-evm = { version = "0.24.2", default-features = false, features = ["op"] }
 alloy-op-evm = { version = "0.24.2", default-features = false }
 alloy-rlp = "0.3.12"
-alloy-primitives = { version = "1.4.1", default-features = false, features = ["map-hashbrown"] }
+alloy-primitives = { version = "1.4.1", default-features = false, features = ["map-hashbrown", "rkyv"] }
 alloy-rpc-types-beacon = "1.1.2"
 alloy-rpc-types-engine = { version = "1.1.2", default-features = false }
 alloy-trie = { version = "0.9.1", default-features = false, features = ["std", "ethereum"] }

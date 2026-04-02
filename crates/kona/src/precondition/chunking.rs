@@ -22,12 +22,15 @@ use risc0_zkvm::sha::rust_crypto::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// EVM state accumulators tracked across chunk boundaries.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone, Debug, Default, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct EvmAccumulatorState {
     pub cumulative_gas_used: u64,
     pub da_footprint_used: u64,
     pub blob_gas_used: u64,
     pub logs_bloom: Bloom,
+    #[rkyv(with = rkyv::with::Map<crate::rkyv::chunking::OpReceiptRlpRkyv>)]
     pub receipts: Vec<OpReceiptEnvelope>,
 }
 

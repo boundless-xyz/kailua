@@ -48,55 +48,54 @@ This context SHALL include all block-level fields needed by chunk execution, suc
 - **WHEN** the chunk guest initializes the EVM and executor
 - **THEN** it does so from the block execution context carried in the witness, matching the corresponding monolithic block execution inputs
 
-### Requirement: Host constructs chunk-start flat state witnesses from boundary snapshots
+### Requirement: Host constructs chunk-start flat state witnesses as full cumulative cache snapshots
 
-For each chunk, the host SHALL compute a chunk-start `Cache` snapshot derived from the post-prelude boundary state immediately before that chunk executes. The witness MAY prune addresses and storage slots that the chunk cannot access, but for every included address it SHALL carry the full chunk-start `DbAccount` metadata (`AccountInfo` and `account_state`) in addition to the required storage slots. The algorithm SHALL:
+For each chunk, the host SHALL provide the **full cumulative cache** at the chunk boundary — not a filtered subset. This is required for hash chain continuity: the chunk guest computes `pre_db_hash` from its witness cache and `post_db_hash` from the post-execution state; for the chain `post_db_hash[i] == pre_db_hash[i+1]` to hold, chunk i+1's witness cache must be exactly chunk i's post-state.
+
+The algorithm SHALL:
 1. Materialize the post-prelude flat state once.
-2. Track a boundary state across chunks by applying all prior chunks' account-level and storage-level writes.
-3. For each chunk, identify the externally needed addresses, storage slots, contracts, and block hashes for that chunk.
-4. For each needed address, load its full chunk-start `DbAccount` snapshot from the current boundary state, including nonce, balance, code hash, existence / cleared / destroyed state, and any other `AccountInfo` fields.
-5. For each needed storage slot, use the value from the chunk-start boundary state. If a prior chunk wrote the slot, use the carried-forward value; otherwise, use the post-prelude trie value.
-6. Include all contracts (bytecodes) referenced by the chunk's transactions.
-7. Include all block_hashes referenced by the chunk's transactions.
+2. Pre-populate the cumulative cache with all accounts, contracts, and block hashes that any chunk in the block will access, determined by scanning all per-transaction traces and metadata. Addresses absent from the post-prelude cache are inserted as `NotExisting`. Pre-existing contract bytecodes and block hashes from all transactions are inserted upfront.
+3. For each chunk, clone the full cumulative cache as the chunk's witness.
+4. After each chunk, advance the cumulative cache by applying that chunk's traces (account info, storage, contracts, lifecycle state).
 
 #### Scenario: first chunk reads from post-prelude state
 - **WHEN** `chunk_0` reads state and no prior chunk exists
-- **THEN** the witness includes the chunk-start boundary values from the post-prelude flat state
+- **THEN** the witness includes the full pre-populated post-prelude cumulative state
 
 #### Scenario: later chunk reads prior chunk's write
 - **WHEN** chunk_0 writes slot S at address A to value V, and chunk_1 reads slot S at address A
-- **THEN** chunk_1's witness includes `(A, S) -> V` (chunk_0's written value, not the pre-block value)
+- **THEN** chunk_1's witness includes `(A, S) -> V` as part of the full cumulative state carried forward from chunk_0
 
 #### Scenario: later chunk sees prior chunk's account metadata changes
 - **WHEN** chunk_0 changes an address's nonce, balance, code hash, or existence state, and chunk_1 accesses that address
-- **THEN** chunk_1's witness includes the updated chunk-start `DbAccount` snapshot from after chunk_0
+- **THEN** chunk_1's witness includes the updated `DbAccount` snapshot as part of the full cumulative state
 
 #### Scenario: later chunk sees prior chunk's contract creation
 - **WHEN** chunk_0 creates a contract at address A and chunk_1 calls or inspects A
-- **THEN** chunk_1's witness includes A as an existing account with the created code hash and bytecode from the chunk-start boundary state
+- **THEN** chunk_1's witness includes A as an existing account with the created code hash and bytecode from the cumulative state
 
 #### Scenario: later chunk sees prior chunk's selfdestruct or cleared state
 - **WHEN** chunk_0 selfdestructs or clears account A and chunk_1 accesses A
-- **THEN** chunk_1's witness includes A's updated `account_state` from the chunk-start boundary state rather than the original trie state
+- **THEN** chunk_1's witness includes A's updated `account_state` from the cumulative state
 
-#### Scenario: intra-chunk write satisfies later read
-- **WHEN** tx_0 in chunk_1 writes slot S, and tx_2 in chunk_1 reads slot S
-- **THEN** slot S is NOT required in chunk_1's external witness (the write within the chunk satisfies the read)
+#### Scenario: hash chain continuity
+- **WHEN** chunk_0 and chunk_1 are proven independently
+- **THEN** `hash(chunk_0 post-state) == hash(chunk_1 pre-state)` because both are derived from the same full cumulative cache
 
 #### Scenario: witness completeness
 - **WHEN** a chunk witness is constructed and provided to the chunk guest
-- **THEN** no PanicDB fallback is triggered during execution (all required account metadata, storage values, contracts, and block hashes are present)
+- **THEN** no PanicDB fallback is triggered during execution (all required account metadata, storage values, contracts, and block hashes are present in the full cumulative cache)
 
-### Requirement: Chunk witness uses rkyv-serializable mirror types
+### Requirement: Chunk witness uses rkyv serialization
 
-The chunk witness `Cache` state SHALL be serialized using rkyv-compatible mirror types (`SerializableCache`, `SerializableDbAccount`, etc.) since revm's native `Cache`, `DbAccount`, `AccountInfo`, and `Bytecode` types support serde but not rkyv. Conversion between mirror types and native revm types SHALL be lossless and round-trip tested.
+The chunk witness SHALL serialize foreign types without native rkyv support using `ArchiveWith` wrappers that decompose each type into a tuple of rkyv-native types (`CacheRkyv` for `Cache`, `BlockEnvRkyv` for `BlockEnv`, `OpBlockExecutionCtxRkyv` for `OpBlockExecutionCtx`). Types owned by the crate (`EvmAccumulatorState`) SHALL derive rkyv traits directly, using `#[rkyv(with = ...)]` for individual fields that lack rkyv support (e.g. `OpReceiptEnvelope` via RLP encoding composed with `rkyv::with::Map`). Conversion between archived and native types SHALL be lossless and round-trip tested.
 
 #### Scenario: round-trip serialization preserves state
-- **WHEN** a `Cache` is converted to `SerializableCache`, serialized with rkyv, deserialized, and converted back to `Cache`
+- **WHEN** a `Cache` is serialized via `CacheRkyv`, deserialized, and converted back
 - **THEN** the resulting `Cache` is logically identical to the original (same accounts, storage, contracts, block_hashes)
 
 #### Scenario: canonical hash is preserved across serialization
-- **WHEN** a `Cache` is round-tripped through `SerializableCache` and back
+- **WHEN** a `Cache` is round-tripped through rkyv and back
 - **THEN** the canonical hash of the original and the round-tripped `Cache` are identical
 
 ### Requirement: Host constructs EVM state accumulators per chunk

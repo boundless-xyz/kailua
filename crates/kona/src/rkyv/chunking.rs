@@ -19,14 +19,18 @@
 //! pattern consistent with `execution.rs` and other rkyv modules. Fields are decomposed into
 //! tuples of rkyv-native types and rkyv handles the actual serialization.
 
+use alloy_evm::revm::context::BlockEnv;
+use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
 use alloy_evm::revm::database::in_memory_db::{AccountState, Cache, DbAccount};
 use alloy_evm::revm::state::{AccountInfo, Bytecode};
-use alloy_primitives::{Address, Bloom, Bytes, B256, U256};
+use alloy_op_evm::block::OpBlockExecutionCtx;
+use alloy_primitives::{Address, Bytes, B256, U256};
+use op_alloy_consensus::OpReceiptEnvelope;
 use rkyv::rancor::Fallible;
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Archived, Place, Resolver};
 
-use crate::precondition::chunking::{account_state_byte, EvmAccumulatorState};
+use crate::precondition::chunking::account_state_byte;
 
 fn account_state_from_byte(byte: u8) -> AccountState {
     match byte {
@@ -214,80 +218,213 @@ where
     }
 }
 
-// -- EvmAccumulatorStateRkyv --
+// -- OpReceiptRlpRkyv --
 
-/// (cumulative_gas_used, da_footprint_used, blob_gas_used, logs_bloom, rlp_receipts)
-pub type RkyvedEvmAccumulatorState = (u64, u64, u64, [u8; 256], Vec<u8>);
-
-/// rkyv wrapper for [`EvmAccumulatorState`].
+/// rkyv wrapper for a single [`OpReceiptEnvelope`] using RLP encoding.
 ///
-/// Archives as a tuple of rkyv-native types via [`RkyvedEvmAccumulatorState`].
-/// Receipts are RLP-encoded, matching the pattern in `execution.rs`.
-pub struct EvmAccumulatorStateRkyv;
+/// Compose with `rkyv::with::Map<OpReceiptRlpRkyv>` to serialize `Vec<OpReceiptEnvelope>`.
+pub struct OpReceiptRlpRkyv;
 
-impl EvmAccumulatorStateRkyv {
-    pub fn rkyv(state: &EvmAccumulatorState) -> RkyvedEvmAccumulatorState {
-        (
-            state.cumulative_gas_used,
-            state.da_footprint_used,
-            state.blob_gas_used,
-            *state.logs_bloom.0,
-            alloy_rlp::encode(&state.receipts),
-        )
-    }
-
-    pub fn raw(rkyved: RkyvedEvmAccumulatorState) -> EvmAccumulatorState {
-        EvmAccumulatorState {
-            cumulative_gas_used: rkyved.0,
-            da_footprint_used: rkyved.1,
-            blob_gas_used: rkyved.2,
-            logs_bloom: Bloom::new(rkyved.3),
-            receipts: alloy_rlp::decode_exact(rkyved.4.as_slice()).unwrap(),
-        }
-    }
-}
-
-impl ArchiveWith<EvmAccumulatorState> for EvmAccumulatorStateRkyv {
-    type Archived = Archived<RkyvedEvmAccumulatorState>;
-    type Resolver = Resolver<RkyvedEvmAccumulatorState>;
+impl ArchiveWith<OpReceiptEnvelope> for OpReceiptRlpRkyv {
+    type Archived = Archived<Vec<u8>>;
+    type Resolver = Resolver<Vec<u8>>;
 
     fn resolve_with(
-        field: &EvmAccumulatorState,
+        field: &OpReceiptEnvelope,
         resolver: Self::Resolver,
         out: Place<Self::Archived>,
     ) {
-        let rkyved = EvmAccumulatorStateRkyv::rkyv(field);
-        <RkyvedEvmAccumulatorState as Archive>::resolve(&rkyved, resolver, out);
+        let encoded = alloy_rlp::encode(field);
+        <Vec<u8> as Archive>::resolve(&encoded, resolver, out);
     }
 }
 
-impl<S> SerializeWith<EvmAccumulatorState, S> for EvmAccumulatorStateRkyv
+impl<S> SerializeWith<OpReceiptEnvelope, S> for OpReceiptRlpRkyv
 where
     S: Fallible + rkyv::ser::Allocator + rkyv::ser::Writer + ?Sized,
     <S as Fallible>::Error: rkyv::rancor::Source,
 {
     fn serialize_with(
-        field: &EvmAccumulatorState,
+        field: &OpReceiptEnvelope,
         serializer: &mut S,
     ) -> Result<Self::Resolver, S::Error> {
-        let rkyved = EvmAccumulatorStateRkyv::rkyv(field);
-        <RkyvedEvmAccumulatorState as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+        let encoded = alloy_rlp::encode(field);
+        <Vec<u8> as rkyv::Serialize<S>>::serialize(&encoded, serializer)
     }
 }
 
-impl<D> DeserializeWith<Archived<RkyvedEvmAccumulatorState>, EvmAccumulatorState, D>
-    for EvmAccumulatorStateRkyv
+impl<D> DeserializeWith<Archived<Vec<u8>>, OpReceiptEnvelope, D> for OpReceiptRlpRkyv
 where
     D: Fallible + ?Sized,
     <D as Fallible>::Error: rkyv::rancor::Source,
 {
     fn deserialize_with(
-        field: &Archived<RkyvedEvmAccumulatorState>,
+        field: &Archived<Vec<u8>>,
         deserializer: &mut D,
-    ) -> Result<EvmAccumulatorState, D::Error> {
-        let rkyved: RkyvedEvmAccumulatorState =
+    ) -> Result<OpReceiptEnvelope, D::Error> {
+        let bytes: Vec<u8> = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(alloy_rlp::decode_exact(bytes.as_slice()).unwrap())
+    }
+}
+
+// -- BlockEnvRkyv --
+
+/// (number, beneficiary, timestamp, gas_limit, basefee, difficulty, prevrandao, blob_excess_gas_and_price)
+type RkyvedBlockEnv = (
+    U256,
+    Address,
+    U256,
+    u64,
+    u64,
+    U256,
+    Option<B256>,
+    Option<(u64, u128)>,
+);
+
+/// rkyv wrapper for revm's [`BlockEnv`].
+///
+/// Archives as a tuple of rkyv-native types via [`RkyvedBlockEnv`].
+/// `BlobExcessGasAndPrice` is decomposed to `(u64, u128)` since it lacks rkyv support.
+pub struct BlockEnvRkyv;
+
+impl BlockEnvRkyv {
+    pub fn rkyv(env: &BlockEnv) -> RkyvedBlockEnv {
+        (
+            env.number,
+            env.beneficiary,
+            env.timestamp,
+            env.gas_limit,
+            env.basefee,
+            env.difficulty,
+            env.prevrandao,
+            env.blob_excess_gas_and_price
+                .as_ref()
+                .map(|b| (b.excess_blob_gas, b.blob_gasprice)),
+        )
+    }
+
+    pub fn raw(r: RkyvedBlockEnv) -> BlockEnv {
+        BlockEnv {
+            number: r.0,
+            beneficiary: r.1,
+            timestamp: r.2,
+            gas_limit: r.3,
+            basefee: r.4,
+            difficulty: r.5,
+            prevrandao: r.6,
+            blob_excess_gas_and_price: r.7.map(|(excess, price)| BlobExcessGasAndPrice {
+                excess_blob_gas: excess,
+                blob_gasprice: price,
+            }),
+        }
+    }
+}
+
+impl ArchiveWith<BlockEnv> for BlockEnvRkyv {
+    type Archived = Archived<RkyvedBlockEnv>;
+    type Resolver = Resolver<RkyvedBlockEnv>;
+
+    fn resolve_with(field: &BlockEnv, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = BlockEnvRkyv::rkyv(field);
+        <RkyvedBlockEnv as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<BlockEnv, S> for BlockEnvRkyv
+where
+    S: Fallible + rkyv::ser::Allocator + rkyv::ser::Writer + ?Sized,
+    <S as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn serialize_with(field: &BlockEnv, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        let rkyved = BlockEnvRkyv::rkyv(field);
+        <RkyvedBlockEnv as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedBlockEnv>, BlockEnv, D> for BlockEnvRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedBlockEnv>,
+        deserializer: &mut D,
+    ) -> Result<BlockEnv, D::Error> {
+        let rkyved: RkyvedBlockEnv = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(BlockEnvRkyv::raw(rkyved))
+    }
+}
+
+// -- OpBlockExecutionCtxRkyv --
+
+/// (parent_hash, parent_beacon_block_root, extra_data)
+type RkyvedOpBlockExecutionCtx = (B256, Option<B256>, Bytes);
+
+/// rkyv wrapper for [`OpBlockExecutionCtx`].
+///
+/// Archives as a tuple of rkyv-native types via [`RkyvedOpBlockExecutionCtx`].
+/// All fields have native rkyv support via the `alloy-primitives` `rkyv` feature.
+pub struct OpBlockExecutionCtxRkyv;
+
+impl OpBlockExecutionCtxRkyv {
+    pub fn rkyv(ctx: &OpBlockExecutionCtx) -> RkyvedOpBlockExecutionCtx {
+        (
+            ctx.parent_hash,
+            ctx.parent_beacon_block_root,
+            ctx.extra_data.clone(),
+        )
+    }
+
+    pub fn raw(r: RkyvedOpBlockExecutionCtx) -> OpBlockExecutionCtx {
+        OpBlockExecutionCtx {
+            parent_hash: r.0,
+            parent_beacon_block_root: r.1,
+            extra_data: r.2,
+        }
+    }
+}
+
+impl ArchiveWith<OpBlockExecutionCtx> for OpBlockExecutionCtxRkyv {
+    type Archived = Archived<RkyvedOpBlockExecutionCtx>;
+    type Resolver = Resolver<RkyvedOpBlockExecutionCtx>;
+
+    fn resolve_with(
+        field: &OpBlockExecutionCtx,
+        resolver: Self::Resolver,
+        out: Place<Self::Archived>,
+    ) {
+        let rkyved = OpBlockExecutionCtxRkyv::rkyv(field);
+        <RkyvedOpBlockExecutionCtx as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<OpBlockExecutionCtx, S> for OpBlockExecutionCtxRkyv
+where
+    S: Fallible + rkyv::ser::Allocator + rkyv::ser::Writer + ?Sized,
+    <S as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn serialize_with(
+        field: &OpBlockExecutionCtx,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = OpBlockExecutionCtxRkyv::rkyv(field);
+        <RkyvedOpBlockExecutionCtx as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedOpBlockExecutionCtx>, OpBlockExecutionCtx, D>
+    for OpBlockExecutionCtxRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedOpBlockExecutionCtx>,
+        deserializer: &mut D,
+    ) -> Result<OpBlockExecutionCtx, D::Error> {
+        let rkyved: RkyvedOpBlockExecutionCtx =
             rkyv::Deserialize::deserialize(field, deserializer)?;
-        Ok(EvmAccumulatorStateRkyv::raw(rkyved))
+        Ok(OpBlockExecutionCtxRkyv::raw(rkyved))
     }
 }
 
@@ -295,7 +432,7 @@ where
 mod tests {
     use super::*;
     use crate::{from_bytes_with, to_bytes_with};
-    use alloy_primitives::address;
+    use alloy_primitives::{address, Bloom};
 
     fn make_info(nonce: u64, balance: u64) -> AccountInfo {
         AccountInfo {
@@ -474,15 +611,19 @@ mod tests {
 
     #[test]
     fn empty_evm_accumulator_round_trip() {
+        use crate::precondition::chunking::EvmAccumulatorState;
         let state = EvmAccumulatorState::default();
-        let bytes = to_bytes_with!(EvmAccumulatorStateRkyv, &state);
-        let deser = from_bytes_with!(EvmAccumulatorStateRkyv, EvmAccumulatorState, &bytes);
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&state)
+            .unwrap()
+            .to_vec();
+        let deser = rkyv::from_bytes::<EvmAccumulatorState, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(deser, state);
     }
 
     #[test]
     fn evm_accumulator_with_receipts_round_trip() {
-        use op_alloy_consensus::{OpReceiptEnvelope, OpTxType};
+        use crate::precondition::chunking::EvmAccumulatorState;
+        use op_alloy_consensus::OpTxType;
 
         let state = EvmAccumulatorState {
             cumulative_gas_used: 21000,
@@ -494,8 +635,10 @@ mod tests {
                 OpReceiptEnvelope::from_parts(false, 42000, vec![], OpTxType::Eip1559, None, None),
             ],
         };
-        let bytes = to_bytes_with!(EvmAccumulatorStateRkyv, &state);
-        let deser = from_bytes_with!(EvmAccumulatorStateRkyv, EvmAccumulatorState, &bytes);
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&state)
+            .unwrap()
+            .to_vec();
+        let deser = rkyv::from_bytes::<EvmAccumulatorState, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(deser.cumulative_gas_used, 21000);
         assert_eq!(deser.da_footprint_used, 500);
         assert_eq!(deser.blob_gas_used, 131072);
@@ -531,5 +674,49 @@ mod tests {
             let deser = from_bytes_with!(CacheRkyv, Cache, &bytes);
             assert_eq!(deser.accounts.get(&addr).unwrap().account_state, state);
         }
+    }
+
+    #[test]
+    fn block_env_round_trip() {
+        let env = BlockEnv {
+            number: U256::from(42),
+            beneficiary: address!("0x1111111111111111111111111111111111111111"),
+            timestamp: U256::from(1234),
+            gas_limit: 30_000_000,
+            basefee: 7,
+            difficulty: U256::ZERO,
+            prevrandao: Some(B256::repeat_byte(0xAA)),
+            blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
+                excess_blob_gas: 1000,
+                blob_gasprice: 42,
+            }),
+        };
+        let bytes = to_bytes_with!(BlockEnvRkyv, &env);
+        let deser = from_bytes_with!(BlockEnvRkyv, BlockEnv, &bytes);
+        assert_eq!(deser.number, env.number);
+        assert_eq!(deser.beneficiary, env.beneficiary);
+        assert_eq!(deser.timestamp, env.timestamp);
+        assert_eq!(deser.gas_limit, env.gas_limit);
+        assert_eq!(deser.basefee, env.basefee);
+        assert_eq!(deser.difficulty, env.difficulty);
+        assert_eq!(deser.prevrandao, env.prevrandao);
+        assert_eq!(
+            deser.blob_excess_gas_and_price,
+            env.blob_excess_gas_and_price
+        );
+    }
+
+    #[test]
+    fn op_block_execution_ctx_round_trip() {
+        let ctx = OpBlockExecutionCtx {
+            parent_hash: B256::repeat_byte(0xBB),
+            parent_beacon_block_root: Some(B256::repeat_byte(0xCC)),
+            extra_data: Bytes::from_static(&[1, 2, 3]),
+        };
+        let bytes = to_bytes_with!(OpBlockExecutionCtxRkyv, &ctx);
+        let deser = from_bytes_with!(OpBlockExecutionCtxRkyv, OpBlockExecutionCtx, &bytes);
+        assert_eq!(deser.parent_hash, ctx.parent_hash);
+        assert_eq!(deser.parent_beacon_block_root, ctx.parent_beacon_block_root);
+        assert_eq!(deser.extra_data, ctx.extra_data);
     }
 }

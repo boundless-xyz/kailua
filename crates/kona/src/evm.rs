@@ -14,16 +14,16 @@
 
 //! Tracing EVM wrapper for capturing per-transaction state changes.
 //!
-//! [`TracingOpEvm`] wraps any `E: Evm` and captures `ResultAndState.state` after each
+//! [`TracingEvm`] wraps any `E: Evm` and captures `ResultAndState.state` after each
 //! successful `transact_raw()` call into a shared trace buffer. System calls
 //! (`transact_system_call`) are delegated transparently without appending to the trace buffer,
 //! since they represent block-level prelude/epilogue work rather than ordered transaction-body
 //! execution.
 //!
-//! [`TracingEvmFactory`] wraps `OpEvmFactory` and produces `TracingOpEvm<OpEvm<...>>` instances
+//! [`TracingOpEvmFactory`] wraps `OpEvmFactory` and produces `TracingOpEvm<OpEvm<...>>` instances
 //! that share a single trace buffer. Used on the host to capture per-transaction traces during
 //! `build_block()` for chunk witness construction. Callers must drain the shared buffer via
-//! [`TracingEvmFactory::take_traces`] at the per-block boundary so stale traces do not leak into
+//! [`TracingOpEvmFactory::take_traces`] at the per-block boundary so stale traces do not leak into
 //! later witness construction.
 
 use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError};
@@ -46,19 +46,19 @@ use std::sync::{Arc, Mutex};
 /// required methods to the inner EVM. No `Deref`/`DerefMut` needed — the block executor accesses
 /// fields through `Evm` trait default methods (`db()`, `db_mut()`, etc.) which delegate to
 /// `components()`/`components_mut()`.
-pub struct TracingOpEvm<E: Evm> {
+pub struct TracingEvm<E: Evm> {
     inner: E,
     traces: Arc<Mutex<Vec<EvmState>>>,
 }
 
-impl<E: Evm> TracingOpEvm<E> {
+impl<E: Evm> TracingEvm<E> {
     /// Creates a new tracing wrapper around the given EVM with a shared trace buffer.
     pub fn new(inner: E, traces: Arc<Mutex<Vec<EvmState>>>) -> Self {
         Self { inner, traces }
     }
 }
 
-impl<E: Evm> Evm for TracingOpEvm<E> {
+impl<E: Evm> Evm for TracingEvm<E> {
     type DB = E::DB;
     type Tx = E::Tx;
     type Error = E::Error;
@@ -127,12 +127,12 @@ impl<E: Evm> Evm for TracingOpEvm<E> {
 /// tracing overhead). The shared buffer must be drained with [`take_traces`](Self::take_traces)
 /// after each block so traces from prior executions do not accumulate.
 #[derive(Clone, Debug)]
-pub struct TracingEvmFactory {
+pub struct TracingOpEvmFactory {
     inner: OpEvmFactory,
     traces: Arc<Mutex<Vec<EvmState>>>,
 }
 
-impl TracingEvmFactory {
+impl TracingOpEvmFactory {
     /// Creates a new tracing factory with a fresh shared trace buffer.
     pub fn new() -> Self {
         Self {
@@ -150,15 +150,14 @@ impl TracingEvmFactory {
     }
 }
 
-impl Default for TracingEvmFactory {
+impl Default for TracingOpEvmFactory {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl EvmFactory for TracingEvmFactory {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> =
-        TracingOpEvm<OpEvm<DB, I, PrecompilesMap>>;
+impl EvmFactory for TracingOpEvmFactory {
+    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = TracingEvm<OpEvm<DB, I, PrecompilesMap>>;
     type Context<DB: Database> = OpContext<DB>;
     type Tx = OpTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
@@ -173,7 +172,7 @@ impl EvmFactory for TracingEvmFactory {
         db: DB,
         input: EvmEnv<OpSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
-        TracingOpEvm::new(self.inner.create_evm(db, input), self.traces.clone())
+        TracingEvm::new(self.inner.create_evm(db, input), self.traces.clone())
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -182,7 +181,7 @@ impl EvmFactory for TracingEvmFactory {
         input: EvmEnv<OpSpecId>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        TracingOpEvm::new(
+        TracingEvm::new(
             self.inner.create_evm_with_inspector(db, input, inspector),
             self.traces.clone(),
         )
@@ -230,7 +229,7 @@ mod tests {
 
     #[test]
     fn transact_raw_captures_state_trace() {
-        let factory = TracingEvmFactory::new();
+        let factory = TracingOpEvmFactory::new();
         let mut db = InMemoryDB::default();
 
         let sender = address!("0x1000000000000000000000000000000000000000");
@@ -263,7 +262,7 @@ mod tests {
 
     #[test]
     fn multiple_transactions_produce_ordered_traces() {
-        let factory = TracingEvmFactory::new();
+        let factory = TracingOpEvmFactory::new();
         let mut db = InMemoryDB::default();
 
         let sender = address!("0x1000000000000000000000000000000000000000");
@@ -299,7 +298,7 @@ mod tests {
 
     #[test]
     fn system_call_does_not_append_trace() {
-        let factory = TracingEvmFactory::new();
+        let factory = TracingOpEvmFactory::new();
         let db = InMemoryDB::default();
         let mut evm = factory.create_evm(db, test_env());
 
@@ -318,7 +317,7 @@ mod tests {
 
     #[test]
     fn failed_transaction_does_not_append_trace() {
-        let factory = TracingEvmFactory::new();
+        let factory = TracingOpEvmFactory::new();
         let db = InMemoryDB::default();
         let mut evm = factory.create_evm(db, test_env());
 
@@ -346,7 +345,7 @@ mod tests {
 
     #[test]
     fn trait_method_field_access_works() {
-        let factory = TracingEvmFactory::new();
+        let factory = TracingOpEvmFactory::new();
         let db = InMemoryDB::default();
         let evm = factory.create_evm(db, test_env());
 
@@ -357,7 +356,7 @@ mod tests {
 
     #[test]
     fn take_traces_drains_shared_buffer() {
-        let factory = TracingEvmFactory::new();
+        let factory = TracingOpEvmFactory::new();
         let cloned_factory = factory.clone();
         let mut db = InMemoryDB::default();
 
