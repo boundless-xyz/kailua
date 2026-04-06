@@ -59,3 +59,5 @@ op-alloy-rpc-types = { git = "https://github.com/ethereum-optimism/optimism", ta
 op-alloy = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.12" }
 # Duplicated by: alloy-evm (crates.io)
 alloy-op-hardforks = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.12" }
+# Duplicated by: alloy-evm (crates.io)
+alloy-op-evm = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.12" }
