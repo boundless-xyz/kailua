@@ -105,6 +105,8 @@ The aggregation proof does NOT need to compute flat cache hashes from the trie o
 
 The `CachedExecutor` SHALL support chunk aggregation by accepting a `ChunkingEvmFactory` (constructed with chunk data) instead of `OpEvmFactory`. When chunks are present for blocks in the execution range, the caller provides `ChunkingEvmFactory` to `CachedExecutor::new()`. The factory produces `ChunkingEvm` instances that return pre-computed results during block execution.
 
+The `ChunkingEvmFactory` SHALL hold per-block chunk data keyed by block number (or consumed sequentially matching block execution order). When `create_evm` or `create_evm_with_inspector` is called, it extracts the block number from `EvmEnv.block.number` to select the correct chunk vec for that block. If no chunks exist for a block, the resulting `ChunkingEvm` has an empty chunk vec and delegates all `transact_raw()` calls to the inner EVM (monolithic execution).
+
 The existing `CachedExecutor` logic (cache-hit precedence, collection target, fallback) remains unchanged. The chunk aggregation is transparent at the executor level — it happens inside the EVM layer.
 
 #### Scenario: CachedExecutor with ChunkingEvmFactory

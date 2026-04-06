@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Tracing EVM wrapper for capturing per-transaction state changes.
+//! Tracing EVM wrapper for capturing per-transaction execution results.
 //!
-//! [`TracingEvm`] wraps any `E: Evm` and captures `ResultAndState.state` after each
-//! successful `transact_raw()` call into a shared trace buffer. System calls
-//! (`transact_system_call`) are delegated transparently without appending to the trace buffer,
-//! since they represent block-level prelude/epilogue work rather than ordered transaction-body
-//! execution.
+//! [`TracingEvm`] wraps any `E: Evm` and captures full `ResultAndState` (execution result +
+//! state diff) after each successful `transact_raw()` call into a shared trace buffer. System
+//! calls (`transact_system_call`) are delegated transparently without appending to the trace
+//! buffer, since they represent block-level prelude/epilogue work rather than ordered
+//! transaction-body execution.
 //!
 //! [`TracingOpEvmFactory`] wraps `OpEvmFactory` and produces `TracingOpEvm<OpEvm<...>>` instances
 //! that share a single trace buffer. Used on the host to capture per-transaction traces during
-//! `build_block()` for chunk witness construction. Callers must drain the shared buffer via
-//! [`TracingOpEvmFactory::take_traces`] at the per-block boundary so stale traces do not leak into
-//! later witness construction.
+//! `build_block()` for chunk witness construction. The `EvmState` component is used for witness
+//! cache construction; the full `ResultAndState` is used for `Chunk.results` in aggregation.
+//! Callers must drain the shared buffer via [`TracingOpEvmFactory::take_traces`] at the per-block
+//! boundary so stale traces do not leak into later witness construction.
 
 use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError};
 use alloy_evm::precompiles::PrecompilesMap;
@@ -32,7 +33,6 @@ use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context::TxEnv;
 use alloy_evm::revm::context_interface::result::{EVMError, ResultAndState};
 use alloy_evm::revm::inspector::NoOpInspector;
-use alloy_evm::revm::state::EvmState;
 use alloy_evm::revm::Inspector;
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::{OpEvm, OpEvmFactory};
@@ -40,7 +40,7 @@ use alloy_primitives::{Address, Bytes};
 use std::mem;
 use std::sync::{Arc, Mutex};
 
-/// EVM wrapper that captures per-transaction `EvmState` traces on successful `transact_raw()`.
+/// EVM wrapper that captures full per-transaction `ResultAndState` on successful `transact_raw()`.
 ///
 /// Follows the proven `CustomEvm` wrapper pattern: implements the `Evm` trait by delegating all
 /// required methods to the inner EVM. No `Deref`/`DerefMut` needed — the block executor accesses
@@ -48,12 +48,12 @@ use std::sync::{Arc, Mutex};
 /// `components()`/`components_mut()`.
 pub struct TracingEvm<E: Evm> {
     inner: E,
-    traces: Arc<Mutex<Vec<EvmState>>>,
+    traces: Arc<Mutex<Vec<ResultAndState<E::HaltReason>>>>,
 }
 
 impl<E: Evm> TracingEvm<E> {
     /// Creates a new tracing wrapper around the given EVM with a shared trace buffer.
-    pub fn new(inner: E, traces: Arc<Mutex<Vec<EvmState>>>) -> Self {
+    pub fn new(inner: E, traces: Arc<Mutex<Vec<ResultAndState<E::HaltReason>>>>) -> Self {
         Self { inner, traces }
     }
 }
@@ -76,14 +76,14 @@ impl<E: Evm> Evm for TracingEvm<E> {
         self.inner.chain_id()
     }
 
-    /// Executes a transaction, captures the resulting `EvmState` on success, then returns
+    /// Executes a transaction, captures the full `ResultAndState` on success, then returns
     /// the original result unmodified.
     fn transact_raw(
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         let result = self.inner.transact_raw(tx)?;
-        self.traces.lock().unwrap().push(result.state.clone());
+        self.traces.lock().unwrap().push(result.clone());
         Ok(result)
     }
 
@@ -129,7 +129,7 @@ impl<E: Evm> Evm for TracingEvm<E> {
 #[derive(Clone, Debug)]
 pub struct TracingOpEvmFactory {
     inner: OpEvmFactory,
-    traces: Arc<Mutex<Vec<EvmState>>>,
+    traces: Arc<Mutex<Vec<ResultAndState<OpHaltReason>>>>,
 }
 
 impl TracingOpEvmFactory {
@@ -143,9 +143,13 @@ impl TracingOpEvmFactory {
 
     /// Atomically drains and returns the accumulated traces for the current block execution.
     ///
+    /// Each entry is a full `ResultAndState` capturing both the `ExecutionResult` (gas, logs,
+    /// output) and the `EvmState` (per-tx state diff). The `EvmState` component is used for
+    /// chunk witness cache construction; the full `ResultAndState` is used for `Chunk.results`.
+    ///
     /// This establishes the per-block trace boundary expected by chunk witness construction.
     /// Subsequent executions that reuse this factory start with an empty trace buffer.
-    pub fn take_traces(&self) -> Vec<EvmState> {
+    pub fn take_traces(&self) -> Vec<ResultAndState<OpHaltReason>> {
         mem::take(&mut *self.traces.lock().unwrap())
     }
 }
@@ -251,11 +255,11 @@ mod tests {
         let traces = factory.take_traces();
         assert_eq!(traces.len(), 1, "should have exactly one trace entry");
         assert!(
-            traces[0].contains_key(&sender),
+            traces[0].state.contains_key(&sender),
             "trace should contain sender"
         );
         assert!(
-            traces[0].contains_key(&recipient),
+            traces[0].state.contains_key(&recipient),
             "trace should contain recipient"
         );
     }
@@ -287,11 +291,11 @@ mod tests {
         let traces = factory.take_traces();
         assert_eq!(traces.len(), 2, "should have two trace entries");
         assert!(
-            traces[0].contains_key(&recipient1),
+            traces[0].state.contains_key(&recipient1),
             "first trace should contain recipient1"
         );
         assert!(
-            traces[1].contains_key(&recipient2),
+            traces[1].state.contains_key(&recipient2),
             "second trace should contain recipient2"
         );
     }

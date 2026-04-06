@@ -2,7 +2,7 @@
 
 ### Requirement: Host computes per-transaction tx-body EvmState traces via TracingEvmFactory
 
-The host-side pre-execution SHALL use `TracingEvmFactory` to capture per-transaction `EvmState` (the `HashMap<Address, Account>` from `ResultAndState.state`) during `build_block()`'s ordered transaction-body execution. Each trace entry corresponds to one ordered block transaction and contains all accounts and storage slots that the transaction accessed (read or wrote). Block-level prelude and epilogue state transitions are handled outside this trace sequence.
+The host-side pre-execution SHALL use `TracingEvmFactory` to capture full per-transaction `ResultAndState` instances (containing both `ExecutionResult` and `EvmState`) during `build_block()`'s ordered transaction-body execution. Each trace entry corresponds to one ordered block transaction. The `EvmState` component (`HashMap<Address, Account>`) contains all accounts and storage slots that the transaction accessed (read or wrote). The `ExecutionResult` component contains gas_used, logs, output, and success/revert/halt status. Block-level prelude and epilogue state transitions are handled outside this trace sequence. The full `ResultAndState` is needed for constructing `Chunk.results` for aggregation; the `EvmState` component is used for witness cache construction.
 
 #### Scenario: trace count matches transaction count
 - **WHEN** a block with N transactions is pre-executed on the host
@@ -56,7 +56,7 @@ This context SHALL include all block-level fields needed by chunk execution, suc
 
 For each chunk, the host SHALL provide the **full cumulative cache** at the chunk boundary — not a filtered subset. This is required for hash chain continuity: the chunk guest computes `pre_db_hash` from its witness cache and `post_db_hash` from the post-execution state; for the chain `post_db_hash[i] == pre_db_hash[i+1]` to hold, chunk i+1's witness cache must be exactly chunk i's post-state.
 
-The core state-advancement functions `apply_trace_to_cache()` and `account_state_from_evm_status()` live in `kailua-kona` (`crates/kona/src/precondition/chunking.rs`) because they are shared between host-side witness construction and guest-side chunk verification (the `ChunkExecutor` uses them to apply merged state deltas during aggregation).
+The core state-advancement functions `apply_trace_to_cache()` and `account_state_from_evm_status()` live in `kailua-kona` (`crates/kona/src/precondition/chunking.rs`) because they are shared between host-side witness construction and guest-side chunk proving (the chunk execution-only path uses them to advance state when computing `post_db_hash`).
 
 The algorithm SHALL:
 1. Materialize the post-prelude flat state once.

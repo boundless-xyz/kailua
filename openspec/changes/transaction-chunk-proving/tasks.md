@@ -55,6 +55,7 @@
 
 ## 7. Chunk execution-only mode in run_core_client
 
+- [ ] 7.0 Define `compute_tx_hash(transactions: &[Vec<u8>]) -> B256` in `precondition/chunking.rs`. Use deterministic SHA256 with explicit encoding: `SHA256(u64_be(len) || for each tx: u64_be(tx.len()) || tx_bytes)`, matching the length-prefix pattern used by the existing memdb hashing functions. Add unit tests: determinism, ordering sensitivity, content sensitivity, empty list.
 - [ ] 7.1 Add `chunk_witness: Option<ChunkWitnessData>` field to `Witness` in `crates/kona/src/witness.rs`. Add rkyv serialization with `Default` producing `None`. Thread it through `run_stateless_client()` → `run_stitching_client()` → `run_core_client()` as a new parameter.
 - [ ] 7.2 Add the chunk execution-only branch in `run_core_client()` (`crates/kona/src/client/core.rs`): when `boot.l1_head == B256::from([0xFF; 32])`, enter chunk mode. Extract `ChunkWitnessData` from the parameter (panic if `None`).
 - [ ] 7.3 Implement the chunk execution flow within the new branch:
@@ -76,7 +77,9 @@
 
 - [ ] 8.1 Define `ChunkingEvm<E: Evm>` in `kailua-kona` (analogous to `TracingOpEvm`). Wraps inner `E: Evm`, holds a chunk vec (reversed, popped from end) and current tx index. `transact_raw()`: if a chunk is active, return the next pre-computed `ResultAndState` from `chunk.results`; if a new chunk starts at the current tx index, pop it and return the first result; otherwise delegate to inner EVM. `transact_system_call()`: always delegates to inner (prelude/epilogue run normally). All other `Evm` trait methods delegate to inner.
 - [ ] 8.2 Define `ChunkingEvmFactory` (analogous to `TracingEvmFactory`). Implements `EvmFactory` with `type Evm<DB, I> = ChunkingEvm<OpEvm<DB, I, PrecompilesMap>>`. Holds per-block chunk data. Both `create_evm` and `create_evm_with_inspector` delegate to `OpEvmFactory` then wrap in `ChunkingEvm`.
-- [ ] 8.3 Add `chunks: Vec<Vec<Chunk>>` field to `Witness` (one inner vec per block, empty by default). Thread through `run_stateless_client()` → `run_stitching_client()` → `run_core_client()`. When chunk data is present, construct `ChunkingEvmFactory` instead of `OpEvmFactory` for `CachedExecutor::new()`.
+- [ ] 8.3a Add `chunks: Vec<Vec<Chunk>>` field to `Witness` (one inner vec per block, empty by default). Add rkyv serialization.
+- [ ] 8.3b Extend the `StitchingClient` trait signature and `KonaStitchingClient` implementation to accept and forward chunk data. Extend `run_core_client()` parameter list to accept chunk data. Update all call sites in `run_stateless_client()`, `run_stitching_client()`, `run_core_client()`, and `kailua-prover`.
+- [ ] 8.3c In `run_core_client()`, when chunk data is present for the execution range, construct `ChunkingEvmFactory` (keyed by block number from the chunk data) instead of `OpEvmFactory` for `CachedExecutor::new()`.
 - [ ] 8.4 Implement `stitch_chunks()` in `crates/kona/src/client/stitching.rs` (analogous to `stitch_executions()`). Called in `run_stitching_client()` after `run_core_client()` returns. For each block's chunks: verify hash chain continuity (`chunk[i].agreed_db == chunk[i-1].claimed_db`), compute `chunk_trace`, construct expected `ProofJournal` (using `config_hash`, `fpvm_image_id`, `payout_recipient`, `agreed_l2_output_root`, `claimed_l2_block_number` from `BootInfo`), call `verify_stitching_journal()`.
 - [ ] 8.5 Add unit tests for `ChunkingEvm`: pre-computed results returned in order, system calls delegate to inner, empty chunk vec delegates all transact_raw to inner, tx index tracking is correct across chunks.
 - [ ] 8.6 Add unit tests for `stitch_chunks()`: valid chain passes, hash chain break panics, receipt mismatch panics.
@@ -86,8 +89,8 @@
 ## 9. Prover-side chunk dispatch
 
 - [ ] 9.1 Add `max_txs_per_chunk: usize` field to `ProvingArgs` in `crates/prover/src/args.rs` with default `usize::MAX`, `#[clap(long)]`, and validation that rejects `0`.
-- [ ] 9.2 In `crates/prover/src/tasks.rs`, add chunk dispatch logic: only when `0 < max_txs_per_chunk < block_tx_count`, pre-execute with `TracingEvmFactory` (from `crate::evm`), call `build_chunk_witnesses()` (from `crate::chunk`), construct `Chunk` entries with merged state deltas from the per-transaction traces, dispatch chunk proof jobs in parallel via `seek_proof()`, collect receipts. Otherwise keep the existing monolithic proving path for that block.
-- [ ] 9.3 After chunk receipts are collected, assemble the chunk data for the aggregation proof: `Vec<Chunk>` entries with state deltas and hashes, plus chunk proof receipts appended to `stitched_proofs`.
+- [ ] 9.2 In `crates/prover/src/tasks.rs`, add chunk dispatch logic: only when `0 < max_txs_per_chunk < block_tx_count`, pre-execute with `TracingEvmFactory` (from `crate::evm`, which now captures full `ResultAndState` per tx), call `build_chunk_witnesses()` (from `crate::chunk`), construct `Chunk` entries with per-tx `ResultAndState` instances and computed hash commitments (`agreed_db`/`claimed_db`/`agreed_evm`/`claimed_evm`/`tx_hash`), dispatch chunk proof jobs in parallel via `seek_proof()`, collect receipts. Otherwise keep the existing monolithic proving path for that block.
+- [ ] 9.3 After chunk receipts are collected, assemble the chunk data for the aggregation proof: `Vec<Chunk>` entries (with per-tx `ResultAndState`, hash commitments, and `EvmAccumulatorState`) plus chunk proof receipts appended to `stitched_proofs`.
 - [ ] 9.4 Add integration test: mock a block with known transactions, set `max_txs_per_chunk`, verify chunk witnesses are constructed correctly and chunk proofs are dispatched.
 - [ ] 9.5 Add integration test: verify that `max_txs_per_chunk = usize::MAX` produces identical behavior to the current code (no chunking path activated).
 

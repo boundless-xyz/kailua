@@ -4,11 +4,11 @@
 
 **Crate:** `kailua-prover` (host-only types in `crates/prover/src/evm.rs`)
 
-The system SHALL provide a generic `TracingOpEvm<E: Evm>` struct that wraps an inner `E: Evm` and implements the `Evm` trait. In this change, `TracingEvmFactory` instantiates it as `TracingOpEvm<OpEvm<DB, I, PrecompilesMap>>`. The `transact_raw()` method SHALL clone `ResultAndState.state` into a shared trace buffer before returning. The trace buffer represents only the ordered block transaction body used for chunk proving. Block-level prelude and epilogue state transitions are handled separately and SHALL NOT append extra entries to the chunk trace buffer. All other `Evm` trait methods SHALL delegate to the inner EVM without modification.
+The system SHALL provide a generic `TracingOpEvm<E: Evm>` struct that wraps an inner `E: Evm` and implements the `Evm` trait. In this change, `TracingEvmFactory` instantiates it as `TracingOpEvm<OpEvm<DB, I, PrecompilesMap>>`. The `transact_raw()` method SHALL clone the full `ResultAndState` into a shared trace buffer before returning. The trace buffer type is `Vec<ResultAndState>`, capturing both the `ExecutionResult` (gas, logs, output, status) and the `EvmState` (per-tx state diff). The `EvmState` component is used for chunk witness cache construction; the full `ResultAndState` is used for constructing `Chunk.results` for aggregation. The trace buffer represents only the ordered block transaction body used for chunk proving. Block-level prelude and epilogue state transitions are handled separately and SHALL NOT append extra entries to the chunk trace buffer. All other `Evm` trait methods SHALL delegate to the inner EVM without modification.
 
-#### Scenario: transact_raw captures state on success
+#### Scenario: transact_raw captures full ResultAndState on success
 - **WHEN** `TracingOpEvm::transact_raw(tx)` is called and the inner EVM returns `Ok(ResultAndState { result, state })`
-- **THEN** `state` is cloned and appended to the shared trace buffer, and the original `Ok(ResultAndState)` is returned unmodified
+- **THEN** the full `ResultAndState` is cloned and appended to the shared trace buffer, and the original `Ok(ResultAndState)` is returned unmodified
 
 #### Scenario: transact_raw propagates errors without capturing
 - **WHEN** `TracingOpEvm::transact_raw(tx)` is called and the inner EVM returns `Err(e)`
