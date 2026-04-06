@@ -63,25 +63,25 @@ kona-protocol.workspace = true
 kona-providers-alloy.workspace = true
 kona-std-fpvm.workspace = true
 
-## Hokulea
-#kailua-hokulea = { workspace = true, optional = true }
-#canoe-bindings = { workspace = true, optional = true }
-#canoe-provider = { workspace = true, optional = true }
-#canoe-verifier = { workspace = true, optional = true }
-#canoe-verifier-address-fetcher = { workspace = true, optional = true }
-#hokulea-compute-proof = { workspace = true, optional = true }
-#hokulea-host-bin = { workspace = true, optional = true }
-#hokulea-proof = { workspace = true, optional = true }
-#hokulea-witgen = { workspace = true, optional = true }
-#hokulea-zkvm-verification = { workspace = true, optional = true }
-#
-## Hana
-#kailua-hana = { workspace = true, optional = true }
-#celestia-rpc = { workspace = true, optional = true }
-#celestia-types = { workspace = true, optional = true }
-#hana-blobstream = { workspace = true, optional = true }
-#hana-host = { workspace = true, optional = true }
-#hana-oracle = { workspace = true, optional = true }
+# Hokulea
+kailua-hokulea = { workspace = true, optional = true }
+canoe-bindings = { workspace = true, optional = true }
+canoe-provider = { workspace = true, optional = true }
+canoe-verifier = { workspace = true, optional = true }
+canoe-verifier-address-fetcher = { workspace = true, optional = true }
+hokulea-compute-proof = { workspace = true, optional = true }
+hokulea-host-bin = { workspace = true, optional = true }
+hokulea-proof = { workspace = true, optional = true }
+hokulea-witgen = { workspace = true, optional = true }
+hokulea-zkvm-verification = { workspace = true, optional = true }
+
+# Hana
+kailua-hana = { workspace = true, optional = true }
+celestia-rpc = { workspace = true, optional = true }
+celestia-types = { workspace = true, optional = true }
+hana-blobstream = { workspace = true, optional = true }
+hana-host = { workspace = true, optional = true }
+hana-oracle = { workspace = true, optional = true }
 
 # Bonsai
 bonsai-sdk.workspace = true
@@ -116,24 +116,24 @@ rebuild-fpvm = [
 eigen = [
     "kailua-build/eigen",
     "kailua-sync/eigen",
-#    "dep:kailua-hokulea",
-#    "dep:canoe-bindings",
-#    "dep:canoe-provider",
-#    "dep:canoe-verifier",
-#    "dep:canoe-verifier-address-fetcher",
-#    "dep:hokulea-compute-proof",
-#    "dep:hokulea-host-bin",
-#    "dep:hokulea-proof",
-#    "dep:hokulea-witgen",
-#    "dep:hokulea-zkvm-verification",
+    "dep:kailua-hokulea",
+    "dep:canoe-bindings",
+    "dep:canoe-provider",
+    "dep:canoe-verifier",
+    "dep:canoe-verifier-address-fetcher",
+    "dep:hokulea-compute-proof",
+    "dep:hokulea-host-bin",
+    "dep:hokulea-proof",
+    "dep:hokulea-witgen",
+    "dep:hokulea-zkvm-verification",
 ]
 celestia = [
     "kailua-build/celestia",
     "kailua-sync/eigen",
-#    "dep:kailua-hana",
-#    "dep:celestia-rpc",
-#    "dep:celestia-types",
-#    "dep:hana-blobstream",
-#    "dep:hana-host",
-#    "dep:hana-oracle",
+    "dep:kailua-hana",
+    "dep:celestia-rpc",
+    "dep:celestia-types",
+    "dep:hana-blobstream",
+    "dep:hana-host",
+    "dep:hana-oracle",
 ]
