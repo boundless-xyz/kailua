@@ -64,9 +64,10 @@ where
         },
     );
     // Instantiate verifier to populate data
-    let (eigen_verifier, _) = KailuaCanoeVerifier::new(eigen_oracle.clone());
+    let (eigen_verifier, boot_info) = KailuaCanoeVerifier::new(eigen_oracle.clone());
     eigenda_witness_to_preloaded_provider(
         eigen_oracle,
+        &boot_info,
         eigen_verifier,
         CanoeVerifierAddressFetcherDeployedByEigenLabs {},
         Default::default(),

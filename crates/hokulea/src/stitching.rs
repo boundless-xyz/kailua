@@ -79,6 +79,7 @@ impl<
         let eigen_stitching_client = KonaStitchingClient(EigenDADataSourceProvider(
             kona_proof::block_on(eigenda_witness_to_preloaded_provider(
                 eigen_oracle,
+                &boot,
                 eigen_verifier,
                 CanoeVerifierAddressFetcherDeployedByEigenLabs {},
                 self.eigen_da_witness,
