@@ -31,6 +31,11 @@ build-fpvm-kona +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -
 fpvm-kona:
   cargo build --manifest-path build/risczero/kona/Cargo.toml --locked --release -F disable-dev-mode
 
+fmt-kona:
+  cargo fmt --all
+  cargo fmt --all --manifest-path build/risczero/kona/Cargo.toml
+  forge fmt --root crates/contracts/foundry
+
 fmt:
   cargo fmt --all
 

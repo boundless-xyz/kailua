@@ -84,7 +84,7 @@ impl<N: Network> TxFiller<N> for PremiumExecGasFiller {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct PremiumBlobGasFiller {
     pub inner: BlobGasFiller,
     pub premium: u128,

@@ -15,11 +15,8 @@
 use crate::await_tel;
 use crate::transact::rpc::get_block;
 use alloy::consensus::transaction::SignerRecoverable;
-use alloy::consensus::{
-    BlobTransactionSidecar, BlockHeader, Bytes48, EthereumTxEnvelope, Signed, Transaction,
-    TxEip4844Variant, TxEip4844WithSidecar,
-};
-use alloy::eips::eip7594::BlobTransactionSidecarEip7594;
+use alloy::consensus::{BlobTransactionSidecar, BlockHeader, Bytes48, Transaction};
+use alloy::eips::eip7594::{BlobTransactionSidecarEip7594, Encodable7594};
 use alloy::eips::{BlockId, BlockNumberOrTag, Encodable2718};
 use alloy::network::{BlockResponse, Ethereum, Network, TransactionBuilder4844};
 use alloy::providers::fillers::{FillProvider, TxFiller};
@@ -132,24 +129,13 @@ where
                 .unwrap_or_default();
             let encoded_tx = if self.eip_7594 && has_sidecar {
                 info!("Applying EIP-7594 to EIP-4844 transaction.");
-                EthereumTxEnvelope::Eip4844(Signed::new_unhashed(
-                    TxEip4844Variant::TxEip4844WithSidecar(
-                        TxEip4844WithSidecar::from_tx_and_sidecar(
-                            envelope.as_eip4844().unwrap().tx().tx().clone(),
-                            convert_sidecar(
-                                envelope
-                                    .as_eip4844()
-                                    .unwrap()
-                                    .tx()
-                                    .sidecar()
-                                    .unwrap()
-                                    .clone(),
-                            ),
-                        ),
-                    ),
-                    *envelope.signature(),
-                ))
-                .encoded_2718()
+                envelope
+                    .as_eip4844()
+                    .unwrap()
+                    .tx()
+                    .sidecar()
+                    .unwrap()
+                    .encoded_7594()
             } else {
                 envelope.encoded_2718()
             };
