@@ -1333,7 +1333,7 @@ impl R2Storage {
 
     async fn upload_input(&self, input: &[u8]) -> anyhow::Result<Url> {
         let digest = Sha256::digest(input);
-        let key = format!("v2/kailua/input/{}.bin", hex::encode(digest.as_slice()));
+        let key = format!("v2/kailua/input/{}.bin", hex::encode(digest));
         self.upload(&key, input.to_vec()).await
     }
 }
