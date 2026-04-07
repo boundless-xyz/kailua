@@ -84,7 +84,7 @@ ethereum_package:
       el_extra_params:
         - --gcmode=archive
       cl_type: lighthouse
-      cl_image: ethpandaops/lighthouse:stable-e21198c
+      cl_image: ethpandaops/lighthouse:stable-176cce5
       el_volume_size: 16384
       cl_volume_size: 8192
   network_params:
