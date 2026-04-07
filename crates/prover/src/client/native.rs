@@ -134,7 +134,7 @@ pub async fn run_native_client(
                 .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
             hint.host,
             preimage.host,
-            kona_host::single::SingleChainHintHandler,
+            crate::hint_handler::FallbackBlobHintHandler,
             retry_res_ctx_timeout!(args.timeouts.max(), args.create_providers().await).await,
             args.kona.is_offline(),
             HintType::L2PayloadWitness,

@@ -25,6 +25,7 @@ pub mod config;
 pub mod driver;
 #[cfg(feature = "celestia")]
 pub mod hana;
+pub mod hint_handler;
 #[cfg(feature = "eigen")]
 pub mod hokulea;
 pub mod kv;
