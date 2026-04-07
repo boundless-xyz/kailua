@@ -86,7 +86,7 @@ ethereum_package:
       cl_type: teku
       cl_image: consensys/teku:25.7.1
       cl_extra_params:
-        - --data-storage-mode=ARCHIVE
+        - --data-storage-archive-blob-epochs=100000
       el_volume_size: 16384
       cl_volume_size: 8192
   network_params:
