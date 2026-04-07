@@ -8,8 +8,8 @@ from pathlib import Path
 
 
 MNEMONIC = "test test test test test test test test test test test junk"
-L1_EL_SERVICE = "el-1-geth-teku"
-L1_CL_SERVICE = "cl-1-teku-geth"
+L1_EL_SERVICE = "el-1-geth-lighthouse"
+L1_CL_SERVICE = "cl-1-lighthouse-geth"
 L2_PARTICIPANT = "node0"
 L2_EL_TYPE = "op-geth"
 L2_CL_TYPE = "op-node"
