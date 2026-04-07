@@ -83,10 +83,8 @@ ethereum_package:
       el_image: ethereum/client-go:v1.16.9
       el_extra_params:
         - --gcmode=archive
-      cl_type: teku
-      cl_image: consensys/teku:25.7.1
-      cl_extra_params:
-        - --rest-api-getblobs-sidecars-download-enabled=true
+      cl_type: lighthouse
+      cl_image: ethpandaops/lighthouse:stable-e21198c
       el_volume_size: 16384
       cl_volume_size: 8192
   network_params:
