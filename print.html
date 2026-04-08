@@ -2237,7 +2237,7 @@ is made by an honest proposer!</p>
 generation takes place.
 Running using only the parameters above will generate proofs using the local RISC Zero prover available to the validator.
 Alternatively, proof generation can be delegated to an external service such as <a href="https://risczero.com/bonsai">Bonsai</a>,
-or to the decentralized <a href="https://docs.beboundless.xyz/">Boundless proving network</a>.</p>
+or to the decentralized <a href="https://docs.boundless.network/">Boundless proving network</a>.</p>
 <div id="admonition-note-3" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-3-title">
 <div class="admonition-title">
 <div id="admonition-note-3-title">
@@ -2268,16 +2268,20 @@ making this process safe to delegate.</p>
 </div>
 </div>
 <h3 id="boundless"><a class="header" href="#boundless">Boundless</a></h3>
-<p>When delegating generation of Kailua Fault proofs to the decentralized <a href="https://docs.beboundless.xyz/">Boundless proving network</a>,
+<p>When delegating generation of Kailua Fault proofs to the decentralized <a href="https://docs.boundless.network/">Boundless proving network</a>,
 for every fault proof, a proof request is submitted to the network, where it goes through the standard
-<a href="https://docs.beboundless.xyz/provers/proof-lifecycle">proof life-cycle</a> on boundless, before being published by
+<a href="https://docs.boundless.network/developers/proof-lifecycle">proof life-cycle</a> on Boundless, before being published by
 your validator to settle a dispute.</p>
+<p>Pricing, timing, and collateral for proof requests are handled automatically by the
+<a href="https://docs.boundless.network/developers/tutorials/request">Boundless SDK</a>. The SDK determines
+appropriate prices from market data and gas costs, sets cycle-aware timeouts, and uses chain-specific
+collateral defaults. See the <a href="https://docs.boundless.network/developers/tutorials/auction">auction parameter guide</a>
+for details on how the reverse Dutch auction works.</p>
 <p>This functionality requires some additional parameters when starting the validator.
-These parameters can be passed in as CLI arguments or set as environment variables</p>
-<h4 id="proof-requests"><a class="header" href="#proof-requests">Proof Requests</a></h4>
-<p>The following first set of parameters determine where/how requests are made:</p>
+These parameters can be passed in as CLI arguments or set as environment variables.</p>
+<h4 id="connection"><a class="header" href="#connection">Connection</a></h4>
 <ul>
-<li><code>boundless-rpc-url</code>: The rpc endpoint of the L1 chain where the Boundless network is deployed.</li>
+<li><code>boundless-rpc-url</code>: The RPC endpoint of the L1 chain where the Boundless network is deployed.</li>
 <li><code>boundless-wallet-key</code>: The wallet private key to use to send proof request transactions.</li>
 <li><code>boundless-order-stream-url</code>: (Optional) The URL to use for off-chain order submission.</li>
 <li><code>boundless-chain-id</code>: EIP-155 chain ID of the network hosting Boundless.</li>
@@ -2285,46 +2289,59 @@ These parameters can be passed in as CLI arguments or set as environment variabl
 <li><code>boundless-set-verifier-address</code>: The address of the RISC Zero verifier supporting aggregated proofs for order validation.</li>
 <li><code>boundless-market-address</code>: The address of the Boundless market contract.</li>
 <li><code>boundless-collateral-token-address</code>: Address of the stake collateral ERC-20 contract.</li>
-<li><code>boundless-lookback</code>: (Defaults to <code>true</code>) Whether to inspect for duplicates before making a new proof request.</li>
-<li><code>boundless-assume-cycle-count</code>: Whether to skip preflighting execution and assume the given cycle count.</li>
+</ul>
+<h4 id="execution-estimation"><a class="header" href="#execution-estimation">Execution Estimation</a></h4>
+<ul>
+<li><code>boundless-look-back</code>: (Defaults to <code>true</code>) Whether to inspect for duplicates before making a new proof request.</li>
+<li><code>boundless-assume-cycle-count</code>: Skip preflighting execution and assume the given cycle count.</li>
 <li><code>boundless-assume-cycles-per-gas</code>: Skip preflighting and assume a fixed cycle count per gas.</li>
 <li><code>boundless-assume-cycles-per-byte</code>: Skip preflighting and assume a fixed cycle count per input byte.</li>
 <li><code>boundless-assume-cycles-per-snark</code>: Skip preflighting and assume a fixed cycle count per recursive snark.</li>
-<li><code>boundless-expired-price-inc-perc</code>: Percentage to increase the price of a proving order by after it expires (Default 10).</li>
-<li><code>boundless-expired-time-inc-perc</code>: Percentage to increase the time allowed for a proving order by after it expires (Default 4).</li>
-<li><code>boundless-cycle-min-wei</code>: (Defaults to <code>200000000</code>) Starting price (wei) per cycle of proving.</li>
-<li><code>boundless-cycle-max-wei</code>: (Defaults to <code>600000000</code>) Maximum price (wei) per cycle of proving.</li>
-<li><code>boundless-mega-cycle-min</code>: Minimum megacycles per proving order (Default 250).</li>
-<li><code>boundless-mega-cycle-collateral</code>: Collateral (ZKC) per megacycle of the proving order (Default <code>2500000000000000</code>).</li>
-<li><code>boundless-order-min-collateral</code>: Minimum collateral (ZKC) per proving order (Default <code>5000000000000000000</code>).</li>
-<li><code>boundless-order-bid-delay-factor</code>: Multiplier for delay before order price starts ramping up (Default 0.5).</li>
-<li><code>boundless-order-min-bid-delay</code>: Minimum number of seconds to set as bid delay time (Default 120).</li>
-<li><code>boundless-order-ramp-up-factor</code>: (Defaults to <code>1.0</code>) Multiplier for order price to ramp up to maximum.</li>
-<li><code>boundless-order-min-ramp-up</code>: Minimum number of seconds to set as ramp up time (Default 600).</li>
-<li><code>boundless-order-lock-timeout-factor</code>: (Defaults to <code>3</code>) Multiplier for order fulfillment timeout after locking.</li>
-<li><code>boundless-order-min-lock-timeout</code>: Minimum number of seconds to set as lock timeout time (Default 1200).</li>
-<li><code>boundless-order-expiry-factor</code>: (Defaults to <code>1.0</code>) Multiplier for order expiry timeout after creation.</li>
-<li><code>boundless-order-min-expiry</code>: Minimum number of seconds to set as expiry time (Default 900).</li>
-<li><code>boundless-order-check-interval</code>: (Defaults to <code>12</code>) Time in seconds between attempts to check order status.</li>
-<li><code>boundless-enable-upload-caching</code>: Whether to enable image/input upload caching.</li>
+</ul>
+<h4 id="pricing"><a class="header" href="#pricing">Pricing</a></h4>
+<p>By default, the Boundless SDK sets pricing automatically based on market conditions and gas costs.
+The following optional parameters allow you to override the SDK defaults:</p>
+<ul>
+<li><code>boundless-min-price-per-cycle</code>: Minimum price per cycle, e.g. <code>"0.00001 USD"</code> or <code>"0.0000001 ETH"</code>. Requires a unit. If unset, the SDK uses market pricing from the price provider.</li>
+<li><code>boundless-max-price-per-cycle</code>: Maximum price per cycle, same format. If unset, the SDK uses a market-calibrated default plus a gas cost buffer.</li>
+<li><code>boundless-max-price-cap</code>: Hard cap on total order price (e.g. <code>"0.5 ETH"</code>, <code>"100 USD"</code>). Safety mechanism to prevent excessive spending.</li>
+</ul>
+<h4 id="retry-escalation"><a class="header" href="#retry-escalation">Retry Escalation</a></h4>
+<p>When a proof request expires without being fulfilled, it is automatically resubmitted with increased pricing and timeouts:</p>
+<ul>
+<li><code>boundless-expired-price-inc-perc</code>: Percentage to increase the price by per retry attempt (Default 10).</li>
+<li><code>boundless-expired-time-inc-perc</code>: Percentage to increase timeouts by per retry attempt (Default 4).</li>
+</ul>
+<h4 id="order-submission"><a class="header" href="#order-submission">Order Submission</a></h4>
+<ul>
 <li><code>boundless-order-submission-cooldown</code>: Time in seconds between attempts to submit new orders (Default 12).</li>
+<li><code>boundless-order-check-interval</code>: (Defaults to <code>12</code>) Time in seconds between attempts to check order status.</li>
+<li><code>boundless-enable-upload-caching</code>: Whether to enable image/input upload caching (Default <code>true</code>).</li>
+</ul>
+<h4 id="funding"><a class="header" href="#funding">Funding</a></h4>
+<ul>
 <li><code>boundless-order-funding-mode</code>: Funding mode for order submission. One of <code>never</code>, <code>always</code>, <code>available-balance</code>, or <code>below-threshold</code> (Default <code>never</code>).</li>
 <li><code>boundless-order-funding-threshold</code>: Threshold (wei) for <code>below-threshold</code> funding mode.</li>
 </ul>
-<div id="admonition-note-4" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-4-title">
-<div class="admonition-title">
-<div id="admonition-note-4-title">
-<p>Note</p>
-</div>
-<a class="admonition-anchor-link" href="validator.html#admonition-note-4"></a>
-</div>
-<div>
-<p>Order timeouts are set by default to the number of megacycles in a proof request.
-The multipliers allow you to scale these timeouts according to your expected proving speeds.
-The default scale values give a 1 MHz prover 3x the amount of time it needs to fulfill a request once it's locked, and
-10x its expected proving time as overall timeout.</p>
-</div>
-</div>
+<h4 id="legacy-pricing"><a class="header" href="#legacy-pricing">Legacy Pricing</a></h4>
+<p>For backward compatibility, static wei-based pricing can be enabled with <code>--boundless-legacy-pricing</code>.
+When this flag is set, the SDK's dynamic pricing is bypassed and the following parameters are used instead.
+These flags are hidden from <code>--help</code> and require <code>--boundless-legacy-pricing</code> to be set.</p>
+<ul>
+<li><code>boundless-cycle-min-wei</code>: Starting price (wei) per cycle (Default <code>200000000</code>).</li>
+<li><code>boundless-cycle-max-wei</code>: Maximum price (wei) per cycle (Default <code>600000000</code>).</li>
+<li><code>boundless-mega-cycle-min</code>: Minimum megacycles per proving order (Default 250).</li>
+<li><code>boundless-mega-cycle-collateral</code>: Collateral (ZKC) per megacycle (Default <code>2500000000000000</code>).</li>
+<li><code>boundless-order-min-collateral</code>: Minimum collateral (ZKC) per order (Default <code>5000000000000000000</code>).</li>
+<li><code>boundless-order-bid-delay-factor</code>: Multiplier for delay before price ramp-up starts (Default 0.5).</li>
+<li><code>boundless-order-min-bid-delay</code>: Minimum bid delay in seconds (Default 120).</li>
+<li><code>boundless-order-ramp-up-factor</code>: Multiplier for price ramp-up duration (Default 1.0).</li>
+<li><code>boundless-order-min-ramp-up</code>: Minimum ramp-up time in seconds (Default 600).</li>
+<li><code>boundless-order-lock-timeout-factor</code>: Multiplier for lock timeout (Default 3.0).</li>
+<li><code>boundless-order-min-lock-timeout</code>: Minimum lock timeout in seconds (Default 1200).</li>
+<li><code>boundless-order-expiry-factor</code>: Multiplier for order expiry (Default 1.0).</li>
+<li><code>boundless-order-min-expiry</code>: Minimum expiry time in seconds (Default 900).</li>
+</ul>
 <h4 id="storage-uploader"><a class="header" href="#storage-uploader">Storage Uploader</a></h4>
 <p>The below second set of parameters determine where the proven executable and its input are stored:</p>
 <ul>
@@ -2352,7 +2369,7 @@ The default scale values give a 1 MHz prover 3x the amount of time it needs to f
 <a class="admonition-anchor-link" href="validator.html#admonition-success-3"></a>
 </div>
 <div>
-<p>Running <code>kailua-cli validate</code> with the above extra arguments should now delegate all validator proving to the <a href="https://docs.beboundless.xyz/">Boundless proving network</a>!</p>
+<p>Running <code>kailua-cli validate</code> with the above extra arguments should now delegate all validator proving to the <a href="https://docs.boundless.network/">Boundless proving network</a>!</p>
 </div>
 </div>
 <h2 id="advanced-settings"><a class="header" href="#advanced-settings">Advanced Settings</a></h2>
