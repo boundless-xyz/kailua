@@ -171,6 +171,7 @@ jobs:
         run: cargo test --locked --workspace -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
 
   cargo-test-eigen:
+    needs: cargo-test
     runs-on: [ self-hosted, prod, "${{ matrix.os }}", docker ]
     strategy:
       matrix:
