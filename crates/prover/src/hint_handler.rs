@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2026 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,11 +16,13 @@
 //! the standard `/eth/v1/beacon/blob_sidecars/{slot}` endpoint when the Fusaka-era
 //! `/eth/v1/beacon/blobs/{slot}` endpoint is unavailable.
 
-use alloy::eips::eip4844::{kzg_to_versioned_hash, FIELD_ELEMENTS_PER_BLOB};
+use alloy::eips::eip4844::{
+    kzg_to_versioned_hash, BlobTransactionSidecarItem, IndexedBlobHash, FIELD_ELEMENTS_PER_BLOB,
+};
 use alloy_primitives::keccak256;
 use alloy_primitives::B256;
 use alloy_rpc_types_beacon::sidecar::BeaconBlobBundle;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use ark_ff::{BigInteger, PrimeField};
 use async_trait::async_trait;
 use kona_host::single::{SingleChainHintHandler, SingleChainHost, SingleChainProviders};
@@ -31,21 +33,36 @@ use kona_proof::{Hint, HintType};
 use reqwest::Client;
 use tracing::warn;
 
+#[derive(Debug, Clone, Copy)]
+struct ParsedBlobHint {
+    hash: B256,
+    index: Option<u64>,
+    timestamp: u64,
+}
+
 /// Parses a blob hint from raw bytes. Supports two formats:
 /// - 40 bytes (new): hash (32) + timestamp (8)
 /// - 48 bytes (legacy): hash (32) + index (8) + timestamp (8)
-fn parse_blob_hint(data: &[u8]) -> Result<(B256, u64)> {
+fn parse_blob_hint(data: &[u8]) -> Result<ParsedBlobHint> {
     match data.len() {
         40 => {
             let hash = B256::from_slice(&data[..32]);
             let timestamp = u64::from_be_bytes(data[32..40].try_into().unwrap());
-            Ok((hash, timestamp))
+            Ok(ParsedBlobHint {
+                hash,
+                index: None,
+                timestamp,
+            })
         }
         48 => {
             let hash = B256::from_slice(&data[..32]);
-            // bytes 32..40 are the blob index (unused)
+            let index = u64::from_be_bytes(data[32..40].try_into().unwrap());
             let timestamp = u64::from_be_bytes(data[40..48].try_into().unwrap());
-            Ok((hash, timestamp))
+            Ok(ParsedBlobHint {
+                hash,
+                index: Some(index),
+                timestamp,
+            })
         }
         n => Err(anyhow!("Invalid blob hint length: {n} (expected 40 or 48)")),
     }
@@ -99,6 +116,30 @@ impl HintHandler for FallbackBlobHintHandler {
 }
 
 impl FallbackBlobHintHandler {
+    fn validate_blob_sidecar(
+        sidecar: &BlobTransactionSidecarItem,
+        hash: B256,
+        hinted_index: Option<u64>,
+    ) -> Result<()> {
+        if let Some(index) = hinted_index {
+            sidecar
+                .verify_blob(&IndexedBlobHash { index, hash })
+                .map_err(|err| anyhow!("Blob sidecar validation failed: {err}"))?;
+            return Ok(());
+        }
+
+        let computed_hash = B256::from(sidecar.to_kzg_versioned_hash());
+        ensure!(
+            computed_hash == hash,
+            "Blob sidecar validation failed: expected versioned hash {hash}, got {computed_hash}",
+        );
+        sidecar
+            .verify_blob_kzg_proof()
+            .map_err(|err| anyhow!("Blob sidecar validation failed: {err}"))?;
+
+        Ok(())
+    }
+
     /// Fetches blob data using the standard `/eth/v1/beacon/blob_sidecars/{slot}` endpoint
     /// and writes the preimage oracle key-value entries in the same format as
     /// [`SingleChainHintHandler`].
@@ -108,7 +149,11 @@ impl FallbackBlobHintHandler {
         providers: &SingleChainProviders,
         kv: SharedKeyValueStore,
     ) -> Result<()> {
-        let (hash, timestamp) = parse_blob_hint(hint_data)?;
+        let ParsedBlobHint {
+            hash,
+            index,
+            timestamp,
+        } = parse_blob_hint(hint_data)?;
 
         // Compute slot from timestamp
         let genesis_time = providers.blobs.genesis_time;
@@ -137,16 +182,42 @@ impl FallbackBlobHintHandler {
             .await
             .map_err(|e| anyhow!("Failed to parse blob sidecars response: {e}"))?;
 
-        // Find the matching blob by versioned hash
-        let blob_data = response
-            .data
-            .into_iter()
-            .find(|b| kzg_to_versioned_hash(b.kzg_commitment.as_slice()) == hash)
-            .ok_or_else(|| anyhow!("Blob with hash {hash} not found in slot {slot}"))?;
+        // Find and validate the matching blob sidecar before writing any oracle entries.
+        let mut validation_error = None;
+        let mut matching_sidecar = None;
+        for blob_data in response.data {
+            if kzg_to_versioned_hash(blob_data.kzg_commitment.as_slice()) != hash {
+                continue;
+            }
 
-        let blob = blob_data.blob;
-        let commitment = blob_data.kzg_commitment;
-        let proof = blob_data.kzg_proof;
+            let sidecar = BlobTransactionSidecarItem {
+                index: blob_data.index,
+                blob: blob_data.blob,
+                kzg_commitment: blob_data.kzg_commitment,
+                kzg_proof: blob_data.kzg_proof,
+            };
+
+            match Self::validate_blob_sidecar(&sidecar, hash, index) {
+                Ok(()) => {
+                    matching_sidecar = Some(sidecar);
+                    break;
+                }
+                Err(err) => validation_error = Some(err),
+            }
+        }
+
+        let BlobTransactionSidecarItem {
+            blob,
+            kzg_commitment: commitment,
+            kzg_proof: proof,
+            ..
+        } = match matching_sidecar {
+            Some(sidecar) => sidecar,
+            None => {
+                return Err(validation_error
+                    .unwrap_or_else(|| anyhow!("Blob with hash {hash} not found in slot {slot}")));
+            }
+        };
 
         // Write kv entries in the same format as SingleChainHintHandler
         let mut kv_lock = kv.write().await;
@@ -192,5 +263,64 @@ impl FallbackBlobHintHandler {
         )?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::eips::eip4844::{env_settings::EnvKzgSettings, Blob, BlobTransactionSidecar};
+
+    fn sample_sidecar(index: u64) -> (BlobTransactionSidecarItem, B256) {
+        let mut sidecar = BlobTransactionSidecar::try_from_blobs_with_settings(
+            vec![Blob::default()],
+            EnvKzgSettings::Default.get(),
+        )
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+        sidecar.index = index;
+        let hash = B256::from(sidecar.to_kzg_versioned_hash());
+        (sidecar, hash)
+    }
+
+    #[test]
+    fn parse_blob_hint_preserves_legacy_index() {
+        let hash = B256::repeat_byte(0x42);
+        let index = 7u64;
+        let timestamp = 1234u64;
+
+        let mut hint = [0u8; 48];
+        hint[..32].copy_from_slice(hash.as_slice());
+        hint[32..40].copy_from_slice(&index.to_be_bytes());
+        hint[40..48].copy_from_slice(&timestamp.to_be_bytes());
+
+        let parsed = parse_blob_hint(&hint).unwrap();
+        assert_eq!(parsed.hash, hash);
+        assert_eq!(parsed.index, Some(index));
+        assert_eq!(parsed.timestamp, timestamp);
+    }
+
+    #[test]
+    fn validate_blob_sidecar_checks_legacy_indexed_hints() {
+        let (sidecar, hash) = sample_sidecar(3);
+        FallbackBlobHintHandler::validate_blob_sidecar(&sidecar, hash, Some(3)).unwrap();
+
+        let err =
+            FallbackBlobHintHandler::validate_blob_sidecar(&sidecar, hash, Some(4)).unwrap_err();
+        assert!(err.to_string().contains("Blob sidecar validation failed"));
+    }
+
+    #[test]
+    fn validate_blob_sidecar_checks_hash_and_proof_without_index() {
+        let (sidecar, hash) = sample_sidecar(9);
+        FallbackBlobHintHandler::validate_blob_sidecar(&sidecar, hash, None).unwrap();
+
+        let mut invalid_proof = sidecar.clone();
+        invalid_proof.kzg_proof = [0u8; 48].into();
+        let err =
+            FallbackBlobHintHandler::validate_blob_sidecar(&invalid_proof, hash, None).unwrap_err();
+        assert!(err.to_string().contains("Blob sidecar validation failed"));
     }
 }
