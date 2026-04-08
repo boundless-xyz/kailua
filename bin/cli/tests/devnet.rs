@@ -41,12 +41,16 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::env::set_var;
 use std::fs;
+#[cfg(feature = "eigen")]
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
+#[cfg(feature = "eigen")]
+use tokio::process::Child;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
@@ -68,10 +72,18 @@ const FAULT_PROPOSER_ALIAS: &str = "fault-proposer";
 const TRAIL_FAULT_PROPOSER_ALIAS: &str = "trail-fault-proposer";
 const VANGUARD_ALIAS: &str = "vanguard";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DevnetFlavor {
+    Standard,
+    EigenDA,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct DevnetConfig {
     l1: ChainDescriptor,
     l2: Vec<L2ChainDescriptor>,
+    #[serde(default)]
+    auxiliary_services: HashMap<String, ServiceDescriptor>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -149,6 +161,25 @@ impl DevnetConfig {
         Ok(format!("{scheme}://{}:{}", endpoint.host, endpoint.port))
     }
 
+    fn auxiliary_endpoint_url(
+        &self,
+        service: &str,
+        endpoint: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let service_name = service;
+        let Some(service) = self.auxiliary_services.get(service_name) else {
+            return Ok(None);
+        };
+        let endpoint = service.endpoints.get(endpoint).ok_or_else(|| {
+            anyhow!("Missing {endpoint} endpoint for auxiliary service {service_name}")
+        })?;
+        let scheme = endpoint.scheme.as_deref().unwrap_or("http");
+        Ok(Some(format!(
+            "{scheme}://{}:{}",
+            endpoint.host, endpoint.port
+        )))
+    }
+
     fn l1_rpc_url(&self) -> anyhow::Result<String> {
         self.endpoint_url(&self.l1, "el", "rpc")
     }
@@ -163,6 +194,11 @@ impl DevnetConfig {
 
     fn op_node_rpc_url(&self) -> anyhow::Result<String> {
         self.endpoint_url(self.l2_chain()?, "cl", "http")
+    }
+
+    fn eigenda_proxy_url(&self) -> anyhow::Result<String> {
+        self.auxiliary_endpoint_url("eigenda_proxy", "http")?
+            .ok_or_else(|| anyhow!("Missing eigenda_proxy endpoint in devnet descriptor"))
     }
 
     fn wallet(&self, alias: &str) -> anyhow::Result<&WalletDescriptor> {
@@ -201,12 +237,55 @@ fn workspace_root() -> PathBuf {
         .expect("Failed to resolve workspace root")
 }
 
-fn devnet_descriptor_path() -> PathBuf {
-    workspace_root().join("devnet/kurtosis-devnet.json")
+impl DevnetFlavor {
+    const ALL: [Self; 2] = [Self::Standard, Self::EigenDA];
+
+    fn descriptor_path(self) -> PathBuf {
+        workspace_root().join(match self {
+            Self::Standard => "devnet/kurtosis-devnet.json",
+            Self::EigenDA => "devnet/kurtosis-eigenda-devnet.json",
+        })
+    }
+
+    fn up_script(self) -> &'static str {
+        match self {
+            Self::Standard => "devnet-up.sh",
+            Self::EigenDA => "devnet-up-eigenda.sh",
+        }
+    }
+
+    fn clean_script(self) -> &'static str {
+        match self {
+            Self::Standard => "devnet-clean.sh",
+            Self::EigenDA => "devnet-clean-eigenda.sh",
+        }
+    }
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Standard => "Optimism",
+            Self::EigenDA => "EigenDA",
+        }
+    }
+
+    fn requires_eigenda_proxy(self) -> bool {
+        matches!(self, Self::EigenDA)
+    }
 }
 
 fn devnet_script(name: &str) -> PathBuf {
     workspace_root().join("scripts").join(name)
+}
+
+#[cfg(feature = "eigen")]
+fn reserve_local_port() -> anyhow::Result<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0").context("Failed to reserve local port")?;
+    let port = listener
+        .local_addr()
+        .context("Failed to read reserved local address")?
+        .port();
+    drop(listener);
+    Ok(port)
 }
 
 async fn run_devnet_script(script: &str) -> io::Result<ExitStatus> {
@@ -279,13 +358,24 @@ async fn wait_for_beacon_api(client: &Client, url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn wait_for_devnet_ready() -> anyhow::Result<DevnetConfig> {
+async fn wait_for_http_api(client: &Client, url: &str) -> anyhow::Result<()> {
+    client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("Failed to reach HTTP endpoint {url}"))?
+        .error_for_status()
+        .with_context(|| format!("Non-success response from HTTP endpoint {url}"))?;
+    Ok(())
+}
+
+async fn wait_for_devnet_ready(flavor: DevnetFlavor) -> anyhow::Result<DevnetConfig> {
     let client = Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .context("Failed to construct readiness HTTP client")?;
     let start = Instant::now();
-    let descriptor_path = devnet_descriptor_path();
+    let descriptor_path = flavor.descriptor_path();
 
     loop {
         let current_error = match DevnetConfig::load(&descriptor_path) {
@@ -303,6 +393,13 @@ async fn wait_for_devnet_ready() -> anyhow::Result<DevnetConfig> {
                         json!(["0x0"]),
                     )
                     .await?;
+                    if flavor.requires_eigenda_proxy() {
+                        wait_for_http_api(
+                            &client,
+                            &format!("{}/health", config.eigenda_proxy_url()?),
+                        )
+                        .await?;
+                    }
                     Ok(())
                 }
                 .await;
@@ -372,7 +469,7 @@ async fn deploy_kailua_contracts(
     Ok(())
 }
 
-async fn start_devnet() -> anyhow::Result<DevnetConfig> {
+async fn start_devnet_with_flavor(flavor: DevnetFlavor) -> anyhow::Result<DevnetConfig> {
     // print out INFO logs
     if let Err(err) = kona_cli::LogConfig::new(kona_cli::LogArgs {
         level: 3,
@@ -386,14 +483,14 @@ async fn start_devnet() -> anyhow::Result<DevnetConfig> {
     {
         eprintln!("Failed to set up tracing: {err:?}");
     }
-    run_devnet("devnet-up.sh").await?;
-    let config = wait_for_devnet_ready().await?;
-    println!("Optimism devnet deployed.");
+    run_devnet(flavor.up_script()).await?;
+    let config = wait_for_devnet_ready(flavor).await?;
+    println!("{} devnet deployed.", flavor.display_name());
     Ok(config)
 }
 
-async fn stop_devnet() {
-    match run_devnet_script("devnet-clean.sh").await {
+async fn stop_devnet_with_flavor(flavor: DevnetFlavor) {
+    match run_devnet_script(flavor.clean_script()).await {
         Ok(exit_code) => {
             println!("Cleanup Complete: {exit_code:?}")
         }
@@ -403,16 +500,219 @@ async fn stop_devnet() {
     }
 }
 
-async fn start_clean_devnet() -> anyhow::Result<DevnetConfig> {
-    stop_devnet().await;
-    match start_devnet().await {
+async fn stop_all_devnets() {
+    for flavor in DevnetFlavor::ALL {
+        stop_devnet_with_flavor(flavor).await;
+    }
+}
+
+#[cfg(feature = "eigen")]
+struct EigendaProxyShim {
+    url: String,
+    child: Child,
+}
+
+#[cfg(feature = "eigen")]
+impl EigendaProxyShim {
+    async fn start(upstream: &str) -> anyhow::Result<Self> {
+        let port = reserve_local_port()?;
+        let url = format!("http://127.0.0.1:{port}");
+        let script_path = devnet_script("eigenda-proxy-encoded-shim.py");
+
+        let mut cmd = Command::new("python3");
+        cmd.current_dir(workspace_root())
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .arg(&script_path)
+            .arg("--upstream")
+            .arg(upstream)
+            .arg("--listen-host")
+            .arg("127.0.0.1")
+            .arg("--listen-port")
+            .arg(port.to_string());
+
+        let mut child = cmd.kill_on_drop(true).spawn().unwrap_or_else(|err| {
+            panic!(
+                "Failed to spawn EigenDA proxy shim {}: {err}",
+                script_path.display()
+            )
+        });
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .context("Failed to construct EigenDA proxy shim readiness client")?;
+        let health_url = format!("{url}/health");
+        let start = Instant::now();
+        loop {
+            if let Some(status) = child
+                .try_wait()
+                .context("Failed to poll EigenDA proxy shim process")?
+            {
+                return Err(anyhow!(
+                    "EigenDA proxy shim exited before becoming ready: {status:?}"
+                ));
+            }
+
+            match wait_for_http_api(&client, &health_url).await {
+                Ok(()) => return Ok(Self { url, child }),
+                Err(err) => {
+                    if start.elapsed() >= Duration::from_secs(30) {
+                        return Err(anyhow!(
+                            "Timed out waiting for EigenDA proxy shim readiness: {}",
+                            err
+                        ));
+                    }
+                }
+            }
+
+            sleep(DEVNET_POLL_INTERVAL).await;
+        }
+    }
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+}
+
+#[cfg(feature = "eigen")]
+impl Drop for EigendaProxyShim {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
+async fn start_clean_devnet_with_flavor(flavor: DevnetFlavor) -> anyhow::Result<DevnetConfig> {
+    stop_all_devnets().await;
+    match start_devnet_with_flavor(flavor).await {
         Ok(config) => Ok(config),
         Err(err) => {
             eprintln!("Error: {err}");
-            stop_devnet().await;
+            stop_all_devnets().await;
             Err(err)
         }
     }
+}
+
+fn base_proving_args(max_witness_size: usize) -> ProvingArgs {
+    ProvingArgs {
+        payout_recipient_address: None,
+        segment_limit: 21,
+        max_derivation_length: u64::MAX,
+        max_block_derivations: u64::MAX,
+        max_block_executions: usize::MAX,
+        max_proof_stitches: usize::MAX,
+        max_witness_size,
+        num_tail_blocks: 10,
+        num_concurrent_preflights: 4,
+        num_concurrent_proofs: 2,
+        num_concurrent_witgens: None,
+        num_concurrent_r0vm: None,
+        bypass_chain_registry: false,
+        skip_derivation_proof: false,
+        skip_await_proof: false,
+        clear_cache_data: true,
+        #[cfg(feature = "eigen")]
+        hokulea: Default::default(),
+        #[cfg(feature = "celestia")]
+        hana: Default::default(),
+        export_profile_csv: false,
+    }
+}
+
+async fn run_prover(
+    devnet: &DevnetConfig,
+    proof_size: u64,
+    proving: ProvingArgs,
+) -> anyhow::Result<()> {
+    let tmp_dir = tempdir()?;
+    let data_dir = tmp_dir.path().join("agent");
+    let provider = devnet.provider_args()?;
+    let sync = SyncArgs {
+        provider,
+        kailua_game_implementation: None,
+        kailua_anchor_address: None,
+        final_l2_block: Some(proof_size),
+        data_dir: Some(data_dir.clone()),
+        telemetry: Default::default(),
+    };
+
+    println!("Waiting for l2 block #{proof_size} to be safe.");
+    let mut agent = SyncAgent::new(&sync.provider, data_dir.clone(), None, None, false).await?;
+    loop {
+        // Only op_rpc_concurrency/op_rpc_delay matter here; the agent
+        // already holds the real provider URLs from its initial construction.
+        agent
+            .sync(&SyncArgs {
+                provider: ProviderArgs {
+                    op_rpc_concurrency: 64,
+                    op_rpc_delay: 0,
+                    ..Default::default()
+                },
+                final_l2_block: Some(proof_size),
+                ..Default::default()
+            })
+            .await?;
+        if agent.cursor.last_output_index >= proof_size {
+            break;
+        }
+        sleep(Duration::from_secs(2)).await;
+    }
+    println!("Proving l2 block #{proof_size} since genesis");
+
+    let l1_head = agent
+        .provider
+        .l1_provider
+        .get_block(BlockId::Number(BlockNumberOrTag::Latest))
+        .await?
+        .ok_or_else(|| anyhow!("Missing latest L1 block"))?
+        .header()
+        .hash;
+    let agreed_l2_head_hash = agent
+        .provider
+        .l2_provider
+        .get_block(BlockId::Number(BlockNumberOrTag::Number(0)))
+        .await?
+        .ok_or_else(|| anyhow!("Missing L2 genesis block"))?
+        .header()
+        .hash;
+    let agreed_l2_output_root = agent.provider.op_provider.output_at_block(0).await?;
+    let claimed_l2_output_root = agent
+        .provider
+        .op_provider
+        .output_at_block(proof_size)
+        .await?;
+    prove(ProveArgs {
+        kona: kona_host::single::SingleChainHost {
+            l1_head,
+            agreed_l2_head_hash,
+            agreed_l2_output_root,
+            claimed_l2_output_root,
+            claimed_l2_block_number: proof_size,
+            l2_node_address: Some(sync.provider.op_geth_url.clone()),
+            l1_node_address: Some(sync.provider.eth_rpc_url.clone()),
+            l1_beacon_address: Some(sync.provider.beacon_rpc_url.clone()),
+            data_dir: Some(tmp_dir.path().join("prover")),
+            native: true,
+            server: false,
+            l2_chain_id: Some(agent.config.l2_chain_id.id()),
+            rollup_config_path: None,
+            l1_config_path: None,
+            enable_experimental_witness_endpoint: false,
+        },
+        op_node_address: Some(sync.provider.op_node_url.clone()),
+        proving,
+        boundless: Default::default(),
+        precondition_params: vec![],
+        precondition_block_hashes: vec![],
+        precondition_blob_hashes: vec![],
+        telemetry: Default::default(),
+        timeouts: Default::default(),
+    })
+    .await?;
+
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -421,7 +721,7 @@ async fn proposer_validator() {
     let devnet_lock = DEVNET.lock().await;
 
     // Start the optimism devnet
-    let devnet = start_clean_devnet().await.unwrap();
+    let devnet = start_clean_devnet_with_flavor(DevnetFlavor::Standard).await.unwrap();
     // update dgf to use kailua
     deploy_kailua_contracts(&devnet, 60).await.unwrap();
 
@@ -551,27 +851,10 @@ async fn proposer_validator() {
             ),
             txn_args: txn_args.clone(),
             proving: ProvingArgs {
-                payout_recipient_address: None,
-                segment_limit: 21,
-                max_derivation_length: u64::MAX,
-                max_block_derivations: u64::MAX,
-                max_block_executions: usize::MAX,
-                max_proof_stitches: usize::MAX,
-                max_witness_size: 2_684_354_560,
-                num_tail_blocks: 10,
                 num_concurrent_preflights: 1,
                 num_concurrent_proofs: 1,
-                num_concurrent_witgens: None,
-                num_concurrent_r0vm: None,
                 bypass_chain_registry: true,
-                skip_derivation_proof: false,
-                skip_await_proof: false,
-                clear_cache_data: true,
-                #[cfg(feature = "eigen")]
-                hokulea: Default::default(),
-                #[cfg(feature = "celestia")]
-                hana: Default::default(),
-                export_profile_csv: false,
+                ..base_proving_args(2_684_354_560)
             },
             boundless: Default::default(),
         },
@@ -619,27 +902,10 @@ async fn proposer_validator() {
             ),
             txn_args: txn_args.clone(),
             proving: ProvingArgs {
-                payout_recipient_address: None,
-                segment_limit: 21,
-                max_derivation_length: u64::MAX,
-                max_block_derivations: u64::MAX,
-                max_block_executions: usize::MAX,
-                max_proof_stitches: usize::MAX,
-                max_witness_size: 2_684_354_560,
-                num_tail_blocks: 10,
                 num_concurrent_preflights: 1,
                 num_concurrent_proofs: 1,
-                num_concurrent_witgens: None,
-                num_concurrent_r0vm: None,
                 bypass_chain_registry: true,
-                skip_derivation_proof: false,
-                skip_await_proof: false,
-                clear_cache_data: true,
-                #[cfg(feature = "eigen")]
-                hokulea: Default::default(),
-                #[cfg(feature = "celestia")]
-                hana: Default::default(),
-                export_profile_csv: false,
+                ..base_proving_args(2_684_354_560)
             },
             boundless: Default::default(),
         },
@@ -662,7 +928,7 @@ async fn proposer_validator() {
     proposer.unwrap();
 
     // Stop and discard the devnet
-    stop_devnet().await;
+    stop_all_devnets().await;
     drop(devnet_lock);
 }
 
@@ -674,128 +940,39 @@ async fn prover() {
     let devnet_lock = DEVNET.lock().await;
 
     // Start the optimism devnet
-    let devnet = start_clean_devnet().await.unwrap();
+    let devnet = start_clean_devnet_with_flavor(DevnetFlavor::Standard).await.unwrap();
     // update dgf to use kailua
     deploy_kailua_contracts(&devnet, 60).await.unwrap();
 
-    // Instantiate sync arguments
-    let tmp_dir = tempdir().unwrap();
-    let data_dir = tmp_dir.path().join("agent").to_path_buf();
-    let provider = devnet.provider_args().unwrap();
-    let sync = SyncArgs {
-        provider,
-        kailua_game_implementation: None,
-        kailua_anchor_address: None,
-        final_l2_block: Some(60),
-        data_dir: Some(data_dir.clone()),
-        telemetry: Default::default(),
-    };
-
-    // Wait for 200 blocks to be provable
-    println!("Waiting for l2 block #{PROOF_SIZE} to be safe.");
-    let mut agent = SyncAgent::new(&sync.provider, data_dir.clone(), None, None, false)
+    run_prover(&devnet, PROOF_SIZE, base_proving_args(5 * 1024 * 1024))
         .await
         .unwrap();
-    loop {
-        agent
-            .sync(&SyncArgs {
-                provider: ProviderArgs {
-                    op_rpc_concurrency: 64,
-                    op_rpc_delay: 0,
-                    ..Default::default()
-                },
-                final_l2_block: Some(PROOF_SIZE),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
-        if agent.cursor.last_output_index >= PROOF_SIZE {
-            break;
-        }
-        // Wait for more blocks to be confirmed
-        sleep(Duration::from_secs(2)).await;
-    }
-    println!("Proving l2 block #{PROOF_SIZE} since genesis");
-
-    // Prove 200 blocks with very little memory
-    let l1_head = agent
-        .provider
-        .l1_provider
-        .get_block(BlockId::Number(BlockNumberOrTag::Latest))
-        .await
-        .unwrap()
-        .unwrap()
-        .header()
-        .hash;
-    let agreed_l2_head_hash = agent
-        .provider
-        .l2_provider
-        .get_block(BlockId::Number(BlockNumberOrTag::Number(0)))
-        .await
-        .unwrap()
-        .unwrap()
-        .header()
-        .hash;
-    let agreed_l2_output_root = agent.provider.op_provider.output_at_block(0).await.unwrap();
-    let claimed_l2_output_root = agent
-        .provider
-        .op_provider
-        .output_at_block(PROOF_SIZE)
-        .await
-        .unwrap();
-    prove(ProveArgs {
-        kona: kona_host::single::SingleChainHost {
-            l1_head,
-            agreed_l2_head_hash,
-            agreed_l2_output_root,
-            claimed_l2_output_root,
-            claimed_l2_block_number: PROOF_SIZE,
-            l2_node_address: Some(sync.provider.op_geth_url),
-            l1_node_address: Some(sync.provider.eth_rpc_url),
-            l1_beacon_address: Some(sync.provider.beacon_rpc_url),
-            data_dir: Some(tmp_dir.path().join("prover").to_path_buf()),
-            native: true,
-            server: false,
-            l2_chain_id: Some(agent.config.l2_chain_id.id()),
-            rollup_config_path: None,
-            l1_config_path: None,
-            enable_experimental_witness_endpoint: false,
-        },
-        op_node_address: Some(sync.provider.op_node_url),
-        proving: ProvingArgs {
-            payout_recipient_address: None,
-            segment_limit: 21,
-            max_derivation_length: u64::MAX,
-            max_block_derivations: u64::MAX,
-            max_block_executions: usize::MAX,
-            max_proof_stitches: usize::MAX,
-            max_witness_size: 5 * 1024 * 1024, // 5 MB witness maximum
-            num_tail_blocks: 10,
-            num_concurrent_preflights: 4,
-            num_concurrent_proofs: 2,
-            num_concurrent_witgens: None,
-            num_concurrent_r0vm: None,
-            bypass_chain_registry: false,
-            skip_derivation_proof: false,
-            skip_await_proof: false,
-            clear_cache_data: true,
-            #[cfg(feature = "eigen")]
-            hokulea: Default::default(),
-            #[cfg(feature = "celestia")]
-            hana: Default::default(),
-            export_profile_csv: false,
-        },
-        boundless: Default::default(),
-        precondition_params: vec![],
-        precondition_block_hashes: vec![],
-        precondition_blob_hashes: vec![],
-        telemetry: Default::default(),
-        timeouts: Default::default(),
-    })
-    .await
-    .unwrap();
 
     // Stop and discard the devnet
-    stop_devnet().await;
+    stop_all_devnets().await;
+    drop(devnet_lock);
+}
+
+#[cfg(feature = "eigen")]
+#[tokio::test(flavor = "multi_thread")]
+async fn prover_hokulea() {
+    const PROOF_SIZE: u64 = 60;
+
+    let devnet_lock = DEVNET.lock().await;
+
+    let devnet = start_clean_devnet_with_flavor(DevnetFlavor::EigenDA)
+        .await
+        .unwrap();
+    deploy_kailua_contracts(&devnet, 60).await.unwrap();
+    let eigenda_proxy_shim = EigendaProxyShim::start(&devnet.eigenda_proxy_url().unwrap())
+        .await
+        .unwrap();
+    let mut proving = base_proving_args(5 * 1024 * 1024);
+    proving.hokulea.eigenda_proxy_address = Some(eigenda_proxy_shim.url().to_owned());
+
+    run_prover(&devnet, PROOF_SIZE, proving).await.unwrap();
+
+    drop(eigenda_proxy_shim);
+    stop_all_devnets().await;
     drop(devnet_lock);
 }

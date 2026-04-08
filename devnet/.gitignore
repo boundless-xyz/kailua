@@ -1,5 +1,8 @@
 optimism-package/
 kurtosis-devnet.json
+kurtosis-eigenda-devnet.json
+eigenda-devnet.log
+eigenda-proxy-src/
 data/
 propose/
 validate/
