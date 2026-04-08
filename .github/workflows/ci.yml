@@ -81,14 +81,14 @@ jobs:
         run: cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets --all-features
         env:
           RUSTFLAGS: -Dwarnings
-#      - name: cargo clippy kailua-fpvm-hokulea
-#        run: cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets --all-features
-#        env:
-#          RUSTFLAGS: -Dwarnings
-#      - name: cargo clippy kailua-fpvm-hana
-#        run: cargo clippy --manifest-path build/risczero/hana/Cargo.toml --locked --workspace --all --all-targets --all-features
-#        env:
-#          RUSTFLAGS: -Dwarnings
+      - name: cargo clippy kailua-fpvm-hokulea
+        run: cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets --all-features
+        env:
+          RUSTFLAGS: -Dwarnings
+      - name: cargo clippy kailua-fpvm-hana
+        run: cargo clippy --manifest-path build/risczero/hana/Cargo.toml --locked --workspace --all --all-targets --all-features
+        env:
+          RUSTFLAGS: -Dwarnings
 
   cargo-test:
     runs-on: [ self-hosted, prod, "${{ matrix.os }}", docker ]
@@ -168,7 +168,87 @@ jobs:
         with:
           version: v1.5.1
       - name: cargo test kailua
-        run: cargo test --locked --workspace --exclude kailua-hana --exclude kailua-hokulea -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
+        run: cargo test --locked --workspace -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
+
+  cargo-test-eigen:
+    runs-on: [ self-hosted, prod, "${{ matrix.os }}", docker ]
+    strategy:
+      matrix:
+        include:
+          - os: Linux
+            feature: default
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Fetch optimism devnet
+        uses: actions/checkout@v4
+        with:
+          repository: 'ethereum-optimism/optimism'
+          ref: 'v1.16.7'
+          path: 'optimism'
+          submodules: recursive
+          fetch-depth: '1'
+      - name: Install Go 1.22.6
+        uses: actions/setup-go@v5
+        with:
+          go-version: '=1.22.6'
+      - name: Install Python 3.13.1
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.1'
+      - name: Install Kurtosis
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO=sudo
+          else
+            SUDO=
+          fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y jq
+          if ! command -v kurtosis >/dev/null 2>&1; then
+            echo "deb [trusted=yes] https://apt.fury.io/kurtosis-tech/ /" | $SUDO tee /etc/apt/sources.list.d/kurtosis.list
+            $SUDO apt-get update
+            $SUDO apt-get install -y kurtosis-cli
+          fi
+          docker version
+          kurtosis version
+      - name: Start Kurtosis engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          kurtosis engine start
+          kurtosis engine status
+      - uses: risc0/risc0/.github/actions/rustup@main
+      - uses: boundless-xyz/boundless/.github/actions/sccache@main
+      - name: Install rzup
+        env:
+          ENV_PATH: test
+        shell: bash
+        run: |
+          curl -L https://risczero.com/install | bash
+          echo "$HOME/.risc0/bin" >> $GITHUB_PATH
+      - name: Install RISC Zero toolchain
+        shell: bash
+        run: rzup install
+      - name: Install svm-rs
+        uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
+        with:
+          crate: svm-rs
+          version: '0.5.17'
+      - name: Install solc
+        continue-on-error: true
+        run: svm install $SOLC_VERSION
+      - run: svm use $SOLC_VERSION
+      - name: Install Foundry toolchain
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+      - name: cargo test kailua-hokulea
+        run: cargo test --locked -p kailua-cli -F eigen -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
 
   cargo-llvm-cov:
     runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]

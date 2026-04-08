@@ -715,6 +715,7 @@ async fn run_prover(
     Ok(())
 }
 
+#[cfg(not(feature = "eigen"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn proposer_validator() {
     // We can only run one of these dockerized devnets at a time
@@ -932,6 +933,7 @@ async fn proposer_validator() {
     drop(devnet_lock);
 }
 
+#[cfg(not(feature = "eigen"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn prover() {
     const PROOF_SIZE: u64 = 200;
