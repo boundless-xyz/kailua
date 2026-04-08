@@ -19,20 +19,24 @@ use alloy::network::BlockResponse;
 use alloy::providers::Provider;
 use anyhow::{anyhow, Context};
 use kailua_cli::fast_track::{fast_track, FastTrackArgs};
+#[cfg(not(feature = "eigen"))]
 use kailua_cli::fault::{fault, FaultArgs};
+#[cfg(not(feature = "eigen"))]
 use kailua_proposer::args::ProposeArgs;
+#[cfg(not(feature = "eigen"))]
 use kailua_proposer::propose::propose;
 use kailua_prover::args::{ProveArgs, ProvingArgs};
 use kailua_prover::prove::prove;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::args::SyncArgs;
 use kailua_sync::provider::ProviderArgs;
-use kailua_sync::transact::signer::{
-    DeployerSignerArgs, GuardianSignerArgs, OwnerSignerArgs, ProposerSignerArgs,
-    ValidatorSignerArgs,
-};
+use kailua_sync::transact::signer::{DeployerSignerArgs, GuardianSignerArgs, OwnerSignerArgs};
+#[cfg(not(feature = "eigen"))]
+use kailua_sync::transact::signer::{ProposerSignerArgs, ValidatorSignerArgs};
 use kailua_sync::transact::TransactArgs;
+#[cfg(not(feature = "eigen"))]
 use kailua_validator::args::{PermitPolicy, ValidateArgs};
+#[cfg(not(feature = "eigen"))]
 use kailua_validator::validate::validate;
 use lazy_static::lazy_static;
 use reqwest::Client;
@@ -49,12 +53,14 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
+use tokio::io;
 #[cfg(feature = "eigen")]
 use tokio::process::Child;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
-use tokio::{io, try_join};
+#[cfg(not(feature = "eigen"))]
+use tokio::try_join;
 
 lazy_static! {
     static ref DEVNET: Arc<Mutex<()>> = Default::default();
@@ -66,9 +72,13 @@ const DEVNET_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEPLOYER_ALIAS: &str = "deployer";
 const OWNER_ALIAS: &str = "owner";
 const GUARDIAN_ALIAS: &str = "guardian";
+#[cfg(not(feature = "eigen"))]
 const PROPOSER_ALIAS: &str = "proposer";
+#[cfg(not(feature = "eigen"))]
 const VALIDATOR_ALIAS: &str = "validator";
+#[cfg(not(feature = "eigen"))]
 const FAULT_PROPOSER_ALIAS: &str = "fault-proposer";
+#[cfg(not(feature = "eigen"))]
 const TRAIL_FAULT_PROPOSER_ALIAS: &str = "trail-fault-proposer";
 const VANGUARD_ALIAS: &str = "vanguard";
 
@@ -722,7 +732,9 @@ async fn proposer_validator() {
     let devnet_lock = DEVNET.lock().await;
 
     // Start the optimism devnet
-    let devnet = start_clean_devnet_with_flavor(DevnetFlavor::Standard).await.unwrap();
+    let devnet = start_clean_devnet_with_flavor(DevnetFlavor::Standard)
+        .await
+        .unwrap();
     // update dgf to use kailua
     deploy_kailua_contracts(&devnet, 60).await.unwrap();
 
@@ -942,7 +954,9 @@ async fn prover() {
     let devnet_lock = DEVNET.lock().await;
 
     // Start the optimism devnet
-    let devnet = start_clean_devnet_with_flavor(DevnetFlavor::Standard).await.unwrap();
+    let devnet = start_clean_devnet_with_flavor(DevnetFlavor::Standard)
+        .await
+        .unwrap();
     // update dgf to use kailua
     deploy_kailua_contracts(&devnet, 60).await.unwrap();
 
