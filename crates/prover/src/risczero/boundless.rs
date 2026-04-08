@@ -34,6 +34,7 @@ use boundless_market::contracts::boundless_market::MarketError;
 use boundless_market::contracts::{
     Predicate, RequestError, RequestId, RequestStatus, Requirements,
 };
+use boundless_market::price_oracle::{Amount, Asset};
 use boundless_market::request_builder::{OfferParams, RequirementParams};
 use boundless_market::storage::{StorageUploaderConfig, StorageUploaderType};
 use boundless_market::{Deployment, GuestEnv, ProofRequest, StandardUploader};
@@ -128,7 +129,6 @@ pub struct MarketProviderConfig {
     /// Whether to look back at prior proof requests
     #[clap(long, env, required = false, default_value_t = true)]
     pub boundless_look_back: bool,
-
     /// Whether to skip preflighting execution and assume a fixed cycle count.
     #[clap(long, env, required = false)]
     pub boundless_assume_cycle_count: Option<u64>,
@@ -142,6 +142,28 @@ pub struct MarketProviderConfig {
     #[clap(long, env, required = false)]
     pub boundless_assume_cycles_per_snark: Option<u64>,
 
+    /// Minimum price per cycle (e.g., "0.00001 USD", "0.0000001 ETH").
+    /// If unset, the SDK uses market pricing from the price provider.
+    #[clap(
+        long,
+        env,
+        required = false,
+        conflicts_with = "boundless_legacy_pricing"
+    )]
+    pub boundless_min_price_per_cycle: Option<Amount>,
+    /// Maximum price per cycle (e.g., "0.00001 USD", "0.0000001 ETH").
+    /// If unset, the SDK default (~100 Kwei/cycle, 99th percentile) is used.
+    #[clap(
+        long,
+        env,
+        required = false,
+        conflicts_with = "boundless_legacy_pricing"
+    )]
+    pub boundless_max_price_per_cycle: Option<Amount>,
+    /// Hard cap on total order price (e.g., "0.5 ETH", "100 USD"). Safety mechanism.
+    #[clap(long, env, required = false)]
+    pub boundless_max_price_cap: Option<Amount>,
+
     /// How much % to increase the price of the proving order by after it expires.
     #[clap(long, env, required = false, default_value_t = 10)]
     pub boundless_expired_price_inc_perc: u64,
@@ -149,45 +171,9 @@ pub struct MarketProviderConfig {
     #[clap(long, env, required = false, default_value_t = 4)]
     pub boundless_expired_time_inc_perc: u64,
 
-    /// Starting price (wei) per cycle of the proving order
-    #[clap(long, env, required = false, default_value = "200000000")]
-    pub boundless_cycle_min_wei: U256,
-    /// Maximum price (wei) per cycle of the proving order
-    #[clap(long, env, required = false, default_value = "600000000")]
-    pub boundless_cycle_max_wei: U256,
-    /// Minimum megacycles per proving order
-    #[clap(long, env, required = false, default_value_t = 250)]
-    pub boundless_mega_cycle_min: u64,
-    /// Collateral (ZKC) per megacycle of the proving order
-    #[clap(long, env, required = false, default_value = "2500000000000000")]
-    pub boundless_mega_cycle_collateral: U256,
-    /// Minimum collateral (ZKC) per proving order
-    #[clap(long, env, required = false, default_value = "5000000000000000000")]
-    pub boundless_order_min_collateral: U256,
-    /// Multiplier for delay before order price starts ramping up.
-    #[clap(long, env, required = false, default_value_t = 0.5)]
-    pub boundless_order_bid_delay_factor: f64,
-    /// Minimum number of seconds to set as bid delay time
-    #[clap(long, env, required = false, default_value_t = 120)]
-    pub boundless_order_min_bid_delay: u64,
-    /// Multiplier for order price to ramp up from min to max.
-    #[clap(long, env, required = false, default_value_t = 1.0)]
-    pub boundless_order_ramp_up_factor: f64,
-    /// Minimum number of seconds to set as ramp up time
-    #[clap(long, env, required = false, default_value_t = 600)]
-    pub boundless_order_min_ramp_up: u32,
-    /// Multiplier for order fulfillment timeout (seconds/segment) after locking
-    #[clap(long, env, required = false, default_value_t = 3.0)]
-    pub boundless_order_lock_timeout_factor: f64,
-    /// Minimum number of seconds to set as lock timeout time
-    #[clap(long, env, required = false, default_value_t = 1200)]
-    pub boundless_order_min_lock_timeout: u32,
-    /// Multiplier for order expiry timeout (seconds/segment) after lock timeout
-    #[clap(long, env, required = false, default_value_t = 1.0)]
-    pub boundless_order_expiry_factor: f64,
-    /// Minimum number of seconds to set as expiry time
-    #[clap(long, env, required = false, default_value_t = 900)]
-    pub boundless_order_min_expiry: u32,
+    /// Time in seconds between attempts to submit new orders
+    #[clap(long, env, required = false, default_value_t = 12)]
+    pub boundless_order_submission_cooldown: u64,
     /// Time in seconds between attempts to check order status
     #[clap(long, env, required = false, default_value_t = 12)]
     pub boundless_order_check_interval: u64,
@@ -195,20 +181,150 @@ pub struct MarketProviderConfig {
     #[clap(long, env, required = false, default_value_t = true)]
     pub boundless_enable_upload_caching: bool,
 
-    /// Time in seconds between attempts to submit new orders
-    #[clap(long, env, required = false, default_value_t = 12)]
-    pub boundless_order_submission_cooldown: u64,
-
     /// Funding mode for order submission.
     /// Options: "never", "always", "available-balance", "below-threshold".
     /// When "below-threshold", also set --boundless-order-funding-threshold.
     #[clap(long, env, required = false, default_value = "never")]
     pub boundless_order_funding_mode: String,
-
     /// Threshold (wei) for below-threshold funding mode.
     /// Only used when --boundless-order-funding-mode is "below-threshold".
     #[clap(long, env, required = false)]
     pub boundless_order_funding_threshold: Option<U256>,
+
+    /// Use legacy static wei-based pricing instead of dynamic SDK pricing.
+    /// When enabled, the flags below are used instead of the SDK's OfferLayer.
+    #[clap(long, env, required = false, default_value_t = false)]
+    pub boundless_legacy_pricing: bool,
+    /// Starting price (wei) per cycle.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value = "200000000",
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_cycle_min_wei: U256,
+    /// Maximum price (wei) per cycle.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value = "600000000",
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_cycle_max_wei: U256,
+    /// Minimum megacycles per proving order.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = 250,
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_mega_cycle_min: u64,
+    /// Collateral (ZKC) per megacycle.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value = "2500000000000000",
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_mega_cycle_collateral: U256,
+    /// Minimum collateral (ZKC) per order.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value = "5000000000000000000",
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_order_min_collateral: U256,
+    /// Multiplier for delay before order price starts ramping up.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = 0.5,
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_order_bid_delay_factor: f64,
+    /// Minimum number of seconds to set as bid delay time.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = 120,
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_order_min_bid_delay: u64,
+    /// Multiplier for order price to ramp up from min to max.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = 1.0,
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_order_ramp_up_factor: f64,
+    /// Minimum number of seconds to set as ramp up time.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = 600,
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_order_min_ramp_up: u32,
+    /// Multiplier for order fulfillment timeout (seconds/segment) after locking.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = 3.0,
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_order_lock_timeout_factor: f64,
+    /// Minimum number of seconds to set as lock timeout time.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = 1200,
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_order_min_lock_timeout: u32,
+    /// Multiplier for order expiry timeout (seconds/segment) after lock timeout.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = 1.0,
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_order_expiry_factor: f64,
+    /// Minimum number of seconds to set as expiry time.
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = 900,
+        hide = true,
+        requires = "boundless_legacy_pricing"
+    )]
+    pub boundless_order_min_expiry: u32,
 }
 
 impl MarketProviderConfig {
@@ -286,34 +402,57 @@ impl MarketProviderConfig {
                 cycle_count.to_string(),
             ]);
         }
-        // Proving fee args
+        // Dynamic pricing args
+        if let Some(ref min_price) = self.boundless_min_price_per_cycle {
+            proving_args.extend(vec![
+                String::from("--boundless-min-price-per-cycle"),
+                min_price.to_string(),
+            ]);
+        }
+        if let Some(ref max_price) = self.boundless_max_price_per_cycle {
+            proving_args.extend(vec![
+                String::from("--boundless-max-price-per-cycle"),
+                max_price.to_string(),
+            ]);
+        }
+        if let Some(ref cap) = self.boundless_max_price_cap {
+            proving_args.extend(vec![
+                String::from("--boundless-max-price-cap"),
+                cap.to_string(),
+            ]);
+        }
+        if self.boundless_legacy_pricing {
+            proving_args.extend(vec![
+                String::from("--boundless-legacy-pricing"),
+                String::from("--boundless-cycle-min-wei"),
+                self.boundless_cycle_min_wei.to_string(),
+                String::from("--boundless-cycle-max-wei"),
+                self.boundless_cycle_max_wei.to_string(),
+                String::from("--boundless-mega-cycle-min"),
+                self.boundless_mega_cycle_min.to_string(),
+                String::from("--boundless-mega-cycle-collateral"),
+                self.boundless_mega_cycle_collateral.to_string(),
+                String::from("--boundless-order-min-collateral"),
+                self.boundless_order_min_collateral.to_string(),
+                String::from("--boundless-order-bid-delay-factor"),
+                self.boundless_order_bid_delay_factor.to_string(),
+                String::from("--boundless-order-min-bid-delay"),
+                self.boundless_order_min_bid_delay.to_string(),
+                String::from("--boundless-order-ramp-up-factor"),
+                self.boundless_order_ramp_up_factor.to_string(),
+                String::from("--boundless-order-min-ramp-up"),
+                self.boundless_order_min_ramp_up.to_string(),
+                String::from("--boundless-order-lock-timeout-factor"),
+                self.boundless_order_lock_timeout_factor.to_string(),
+                String::from("--boundless-order-min-lock-timeout"),
+                self.boundless_order_min_lock_timeout.to_string(),
+                String::from("--boundless-order-expiry-factor"),
+                self.boundless_order_expiry_factor.to_string(),
+                String::from("--boundless-order-min-expiry"),
+                self.boundless_order_min_expiry.to_string(),
+            ]);
+        }
         proving_args.extend(vec![
-            String::from("--boundless-cycle-min-wei"),
-            self.boundless_cycle_min_wei.to_string(),
-            String::from("--boundless-cycle-max-wei"),
-            self.boundless_cycle_max_wei.to_string(),
-            String::from("--boundless-mega-cycle-min"),
-            self.boundless_mega_cycle_min.to_string(),
-            String::from("--boundless-mega-cycle-collateral"),
-            self.boundless_mega_cycle_collateral.to_string(),
-            String::from("--boundless-order-min-collateral"),
-            self.boundless_order_min_collateral.to_string(),
-            String::from("--boundless-order-bid-delay-factor"),
-            self.boundless_order_bid_delay_factor.to_string(),
-            String::from("--boundless-order-min-bid-delay"),
-            self.boundless_order_min_bid_delay.to_string(),
-            String::from("--boundless-order-ramp-up-factor"),
-            self.boundless_order_ramp_up_factor.to_string(),
-            String::from("--boundless-order-min-ramp-up"),
-            self.boundless_order_min_ramp_up.to_string(),
-            String::from("--boundless-order-lock-timeout-factor"),
-            self.boundless_order_lock_timeout_factor.to_string(),
-            String::from("--boundless-order-min-lock-timeout"),
-            self.boundless_order_min_lock_timeout.to_string(),
-            String::from("--boundless-order-expiry-factor"),
-            self.boundless_order_expiry_factor.to_string(),
-            String::from("--boundless-order-min-expiry"),
-            self.boundless_order_min_expiry.to_string(),
             String::from("--boundless-order-check-interval"),
             self.boundless_order_check_interval.to_string(),
             String::from("--boundless-enable-upload-caching"),
@@ -480,6 +619,15 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
             .with_deployment(market_deployment.clone())
             .with_uploader(Some(storage_provider.clone()))
             .with_funding_mode(market.funding_mode())
+            .config_offer_layer(|config| {
+                if let Some(ref min_price) = market.boundless_min_price_per_cycle {
+                    config.min_price_per_cycle(min_price.clone());
+                }
+                if let Some(ref max_price) = market.boundless_max_price_per_cycle {
+                    config.max_price_per_cycle(max_price.clone());
+                }
+                config
+            })
             .build()
             .await
             .context("ClientBuilder::build()")
@@ -1096,52 +1244,8 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     // Build final request
     let boundless_wallet_address = boundless_client.signer.as_ref().unwrap().address();
 
-    let boundless_rpc_time = retry_res_timeout!(
-        15,
-        boundless_client
-            .provider()
-            .get_block_by_number(BlockNumberOrTag::Latest)
-            .await
-            .context("get_block_by_number latest")?
-            .ok_or_else(|| anyhow!("Failed to fetch latest block from Boundless RPC"))
-    )
-    .await
-    .header
-    .timestamp;
-
-    let priced_cycles =
-        U256::from((market.boundless_mega_cycle_min << 20).max(request_cycles.total_cycle_count));
-    let price_increase_numerator =
-        U256::from(100 + attempt * market.boundless_expired_price_inc_perc);
-    let min_price =
-        market.boundless_cycle_min_wei * priced_cycles * price_increase_numerator / U256::from(100);
-    let max_price =
-        market.boundless_cycle_max_wei * priced_cycles * price_increase_numerator / U256::from(100);
-
-    let time_increase_factor =
-        (attempt * market.boundless_expired_price_inc_perc) as f64 / 100.0 + 1.0;
-    let timed_mega_cycles = market
-        .boundless_mega_cycle_min
-        .max(request_cycles.total_cycle_count.div_ceil(1 << 20)) as f64
-        * time_increase_factor;
-    let bid_delay_time = market
-        .boundless_order_min_bid_delay
-        .max((market.boundless_order_bid_delay_factor * timed_mega_cycles) as u64);
-    let ramp_up_period = market
-        .boundless_order_min_ramp_up
-        .max((market.boundless_order_ramp_up_factor * timed_mega_cycles) as u32);
-    let lock_timeout = ramp_up_period
-        + market
-            .boundless_order_min_lock_timeout
-            .max((market.boundless_order_lock_timeout_factor * timed_mega_cycles) as u32);
-    let expiry = lock_timeout
-        + market
-            .boundless_order_min_expiry
-            .max((market.boundless_order_expiry_factor * timed_mega_cycles) as u32);
-    let lock_collateral = market
-        .boundless_order_min_collateral
-        .max(market.boundless_mega_cycle_collateral * U256::from(timed_mega_cycles));
-    let request = boundless_client
+    // Pre-set URLs, cycles, and request ID so the SDK skips upload, preflight, and nonce generation.
+    let request_params = boundless_client
         .new_request()
         .with_journal(journal)
         .with_cycles(request_cycles.total_cycle_count)
@@ -1156,37 +1260,125 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 .context("Failed to convert Requirements")
                 .map_err(ProvingError::OtherError)?,
         )
-        .with_offer(
-            OfferParams::builder()
-                .min_price(min_price)
-                .max_price(max_price)
-                .bidding_start(boundless_rpc_time + bid_delay_time)
-                .lock_collateral(lock_collateral)
-                .ramp_up_period(ramp_up_period)
-                .lock_timeout(lock_timeout)
-                .timeout(expiry)
-                .build()
-                .context("OfferParamsBuilder::build()")
-                .map_err(ProvingError::OtherError)?,
-        )
         .with_request_id(RequestId::new(boundless_wallet_address, fresh_nonce));
 
-    // Send the request and wait for it to be completed.
-    let (request_id, expires_at) = if market.boundless_order_stream_url.is_some() {
-        info!("Submitting offchain request.");
+    let mut request = if market.boundless_legacy_pricing {
+        // Legacy path: manual pricing with static wei parameters
+        let boundless_rpc_time = retry_res_timeout!(
+            15,
+            boundless_client
+                .provider()
+                .get_block_by_number(BlockNumberOrTag::Latest)
+                .await
+                .context("get_block_by_number latest")?
+                .ok_or_else(|| anyhow!("Failed to fetch latest block from Boundless RPC"))
+        )
+        .await
+        .header
+        .timestamp;
+
+        let priced_cycles = U256::from(
+            (market.boundless_mega_cycle_min << 20).max(request_cycles.total_cycle_count),
+        );
+        let min_price = market.boundless_cycle_min_wei * priced_cycles;
+        let max_price = market.boundless_cycle_max_wei * priced_cycles;
+
+        let timed_mega_cycles = market
+            .boundless_mega_cycle_min
+            .max(request_cycles.total_cycle_count.div_ceil(1 << 20))
+            as f64;
+        let bid_delay_time = market
+            .boundless_order_min_bid_delay
+            .max((market.boundless_order_bid_delay_factor * timed_mega_cycles) as u64);
+        let ramp_up_period = market
+            .boundless_order_min_ramp_up
+            .max((market.boundless_order_ramp_up_factor * timed_mega_cycles) as u32);
+        let lock_timeout = ramp_up_period
+            + market
+                .boundless_order_min_lock_timeout
+                .max((market.boundless_order_lock_timeout_factor * timed_mega_cycles) as u32);
+        let expiry = lock_timeout
+            + market
+                .boundless_order_min_expiry
+                .max((market.boundless_order_expiry_factor * timed_mega_cycles) as u32);
+        let lock_collateral = market
+            .boundless_order_min_collateral
+            .max(market.boundless_mega_cycle_collateral * U256::from(timed_mega_cycles));
+
         boundless_client
-            .submit_offchain(request.clone())
+            .build_request(
+                request_params.with_offer(
+                    OfferParams::builder()
+                        .min_price(Amount::new(min_price, Asset::ETH))
+                        .max_price(Amount::new(max_price, Asset::ETH))
+                        .bidding_start(boundless_rpc_time + bid_delay_time)
+                        .lock_collateral(Amount::new(lock_collateral, Asset::ZKC))
+                        .ramp_up_period(ramp_up_period)
+                        .lock_timeout(lock_timeout)
+                        .timeout(expiry)
+                        .build()
+                        .context("OfferParamsBuilder::build()")
+                        .map_err(ProvingError::OtherError)?,
+                ),
+            )
             .await
-            .context("Client::submit_offchain()")
+            .context("Client::build_request (legacy)")
             .map_err(ProvingError::OtherError)?
     } else {
-        info!("Submitting onchain request.");
-        boundless_client
-            .submit_onchain(request.clone())
+        // Dynamic pricing: SDK computes pricing from market data, gas costs, and cycle count.
+        let request = boundless_client
+            .build_request(request_params)
             .await
-            .context("Client::submit_onchain()")
-            .map_err(ProvingError::OtherError)?
+            .context("Client::build_request")
+            .map_err(ProvingError::OtherError)?;
+
+        info!(
+            "SDK pricing: minPrice={}, maxPrice={}, rampUp={}s, lockTimeout={}s, timeout={}s, collateral={}",
+            request.offer.minPrice,
+            request.offer.maxPrice,
+            request.offer.rampUpPeriod,
+            request.offer.lockTimeout,
+            request.offer.timeout,
+            request.offer.lockCollateral,
+        );
+        request
     };
+
+    // Apply retry escalation on subsequent attempts
+    if attempt > 0 {
+        let price_scale = U256::from(100 + attempt * market.boundless_expired_price_inc_perc);
+        request.offer.minPrice = request.offer.minPrice * price_scale / U256::from(100);
+        request.offer.maxPrice = request.offer.maxPrice * price_scale / U256::from(100);
+
+        let time_scale = 1.0 + (attempt * market.boundless_expired_time_inc_perc) as f64 / 100.0;
+        request.offer.rampUpPeriod = (request.offer.rampUpPeriod as f64 * time_scale) as u32;
+        request.offer.lockTimeout = (request.offer.lockTimeout as f64 * time_scale) as u32;
+        request.offer.timeout = (request.offer.timeout as f64 * time_scale) as u32;
+
+        info!(
+            "Retry attempt {}: escalated minPrice={}, maxPrice={}, timeout={}s",
+            attempt, request.offer.minPrice, request.offer.maxPrice, request.offer.timeout,
+        );
+    }
+
+    // Apply max_price_cap safety (both paths)
+    if let Some(ref cap) = market.boundless_max_price_cap {
+        if request.offer.maxPrice > cap.value {
+            warn!(
+                "maxPrice {} exceeds cap {}, capping",
+                request.offer.maxPrice, cap
+            );
+            request.offer.maxPrice = cap.value;
+        }
+    }
+
+    // Submit the request (auto-selects offchain via order stream if available,
+    // otherwise falls back to onchain submission).
+    let (request_id, expires_at) = boundless_client
+        .submit_request(&request)
+        .await
+        .context("Client::submit_request")
+        .map_err(ProvingError::OtherError)?;
     info!(
         "Boundless request 0x{request_id:x} submitted. ({} sec cooldown).",
         market.boundless_order_submission_cooldown
