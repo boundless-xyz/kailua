@@ -193,7 +193,7 @@ pub struct MarketProviderConfig {
 
     /// Use legacy static wei-based pricing instead of dynamic SDK pricing.
     /// When enabled, the flags below are used instead of the SDK's OfferLayer.
-    #[clap(long, env, required = false, default_value_t = false)]
+    #[clap(long, env, required = false, default_value_t = true)]
     pub boundless_legacy_pricing: bool,
     /// Starting price (wei) per cycle.
     #[clap(
