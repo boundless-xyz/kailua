@@ -1,6 +1,6 @@
 [package]
 name = "kailua-fpvm-kona"
-version = "1.1.9"
+version = "1.2.1-rc.0"
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.86"
@@ -22,7 +22,7 @@ codegen-units = 1
 opt-level = 3
 
 [dependencies]
-alloy-primitives = { version = "1.5.7", features = ["tiny-keccak"] }
+alloy-primitives = { version = "1.5.7", features = ["map-hashbrown", "tiny-keccak"] }
 blst = { version = "=0.3.15", features = ["no-threads"] }
 c-kzg = { version = "2.1.5", features = ["eip-7594"] }
 rkyv = "0.8.9"
