@@ -29,7 +29,7 @@ fn main() {
                     let mut opts = opts;
                     opts.use_docker = Some(
                         risc0_build::DockerOptionsBuilder::default()
-                            .docker_container_tag("r0.1.91.1")
+                            .docker_container_tag("r0.1.94.1")
                             .root_dir({
                                 let cwd = std::env::current_dir().unwrap();
                                 cwd.parent()
