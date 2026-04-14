@@ -923,7 +923,7 @@ pub mod tests {
             rollup_config.as_ref(),
         );
         let kona_driver = decoded_driver.uncache(
-            KonaExecutor::new(
+            KonaExecutor::<_, _, OpEvmFactory>::new(
                 &boot_info.rollup_config,
                 l2_provider.clone(),
                 l2_provider.clone(),
@@ -1451,7 +1451,7 @@ pub mod tests {
                     decompressed: [*gen_b256(), *gen_b256(), *gen_b256()].concat(),
                     cursor: gen_usize(),
                     max_rlp_bytes_per_channel: gen_usize(),
-                    brotli_used: gen_u64() % 2 == 0,
+                    brotli_used: gen_u64().is_multiple_of(2),
                 }),
                 prev: channel_provider,
             },

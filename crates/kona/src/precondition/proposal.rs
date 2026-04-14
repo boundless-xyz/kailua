@@ -231,7 +231,7 @@ where
             *beacon
                 .get_and_validate_blobs(
                     &request.block_ref,
-                    std::slice::from_ref(&request.blob_hash),
+                    std::slice::from_ref(&request.blob_hash.hash),
                 )
                 .await
                 .unwrap()[0],
@@ -348,7 +348,7 @@ pub fn validate_proposal_precondition(
             bail!("Output block #{output_block_number} > max block #{proposal_root_claim_block_number}.");
         }
         let offset = output_block_number - proposal_l2_head_number;
-        if offset % output_block_span != 0 {
+        if !offset.is_multiple_of(output_block_span) {
             // We only check equivalence every output_block_span blocks
             continue;
         }

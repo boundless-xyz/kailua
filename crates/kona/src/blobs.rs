@@ -188,17 +188,16 @@ impl BlobProvider for PreloadedBlobProvider {
     async fn get_and_validate_blobs(
         &mut self,
         _block_ref: &BlockInfo,
-        blob_hashes: &[IndexedBlobHash],
+        blob_hashes: &[B256],
     ) -> Result<Vec<Box<Blob>>, Self::Error> {
         let blob_count = blob_hashes.len();
         log(&format!("FETCH {blob_count} BLOB(S)"));
         let mut blobs = Vec::with_capacity(blob_count);
         for hash in blob_hashes {
             let (blob_hash, blob) = self.entries.pop().unwrap();
-            if hash.hash != blob_hash {
+            if *hash != blob_hash {
                 return Err(BlobProviderError::Backend(format!(
-                    "Expected entry with hash {} but found {blob_hash}",
-                    hash.hash
+                    "Expected entry with hash {hash} but found {blob_hash}",
                 )));
             }
             blobs.push(Box::new(blob));
@@ -420,17 +419,14 @@ pub mod tests {
                 .as_ref(),
         )
         .unwrap();
-        let indexed_hashes = blob_witness_data
+        let hashes = blob_witness_data
             .commitments
             .iter()
-            .map(|c| IndexedBlobHash {
-                index: 0,
-                hash: kzg_to_versioned_hash(c.as_slice()),
-            })
+            .map(|c| kzg_to_versioned_hash(c.as_slice()))
             .collect::<Vec<_>>();
         let mut blob_provider = PreloadedBlobProvider::from(blob_witness_data);
         let retrieved = blob_provider
-            .get_and_validate_blobs(&Default::default(), &indexed_hashes)
+            .get_and_validate_blobs(&Default::default(), &hashes)
             .await
             .unwrap()
             .into_iter()
@@ -445,17 +441,14 @@ pub mod tests {
         let blobs = gen_blobs(32);
         let blob_witness_data = BlobWitnessData::from(blobs.clone());
         // exhaust the provider and find nothing
-        let indexed_hashes = blob_witness_data
+        let hashes = blob_witness_data
             .commitments
             .iter()
-            .map(|c| IndexedBlobHash {
-                index: 0,
-                hash: !kzg_to_versioned_hash(c.as_slice()), // invert the expected hash
-            })
+            .map(|c| !kzg_to_versioned_hash(c.as_slice())) // invert the expected hash
             .collect::<Vec<_>>();
         let mut blob_provider = PreloadedBlobProvider::from(blob_witness_data);
         let retrieved = blob_provider
-            .get_and_validate_blobs(&Default::default(), &indexed_hashes)
+            .get_and_validate_blobs(&Default::default(), &hashes)
             .await;
 
         assert!(retrieved.is_err());

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #![cfg(feature = "devnet")]
+#![recursion_limit = "256"]
 
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::network::BlockResponse;
