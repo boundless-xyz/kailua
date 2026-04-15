@@ -1007,4 +1007,64 @@ pub mod tests {
 
         teardown();
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_stitch_boot_info_no_stream() {
+        // Exercises the `None => None` arm of the `stream` match (and the
+        // corresponding `_ => None` arm of the `l1_head_number` match) when the
+        // host is assumed to handle l1-head chain continuity off-stream —
+        // matches the `None` call in `prover::tasks::stitch_boot_info`.
+        let boot_info = BootInfo {
+            l1_head: Default::default(),
+            agreed_l2_output_root: Default::default(),
+            claimed_l2_output_root: Default::default(),
+            claimed_l2_block_number: 0,
+            chain_id: 0,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        };
+        let (_boot, _journal, _precondition) = stitch_boot_info::<crate::oracle::vec::VecOracle>(
+            None,
+            boot_info,
+            B256::ZERO,
+            Address::ZERO,
+            Precondition::default(),
+            vec![],
+            vec![],
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[should_panic(expected = "execution-only proofs")]
+    pub async fn test_stitch_boot_info_execution_only_panics() {
+        // Exercises the `unimplemented!()` guard that rejects stitching of
+        // execution-only proofs (either boot.l1_head or stitched.l1_head == 0).
+        let boot_info = BootInfo {
+            l1_head: b256!("0x1111111111111111111111111111111111111111111111111111111111111111"),
+            agreed_l2_output_root: Default::default(),
+            claimed_l2_output_root: Default::default(),
+            claimed_l2_block_number: 0,
+            chain_id: 0,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        };
+        let stitched_boot = StitchedBootInfo {
+            l1_head: B256::ZERO,
+            agreed_l2_output_root: Default::default(),
+            claimed_l2_output_root: Default::default(),
+            claimed_l2_block_number: 0,
+        };
+        let _ = stitch_boot_info::<crate::oracle::vec::VecOracle>(
+            None,
+            boot_info,
+            B256::ZERO,
+            Address::ZERO,
+            Precondition::default(),
+            vec![Precondition::default()],
+            vec![stitched_boot],
+        )
+        .await;
+    }
 }

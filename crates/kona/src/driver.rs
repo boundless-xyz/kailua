@@ -974,10 +974,9 @@ pub mod tests {
                 l1_heads.pop();
                 break;
             };
-            let Ok(header) = l1_provider.header_by_hash(l1_head).await else {
-                l1_heads.pop();
-                break;
-            };
+            // `OracleL1ChainProvider::new` above caches the header for `l1_head`, so this
+            // lookup cannot fail once the provider was constructed successfully.
+            let header = l1_provider.header_by_hash(l1_head).await.unwrap();
             l1_heads.push(header.parent_hash);
         }
         dbg!(l1_heads.len());
@@ -1064,21 +1063,15 @@ pub mod tests {
                 dbg!(l1_heads.len());
                 continue;
             };
+            // `test_derivation` only populates the trace from `run_core_client`'s epilogue,
+            // which is reached iff the derivation pipeline itself succeeded; with
+            // `proposal_data=None` no post-epilogue step can fail, so the result is
+            // guaranteed `Ok` once the trace is present.
+            bail_derivation_result.unwrap();
             check_traced_driver(&traced_bail_driver).await;
 
             // reuse bail driver
             cached_bail_driver = Some(traced_bail_driver.clone());
-
-            // Check for insufficient data
-            if let Err(err) = bail_derivation_result {
-                // this derivation has failed due to insufficient l1 data
-                dbg!((l1_heads.len(), err));
-                // advance the l1 head
-                for _ in 0..25 {
-                    l1_heads.pop();
-                }
-                continue;
-            }
 
             // Check for driver state equivalence
             let safe_derivation_trace: Arc<Mutex<Option<CachedDriver>>> = Default::default();

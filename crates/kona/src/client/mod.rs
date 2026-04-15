@@ -70,6 +70,20 @@ pub mod tests {
         assert!(cloned.temp_dir.is_none());
     }
 
+    #[test]
+    fn test_oracle_witness_stubs() {
+        // Exercises the `WitnessOracle` stub methods on `TestOracle` so llvm-cov
+        // reports them as covered on stable (where `#[coverage(off)]` is inert).
+        let mut oracle = TestOracle::default();
+        oracle.insert_preimage(
+            PreimageKey::new([0u8; 32], PreimageKeyType::Keccak256),
+            vec![],
+        );
+        oracle.finalize_preimages(1024, false);
+        assert_eq!(oracle.preimage_count(), 1);
+        oracle.validate_preimages().unwrap();
+    }
+
     #[derive(Debug)]
     pub struct TestOracle<T: KeyValueStore + Send + Sync + Debug> {
         pub kv: Arc<RwLock<T>>,
