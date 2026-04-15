@@ -167,6 +167,8 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: v1.5.1
+      - name: vendor fpvm sources
+        run: cargo vendor --manifest-path build/risczero/kona/Cargo.toml --sync build/risczero/hokulea/Cargo.toml --sync build/risczero/hana/Cargo.toml build/risczero/vendor
       - name: cargo test kailua
         run: cargo test --locked --workspace -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
 
@@ -248,6 +250,8 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: v1.5.1
+      - name: vendor fpvm sources
+        run: cargo vendor --manifest-path build/risczero/kona/Cargo.toml --sync build/risczero/hokulea/Cargo.toml --sync build/risczero/hana/Cargo.toml build/risczero/vendor
       - name: cargo test kailua-hokulea
         run: cargo test --locked -p kailua-cli -F eigen -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
 
