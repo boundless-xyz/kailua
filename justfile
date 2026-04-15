@@ -75,9 +75,9 @@ devnet-build +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia": (
 
 devnet-build-kona +ARGS="--bin kailua-cli -F devnet -F prove": (build ARGS)
 
-devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia": vendor (build ARGS)
+devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia": (build ARGS)
 
-devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm": vendor (build ARGS)
+devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm": (build ARGS)
 
 devnet-up:
   ./scripts/devnet-up.sh
