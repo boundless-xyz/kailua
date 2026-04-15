@@ -16,16 +16,19 @@ devnet_package_commit := "89e0b8cacab9f7e9f74d53b72d4870092825d577"
 default:
   @just --list
 
+vendor:
+  cargo vendor --manifest-path build/risczero/kona/Cargo.toml --sync build/risczero/hokulea/Cargo.toml --sync build/risczero/hana/Cargo.toml build/risczero/vendor
+
 build +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F eigen -F celestia --locked":
   cargo build {{ARGS}}
 
 build-kona +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode --locked":
   cargo build {{ARGS}}
 
-build-fpvm +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm -F eigen -F celestia --locked -vvv":
+build-fpvm +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm -F eigen -F celestia --locked -vvv": vendor
   RISC0_USE_DOCKER=1 cargo build {{ARGS}}
 
-build-fpvm-kona +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm --locked -vvv":
+build-fpvm-kona +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm --locked -vvv": vendor
   RISC0_USE_DOCKER=1 cargo build {{ARGS}}
 
 fpvm-kona:
@@ -72,9 +75,9 @@ devnet-build +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia": (
 
 devnet-build-kona +ARGS="--bin kailua-cli -F devnet -F prove": (build ARGS)
 
-devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia": (build ARGS)
+devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia": vendor (build ARGS)
 
-devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm": (build ARGS)
+devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm": vendor (build ARGS)
 
 devnet-up:
   ./scripts/devnet-up.sh

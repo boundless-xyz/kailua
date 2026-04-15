@@ -30,6 +30,12 @@ fn main() {
                     opts.use_docker = Some(
                         risc0_build::DockerOptionsBuilder::default()
                             .docker_container_tag("r0.1.94.1")
+                            .env({
+                                vec![(
+                                    String::from("CARGO_HOME"),
+                                    String::from("/src/build/risczero/.cargo"),
+                                )]
+                            })
                             .root_dir({
                                 let cwd = std::env::current_dir().unwrap();
                                 cwd.parent()
