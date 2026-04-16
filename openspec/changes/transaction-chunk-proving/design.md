@@ -123,24 +123,23 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 **Rationale**: The `Evm` trait provides `db()` and `db_mut()` as defaults that delegate to `components()`/`components_mut()`. The block executor uses these trait methods. The wrapper only needs to implement the 8 required methods — 7 pure delegations plus `transact_raw()` with the state clone intercept. The `transact()` default method (which the block executor actually calls) internally calls `self.transact_raw()`, so our override is always invoked.
 
-### Decision 12: Aggregation uses public BlockExecutor for prelude, explicit tx-body materialization, and standalone epilogue helpers
+### Decision 12: Aggregation runs the standard executor pipeline via ChunkingEvm
 
-**Choice**: The aggregation proof applies the prelude via the public `BlockExecutor::apply_pre_execution_changes()` trait method, snapshots the resulting post-prelude state, verifies the chunk hash chain, then explicitly materializes the verified tx-body transition before applying the epilogue. The epilogue itself is applied with the public standalone functions `post_block_balance_increments()` and `State::increment_balances()`.
+**Choice**: The aggregation proof runs blocks through the standard `CachedExecutor` → `StatelessL2Builder::build_block()` → `OpBlockExecutor` pipeline, with `ChunkingEvmFactory` injected as the `EvmFactory`. `ChunkingEvm` returns pre-computed `ResultAndState` entries for tx-body `transact_raw()` calls while delegating `transact_system_call()` to the inner EVM for prelude and epilogue. The block executor commits each `ResultAndState.state` to `State<TrieDB>` through its normal path, accumulates receipts and gas. `finish()` applies the epilogue (balance increments) and returns `BlockExecutionResult` (receipts, gas_used, blob_gas_used). Then `build_block()` calls `state.merge_transitions()` + `state.take_bundle()` to produce the `BundleState`, and `seal_block()` constructs the header (state root, receipts root, EIP-1559 extra_data, etc.) — producing the final `BlockBuildingOutcome`. Hash chain verification and chunk receipt validation happen separately in `stitch_chunks()` (in the stitching layer) after `run_core_client()` returns.
 
 **Alternatives considered**:
-- *Using `finish()` for epilogue*: `finish()` bundles balance increments with receipt/gas assembly and expects the executor to have processed transactions. Since the aggregation proof verifies chunks instead of executing transactions, the executor's internal receipt list is empty, making `finish()` produce incorrect results.
-- *Hash-checking `post_tx_cache` without materializing it*: This leaves the live `State` at the post-prelude state, so the final trie root would omit all tx-body writes.
+- *Manual aggregation with executor drop after prelude*: Apply prelude via `apply_pre_execution_changes()`, drop the executor, manually verify hash chain, materialize the tx-body transition from boundary snapshots, apply epilogue with standalone `post_block_balance_increments()` + `increment_balances()`, build the header manually using `compute_receipts_root()` / `ordered_trie_with_encoder()` and replicated `pub(crate)` EIP-1559 encoding (~40 lines). Rejected because it duplicates complex executor internals (receipt assembly, gas accounting, header construction, epilogue lifecycle), creates a maintenance surface with upstream hardfork changes, and requires manual `BundleState` construction with error-prone lifecycle semantics.
+- *Hash-checking `post_tx_cache` without materializing it*: This leaves the live `State` at the post-prelude state, so the final trie root would omit all tx-body writes. Not applicable to the `ChunkingEvm` approach since the executor commits state changes directly.
 
-**Rationale**: `apply_pre_execution_changes()` is already used independently in op-reth's payload builder and flashblocks worker. The balance increment functions are public imports from `alloy_evm::block::state_changes`. The aggregation flow becomes:
-1. Create executor → `apply_pre_execution_changes()` (prelude)
-2. Snapshot the post-prelude state and drop the executor (release the state borrow)
-3. Hash post-prelude state → `initial_db_hash`
-4. Verify chunk hash chain
-5. Load the verified `post_tx_cache` / `final_evm_state`
-6. Construct and materialize the tx-body transition from post-prelude → post-transaction state
-7. Apply `post_block_balance_increments()` + `increment_balances()` on top of the verified post-transaction state
-8. Merge tx-body + epilogue transitions into the final `BundleState`
-9. `trie_db.state_root(&bundle)` and build the header manually using public `compute_receipts_root()`, `ordered_trie_with_encoder()`
+**Rationale**: Because `ChunkingEvm::transact_raw()` returns the exact same `ResultAndState` that real EVM execution would produce (captured by `TracingEvmFactory` on the host), the block executor processes them indistinguishably from monolithic execution — committing state to `State<TrieDB>`, accumulating receipts, tracking gas used. The aggregation flow through `build_block()` is:
+1. `CachedExecutor::new()` with `ChunkingEvmFactory` (keyed by block number)
+2. `build_block()` creates `State`, EVM, and executor
+3. `executor.execute_block(transactions)` — prelude runs via `transact_system_call()` → inner EVM; tx-body `transact()` → `transact_raw()` → `ChunkingEvm` returns pre-computed `ResultAndState`; `finish()` applies epilogue (balance increments) and returns `BlockExecutionResult` (receipts, gas_used, blob_gas_used)
+4. `state.merge_transitions()` + `state.take_bundle()` — produces the `BundleState` from committed state changes
+5. `seal_block()` constructs the header — computes `trie_db.state_root(&bundle)`, `receipts_root`, `logs_bloom`, EIP-1559 `extra_data` encoding, and all other header fields
+6. `stitch_chunks()` verifies hash chain continuity and chunk receipts via `verify_stitching_journal()`
+
+Note: `finish()` does NOT construct the header. It returns `(Evm, BlockExecutionResult)` — the epilogue (balance increments) and receipt/gas accumulation. Header construction is performed by `StatelessL2Builder::seal_block()`, called by `build_block()` after `execute_block()` returns. Because `seal_block()` is already part of the `build_block()` pipeline, it runs automatically — no replication of header assembly or EIP-1559 encoding logic is needed.
 
 ### Decision 13: Canonical state hashing normalizes CacheState and Cache to a common representation
 
@@ -158,14 +157,14 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 **Rationale**: revm's `Cache`, `DbAccount`, `AccountInfo`, and `Bytecode` derive `serde::{Serialize, Deserialize}` (feature-gated) but have no rkyv support. Since the existing `Witness` struct uses rkyv throughout, mirror types maintain consistency. The conversion is mechanical (field-by-field copy) and tested via round-trip tests.
 
-### Decision 15: BundleState is derived from boundary snapshots while preserving lifecycle semantics
+### Decision 15: BundleState lifecycle correctness is inherited from pre-computed ResultAndState
 
-**Choice**: The aggregation proof constructs the tx-body `BundleState` from the post-prelude and verified post-transaction boundary snapshots. Reverts remain empty, but the forward state MUST preserve the correct `BundleAccount` lifecycle semantics instead of collapsing everything to `Changed`. In particular:
-- created-from-nonexistent accounts use creation semantics (for example `InMemoryChange`)
-- destroyed accounts use destroyed semantics
-- storage-cleared / recreated accounts preserve storage-wipe semantics and include zero-valued slots for wiped pre-existing storage when needed for trie correctness
+**Choice**: The aggregation proof builds its `BundleState` naturally through the standard executor commit path. Each pre-computed `ResultAndState` (returned by `ChunkingEvm::transact_raw()`) carries the same `EvmState` (per-account `Account` with `AccountStatus` flags and storage slots) that monolithic execution would produce. The executor's `State<TrieDB>::commit()` translates these into `BundleAccount` entries with correct lifecycle semantics — creation, destruction, storage-wipe, and destroy-and-recreate cases are all handled identically to monolithic execution.
 
-**Rationale**: `trie_db.state_root(&bundle)` only reads forward state, but it still depends on the bundle's lifecycle/status semantics to decide when to delete account leaves and how to treat wiped storage. A naïve `status = Changed` diff can produce the wrong trie root for selfdestruct, contract creation, or destroy-and-recreate cases. Empty reverts are still safe because state root computation never reads them.
+**Alternatives considered**:
+- *Manually construct BundleState from boundary snapshots*: Diff the post-prelude and post-transaction flat states, derive `BundleAccount` statuses from both snapshots plus `account_state`. Rejected because it requires reimplementing the executor's lifecycle translation logic, which is error-prone for edge cases (selfdestruct + recreate, storage wipe with zero-valued slots needed for trie correctness).
+
+**Rationale**: `trie_db.state_root(&bundle)` depends on `BundleAccount` lifecycle semantics to decide when to delete account leaves and how to treat wiped storage. Because `ChunkingEvm` returns the identical `ResultAndState` captured by `TracingEvmFactory` during host-side execution, and the executor processes these through its standard commit path, the lifecycle semantics are correct by construction. No manual translation or snapshot diffing is required.
 
 ### Decision 16: State.cache is lazy — post-state hash requires overlay onto CacheDB base
 
@@ -179,11 +178,24 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 **Rationale**: `State` and `CacheDB` maintain independent block hash caches. `State.block_hash(number)` checks `State.block_hashes` first, then calls `self.database.block_hash(number)` (which goes to `CacheDB.cache.block_hashes`, then `PanicDB`). Populating `CacheDB.cache.block_hashes` is sufficient — `State` will load them lazily. The canonical hash must account for both sources in the overlay.
 
-### Decision 18: Header construction replicates EIP-1559 extra_data encoding
+### Decision 18: Header construction is handled by the standard build_block pipeline (no replication needed)
 
-**Choice**: The aggregation proof builds the block header manually using public APIs (`compute_receipts_root()`, `ordered_trie_with_encoder()`, `trie_db.state_root()`, `trie_db.get_trie_account()` for withdrawal root, `alloy_primitives::logs_bloom()`). The `extra_data` field requires replicating the `pub(crate)` functions `encode_holocene_eip_1559_params` and `encode_jovian_eip_1559_params` (~40 lines).
+**Choice**: The aggregation proof runs through `StatelessL2Builder::build_block()`, which calls `executor.execute_block()` followed by `seal_block()`. Header construction — including `trie_db.state_root(&bundle)`, `compute_receipts_root()`, `logs_bloom()`, and hardfork-specific `extra_data` encoding via the `pub(crate)` functions `encode_holocene_eip_1559_params` / `encode_jovian_eip_1559_params` — is performed by `seal_block()` as part of the standard pipeline. Because `ChunkingEvm` makes the executor's `execute_block()` produce a correct `BlockExecutionResult` (with accumulated receipts, gas, and state changes), `seal_block()` receives valid inputs and constructs the header correctly.
 
-**Rationale**: All header fields except `extra_data` can be computed from public APIs. The EIP-1559 encoding functions are `pub(crate)` in kona-executor, requiring ~40 lines of replication. This is the only vendored logic that must be mirrored. It must be kept in sync with upstream hardfork changes — a maintenance cost accepted as the price of zero vendored modifications.
+**Alternatives considered**:
+- *Build the header manually outside `build_block()`*: Replicate `seal_block()`'s logic (~80+ lines including `pub(crate)` EIP-1559 encoding) in the aggregation proof. Rejected because this duplicates vendored logic, creates a maintenance surface that must track upstream hardfork changes (Holocene, Jovian, and future forks), and is unnecessary since the `ChunkingEvm` approach enables the standard `build_block()` pipeline to run end-to-end.
+
+**Rationale**: `seal_block()` uses `BlockExecutionResult` (receipts, gas_used, blob_gas_used) from `execute_block()` plus `BundleState` from `state.take_bundle()` to compute all header fields. With `ChunkingEvm`, the executor accumulates these correctly from pre-computed `ResultAndState` entries. The `pub(crate)` EIP-1559 functions (`encode_holocene_eip_1559_params`, `encode_jovian_eip_1559_params`) are already called within `seal_block()` — they do not need replication. This eliminates the entire header-construction maintenance surface.
+
+### Decision 19: EvmFactory injection is sufficient — OpBlockExecutorFactory and OpBlockExecutor require no modification
+
+**Choice**: The chunking system injects custom behavior exclusively at the `EvmFactory` level (`TracingEvmFactory`, `ChunkingEvmFactory`). The upstream `OpBlockExecutorFactory<R, Spec, EvmFactory>` and `OpBlockExecutor` are used unchanged.
+
+**Alternatives considered**:
+- *Wrap or extend `OpBlockExecutorFactory`*: Would provide a higher-level interception point (e.g., hooking `apply_pre_execution_changes` or `finish`). Unnecessary because the only interception needed is `transact_raw()` on individual transactions — both tracing (host) and aggregation (guest) inject behavior exclusively at that method.
+- *Wrap `OpBlockExecutor` directly*: Would give access to per-block lifecycle hooks. Rejected because the `ChunkingEvm` approach (Decision 12) runs prelude and epilogue through the standard executor via `transact_system_call()` delegation — no executor-level hooks are needed.
+
+**Rationale**: `OpBlockExecutorFactory` (in `alloy-op-evm/src/block/mod.rs`) is generic over its `EvmFactory` parameter — it holds the factory and passes it through to `OpBlockExecutor` when creating execution environments. `StatelessL2Builder` constructs an `OpBlockExecutorFactory::new(receipt_builder, config, evm_factory)` from whatever `EvmFactory` it receives. Because the generic plumbing in the vendored stack (`StatelessL2Builder<P, H, Evm>` → `OpBlockExecutorFactory<R, Spec, EvmFactory>` → `OpBlockExecutor` → EVM creation) is fully parameterized, swapping `OpEvmFactory` for `TracingEvmFactory` or `ChunkingEvmFactory` at `CachedExecutor::new()` propagates automatically through the entire chain. The block executor's field accesses (`self.evm.block()`, `self.evm.db_mut()`) resolve through `Evm` trait default methods, and the `transact()` default internally calls `self.transact_raw()`, so the tracing/chunking intercept is always invoked without any changes above the `EvmFactory` level. This is consistent with Decision 12: the aggregation proof runs the full standard executor pipeline, with `ChunkingEvm` injected at the `EvmFactory` level as the only modification point.
 
 ## Risks / Trade-offs
 
@@ -201,10 +213,8 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 **[Trade-off] Increased proof count** → A block with N chunks produces N+1 proofs (N chunks + 1 aggregation) instead of 1. Proof composition via `env::verify()` adds recursive verification overhead. This is acceptable because the chunk proofs run in parallel, reducing wall-clock time.
 
-**[Risk] CacheState/Cache representation mismatch** → Mitigation: The aggregation proof uses `State<TrieDB>` (CacheState/CacheAccount/AccountStatus) while chunk proofs use `CacheDB<PanicDB>` (Cache/DbAccount/AccountState). A canonical normalization layer maps both to the same byte encoding before hashing; when a hidden preloaded `CacheDB` base exists, the post-state hash is taken over the effective flat state formed by overlaying the live `CacheState` projection onto that base cache. This normalization is HASH-ONLY; bundle construction must still preserve the richer lifecycle semantics. Round-trip tests must verify hash equivalence for identical logical state across both representations.
+**[Risk] CacheState/Cache representation mismatch** → Mitigation: The aggregation proof uses `State<TrieDB>` (CacheState/CacheAccount/AccountStatus) while chunk proofs use `CacheDB<PanicDB>` (Cache/DbAccount/AccountState). A canonical normalization layer maps both to the same byte encoding before hashing; when a hidden preloaded `CacheDB` base exists, the post-state hash is taken over the effective flat state formed by overlaying the live `CacheState` projection onto that base cache. This normalization is HASH-ONLY — the richer lifecycle semantics are preserved automatically by the standard executor commit path (Decision 15). Round-trip tests must verify hash equivalence for identical logical state across both representations.
 
-**[Risk] EIP-1559 extra_data encoding drift** → Mitigation: ~40 lines of EIP-1559 encoding logic replicated from `pub(crate)` kona-executor utils. Must be updated when upstream adds new hardfork-specific encoding. Tracked as a known maintenance surface.
-
-**[Risk] Tx-body bundle construction can miss storage-wipe edge cases** → Mitigation: Tests must cover account creation, selfdestruct, and destroy-and-recreate flows, including wiped inherited storage. The diff algorithm should derive bundle statuses from both boundary snapshots and the final `account_state`, not from a flat “changed vs unchanged” test.
+**[Risk] Pre-computed ResultAndState must exactly match monolithic execution** → Mitigation: `TracingEvmFactory` captures the full `ResultAndState` from real EVM execution via `transact_raw()` cloning. The `ChunkingEvm` returns these unmodified. Since the same `ResultAndState` flows through the standard executor commit path, lifecycle semantics (creation, selfdestruct, storage wipe) are handled identically to monolithic execution. Integration tests must verify that chunk-aggregated blocks produce identical `BlockBuildingOutcome` (state root, receipts root, gas used) to monolithic execution.
 
 **[Risk] rkyv mirror types for Cache must stay synchronized** → Mitigation: Mirror types (`SerializableCache`, etc.) must exactly match revm's `Cache` field layout. revm version upgrades that change `Cache`, `DbAccount`, or `AccountInfo` fields will require mirror type updates. Pin revm version and add compile-time assertions where possible.
