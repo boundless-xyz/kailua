@@ -25,3 +25,5 @@ kailua-input
 *.csv
 
 .serena
+.claude
+.codex
