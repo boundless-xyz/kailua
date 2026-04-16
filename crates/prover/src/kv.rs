@@ -15,7 +15,8 @@
 use alloy_primitives::B256;
 use kona_host::single::{SingleChainHost, SingleChainLocalInputs};
 use kona_host::{
-    DiskKeyValueStore, KeyValueStore, MemoryKeyValueStore, SharedKeyValueStore, SplitKeyValueStore,
+    DiskKeyValueStore, HostError, KeyValueStore, MemoryKeyValueStore, SharedKeyValueStore,
+    SplitKeyValueStore,
 };
 use kona_preimage::PreimageKeyType;
 use std::ops::Deref;
@@ -72,7 +73,7 @@ impl KeyValueStore for RWLKeyValueStore {
         self.read().unwrap().get(self.mask(key))
     }
 
-    fn set(&mut self, key: B256, value: Vec<u8>) -> anyhow::Result<()> {
+    fn set(&mut self, key: B256, value: Vec<u8>) -> Result<(), HostError> {
         self.write().unwrap().set(self.mask(key), value)
     }
 }

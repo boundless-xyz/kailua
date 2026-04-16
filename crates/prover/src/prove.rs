@@ -97,7 +97,10 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
 
     // warn about misconfiguration
     if args.proving.max_block_derivations < args.proving.max_derivation_length
-        && args.proving.max_derivation_length % args.proving.max_block_derivations != 0
+        && !args
+            .proving
+            .max_derivation_length
+            .is_multiple_of(args.proving.max_block_derivations)
     {
         warn!(
             "Max derivation length ({}) is not a multiple of max block derivations ({})",

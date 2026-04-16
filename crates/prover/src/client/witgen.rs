@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use alloy::consensus::Blob;
-use alloy::eips::eip4844::IndexedBlobHash;
 use alloy_primitives::{Address, B256};
 use anyhow::Context;
 use async_trait::async_trait;
@@ -158,7 +157,7 @@ impl<T: BlobProvider + Send> BlobProvider for BlobWitnessProvider<T> {
     async fn get_and_validate_blobs(
         &mut self,
         block_ref: &BlockInfo,
-        blob_hashes: &[IndexedBlobHash],
+        blob_hashes: &[B256],
     ) -> Result<Vec<Box<Blob>>, Self::Error> {
         let blobs = self
             .provider

@@ -135,9 +135,9 @@ where
                     },
                     canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs {},
                 )
-                    .await
-                    .context("Failed to generate Hokulea DA proofs")?
-                    .map(|proof| bincode::serialize(&proof).expect("Canoe proof serialization failed"));
+                .await
+                .context("Failed to generate Hokulea DA proofs")?
+                .map(|proof| bincode::serialize(&proof).expect("Canoe proof serialization failed"));
                 let kzg_proofs =
                     hokulea_compute_proof::create_kzg_proofs_for_eigenda_preimage(&da_preimage);
                 let da_witness = hokulea_proof::eigenda_witness::EigenDAWitness::from_preimage(

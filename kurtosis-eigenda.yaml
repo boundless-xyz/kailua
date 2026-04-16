@@ -1,0 +1,138 @@
+registry:
+  op-geth: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:v1.101609.1
+  op-node: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.7
+  op-batcher: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.4
+  op-proposer: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-proposer:v1.16.0
+  op-deployer: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-deployer:v0.6.0-rc.3
+
+optimism_package:
+  observability:
+    enabled: false
+  altda_deploy_config:
+    da_bond_size: 0
+    da_challenge_window: 1
+    da_commitment_type: GenericCommitment
+    da_resolve_window: 1
+    da_resolver_refund_percentage: 0
+    use_altda: true
+  chains:
+    op-kurtosis:
+      participants:
+        node0:
+          el:
+            type: op-geth
+            log_level: ""
+            extra_env_vars: {}
+            extra_labels: {}
+            extra_params: []
+            tolerations: []
+            volume_size: 0
+            min_cpu: 0
+            max_cpu: 0
+            min_mem: 0
+            max_mem: 0
+          cl:
+            type: op-node
+            log_level: ""
+            extra_env_vars: {}
+            extra_labels: {}
+            extra_params: []
+            tolerations: []
+            volume_size: 0
+            min_cpu: 0
+            max_cpu: 0
+            min_mem: 0
+            max_mem: 0
+          mev_params:
+            image: ""
+            builder_host: ""
+            builder_port: ""
+      network_params:
+        network: "kurtosis"
+        network_id: "2151908"
+        seconds_per_slot: 2
+        fjord_time_offset: 0
+        granite_time_offset: 0
+        holocene_time_offset: 0
+        isthmus_time_offset: 0
+        jovian_time_offset: 0
+        fund_dev_accounts: true
+      batcher_params:
+        extra_params:
+          - --altda.max-concurrent-da-requests=10
+          - --max-pending-tx=10
+          - --target-num-frames=5
+          - --max-l1-tx-size-bytes=1000
+          - --batch-type=1
+      proposer_params:
+        extra_params: []
+        game_type: 1
+        proposal_interval: 10m
+      da_params:
+        enabled: true
+        image: kailua/eigenda-proxy:devnet
+        cmd:
+          - --addr
+          - 0.0.0.0
+          - --port
+          - "3100"
+          - --storage.backends-to-enable
+          - V2
+          - --storage.dispersal-backend
+          - V2
+          - --eigenda.v2.max-blob-length
+          - 1MiB
+          - --memstore.enabled
+          - --memstore.expiration
+          - 180m
+          - --eigenda.v2.network
+          - sepolia_testnet
+  challengers:
+    challenger:
+      enabled: true
+      image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-challenger:v1.9.0
+      participants: "*"
+      cannon_prestates_url: https://storage.googleapis.com/oplabs-network-data/proofs/op-program/cannon
+      cannon_trace_types:
+        - cannon
+        - permissioned
+  op_contract_deployer_params:
+    l1_artifacts_locator: embedded
+    l2_artifacts_locator: embedded
+    overrides:
+      faultGameAbsolutePrestate: 0x033c000916b4a88cfffeceddd6cf0f4be3897a89195941e5a7c3f8209b4dbb6e
+  faucet:
+    enabled: false
+  global_log_level: "info"
+  global_node_selectors: {}
+  global_tolerations: []
+  persistent: false
+ethereum_package:
+  participants:
+    - el_type: geth
+      el_image: ethereum/client-go:v1.16.9
+      el_extra_params:
+        - --gcmode=archive
+      cl_type: teku
+      cl_image: consensys/teku:25.7.1
+      el_volume_size: 16384
+      cl_volume_size: 8192
+  network_params:
+    preset: minimal
+    genesis_delay: 2
+    seconds_per_slot: 4
+    additional_preloaded_contracts: |
+      {
+        "0x4e59b44847b379578588920cA78FbF26c0B4956C": {
+          "balance": "0ETH",
+          "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3",
+          "storage": {},
+          "nonce": "1"
+        },
+        "0xb4B46bdAA835F8E4b4d8e208B6559cD267851051": {
+          "balance": "0ETH",
+          "code": "0x608060405234801561000f575f5ffd5b5060043610610029575f3560e01c80639077193b1461002d575b5f5ffd5b610047600480360381019061004291906100d1565b61005d565b6040516100549190610137565b60405180910390f35b5f6001905092915050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83601f84011261009157610090610070565b5b8235905067ffffffffffffffff8111156100ae576100ad610074565b5b6020830191508360018202830111156100ca576100c9610078565b5b9250929050565b5f5f602083850312156100e7576100e6610068565b5b5f83013567ffffffffffffffff8111156101045761010361006c565b5b6101108582860161007c565b92509250509250929050565b5f60ff82169050919050565b6101318161011c565b82525050565b5f60208201905061014a5f830184610128565b9291505056fea2646970667358221220f191e66aa17136fb7fb39d73b4c52e9a8510baf2c8a9d2a27d2a824ea914b85664736f6c634300081e0033",
+          "storage": {},
+          "nonce": "0"
+        }
+      }

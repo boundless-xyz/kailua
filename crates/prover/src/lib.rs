@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![recursion_limit = "256"]
+
 use alloy_primitives::B256;
 use async_channel::Sender;
 use kailua_kona::driver::CachedDriver;
@@ -30,6 +32,7 @@ pub mod driver;
 pub mod evm;
 #[cfg(feature = "celestia")]
 pub mod hana;
+pub mod hint_handler;
 #[cfg(feature = "eigen")]
 pub mod hokulea;
 pub mod kv;

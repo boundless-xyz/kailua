@@ -5,6 +5,7 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 
 MNEMONIC = "test test test test test test test test test test test junk"
@@ -13,6 +14,7 @@ L1_CL_SERVICE = "cl-1-teku-geth"
 L2_PARTICIPANT = "node0"
 L2_EL_TYPE = "op-geth"
 L2_CL_TYPE = "op-node"
+L2_NETWORK_NAME = "op-kurtosis"
 L1_WALLET_INDEXES = range(3, 10)
 ROLE_WALLET_ALIASES = {
     "deployer": "l1ProxyAdmin",
@@ -40,6 +42,13 @@ def run(*args: str, capture: bool = True) -> str:
 
 def inspect_service(enclave: str, service: str) -> dict:
     return json.loads(run("kurtosis", "service", "inspect", enclave, service, "-o", "json"))
+
+
+def inspect_service_optional(enclave: str, service: str) -> Optional[dict]:
+    try:
+        return inspect_service(enclave, service)
+    except subprocess.CalledProcessError:
+        return None
 
 
 def public_endpoint(service: dict, port_name: str, *, endpoint_name: str) -> dict:
@@ -104,6 +113,10 @@ def build_descriptor(enclave: str) -> dict:
     l1_cl = inspect_service(enclave, L1_CL_SERVICE)
     l2_el = inspect_service(enclave, f"op-el-{chain_id}-{L2_PARTICIPANT}-{L2_EL_TYPE}")
     l2_cl = inspect_service(enclave, f"op-cl-{chain_id}-{L2_PARTICIPANT}-{L2_CL_TYPE}")
+    da_service = inspect_service_optional(
+        enclave,
+        f"op-da-da-server-{chain_id}-{L2_NETWORK_NAME}",
+    )
     wallets = {
         f"user-key-{index}": derive_l1_wallet(index)
         for index in L1_WALLET_INDEXES
@@ -115,7 +128,7 @@ def build_descriptor(enclave: str) -> dict:
         }
     )
 
-    return {
+    descriptor = {
         "l1": {
             "nodes": [
                 {
@@ -156,6 +169,17 @@ def build_descriptor(enclave: str) -> dict:
             }
         ],
     }
+
+    if da_service is not None:
+        descriptor["auxiliary_services"] = {
+            "eigenda_proxy": {
+                "endpoints": {
+                    "http": public_endpoint(da_service, "http", endpoint_name="http"),
+                }
+            }
+        }
+
+    return descriptor
 
 
 def main() -> int:

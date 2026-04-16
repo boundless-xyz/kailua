@@ -2,3 +2,30 @@ paths = ["./kona", "./hokulea", "./hana"]
 
 [term]
 color = "always"
+
+[source."git+https://github.com/Layr-Labs/hokulea?rev=e93c95c01014da064486205e727b74ce076471b5"]
+git = "https://github.com/Layr-Labs/hokulea"
+rev = "e93c95c01014da064486205e727b74ce076471b5"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/Layr-Labs/rust-kzg-bn254.git"]
+git = "https://github.com/Layr-Labs/rust-kzg-bn254.git"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/celestiaorg/hana?rev=3ac60784fd0246263d1e57497c3087b6f233f66c"]
+git = "https://github.com/celestiaorg/hana"
+rev = "3ac60784fd0246263d1e57497c3087b6f233f66c"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/ethereum-optimism/optimism?tag=kona-client/v1.2.13"]
+git = "https://github.com/ethereum-optimism/optimism"
+tag = "kona-client/v1.2.13"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/paradigmxyz/reth?tag=v1.9.3"]
+git = "https://github.com/paradigmxyz/reth"
+tag = "v1.9.3"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

@@ -23,3 +23,5 @@ kailua-input
 .logs
 *.driver
 *.csv
+
+.serena

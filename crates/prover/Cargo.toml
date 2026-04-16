@@ -38,6 +38,7 @@ thousands.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 tokio-retry.workspace = true
+reqwest.workspace = true
 url.workspace = true
 
 # Alloy
@@ -46,6 +47,7 @@ alloy-evm.workspace = true
 alloy-op-evm.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
+alloy-rpc-types-beacon.workspace = true
 op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
 

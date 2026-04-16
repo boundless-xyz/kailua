@@ -155,6 +155,7 @@ pub fn hard_fork_config_hash(hard_fork_config: &HardForkConfig) -> [u8; 32] {
         .as_slice(),
         opt_byte_arr(hard_fork_config.isthmus_time.map(|v| v.to_be_bytes())).as_slice(),
         opt_byte_arr(hard_fork_config.jovian_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(hard_fork_config.karst_time.map(|v| v.to_be_bytes())).as_slice(),
         opt_byte_arr(hard_fork_config.interop_time.map(|v| v.to_be_bytes())).as_slice(),
     ]
     .concat();
@@ -446,6 +447,7 @@ mod tests {
                 jovian_time: Some(0),
                 interop_time: Some(0),
                 pectra_blob_schedule_time: Some(0),
+                karst_time: Some(0),
             },
             batch_inbox_address: Address::ZERO,
             deposit_contract_address: Address::ZERO,
@@ -802,6 +804,7 @@ mod tests {
                 jovian_time: Some(0),
                 interop_time: Some(0),
                 pectra_blob_schedule_time: Some(0),
+                karst_time: Some(0),
             },
             batch_inbox_address: Address::ZERO,
             deposit_contract_address: Address::ZERO,
