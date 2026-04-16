@@ -143,7 +143,9 @@ pub fn apply_trace_to_cache(cache: &mut Cache, trace: &EvmState) {
 /// This is required because the canonical state hash encodes only the sorted set of contract
 /// code-hash keys. If a witness provided arbitrary bytecode under a valid key and we failed to
 /// check it first, the hash would authenticate the wrong executable code.
-pub fn validate_cached_contracts(contracts: &HashMap<B256, Bytecode>) {
+pub fn validate_cached_contracts<S: std::hash::BuildHasher>(
+    contracts: &HashMap<B256, Bytecode, S>,
+) {
     for (expected_hash, bytecode) in contracts {
         let actual_hash = bytecode.hash_slow();
         assert_eq!(
@@ -367,6 +369,7 @@ mod tests {
             nonce,
             balance: U256::from(balance),
             code_hash: B256::ZERO,
+            account_id: None,
             code: None,
         }
     }

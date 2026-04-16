@@ -27,7 +27,7 @@
 //! Callers must drain the shared buffer via [`TracingOpEvmFactory::take_traces`] at the per-block
 //! boundary so stale traces do not leak into later witness construction.
 
-use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError};
+use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context::TxEnv;
@@ -35,7 +35,7 @@ use alloy_evm::revm::context_interface::result::{EVMError, ResultAndState};
 use alloy_evm::revm::inspector::NoOpInspector;
 use alloy_evm::revm::Inspector;
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
-use alloy_op_evm::{OpEvm, OpEvmFactory};
+use alloy_op_evm::{OpEvm, OpEvmFactory, OpTxError};
 use alloy_primitives::{Address, Bytes};
 use std::mem;
 use std::sync::{Arc, Mutex};
@@ -164,8 +164,7 @@ impl EvmFactory for TracingOpEvmFactory {
     type Evm<DB: Database, I: Inspector<OpContext<DB>>> = TracingEvm<OpEvm<DB, I, PrecompilesMap>>;
     type Context<DB: Database> = OpContext<DB>;
     type Tx = OpTransaction<TxEnv>;
-    type Error<DBError: core::error::Error + Send + Sync + 'static> =
-        EVMError<DBError, OpTransactionError>;
+    type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError, OpTxError>;
     type HaltReason = OpHaltReason;
     type Spec = OpSpecId;
     type BlockEnv = BlockEnv;

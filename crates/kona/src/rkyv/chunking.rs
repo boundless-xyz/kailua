@@ -144,6 +144,7 @@ impl CacheRkyv {
                             nonce,
                             balance: U256::from_be_bytes(balance),
                             code_hash: B256::new(code_hash),
+                            account_id: None,
                             code: code.map(|raw| Bytecode::new_raw(Bytes::from(raw))),
                         },
                         account_state: account_state_from_byte(state),
@@ -439,6 +440,7 @@ mod tests {
             nonce,
             balance: U256::from(balance),
             code_hash: B256::ZERO,
+            account_id: None,
             code: None,
         }
     }
@@ -588,6 +590,7 @@ mod tests {
                     nonce: 1,
                     balance: U256::from(100),
                     code_hash: code.hash_slow(),
+                    account_id: None,
                     code: Some(code.clone()),
                 },
                 account_state: AccountState::Touched,

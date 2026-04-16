@@ -247,7 +247,7 @@ where
             da_source_provider.new_from_parts(l1_provider.clone(), beacon, &rollup_config);
 
         // Load the Kailua executor with caching support
-        let cached_executor = CachedExecutor::new(
+        let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, OpEvmFactory>>::new(
             execution_cache,
             rollup_config.as_ref(),
             l2_provider.clone(),
