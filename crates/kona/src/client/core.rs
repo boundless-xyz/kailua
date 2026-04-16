@@ -26,9 +26,12 @@ use crate::precondition::{proposal, Precondition};
 use crate::witness::ChunkWitnessData;
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_eips::eip2718::Decodable2718;
+use alloy_evm::revm::context_interface::result::ResultAndState;
+use alloy_evm::revm::primitives::Bytes;
+use alloy_evm::revm::{Database, DatabaseCommit};
+use alloy_evm::{Evm, EvmFactory, FromTxWithEncoded};
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Sealed, B256};
-use op_alloy_consensus::OpReceiptEnvelope;
 use anyhow::{bail, Context};
 use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
 use kona_driver::{Driver, Executor};
@@ -41,10 +44,14 @@ use kona_proof::l1::OraclePipeline;
 use kona_proof::l2::OracleL2ChainProvider;
 use kona_proof::sync::new_oracle_pipeline_cursor;
 use kona_proof::{BootInfo, FlushableCache, HintType};
+use op_alloy_consensus::OpReceiptEnvelope;
+use op_alloy_consensus::{OpTxEnvelope, OpTxType};
 use risc0_zkvm::sha::Digestible;
 use std::fmt::Debug;
 use std::mem::take;
 use std::sync::{Arc, Mutex};
+
+type EvmTx = alloy_evm::op_revm::OpTransaction<alloy_evm::revm::context::TxEnv>;
 
 pub trait DASourceProvider<
     C: ChainProvider + Send + Sync + Clone + Debug,
@@ -131,14 +138,6 @@ where
         //                    CHUNK EXECUTION-ONLY                    //
         ////////////////////////////////////////////////////////////////
         if boot.l1_head == B256::repeat_byte(0xFF) {
-            use alloy_evm::revm::context_interface::result::ResultAndState;
-            use alloy_evm::revm::primitives::Bytes;
-            use alloy_evm::revm::{Database, DatabaseCommit};
-            use alloy_evm::{Evm, EvmFactory, FromTxWithEncoded};
-            use op_alloy_consensus::{OpTxEnvelope, OpTxType};
-
-            type EvmTx = alloy_evm::op_revm::OpTransaction<alloy_evm::revm::context::TxEnv>;
-
             log("CHUNK EXECUTION");
             let cw = chunk_witness.context("chunk witness required in chunk mode")?;
 
@@ -146,8 +145,7 @@ where
             validate_cached_contracts(&cw.cache.contracts);
 
             // (b) Build CacheDB<PanicDB> from witness cache
-            let mut cache_db =
-                alloy_evm::revm::database::in_memory_db::CacheDB::new(PanicDB);
+            let mut cache_db = alloy_evm::revm::database::in_memory_db::CacheDB::new(PanicDB);
             cache_db.cache = cw.cache.clone();
 
             // (c) Compute pre-hashes from the witness state
@@ -183,24 +181,77 @@ where
             // Determine hardfork flags for deposit receipt handling
             let is_regolith = rollup_config.is_regolith_active(timestamp);
             let is_canyon = rollup_config.is_canyon_active(timestamp);
+            let is_jovian = rollup_config.is_jovian_active(timestamp);
+            let block_gas_limit = cw.block_env.gas_limit;
 
             // (e) Execute exactly witness.transactions in order (no prelude, no epilogue)
             let mut evm_accum = cw.evm_state.clone();
             for tx_bytes in &cw.transactions {
-                // Decode the signed transaction envelope
-                let encoded = Bytes::from(tx_bytes.clone());
-                let tx = OpTxEnvelope::decode_2718(&mut tx_bytes.as_slice())
+                // Decode the signed transaction envelope, rejecting trailing bytes.
+                // This ensures tx_hash commits to exactly the bytes that were executed.
+                let mut buf = tx_bytes.as_slice();
+                let tx = OpTxEnvelope::decode_2718(&mut buf)
                     .context("invalid transaction encoding in chunk witness")?;
+                assert!(
+                    buf.is_empty(),
+                    "trailing bytes after transaction decoding in chunk witness"
+                );
                 let tx_type = tx.tx_type();
                 let is_deposit = tx_type == OpTxType::Deposit;
+
+                // Enforce per-tx block gas budget (mirrors OpBlockExecutor validation).
+                // Deposits bypass the check pre-Regolith; post-Regolith all txs are checked.
+                use alloy_consensus::Transaction;
+                let tx_gas_limit = tx.gas_limit();
+                if is_regolith || !is_deposit {
+                    let block_available_gas =
+                        block_gas_limit.saturating_sub(evm_accum.cumulative_gas_used);
+                    assert!(
+                        tx_gas_limit <= block_available_gas,
+                        "transaction gas limit {tx_gas_limit} exceeds available \
+                         block gas {block_available_gas}"
+                    );
+                }
+
+                // Jovian DA footprint estimation and validation (pre-execution).
+                // Mirrors OpBlockExecutor::execute_transaction_without_commit.
+                let tx_da_footprint = if is_jovian && !is_deposit {
+                    use alloy_evm::op_revm::{estimate_tx_compressed_size, L1BlockInfo};
+                    let compressed =
+                        estimate_tx_compressed_size(tx_bytes).saturating_div(1_000_000);
+                    // Pre-load the L1 block contract into State's cache before
+                    // reading its storage (mirrors the standard executor).
+                    let l1_block =
+                        alloy_primitives::address!("4200000000000000000000000000000000000015");
+                    let _ = evm
+                        .db_mut()
+                        .basic(l1_block)
+                        .context("L1 block contract missing from chunk witness")?;
+                    let scalar: u64 = L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
+                        .context(
+                            "failed to fetch DA footprint gas scalar \
+                                 from L1 block contract",
+                        )?
+                        .into();
+                    let footprint = compressed.saturating_mul(scalar);
+                    let da_available = block_gas_limit.saturating_sub(evm_accum.da_footprint_used);
+                    assert!(
+                        footprint <= da_available,
+                        "transaction DA footprint {footprint} exceeds available \
+                         block DA budget {da_available}"
+                    );
+                    footprint
+                } else {
+                    0
+                };
 
                 // Recover signer and convert to EVM transaction
                 let recovered = tx
                     .try_into_recovered()
                     .context("invalid transaction signature in chunk witness")?;
                 let sender = recovered.signer();
-                let evm_tx =
-                    EvmTx::from_encoded_tx(recovered.inner(), sender, encoded);
+                let encoded = Bytes::from(tx_bytes.clone());
+                let evm_tx = EvmTx::from_encoded_tx(recovered.inner(), sender, encoded);
 
                 // Execute the transaction
                 let ResultAndState {
@@ -216,33 +267,15 @@ where
                 // Update gas accumulator
                 evm_accum.cumulative_gas_used += result.gas_used();
 
-                // DA footprint tracking (Jovian+):
-                // The standard block executor computes a compressed-size DA footprint
-                // per non-deposit tx and accumulates it into da_footprint_used. The
-                // same value is also written to blob_gas_used in BlockExecutionResult.
-                // Pre-Jovian both values are 0 (no DA footprint tracking).
-                let is_jovian = rollup_config.is_jovian_active(timestamp);
-                if is_jovian && !is_deposit {
-                    use alloy_evm::op_revm::{
-                        estimate_tx_compressed_size, L1BlockInfo,
-                    };
-                    let compressed =
-                        estimate_tx_compressed_size(tx_bytes).saturating_div(1_000_000);
-                    let scalar: u64 = L1BlockInfo::fetch_da_footprint_gas_scalar(
-                        evm.db_mut(),
-                    )
-                    .expect("failed to fetch DA footprint gas scalar")
-                    .into();
-                    let tx_da_footprint = compressed.saturating_mul(scalar);
-                    evm_accum.da_footprint_used = evm_accum
-                        .da_footprint_used
-                        .saturating_add(tx_da_footprint);
+                // Update DA footprint / blob gas accumulators (Jovian+)
+                if tx_da_footprint > 0 {
+                    evm_accum.da_footprint_used =
+                        evm_accum.da_footprint_used.saturating_add(tx_da_footprint);
                     // In the block executor, blob_gas_used in BlockExecutionResult
                     // equals the accumulated da_footprint_used. The host-side witness
                     // construction tracks blob_gas_used_delta from the same value.
-                    evm_accum.blob_gas_used = evm_accum
-                        .blob_gas_used
-                        .saturating_add(tx_da_footprint);
+                    evm_accum.blob_gas_used =
+                        evm_accum.blob_gas_used.saturating_add(tx_da_footprint);
                 }
 
                 // Build receipt with proper deposit fields
@@ -266,8 +299,7 @@ where
                 } else {
                     None
                 };
-                let deposit_receipt_version =
-                    (is_deposit && is_canyon).then_some(1);
+                let deposit_receipt_version = (is_deposit && is_canyon).then_some(1);
 
                 let receipt = OpReceiptEnvelope::from_parts(
                     success,
@@ -289,8 +321,7 @@ where
             // (g) Compute post-hashes
             // The State wraps CacheDB<PanicDB>; State.cache has accessed entries,
             // CacheDB.cache (the witness) has the full base layer.
-            let post_db_hash =
-                hash_overlay_state(&cw.cache, &state.cache, &state.block_hashes);
+            let post_db_hash = hash_overlay_state(&cw.cache, &state.cache, &state.block_hashes);
             let post_evm_hash = hash_evm_state(&evm_accum);
 
             // (h) Compute chunk_trace
@@ -1002,8 +1033,7 @@ pub mod tests {
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_chunk_mode_empty_transactions() {
         use crate::precondition::chunking::{
-            compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state,
-            EvmAccumulatorState,
+            compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state, EvmAccumulatorState,
         };
         use alloy_evm::revm::database::in_memory_db::Cache;
         use risc0_zkvm::sha::Digestible;
@@ -1022,11 +1052,14 @@ pub mod tests {
         let pre_db_hash = hash_cache(&cache);
         let pre_evm_hash = hash_evm_state(&evm_state);
         let expected_trace = compute_chunk_trace(
-            tx_hash, pre_db_hash, pre_db_hash, pre_evm_hash, pre_evm_hash,
+            tx_hash,
+            pre_db_hash,
+            pre_db_hash,
+            pre_evm_hash,
+            pre_evm_hash,
         );
 
-        let (result_boot, precondition) =
-            test_chunk_execution(make_chunk_boot_info(), cw);
+        let (result_boot, precondition) = test_chunk_execution(make_chunk_boot_info(), cw);
 
         assert_eq!(result_boot.l1_head, B256::repeat_byte(0xFF));
         let expected_precondition = Precondition::default().chunk(expected_trace);
@@ -1081,9 +1114,7 @@ pub mod tests {
         let wrong_hash = B256::repeat_byte(0xAB); // Not the actual hash of the bytecode
         cache.contracts.insert(wrong_hash, code);
 
-        let cw = make_test_chunk_witness(
-            0, 1, cache, EvmAccumulatorState::default(), vec![],
-        );
+        let cw = make_test_chunk_witness(0, 1, cache, EvmAccumulatorState::default(), vec![]);
 
         // This should panic before execution due to contract validation
         let _ = test_chunk_execution(make_chunk_boot_info(), cw);
