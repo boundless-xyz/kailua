@@ -46,12 +46,12 @@
 
 ## 6. Chunk struct, PanicDB, and rkyv wrappers
 
-- [ ] 6.1a Define `Chunk` struct in `crates/kona/src/executor.rs` (co-located with `Execution`). Fields: `agreed_db: B256`, `agreed_evm: B256`, `tx_count: u16`, `tx_hash: B256`, `results: Vec<ResultAndState>` (full per-tx execution results), `evm_state: EvmAccumulatorState`, `claimed_db: B256`, `claimed_evm: B256`. `results.len() == tx_count`.
-- [ ] 6.1b Implement rkyv `ArchiveWith` wrappers for `ResultAndState` and its nested types in `crates/kona/src/rkyv/chunking.rs`: `ResultAndStateRkyv` (wrapping `ResultAndState<OpHaltReason>`), `ExecutionResultRkyv`, `EvmStateRkyv` (for `HashMap<Address, Account>`), `AccountRkyv` (for `Account` with `AccountInfo`, `AccountStatus` bitflags, `HashMap<U256, EvmStorageSlot>`). Add round-trip tests for each wrapper covering success/revert/halt variants, account lifecycle states, and storage slot values.
-- [ ] 6.2 Define `PanicDB` struct in `kailua-kona` implementing `DatabaseRef` trait (4 methods: `basic_ref`, `storage_ref`, `code_by_hash_ref`, `block_hash_ref`) that panics on all methods with descriptive error messages including the requested address/slot. Use `type Error = Infallible`. `CacheDB<PanicDB>` requires `PanicDB: DatabaseRef`. Note: `EmptyDB` returns defaults (not panics), so `PanicDB` is required for chunk proving.
-- [ ] 6.3 Add unit tests for `PanicDB`: each method panics with expected message.
-- [ ] 6.4 Add rkyv round-trip tests for `Chunk`: verify serialization/deserialization preserves all fields including the per-tx `ResultAndState` entries.
-- [ ] 6.5 Run full `kailua-kona` test suite — verify zero regressions.
+- [x] 6.1a Define `Chunk` struct in `crates/kona/src/executor.rs` (co-located with `Execution`). Fields: `agreed_db: B256`, `agreed_evm: B256`, `tx_count: u16`, `tx_hash: B256`, `results: Vec<ResultAndState>` (full per-tx execution results), `evm_state: EvmAccumulatorState`, `claimed_db: B256`, `claimed_evm: B256`. `results.len() == tx_count`.
+- [x] 6.1b Implement rkyv `ArchiveWith` wrappers for `ResultAndState` and its nested types in `crates/kona/src/rkyv/chunking.rs`: `ResultAndStateRkyv` (wrapping `ResultAndState<OpHaltReason>`), `ExecutionResultRkyv`, `EvmStateRkyv` (for `HashMap<Address, Account>`), `AccountRkyv` (for `Account` with `AccountInfo`, `AccountStatus` bitflags, `HashMap<U256, EvmStorageSlot>`). Add round-trip tests for each wrapper covering success/revert/halt variants, account lifecycle states, and storage slot values.
+- [x] 6.2 Define `PanicDB` struct in `kailua-kona` implementing `DatabaseRef` trait (4 methods: `basic_ref`, `storage_ref`, `code_by_hash_ref`, `block_hash_ref`) that panics on all methods with descriptive error messages including the requested address/slot. Use `type Error = Infallible`. `CacheDB<PanicDB>` requires `PanicDB: DatabaseRef`. Note: `EmptyDB` returns defaults (not panics), so `PanicDB` is required for chunk proving.
+- [x] 6.3 Add unit tests for `PanicDB`: each method panics with expected message.
+- [x] 6.4 Add rkyv round-trip tests for `Chunk`: verify serialization/deserialization preserves all fields including the per-tx `ResultAndState` entries.
+- [x] 6.5 Run full `kailua-kona` test suite — verify zero regressions.
 
 ## 7. Chunk execution-only mode in run_core_client
 

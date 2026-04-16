@@ -1359,9 +1359,7 @@ mod tests {
             block_hashes: Default::default(),
         };
         // Pre-populate the address as NotExisting (as witness construction does)
-        cache
-            .accounts
-            .insert(addr, DbAccount::new_not_existing());
+        cache.accounts.insert(addr, DbAccount::new_not_existing());
 
         // Simulate a trace where the account was read but doesn't exist
         let account = Account::new_not_existing(0);

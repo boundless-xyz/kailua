@@ -13,12 +13,18 @@
 // limitations under the License.
 
 use crate::client::log;
+use crate::precondition::chunking::EvmAccumulatorState;
+use crate::rkyv::chunking::ResultAndStateRkyv;
 use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
+use alloy_evm::op_revm::OpHaltReason;
+use alloy_evm::revm::context_interface::result::ResultAndState;
+use alloy_evm::revm::database_interface::DatabaseRef;
+use alloy_evm::revm::state::{AccountInfo, Bytecode};
 use alloy_evm::EvmFactory;
-use alloy_primitives::{Sealed, B256};
+use alloy_primitives::{Sealed, B256, U256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
 use kona_executor::{BlockBuildingOutcome, TrieDBProvider};
@@ -32,6 +38,7 @@ use kona_proof::FlushableCache;
 use kona_protocol::{BatchValidationProvider, BlockInfo};
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use spin::RwLock;
+use std::convert::Infallible;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
@@ -54,6 +61,75 @@ pub struct Execution {
     /// Output root after execution
     #[rkyv(with = B256Def)]
     pub claimed_output: B256,
+}
+
+/// Represents a proven transaction chunk within a block.
+///
+/// Each chunk contains the pre-computed execution results for a contiguous range of
+/// transactions, along with hash commitments for inter-chunk stitching verification.
+/// `agreed_db`/`agreed_evm` represent the state *before* this chunk's transactions;
+/// `claimed_db`/`claimed_evm` represent the state *after*.
+#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct Chunk {
+    /// Hash of the DB state before this chunk's transactions.
+    #[rkyv(with = B256Def)]
+    pub agreed_db: B256,
+    /// Hash of the EVM accumulator state before this chunk's transactions.
+    #[rkyv(with = B256Def)]
+    pub agreed_evm: B256,
+    /// Number of transactions in this chunk.
+    pub tx_count: u16,
+    /// Hash of the chunk's transaction list.
+    #[rkyv(with = B256Def)]
+    pub tx_hash: B256,
+    /// Full per-tx execution results (ExecutionResult + EvmState), in order.
+    #[rkyv(with = rkyv::with::Map<ResultAndStateRkyv>)]
+    pub results: Vec<ResultAndState<OpHaltReason>>,
+    /// EVM accumulator state at the chunk boundary (post-execution).
+    pub evm_state: EvmAccumulatorState,
+    /// Hash of the DB state after this chunk's transactions.
+    #[rkyv(with = B256Def)]
+    pub claimed_db: B256,
+    /// Hash of the EVM accumulator state after this chunk's transactions.
+    #[rkyv(with = B256Def)]
+    pub claimed_evm: B256,
+}
+
+/// A database backend that panics on all reads.
+///
+/// Used with `CacheDB<PanicDB>` for chunk proving: the cache must contain all required
+/// state. Any missing entry indicates an incomplete witness and must fail loudly rather
+/// than silently returning defaults (which `EmptyDB` would do).
+#[derive(Clone, Debug, Default)]
+pub struct PanicDB;
+
+impl DatabaseRef for PanicDB {
+    type Error = Infallible;
+
+    fn basic_ref(
+        &self,
+        address: alloy_primitives::Address,
+    ) -> Result<Option<AccountInfo>, Self::Error> {
+        panic!("PanicDB: missing account {address} in chunk witness cache");
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        panic!("PanicDB: missing code for hash {code_hash} in chunk witness cache");
+    }
+
+    fn storage_ref(
+        &self,
+        address: alloy_primitives::Address,
+        index: U256,
+    ) -> Result<U256, Self::Error> {
+        panic!(
+            "PanicDB: missing storage slot {index} for account {address} in chunk witness cache"
+        );
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        panic!("PanicDB: missing block hash for block {number} in chunk witness cache");
+    }
 }
 
 /// A structure that provides a caching layer for an `Executor` implementation.
@@ -597,5 +673,183 @@ pub mod tests {
         new_execution_cursor(rollup_config.as_ref(), safe_head.seal_slow(), &mut provider)
             .await
             .unwrap();
+    }
+
+    fn make_test_chunk() -> super::Chunk {
+        use alloy_evm::revm::context_interface::result::{ExecutionResult, Output, SuccessReason};
+        use alloy_evm::revm::state::{Account, AccountStatus, EvmStorageSlot};
+        use alloy_primitives::Bytes;
+
+        let addr = Address::from([0xAA; 20]);
+        let mut storage = alloy_evm::revm::primitives::HashMap::default();
+        storage.insert(
+            alloy_primitives::U256::from(1),
+            EvmStorageSlot::new_changed(
+                alloy_primitives::U256::from(0),
+                alloy_primitives::U256::from(42),
+                0,
+            ),
+        );
+        let mut state = alloy_evm::revm::state::EvmState::default();
+        state.insert(
+            addr,
+            Account {
+                info: alloy_evm::revm::state::AccountInfo {
+                    nonce: 5,
+                    balance: alloy_primitives::U256::from(1000),
+                    code_hash: B256::ZERO,
+                    account_id: None,
+                    code: None,
+                },
+                original_info: Box::new(alloy_evm::revm::state::AccountInfo::default()),
+                transaction_id: 0,
+                storage,
+                status: AccountStatus::Touched,
+            },
+        );
+
+        let ras = alloy_evm::revm::context_interface::result::ResultAndState {
+            result: ExecutionResult::Success {
+                reason: SuccessReason::Return,
+                gas_used: 21000,
+                gas_refunded: 0,
+                logs: vec![],
+                output: Output::Call(Bytes::new()),
+            },
+            state,
+        };
+
+        super::Chunk {
+            agreed_db: keccak256("agreed_db"),
+            agreed_evm: keccak256("agreed_evm"),
+            tx_count: 1,
+            tx_hash: keccak256("tx_hash"),
+            results: vec![ras],
+            evm_state: crate::precondition::chunking::EvmAccumulatorState {
+                cumulative_gas_used: 21000,
+                da_footprint_used: 100,
+                blob_gas_used: 0,
+                logs_bloom: alloy_primitives::Bloom::ZERO,
+                receipts: vec![],
+            },
+            claimed_db: keccak256("claimed_db"),
+            claimed_evm: keccak256("claimed_evm"),
+        }
+    }
+
+    #[test]
+    fn chunk_rkyv_round_trip() {
+        let chunk = make_test_chunk();
+        let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
+        let deser = rkyv::from_bytes::<super::Chunk, Error>(&bytes).unwrap();
+
+        assert_eq!(deser.agreed_db, chunk.agreed_db);
+        assert_eq!(deser.agreed_evm, chunk.agreed_evm);
+        assert_eq!(deser.tx_count, 1);
+        assert_eq!(deser.tx_hash, chunk.tx_hash);
+        assert_eq!(deser.results.len(), 1);
+        assert_eq!(deser.evm_state.cumulative_gas_used, 21000);
+        assert_eq!(deser.evm_state.da_footprint_used, 100);
+        assert_eq!(deser.claimed_db, chunk.claimed_db);
+        assert_eq!(deser.claimed_evm, chunk.claimed_evm);
+
+        // Verify the ResultAndState content survived
+        match &deser.results[0].result {
+            alloy_evm::revm::context_interface::result::ExecutionResult::Success {
+                gas_used,
+                ..
+            } => assert_eq!(*gas_used, 21000),
+            _ => panic!("expected Success"),
+        }
+        let addr = Address::from([0xAA; 20]);
+        let acct = deser.results[0].state.get(&addr).unwrap();
+        assert_eq!(acct.info.nonce, 5);
+        assert_eq!(
+            acct.storage
+                .get(&alloy_primitives::U256::from(1))
+                .unwrap()
+                .present_value,
+            alloy_primitives::U256::from(42)
+        );
+    }
+
+    #[test]
+    fn chunk_multi_result_round_trip() {
+        use alloy_evm::revm::context_interface::result::{ExecutionResult, ResultAndState};
+        use alloy_primitives::Bytes;
+
+        let mut chunk = make_test_chunk();
+        // Add a revert result
+        chunk.results.push(ResultAndState {
+            result: ExecutionResult::Revert {
+                gas_used: 50000,
+                output: Bytes::from_static(&[0x08]),
+            },
+            state: Default::default(),
+        });
+        chunk.tx_count = 2;
+
+        let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
+        let deser = rkyv::from_bytes::<super::Chunk, Error>(&bytes).unwrap();
+
+        assert_eq!(deser.tx_count, 2);
+        assert_eq!(deser.results.len(), 2);
+        assert!(deser.results[0].result.is_success());
+        match &deser.results[1].result {
+            ExecutionResult::Revert { gas_used, output } => {
+                assert_eq!(*gas_used, 50000);
+                assert_eq!(output.as_ref(), &[0x08]);
+            }
+            _ => panic!("expected Revert"),
+        }
+    }
+
+    #[test]
+    fn chunk_empty_results_round_trip() {
+        let chunk = super::Chunk {
+            agreed_db: keccak256("agreed_db"),
+            agreed_evm: keccak256("agreed_evm"),
+            tx_count: 0,
+            tx_hash: keccak256("tx_hash"),
+            results: vec![],
+            evm_state: crate::precondition::chunking::EvmAccumulatorState::default(),
+            claimed_db: keccak256("claimed_db"),
+            claimed_evm: keccak256("claimed_evm"),
+        };
+        let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
+        let deser = rkyv::from_bytes::<super::Chunk, Error>(&bytes).unwrap();
+
+        assert_eq!(deser.tx_count, 0);
+        assert!(deser.results.is_empty());
+        assert_eq!(deser.agreed_db, chunk.agreed_db);
+        assert_eq!(deser.claimed_evm, chunk.claimed_evm);
+    }
+
+    #[test]
+    #[should_panic(expected = "PanicDB: missing account")]
+    fn panic_db_basic_ref() {
+        let db = PanicDB;
+        let _ = db.basic_ref(Address::ZERO);
+    }
+
+    #[test]
+    #[should_panic(expected = "PanicDB: missing code for hash")]
+    fn panic_db_code_by_hash_ref() {
+        let db = PanicDB;
+        let _ = db.code_by_hash_ref(B256::ZERO);
+    }
+
+    #[test]
+    #[should_panic(expected = "PanicDB: missing storage slot")]
+    fn panic_db_storage_ref() {
+        let db = PanicDB;
+        let _ = db.storage_ref(Address::ZERO, U256::from(42));
+    }
+
+    #[test]
+    #[should_panic(expected = "PanicDB: missing block hash for block")]
+    fn panic_db_block_hash_ref() {
+        let db = PanicDB;
+        let _ = db.block_hash_ref(100);
     }
 }
