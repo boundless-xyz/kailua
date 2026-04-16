@@ -88,12 +88,24 @@ fn hash_account(hasher: &mut Sha256, addr: &Address, acct: &DbAccount) {
 ///
 /// This is used by both host-side witness construction and guest-side chunk verification
 /// when applying merged state deltas to advance the cumulative cache.
-pub fn account_state_from_evm_status(status: AccountStatus) -> AccountState {
+///
+/// EIP-161 state-clearing rule: any account that is `Touched` and has empty info
+/// (balance == 0, nonce == 0, no code) is removed from state, regardless of whether
+/// it previously existed or was loaded as not existing. This applies uniformly to
+/// both absent accounts (zero-value call to new address) and existing-but-empty
+/// accounts (e.g. drained all balance).
+pub fn account_state_from_evm_status(status: AccountStatus, info: &AccountInfo) -> AccountState {
     if status.intersects(AccountStatus::SelfDestructed | AccountStatus::Created) {
         AccountState::StorageCleared
     } else if status.contains(AccountStatus::Touched) {
-        AccountState::Touched
+        if info.is_empty() {
+            // EIP-161: touched empty accounts are removed from state.
+            AccountState::NotExisting
+        } else {
+            AccountState::Touched
+        }
     } else if status.contains(AccountStatus::LoadedAsNotExisting) {
+        // Read-only access to absent account (no Touched flag).
         AccountState::NotExisting
     } else {
         AccountState::None
@@ -116,7 +128,7 @@ pub fn apply_trace_to_cache(cache: &mut Cache, trace: &EvmState) {
         });
 
         db_account.info = account.info.clone();
-        db_account.account_state = account_state_from_evm_status(account.status);
+        db_account.account_state = account_state_from_evm_status(account.status, &account.info);
 
         // For created/self-destructed accounts, clear inherited storage
         if account
@@ -1243,43 +1255,91 @@ mod tests {
     #[test]
     fn loaded_as_not_existing_maps_to_not_existing() {
         // A read-only access to a non-existent account produces LoadedAsNotExisting
-        // in EvmState traces. This must map to NotExisting, not None.
+        // in EvmState traces. This must map to NotExisting.
+        let empty = AccountInfo::default();
         assert_eq!(
-            account_state_from_evm_status(EvmAccountStatus::LoadedAsNotExisting),
+            account_state_from_evm_status(EvmAccountStatus::LoadedAsNotExisting, &empty),
             AccountState::NotExisting,
+        );
+    }
+
+    #[test]
+    fn loaded_as_not_existing_touched_empty_maps_to_not_existing() {
+        // A touched absent account with empty info (e.g. zero-value call to
+        // non-existent address) is still NotExisting — EIP-161 cleanup.
+        let empty = AccountInfo::default();
+        assert_eq!(
+            account_state_from_evm_status(
+                EvmAccountStatus::LoadedAsNotExisting | EvmAccountStatus::Touched,
+                &empty,
+            ),
+            AccountState::NotExisting,
+        );
+    }
+
+    #[test]
+    fn loaded_as_not_existing_touched_nonempty_maps_to_touched() {
+        // A touched absent account that now has balance (e.g. received ETH)
+        // is Touched — the account was effectively created via value transfer.
+        let funded = make_info(0, 1000);
+        assert_eq!(
+            account_state_from_evm_status(
+                EvmAccountStatus::LoadedAsNotExisting | EvmAccountStatus::Touched,
+                &funded,
+            ),
+            AccountState::Touched,
         );
     }
 
     #[test]
     fn untouched_account_maps_to_none() {
         // An empty status (loaded existing account, not touched) maps to None.
+        let empty = AccountInfo::default();
         assert_eq!(
-            account_state_from_evm_status(EvmAccountStatus::empty()),
+            account_state_from_evm_status(EvmAccountStatus::empty(), &empty),
             AccountState::None,
         );
     }
 
     #[test]
-    fn touched_account_maps_to_touched() {
+    fn touched_nonempty_account_maps_to_touched() {
+        let info = make_info(1, 100);
         assert_eq!(
-            account_state_from_evm_status(EvmAccountStatus::Touched),
+            account_state_from_evm_status(EvmAccountStatus::Touched, &info),
             AccountState::Touched,
         );
     }
 
     #[test]
-    fn created_account_maps_to_storage_cleared() {
+    fn touched_empty_existing_account_maps_to_not_existing() {
+        // EIP-161: an existing account that is touched but ends up empty
+        // (e.g. drained all balance) is removed from state.
+        let empty = AccountInfo::default();
         assert_eq!(
-            account_state_from_evm_status(EvmAccountStatus::Created | EvmAccountStatus::Touched),
+            account_state_from_evm_status(EvmAccountStatus::Touched, &empty),
+            AccountState::NotExisting,
+        );
+    }
+
+    #[test]
+    fn created_account_maps_to_storage_cleared() {
+        let info = make_info(0, 0);
+        assert_eq!(
+            account_state_from_evm_status(
+                EvmAccountStatus::Created | EvmAccountStatus::Touched,
+                &info,
+            ),
             AccountState::StorageCleared,
         );
     }
 
     #[test]
     fn selfdestructed_account_maps_to_storage_cleared() {
+        let info = make_info(0, 0);
         assert_eq!(
             account_state_from_evm_status(
-                EvmAccountStatus::SelfDestructed | EvmAccountStatus::Touched
+                EvmAccountStatus::SelfDestructed | EvmAccountStatus::Touched,
+                &info,
             ),
             AccountState::StorageCleared,
         );
