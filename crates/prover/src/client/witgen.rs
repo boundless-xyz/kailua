@@ -96,6 +96,7 @@ where
         Some(execution_trace.clone()),
         derivation_cache.clone(),
         trace_derivation.then(|| derivation_trace.clone()),
+        None,
     )?;
     // Fix claimed output of captured executions
     let stitched_executions =
@@ -133,6 +134,7 @@ where
         stitched_preconditions,
         stitched_boot_info,
         fpvm_image_id,
+        chunk_witness: None,
     };
     witness
         .oracle_witness

@@ -22,6 +22,7 @@ use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::precondition::Precondition;
+use kailua_kona::witness::ChunkWitnessData;
 use kona_derive::BlobProvider;
 use kona_preimage::CommsClient;
 use kona_proof::{BootInfo, FlushableCache};
@@ -50,6 +51,7 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        chunk_witness: Option<ChunkWitnessData>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
@@ -74,6 +76,7 @@ impl<
                 derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
+                chunk_witness,
             );
         // Ensure boot record is the same for both oracles
         assert_eq!(boot, kona_boot_info);

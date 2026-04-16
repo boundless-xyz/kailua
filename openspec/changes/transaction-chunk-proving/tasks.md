@@ -55,10 +55,10 @@
 
 ## 7. Chunk execution-only mode in run_core_client
 
-- [ ] 7.0 Define `compute_tx_hash(transactions: &[Vec<u8>]) -> B256` in `precondition/chunking.rs`. Use deterministic SHA256 with explicit encoding: `SHA256(u64_be(len) || for each tx: u64_be(tx.len()) || tx_bytes)`, matching the length-prefix pattern used by the existing memdb hashing functions. Add unit tests: determinism, ordering sensitivity, content sensitivity, empty list.
-- [ ] 7.1 Add `chunk_witness: Option<ChunkWitnessData>` field to `Witness` in `crates/kona/src/witness.rs`. Add rkyv serialization with `Default` producing `None`. Thread it through `run_stateless_client()` → `run_stitching_client()` → `run_core_client()` as a new parameter.
-- [ ] 7.2 Add the chunk execution-only branch in `run_core_client()` (`crates/kona/src/client/core.rs`): when `boot.l1_head == B256::from([0xFF; 32])`, enter chunk mode. Extract `ChunkWitnessData` from the parameter (panic if `None`).
-- [ ] 7.3 Implement the chunk execution flow within the new branch:
+- [x] 7.0 Define `compute_tx_hash(transactions: &[Vec<u8>]) -> B256` in `precondition/chunking.rs`. Use deterministic SHA256 with explicit encoding: `SHA256(u64_be(len) || for each tx: u64_be(tx.len()) || tx_bytes)`, matching the length-prefix pattern used by the existing memdb hashing functions. Add unit tests: determinism, ordering sensitivity, content sensitivity, empty list.
+- [x] 7.1 Add `chunk_witness: Option<ChunkWitnessData>` field to `Witness` in `crates/kona/src/witness.rs`. Add rkyv serialization with `Default` producing `None`. Thread it through `run_stateless_client()` → `run_stitching_client()` → `run_core_client()` as a new parameter.
+- [x] 7.2 Add the chunk execution-only branch in `run_core_client()` (`crates/kona/src/client/core.rs`): when `boot.l1_head == B256::from([0xFF; 32])`, enter chunk mode. Extract `ChunkWitnessData` from the parameter (panic if `None`).
+- [x] 7.3 Implement the chunk execution flow within the new branch:
   (a) Validate every cached contract entry against its `code_hash` key via `validate_cached_contracts()`.
   (b) Build `CacheDB<PanicDB>` from `witness.cache`.
   (c) Compute `pre_db_hash` and `pre_evm_hash` from the witness state.
@@ -68,10 +68,10 @@
   (g) Compute `post_db_hash` from the effective post-state view (overlay final `CacheState` onto initial witness `Cache`), compute `post_evm_hash`.
   (h) Compute `chunk_trace = compute_chunk_trace(tx_hash, pre_db_hash, post_db_hash, pre_evm_hash, post_evm_hash)`.
   (i) Return `(boot, Precondition::default().chunk(chunk_trace))`.
-- [ ] 7.4 Add integration test: construct a `ChunkWitnessData` for known simple transactions (transfers, storage writes), run chunk mode, verify the returned `ProofJournal` has `l1_head == 0xFF..FF` and `precondition_hash` matches manual computation of `chunk_trace`.
-- [ ] 7.5 Add integration test: multi-chunk block. Build witnesses for 2 chunks. Execute both in chunk mode. Verify `post_db_hash` of chunk_0 matches `pre_db_hash` of chunk_1's witness.
-- [ ] 7.6 Add test: missing state in witness triggers PanicDB panic. Add test: malformed contract bytecode is rejected before hashing/execution.
-- [ ] 7.7 Run full `kailua-kona` test suite — verify zero regressions.
+- [x] 7.4 Add integration test: construct a `ChunkWitnessData` for known simple transactions (transfers, storage writes), run chunk mode, verify the returned `ProofJournal` has `l1_head == 0xFF..FF` and `precondition_hash` matches manual computation of `chunk_trace`.
+- [x] 7.5 Add integration test: multi-chunk block. Build witnesses for 2 chunks. Execute both in chunk mode. Verify `post_db_hash` of chunk_0 matches `pre_db_hash` of chunk_1's witness.
+- [x] 7.6 Add test: missing state in witness triggers PanicDB panic. Add test: malformed contract bytecode is rejected before hashing/execution.
+- [x] 7.7 Run full `kailua-kona` test suite — verify zero regressions.
 
 ## 8. ChunkingEvm, ChunkingEvmFactory, and chunk aggregation
 

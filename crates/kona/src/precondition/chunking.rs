@@ -351,6 +351,19 @@ pub fn hash_evm_state(evm_state: &EvmAccumulatorState) -> B256 {
     B256::from_slice(&hasher.finalize())
 }
 
+/// Compute a deterministic hash of a transaction list.
+/// Encoding: `SHA256(u64_be(len) || for each tx: u64_be(tx.len()) || tx_bytes)`.
+/// This matches the length-prefix pattern used by the existing memdb hashing functions.
+pub fn compute_tx_hash(transactions: &[Vec<u8>]) -> B256 {
+    let mut hasher = Sha256::new();
+    hasher.update((transactions.len() as u64).to_be_bytes());
+    for tx in transactions {
+        hasher.update((tx.len() as u64).to_be_bytes());
+        hasher.update(tx);
+    }
+    B256::from_slice(&hasher.finalize())
+}
+
 /// Compute the chunk_trace commitment from five input hashes.
 /// Returns SHA256(tx_hash || pre_db_hash || post_db_hash || pre_evm_hash || post_evm_hash).
 pub fn compute_chunk_trace(
@@ -1374,6 +1387,47 @@ mod tests {
             AccountState::NotExisting,
             "absent account read must preserve NotExisting state for hash chain continuity"
         );
+    }
+
+    // ========== compute_tx_hash tests (7.0) ==========
+
+    #[test]
+    fn tx_hash_deterministic() {
+        let txs = vec![vec![0x01, 0x02], vec![0x03]];
+        let h1 = compute_tx_hash(&txs);
+        let h2 = compute_tx_hash(&txs);
+        assert_eq!(h1, h2);
+        assert!(!h1.is_zero());
+    }
+
+    #[test]
+    fn tx_hash_ordering_sensitivity() {
+        let txs_ab = vec![vec![0x01], vec![0x02]];
+        let txs_ba = vec![vec![0x02], vec![0x01]];
+        assert_ne!(compute_tx_hash(&txs_ab), compute_tx_hash(&txs_ba));
+    }
+
+    #[test]
+    fn tx_hash_content_sensitivity() {
+        let txs1 = vec![vec![0x01, 0x02]];
+        let txs2 = vec![vec![0x01, 0x03]];
+        assert_ne!(compute_tx_hash(&txs1), compute_tx_hash(&txs2));
+    }
+
+    #[test]
+    fn tx_hash_empty_list() {
+        let h = compute_tx_hash(&[]);
+        assert!(!h.is_zero());
+        // Empty list still produces a valid hash (just hashing the zero-length prefix)
+        assert_eq!(h, compute_tx_hash(&[]));
+    }
+
+    #[test]
+    fn tx_hash_length_prefix_prevents_ambiguity() {
+        // [0x01, 0x02] as one tx vs [0x01], [0x02] as two txs must differ
+        let single = vec![vec![0x01, 0x02]];
+        let double = vec![vec![0x01], vec![0x02]];
+        assert_ne!(compute_tx_hash(&single), compute_tx_hash(&double));
     }
 
     #[test]

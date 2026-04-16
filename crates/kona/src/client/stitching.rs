@@ -20,6 +20,7 @@ use crate::executor::Execution;
 use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
 use crate::precondition::Precondition;
+use crate::witness::ChunkWitnessData;
 use alloy_primitives::{Address, B256};
 use anyhow::Context;
 use kona_derive::{BlobProvider, ChainProvider};
@@ -63,6 +64,7 @@ pub trait StitchingClient<
     /// * `stitched_boot_info` - A vector of `StitchedBootInfo` objects describing proofs
     ///   to be stitched together.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn run_stitching_client(
         self,
         proposal_data_hash: B256,
@@ -76,6 +78,7 @@ pub trait StitchingClient<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        chunk_witness: Option<ChunkWitnessData>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug;
@@ -103,6 +106,7 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        chunk_witness: Option<ChunkWitnessData>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
@@ -122,6 +126,7 @@ impl<
             None,
             derivation_cache,
             derivation_trace.then(Default::default),
+            chunk_witness,
         )
         .expect("Failed to compute output hash.");
 
@@ -646,6 +651,7 @@ pub mod tests {
                 derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
+                None,
             )
             .1
     }

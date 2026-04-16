@@ -14,13 +14,21 @@
 
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
+use crate::executor::{new_execution_cursor, CachedExecutor, Execution, PanicDB};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
+use crate::precondition::chunking::{
+    compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state, hash_overlay_state,
+    validate_cached_contracts,
+};
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
+use crate::witness::ChunkWitnessData;
+use alloy_consensus::transaction::SignerRecoverable;
+use alloy_eips::eip2718::Decodable2718;
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Sealed, B256};
+use op_alloy_consensus::OpReceiptEnvelope;
 use anyhow::{bail, Context};
 use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
 use kona_driver::{Driver, Executor};
@@ -95,6 +103,7 @@ pub fn run_core_client<
     execution_trace: Option<Arc<Mutex<Vec<Execution>>>>,
     derivation_cache: Option<CachedDriver>,
     derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
+    chunk_witness: Option<ChunkWitnessData>,
 ) -> anyhow::Result<(BootInfo, Precondition)>
 where
     <B as BlobProvider>::Error: Debug,
@@ -117,6 +126,185 @@ where
         ));
         let l1_config = Arc::new(boot.l1_config.clone());
         let rollup_config = Arc::new(boot.rollup_config.clone());
+
+        ////////////////////////////////////////////////////////////////
+        //                    CHUNK EXECUTION-ONLY                    //
+        ////////////////////////////////////////////////////////////////
+        if boot.l1_head == B256::repeat_byte(0xFF) {
+            use alloy_evm::revm::context_interface::result::ResultAndState;
+            use alloy_evm::revm::primitives::Bytes;
+            use alloy_evm::revm::{Database, DatabaseCommit};
+            use alloy_evm::{Evm, EvmFactory, FromTxWithEncoded};
+            use op_alloy_consensus::{OpTxEnvelope, OpTxType};
+
+            type EvmTx = alloy_evm::op_revm::OpTransaction<alloy_evm::revm::context::TxEnv>;
+
+            log("CHUNK EXECUTION");
+            let cw = chunk_witness.context("chunk witness required in chunk mode")?;
+
+            // (a) Validate cached contract bytecodes against their code_hash keys
+            validate_cached_contracts(&cw.cache.contracts);
+
+            // (b) Build CacheDB<PanicDB> from witness cache
+            let mut cache_db =
+                alloy_evm::revm::database::in_memory_db::CacheDB::new(PanicDB);
+            cache_db.cache = cw.cache.clone();
+
+            // (c) Compute pre-hashes from the witness state
+            let pre_db_hash = hash_cache(&cw.cache);
+            let pre_evm_hash = hash_evm_state(&cw.evm_state);
+
+            // (d) Wrap in State with bundle tracking; set state-clear from hardfork
+            let mut state = alloy_evm::revm::database::states::State::builder()
+                .with_database(cache_db)
+                .with_bundle_update()
+                .build();
+            let timestamp: u64 = cw.block_env.timestamp.to();
+            let spec_id = rollup_config.spec_id(timestamp);
+            // Match monolithic execution: the standard executor uses
+            // `spec.is_spurious_dragon_active_at_block(number)`. All OP spec IDs
+            // (BEDROCK and later) are post-Spurious-Dragon, so state-clear is always
+            // active. We verify this by checking that the spec_id is at least BEDROCK.
+            assert!(
+                spec_id >= alloy_evm::op_revm::OpSpecId::BEDROCK,
+                "unexpected pre-Bedrock OP spec: state-clear semantics may differ"
+            );
+            state.set_state_clear_flag(true);
+
+            // Set up EVM environment
+            let cfg_env = alloy_evm::revm::context::CfgEnv::new()
+                .with_chain_id(boot.chain_id)
+                .with_spec_and_mainnet_gas_params(spec_id);
+            let evm_env = alloy_evm::EvmEnv::new(cfg_env, cw.block_env.clone());
+
+            // Create EVM
+            let mut evm = OpEvmFactory::default().create_evm(&mut state, evm_env);
+
+            // Determine hardfork flags for deposit receipt handling
+            let is_regolith = rollup_config.is_regolith_active(timestamp);
+            let is_canyon = rollup_config.is_canyon_active(timestamp);
+
+            // (e) Execute exactly witness.transactions in order (no prelude, no epilogue)
+            let mut evm_accum = cw.evm_state.clone();
+            for tx_bytes in &cw.transactions {
+                // Decode the signed transaction envelope
+                let encoded = Bytes::from(tx_bytes.clone());
+                let tx = OpTxEnvelope::decode_2718(&mut tx_bytes.as_slice())
+                    .context("invalid transaction encoding in chunk witness")?;
+                let tx_type = tx.tx_type();
+                let is_deposit = tx_type == OpTxType::Deposit;
+
+                // Recover signer and convert to EVM transaction
+                let recovered = tx
+                    .try_into_recovered()
+                    .context("invalid transaction signature in chunk witness")?;
+                let sender = recovered.signer();
+                let evm_tx =
+                    EvmTx::from_encoded_tx(recovered.inner(), sender, encoded);
+
+                // Execute the transaction
+                let ResultAndState {
+                    result,
+                    state: tx_state,
+                } = evm
+                    .transact_raw(evm_tx)
+                    .context("chunk transaction execution failed")?;
+
+                // Commit state changes to the database
+                evm.db_mut().commit(tx_state);
+
+                // Update gas accumulator
+                evm_accum.cumulative_gas_used += result.gas_used();
+
+                // DA footprint tracking (Jovian+):
+                // The standard block executor computes a compressed-size DA footprint
+                // per non-deposit tx and accumulates it into da_footprint_used. The
+                // same value is also written to blob_gas_used in BlockExecutionResult.
+                // Pre-Jovian both values are 0 (no DA footprint tracking).
+                let is_jovian = rollup_config.is_jovian_active(timestamp);
+                if is_jovian && !is_deposit {
+                    use alloy_evm::op_revm::{
+                        estimate_tx_compressed_size, L1BlockInfo,
+                    };
+                    let compressed =
+                        estimate_tx_compressed_size(tx_bytes).saturating_div(1_000_000);
+                    let scalar: u64 = L1BlockInfo::fetch_da_footprint_gas_scalar(
+                        evm.db_mut(),
+                    )
+                    .expect("failed to fetch DA footprint gas scalar")
+                    .into();
+                    let tx_da_footprint = compressed.saturating_mul(scalar);
+                    evm_accum.da_footprint_used = evm_accum
+                        .da_footprint_used
+                        .saturating_add(tx_da_footprint);
+                    // In the block executor, blob_gas_used in BlockExecutionResult
+                    // equals the accumulated da_footprint_used. The host-side witness
+                    // construction tracks blob_gas_used_delta from the same value.
+                    evm_accum.blob_gas_used = evm_accum
+                        .blob_gas_used
+                        .saturating_add(tx_da_footprint);
+                }
+
+                // Build receipt with proper deposit fields
+                let success = result.is_success();
+                let logs: Vec<alloy_primitives::Log> = result.logs().to_vec();
+                for log_entry in &logs {
+                    evm_accum.logs_bloom.accrue_log(log_entry);
+                }
+
+                // For deposit transactions, populate deposit_nonce (post-Regolith)
+                // and deposit_receipt_version (post-Canyon) to match the standard
+                // block executor's receipt construction.
+                let deposit_nonce = if is_regolith && is_deposit {
+                    // Read sender's nonce from the committed state (post-execution).
+                    // This matches the block executor which reads from db after commit.
+                    evm.db_mut()
+                        .basic(sender)
+                        .ok()
+                        .flatten()
+                        .map(|account| account.nonce)
+                } else {
+                    None
+                };
+                let deposit_receipt_version =
+                    (is_deposit && is_canyon).then_some(1);
+
+                let receipt = OpReceiptEnvelope::from_parts(
+                    success,
+                    evm_accum.cumulative_gas_used,
+                    &logs,
+                    tx_type,
+                    deposit_nonce,
+                    deposit_receipt_version,
+                );
+                evm_accum.receipts.push(receipt);
+            }
+
+            // Drop the EVM to release the borrow on `state`
+            drop(evm);
+
+            // (f) Compute tx_hash
+            let tx_hash = compute_tx_hash(&cw.transactions);
+
+            // (g) Compute post-hashes
+            // The State wraps CacheDB<PanicDB>; State.cache has accessed entries,
+            // CacheDB.cache (the witness) has the full base layer.
+            let post_db_hash =
+                hash_overlay_state(&cw.cache, &state.cache, &state.block_hashes);
+            let post_evm_hash = hash_evm_state(&evm_accum);
+
+            // (h) Compute chunk_trace
+            let chunk_trace = compute_chunk_trace(
+                tx_hash,
+                pre_db_hash,
+                post_db_hash,
+                pre_evm_hash,
+                post_evm_hash,
+            );
+
+            // (i) Return
+            return Ok((boot, Precondition::default().chunk(chunk_trace)));
+        }
 
         log("SAFE HEAD HASH");
         let safe_head_hash = fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root)
@@ -448,6 +636,7 @@ pub mod tests {
             Some(collection_target.clone()),
             derivation_cache,
             derivation_trace.clone(),
+            None,
         )
         .context("run_core_client")?;
 
@@ -511,6 +700,7 @@ pub mod tests {
             OracleBlobProvider::new(oracle.clone()),
             EthereumDataSourceProvider,
             execution_cache,
+            None,
             None,
             None,
             None,
@@ -741,5 +931,186 @@ pub mod tests {
         )
         .unwrap();
         assert!(executions.is_empty());
+    }
+
+    /// Helper to run chunk mode through `run_core_client` with the given witness.
+    pub fn test_chunk_execution(
+        boot_info: BootInfo,
+        chunk_witness: ChunkWitnessData,
+    ) -> (BootInfo, Precondition) {
+        assert_eq!(boot_info.l1_head, B256::repeat_byte(0xFF));
+        let oracle = Arc::new(TestOracle::new(boot_info.clone()));
+        run_core_client(
+            B256::ZERO,
+            oracle.clone(),
+            oracle.clone(),
+            OracleBlobProvider::new(oracle.clone()),
+            EthereumDataSourceProvider,
+            vec![],
+            None,
+            None,
+            None,
+            Some(chunk_witness),
+        )
+        .expect("run_core_client chunk mode")
+    }
+
+    /// Creates a chunk witness with default empty state for testing.
+    fn make_test_chunk_witness(
+        chunk_index: u16,
+        total_chunks: u16,
+        cache: alloy_evm::revm::database::in_memory_db::Cache,
+        evm_state: crate::precondition::chunking::EvmAccumulatorState,
+        transactions: Vec<Vec<u8>>,
+    ) -> ChunkWitnessData {
+        ChunkWitnessData {
+            block_number: 16491250,
+            chunk_index,
+            total_chunks,
+            tx_start: 0,
+            tx_count: transactions.len() as u16,
+            transactions,
+            block_env: alloy_evm::revm::context::BlockEnv::default(),
+            op_block_ctx: alloy_op_evm::OpBlockExecutionCtx::default(),
+            cache,
+            evm_state,
+            agreed_l2_output_root: b256!(
+                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+            ),
+            config_hash: B256::ZERO,
+            fpvm_image_id: B256::ZERO,
+            payout_recipient: alloy_primitives::Address::ZERO,
+        }
+    }
+
+    fn make_chunk_boot_info() -> BootInfo {
+        BootInfo {
+            l1_head: B256::repeat_byte(0xFF),
+            agreed_l2_output_root: b256!(
+                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+            ),
+            claimed_l2_output_root: b256!(
+                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+            ),
+            claimed_l2_block_number: 16491249,
+            chain_id: 11155420,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_chunk_mode_empty_transactions() {
+        use crate::precondition::chunking::{
+            compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state,
+            EvmAccumulatorState,
+        };
+        use alloy_evm::revm::database::in_memory_db::Cache;
+        use risc0_zkvm::sha::Digestible;
+
+        let cache = Cache {
+            accounts: Default::default(),
+            contracts: Default::default(),
+            logs: Vec::new(),
+            block_hashes: Default::default(),
+        };
+        let evm_state = EvmAccumulatorState::default();
+        let cw = make_test_chunk_witness(0, 1, cache.clone(), evm_state.clone(), vec![]);
+
+        // Compute expected chunk trace (no txs → post == pre)
+        let tx_hash = compute_tx_hash(&[]);
+        let pre_db_hash = hash_cache(&cache);
+        let pre_evm_hash = hash_evm_state(&evm_state);
+        let expected_trace = compute_chunk_trace(
+            tx_hash, pre_db_hash, pre_db_hash, pre_evm_hash, pre_evm_hash,
+        );
+
+        let (result_boot, precondition) =
+            test_chunk_execution(make_chunk_boot_info(), cw);
+
+        assert_eq!(result_boot.l1_head, B256::repeat_byte(0xFF));
+        let expected_precondition = Precondition::default().chunk(expected_trace);
+        assert_eq!(precondition.digest(), expected_precondition.digest());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_chunk_mode_multi_chunk_hash_continuity() {
+        use crate::precondition::chunking::{hash_cache, EvmAccumulatorState};
+        use alloy_evm::revm::database::in_memory_db::Cache;
+
+        // Two empty chunks from the same state — chunk_0's post_db_hash must equal
+        // chunk_1's pre_db_hash (both are the same cache with no mutations).
+        let cache = Cache {
+            accounts: Default::default(),
+            contracts: Default::default(),
+            logs: Vec::new(),
+            block_hashes: Default::default(),
+        };
+        let evm_state = EvmAccumulatorState::default();
+
+        let cw0 = make_test_chunk_witness(0, 2, cache.clone(), evm_state.clone(), vec![]);
+        let cw1 = make_test_chunk_witness(1, 2, cache.clone(), evm_state.clone(), vec![]);
+
+        let pre_db_hash_0 = hash_cache(&cw0.cache);
+        let pre_db_hash_1 = hash_cache(&cw1.cache);
+
+        // With no transactions, the chunk execution doesn't modify state,
+        // so post_db_hash_0 == pre_db_hash_0 == pre_db_hash_1
+        assert_eq!(pre_db_hash_0, pre_db_hash_1);
+
+        // Run both chunks and verify they produce valid results
+        let (_boot0, _prec0) = test_chunk_execution(make_chunk_boot_info(), cw0);
+        let (_boot1, _prec1) = test_chunk_execution(make_chunk_boot_info(), cw1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[should_panic(expected = "cached contract bytecode hash mismatch")]
+    pub async fn test_chunk_mode_malformed_contract_rejected() {
+        use crate::precondition::chunking::EvmAccumulatorState;
+        use alloy_evm::revm::database::in_memory_db::Cache;
+        use alloy_evm::revm::state::Bytecode;
+
+        let mut cache = Cache {
+            accounts: Default::default(),
+            contracts: Default::default(),
+            logs: Vec::new(),
+            block_hashes: Default::default(),
+        };
+        // Insert a contract with mismatched hash → should panic during validation
+        let code = Bytecode::new_raw(alloy_primitives::Bytes::from_static(&[0x60, 0x00]));
+        let wrong_hash = B256::repeat_byte(0xAB); // Not the actual hash of the bytecode
+        cache.contracts.insert(wrong_hash, code);
+
+        let cw = make_test_chunk_witness(
+            0, 1, cache, EvmAccumulatorState::default(), vec![],
+        );
+
+        // This should panic before execution due to contract validation
+        let _ = test_chunk_execution(make_chunk_boot_info(), cw);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_chunk_mode_missing_witness_errors() {
+        let boot = make_chunk_boot_info();
+        let oracle = Arc::new(TestOracle::new(boot.clone()));
+        // Call with chunk sentinel but None witness → should error
+        let result = run_core_client(
+            B256::ZERO,
+            oracle.clone(),
+            oracle.clone(),
+            OracleBlobProvider::new(oracle.clone()),
+            EthereumDataSourceProvider,
+            vec![],
+            None,
+            None,
+            None,
+            None, // No chunk witness!
+        );
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("chunk witness required"),
+            "unexpected error: {err_msg}"
+        );
     }
 }

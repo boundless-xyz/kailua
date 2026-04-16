@@ -65,6 +65,10 @@ pub struct Witness<O: WitnessOracle> {
     /// Represents the fault-proof virtual machine program image id.
     #[rkyv(with = B256Def)]
     pub fpvm_image_id: B256,
+    /// Optional chunk witness data for chunk execution-only mode.
+    /// When present and the boot sentinel triggers chunk mode, this provides
+    /// the pre-populated state, transactions, and metadata for chunk proving.
+    pub chunk_witness: Option<ChunkWitnessData>,
 }
 
 impl Witness<VecOracle> {
@@ -146,6 +150,7 @@ pub mod tests {
             ],
             stitched_boot_info: gen_boot_infos(32, 128),
             fpvm_image_id: keccak256(b"fpvm_image_id"),
+            chunk_witness: None,
         };
 
         (witness, values)
