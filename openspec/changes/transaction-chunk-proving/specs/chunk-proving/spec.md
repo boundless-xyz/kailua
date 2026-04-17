@@ -90,6 +90,10 @@ The chunk guest SHALL compute the SHA256 hash of the EVM state accumulators befo
 - **WHEN** all chunk transactions have executed
 - **THEN** `post_evm_state_hash` is computed from the updated accumulators (cumulative_gas_used, da_footprint_used, blob_gas_used, logs_bloom, receipts)
 
+#### Scenario: EVM accumulators are seeded before transaction execution
+- **WHEN** the chunk guest constructs its block executor
+- **THEN** its cumulative gas, DA footprint, and receipts accumulators start from the values committed by `pre_evm_state_hash`, so that per-transaction prechecks (block-available-gas, Jovian DA footprint budget) see the same budget a monolithic executor would see at the same point in block execution
+
 ### Requirement: Chunk guest computes tx_hash
 
 The chunk guest SHALL compute `tx_hash = SHA256(canonical_encode(transactions))` where `transactions` is the ordered list of transactions in the chunk.

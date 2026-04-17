@@ -25,12 +25,13 @@ use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
 use crate::witness::ChunkWitnessData;
 use alloy_consensus::transaction::SignerRecoverable;
-use alloy_eips::eip2718::Decodable2718;
-use alloy_evm::revm::context_interface::result::ResultAndState;
+use alloy_consensus::TxReceipt;
+use alloy_eips::eip2718::{Decodable2718, WithEncoded};
+use alloy_evm::block::BlockExecutor;
 use alloy_evm::revm::primitives::Bytes;
-use alloy_evm::revm::{Database, DatabaseCommit};
-use alloy_evm::{Evm, EvmFactory, FromTxWithEncoded};
-use alloy_op_evm::OpEvmFactory;
+use alloy_evm::EvmFactory;
+use alloy_op_evm::block::OpAlloyReceiptBuilder;
+use alloy_op_evm::{OpBlockExecutor, OpEvmFactory};
 use alloy_primitives::{Sealed, B256};
 use anyhow::{bail, Context};
 use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
@@ -44,14 +45,11 @@ use kona_proof::l1::OraclePipeline;
 use kona_proof::l2::OracleL2ChainProvider;
 use kona_proof::sync::new_oracle_pipeline_cursor;
 use kona_proof::{BootInfo, FlushableCache, HintType};
-use op_alloy_consensus::OpReceiptEnvelope;
-use op_alloy_consensus::{OpTxEnvelope, OpTxType};
+use op_alloy_consensus::OpTxEnvelope;
 use risc0_zkvm::sha::Digestible;
 use std::fmt::Debug;
 use std::mem::take;
 use std::sync::{Arc, Mutex};
-
-type EvmTx = alloy_evm::op_revm::OpTransaction<alloy_evm::revm::context::TxEnv>;
 
 pub trait DASourceProvider<
     C: ChainProvider + Send + Sync + Clone + Debug,
@@ -155,11 +153,11 @@ where
             // `cw.block_env` is read here but not committed into `chunk_trace`.
             // It drives:
             //   * `spec_id = rollup_config.spec_id(timestamp)` — hardfork
-            //     gating for is_regolith / is_canyon / is_jovian, plus EVM
-            //     semantics (Spurious Dragon, London basefee, Shanghai
-            //     PUSH0, Cancun blob opcodes, Prague, ...).
+            //     gating plus EVM semantics (Spurious Dragon, London
+            //     basefee, Shanghai PUSH0, Cancun blob opcodes, Prague, ...).
             //   * `block_gas_limit = cw.block_env.gas_limit` — per-tx gas
-            //     and DA-footprint budget checks.
+            //     and DA-footprint budget checks (enforced inside
+            //     `OpBlockExecutor::execute_transaction_without_commit`).
             //   * `basefee`, `prevrandao`, `coinbase`/`beneficiary`,
             //     `number`, `blob_excess_gas_and_price` — consumed by the
             //     EVM during tx execution (e.g. BASEFEE, PREVRANDAO,
@@ -174,18 +172,25 @@ where
             // `basefee`, etc. Part 8 MUST verify that every chunk's
             // `block_env` matches the header context of the target block.
             //
+            // Similarly, `cw.op_block_ctx` (parent_hash, parent_beacon_block_root,
+            // extra_data) is consumed by `OpBlockExecutor::new` but not
+            // committed into `chunk_trace`. Part 8 MUST bind it to the
+            // target block header. It is not *currently* load-bearing for
+            // per-tx execution in this branch (prelude system calls are
+            // skipped), but upstream hardforks may expand its reach.
+            //
             // Other ChunkWitnessData fields reserved for Part 8 binding:
             //   `block_number`, `chunk_index`, `total_chunks`, `tx_start`,
-            //   `tx_count`, `op_block_ctx`, `agreed_l2_output_root`,
-            //   `config_hash`, `fpvm_image_id`, `payout_recipient`. They
-            //   are NOT read in Part 7.
+            //   `tx_count`, `agreed_l2_output_root`, `config_hash`,
+            //   `fpvm_image_id`, `payout_recipient`. They are NOT read in
+            //   Part 7.
             //
             // Tampering evidence for `cw.evm_state`
             // -------------------------------------
-            // `cw.evm_state` seeds the running accumulator (cumulative gas,
-            // da_footprint_used, blob_gas_used, logs_bloom, receipts). It is
-            // trusted LOCALLY but detected if tampered with via the Part 8
-            // hash chain:
+            // `cw.evm_state` seeds `OpBlockExecutor`'s running accumulator
+            // (cumulative gas, da_footprint_used, receipts) plus our local
+            // `logs_bloom`. It is trusted LOCALLY but detected if tampered
+            // with via the Part 8 hash chain:
             //   * `pre_evm_hash = hash_evm_state(&cw.evm_state)` is
             //     committed into `chunk_trace`. Aggregation requires
             //     `chunk_i.pre_evm_hash == chunk_{i-1}.post_evm_hash`, and
@@ -197,10 +202,91 @@ where
             //     missing receipt, mismatched bloom, forged blob_gas) either
             //     breaks the chain between chunks or fails the final
             //     header-match step.
+            //
+            // Implementation note: per-transaction execution is driven by
+            // upstream's `OpBlockExecutor` (alloy-op-evm) rather than a
+            // hand-rolled loop. We seed its `pub` accumulator fields
+            // (`gas_used`, `da_footprint_used`, `receipts`) from
+            // `cw.evm_state` and call `execute_transaction_without_commit`
+            // + `commit_transaction` per tx, skipping the per-block hooks
+            // (`apply_pre_execution_changes`, `finish`). This inherits
+            // block-gas-budget and Jovian-DA prechecks, deposit-nonce
+            // handling, receipt construction, and all future upstream
+            // hardfork changes. `logs_bloom` is tracked locally because
+            // `OpBlockExecutor` does not maintain a running bloom.
+            //
+            // Witness-seed validation (trust boundary)
+            // ----------------------------------------
+            // `cw.evm_state.{cumulative_gas_used, da_footprint_used}` seed
+            // `OpBlockExecutor`'s accumulators. Upstream's per-tx prechecks
+            // compute `block_available_gas = gas_limit - self.gas_used` and
+            // `da_footprint_available = gas_limit - self.da_footprint_used`
+            // with *unchecked* subtraction. A malicious or malformed witness
+            // that seeds either value above `block_env.gas_limit` wraps the
+            // subtraction to near-`u64::MAX` in release (silently accepting
+            // an impossible "huge" budget) or panics in debug. We therefore
+            // bail early on any seed that exceeds the block gas limit.
+            //
+            // `blob_gas_used == da_footprint_used` invariant (OP Jovian)
+            // ---------------------------------------------------------
+            // On OP post-Jovian, upstream's `BlockExecutionResult.blob_gas_used
+            // = self.da_footprint_used` (alloy-op-evm/src/block/mod.rs) — the
+            // block header's `blob_gas_used` is repurposed to track DA
+            // footprint. OP L2 user transactions cannot carry EIP-4844 blobs
+            // (`OpTxType` has no `Eip4844` variant: only Legacy / Eip2930 /
+            // Eip1559 / Eip7702 / Deposit), so there is no independent real
+            // blob-gas source. We enforce this invariant at chunk entry
+            // (`blob_gas_used == da_footprint_used`) and derive the output
+            // `blob_gas_used` from `exec.da_footprint_used`, matching
+            // upstream's `BlockExecutionResult` convention by construction.
+            // The host's independent tracking of the two deltas (see
+            // `crates/prover/src/chunk.rs::accumulate_receipt`) is schema
+            // flexibility for the pre-Jovian era / synthetic tests; in
+            // production post-Jovian witnesses the two must agree, and we
+            // fail closed if they don't. If a future hardfork introduces
+            // real per-tx blob gas on OP L2 independent of DA footprint,
+            // the witness schema must be extended to carry a per-chunk
+            // blob-gas-delta total and this invariant relaxed.
             // ---------------------------------------------------------------
 
             // (a) Validate cached contract bytecodes against their code_hash keys.
             validate_cached_contracts(&cw.cache.contracts);
+
+            // (a') Validate the seeded accumulator state against the block
+            // gas limit (trust-boundary check — see Witness-seed validation
+            // above). These values come from witness input; without these
+            // bounds, upstream's unchecked `gas_limit - self.gas_used`
+            // subtraction can wrap or panic.
+            let block_gas_limit = cw.block_env.gas_limit;
+            if cw.evm_state.cumulative_gas_used > block_gas_limit {
+                bail!(
+                    "witness cumulative_gas_used {} exceeds block gas_limit {}",
+                    cw.evm_state.cumulative_gas_used,
+                    block_gas_limit
+                );
+            }
+            if cw.evm_state.da_footprint_used > block_gas_limit {
+                bail!(
+                    "witness da_footprint_used {} exceeds block gas_limit {}",
+                    cw.evm_state.da_footprint_used,
+                    block_gas_limit
+                );
+            }
+            // OP Jovian invariant: blob_gas_used == da_footprint_used (see
+            // `BlockExecutionResult.blob_gas_used = self.da_footprint_used`
+            // in upstream). We fail closed on any divergence to guarantee
+            // the output `blob_gas_used` (derived from `exec.da_footprint_used`)
+            // matches what the host threads as the next chunk's seed.
+            if cw.evm_state.blob_gas_used != cw.evm_state.da_footprint_used {
+                bail!(
+                    "witness blob_gas_used {} != da_footprint_used {} (OP Jovian \
+                     invariant: BlockExecutionResult.blob_gas_used is always \
+                     self.da_footprint_used on OP L2; host must thread them in \
+                     lockstep)",
+                    cw.evm_state.blob_gas_used,
+                    cw.evm_state.da_footprint_used
+                );
+            }
 
             // (b) Build CacheDB<PanicDB> from witness cache.
             let mut cache_db = alloy_evm::revm::database::in_memory_db::CacheDB::new(PanicDB);
@@ -216,15 +302,18 @@ where
             // hash is computed from `state.cache` (live CacheState) and
             // `state.block_hashes` via `hash_overlay_state`; the bundle
             // delta is never consumed.
+            //
+            // We also set the state-clear flag manually here because we
+            // skip `OpBlockExecutor::apply_pre_execution_changes` below —
+            // that is where upstream normally sets the flag. All OP spec
+            // IDs (BEDROCK and later) are post-Spurious-Dragon, so the
+            // flag is always active. We verify this by checking that the
+            // spec_id is at least BEDROCK.
             let mut state = alloy_evm::revm::database::states::State::builder()
                 .with_database(cache_db)
                 .build();
             let timestamp: u64 = cw.block_env.timestamp.to();
             let spec_id = rollup_config.spec_id(timestamp);
-            // Match monolithic execution: the standard executor uses
-            // `spec.is_spurious_dragon_active_at_block(number)`. All OP spec IDs
-            // (BEDROCK and later) are post-Spurious-Dragon, so state-clear is always
-            // active. We verify this by checking that the spec_id is at least BEDROCK.
             if spec_id < alloy_evm::op_revm::OpSpecId::BEDROCK {
                 bail!("unexpected pre-Bedrock OP spec: state-clear semantics may differ");
             }
@@ -239,41 +328,48 @@ where
             let evm_env = alloy_evm::EvmEnv::new(cfg_env, cw.block_env.clone());
 
             // Long-lived factory for chunk execution (stateless ZST reused
-            // for the full EVM lifetime of this chunk).
-            let op_evm_factory = OpEvmFactory::default();
-            let mut evm = op_evm_factory.create_evm(&mut state, evm_env);
+            // for the full EVM lifetime of this chunk). The turbofish pins
+            // the EVM's `Tx` type so downstream inference through
+            // `OpBlockExecutor` can uniquely pick a `FromTxWithEncoded`
+            // impl — `OpEvmFactory<Tx>` is generic and has two candidate
+            // transaction types (`TxEnv` vs `OpTransaction<TxEnv>`) whose
+            // ambiguity rustc cannot resolve purely from the default.
+            let op_evm_factory =
+                OpEvmFactory::<alloy_evm::op_revm::OpTransaction<
+                    alloy_evm::revm::context::TxEnv,
+                >>::default();
+            let evm = op_evm_factory.create_evm(&mut state, evm_env);
 
-            // Determine hardfork flags for deposit receipt handling
-            let is_regolith = rollup_config.is_regolith_active(timestamp);
-            let is_canyon = rollup_config.is_canyon_active(timestamp);
-            let is_jovian = rollup_config.is_jovian_active(timestamp);
-            let block_gas_limit = cw.block_env.gas_limit;
+            // (e) Construct upstream `OpBlockExecutor` and seed its
+            // accumulators from the witness. `RollupConfig` implements
+            // `OpHardforks` (optimism/.../protocol/genesis/src/rollup.rs),
+            // so it drives hardfork gating directly.
+            let spec = rollup_config.as_ref().clone();
+            let mut exec = OpBlockExecutor::new(
+                evm,
+                cw.op_block_ctx.clone(),
+                spec,
+                OpAlloyReceiptBuilder::default(),
+            );
+            // Seed the executor's running accumulators so `block_available_gas`
+            // and Jovian DA-budget prechecks see the same budget monolithic
+            // execution would at this point in the block.
+            exec.gas_used = cw.evm_state.cumulative_gas_used;
+            exec.da_footprint_used = cw.evm_state.da_footprint_used;
+            exec.receipts = cw.evm_state.receipts.clone();
+            // Local logs_bloom: OpBlockExecutor does not track a running
+            // bloom (upstream computes it at seal_block time from the final
+            // receipts vector). Chunk proofs need it in the accumulator
+            // hash, so we accrue it from each committed receipt.
+            let mut logs_bloom = cw.evm_state.logs_bloom;
 
-            // (e) Execute exactly witness.transactions in order (no prelude,
-            // no epilogue). Per-tx flow mirrors
-            //   optimism/rust/alloy-op-evm/src/block/mod.rs::
-            //     execute_transaction_without_commit (pre-execution checks)
-            //   optimism/rust/alloy-op-evm/src/block/mod.rs::
-            //     commit_transaction (post-execution commit, receipt build).
-            //
-            // L1Block contract loading (non-Jovian path)
-            // ------------------------------------------
-            // Every non-deposit post-Bedrock tx causes op_revm to internally
-            // invoke `L1BlockInfo::try_fetch`, which calls
-            // `db.basic(L1_BLOCK_CONTRACT)` + storage reads to populate L1
-            // cost parameters. The witness cache must therefore include the
-            // L1Block contract and its relevant storage slots; if absent,
-            // `PanicDB` aborts inside the EVM (proof-abort semantics — a
-            // defensive failure, not silent corruption). The explicit
-            // preload a few lines below is Jovian-only because we must read
-            // the DA scalar BEFORE op_revm's own fetch runs, to enforce the
-            // Jovian DA budget.
-            //
-            // Chunking of system transactions (pre-block depositor call,
-            // beacon-root update, pre/post-block balance increments, etc.)
-            // is explicitly out of scope for chunk mode — those live in
-            // whole-block execution paths.
-            let mut evm_accum = cw.evm_state.clone();
+            // Skip `apply_pre_execution_changes` — chunk_0 witness already
+            // reflects the prelude (parent-hash ring buffer writes,
+            // beacon-root contract call, create2 deployer at canyon). The
+            // aggregator (Part 8) binds `cw.cache` to the post-prelude state.
+            // Skip `finish` — chunks do not apply post-block balance
+            // increments; the aggregation proof owns that.
+
             for tx_bytes in &cw.transactions {
                 // Decode the signed transaction envelope, rejecting trailing bytes.
                 // This ensures tx_hash commits to exactly the bytes that were executed.
@@ -283,138 +379,50 @@ where
                 if !buf.is_empty() {
                     bail!("trailing bytes after transaction decoding in chunk witness");
                 }
-                let tx_type = tx.tx_type();
-                let is_deposit = tx_type == OpTxType::Deposit;
-
-                // Enforce per-tx block gas budget. Mirrors
-                // alloy-op-evm/src/block/mod.rs::execute_transaction_without_commit
-                // (block_available_gas check + Regolith deposit bypass).
-                use alloy_consensus::Transaction;
-                let tx_gas_limit = tx.gas_limit();
-                if is_regolith || !is_deposit {
-                    let block_available_gas =
-                        block_gas_limit.saturating_sub(evm_accum.cumulative_gas_used);
-                    if tx_gas_limit > block_available_gas {
-                        bail!(
-                            "transaction gas limit {tx_gas_limit} exceeds available \
-                             block gas {block_available_gas}"
-                        );
-                    }
-                }
-
-                // Jovian DA footprint estimation and validation (pre-execution).
-                // Mirrors alloy-op-evm/src/block/mod.rs::
-                //     execute_transaction_without_commit
-                // (the `da_footprint_used` precheck block).
-                let tx_da_footprint = if is_jovian && !is_deposit {
-                    use alloy_evm::op_revm::{estimate_tx_compressed_size, L1BlockInfo};
-                    let compressed =
-                        estimate_tx_compressed_size(tx_bytes).saturating_div(1_000_000);
-                    // Pre-load the L1 block contract into State's cache
-                    // before reading its DA-scalar storage slot (mirrors
-                    // the standard executor's pre-fetch ordering).
-                    let l1_block =
-                        alloy_primitives::address!("4200000000000000000000000000000000000015");
-                    let _ = evm
-                        .db_mut()
-                        .basic(l1_block)
-                        .context("L1 block contract missing from chunk witness")?;
-                    let scalar: u64 = L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
-                        .context(
-                            "failed to fetch DA footprint gas scalar \
-                                 from L1 block contract",
-                        )?
-                        .into();
-                    let footprint = compressed.saturating_mul(scalar);
-                    let da_available = block_gas_limit.saturating_sub(evm_accum.da_footprint_used);
-                    if footprint > da_available {
-                        bail!(
-                            "transaction DA footprint {footprint} exceeds available \
-                             block DA budget {da_available}"
-                        );
-                    }
-                    footprint
-                } else {
-                    0
-                };
-
-                // Recover signer and convert to EVM transaction
                 let recovered = tx
                     .try_into_recovered()
                     .context("invalid transaction signature in chunk witness")?;
-                let sender = recovered.signer();
                 let encoded = Bytes::from(tx_bytes.clone());
-                let evm_tx = EvmTx::from_encoded_tx(recovered.inner(), sender, encoded);
+                let wrapped = WithEncoded::new(encoded, recovered);
 
-                // Execute the transaction
-                let ResultAndState {
-                    result,
-                    state: tx_state,
-                } = evm
-                    .transact_raw(evm_tx)
-                    .context("chunk transaction execution failed")?;
+                // Delegates to `execute_transaction_without_commit`
+                // (block-available-gas check, Jovian DA precheck with L1Block
+                // preload) and `commit_transaction` (state commit,
+                // deposit-nonce read, receipt construction via
+                // `OpAlloyReceiptBuilder`, gas/DA accumulation).
+                exec.execute_transaction(wrapped)
+                    .map_err(|e| anyhow::anyhow!("chunk transaction execution failed: {e}"))?;
 
-                // Commit state changes to the database
-                evm.db_mut().commit(tx_state);
-
-                // Update gas accumulator. Mirrors alloy-op-evm/src/block/mod.rs::
-                //     commit_transaction (`self.gas_used += gas_used`).
-                evm_accum.cumulative_gas_used += result.gas_used();
-
-                // Update DA footprint / blob gas accumulators (Jovian+).
-                // Mirrors alloy-op-evm/src/block/mod.rs::commit_transaction
-                // (`self.da_footprint_used += blob_gas_used`). Upstream's
-                // final `BlockExecutionResult` reports
-                // `blob_gas_used = self.da_footprint_used`, so the
-                // accumulator's blob_gas_used mirrors that aggregate here.
-                if tx_da_footprint > 0 {
-                    evm_accum.da_footprint_used =
-                        evm_accum.da_footprint_used.saturating_add(tx_da_footprint);
-                    evm_accum.blob_gas_used =
-                        evm_accum.blob_gas_used.saturating_add(tx_da_footprint);
+                // Accrue logs from the newly-added receipt into the running bloom.
+                if let Some(receipt) = exec.receipts.last() {
+                    for log in TxReceipt::logs(receipt) {
+                        logs_bloom.accrue_log(log);
+                    }
                 }
-
-                // Build receipt with proper deposit fields
-                let success = result.is_success();
-                let logs: Vec<alloy_primitives::Log> = result.logs().to_vec();
-                for log_entry in &logs {
-                    evm_accum.logs_bloom.accrue_log(log_entry);
-                }
-
-                // Read post-execution deposit sender state for deposit_nonce.
-                // Mirrors alloy-op-evm/src/block/mod.rs::commit_transaction
-                // (the `depositor` fetch + `deposit_nonce: depositor.map(...)`
-                // receipt field). DB errors propagate; a missing account
-                // defaults to `AccountInfo::default()` (nonce 0), matching
-                // upstream's `acc.unwrap_or_default()`.
-                let deposit_nonce = if is_regolith && is_deposit {
-                    let account = evm
-                        .db_mut()
-                        .basic(sender)
-                        .context("failed to read deposit sender account after commit")?
-                        .unwrap_or_default();
-                    Some(account.nonce)
-                } else {
-                    None
-                };
-                // Deposit receipt version gate (Canyon). Mirrors
-                // alloy-op-evm/src/block/mod.rs::commit_transaction
-                // (`deposit_receipt_version: (is_deposit && canyon).then_some(1)`).
-                let deposit_receipt_version = (is_deposit && is_canyon).then_some(1);
-
-                let receipt = OpReceiptEnvelope::from_parts(
-                    success,
-                    evm_accum.cumulative_gas_used,
-                    &logs,
-                    tx_type,
-                    deposit_nonce,
-                    deposit_receipt_version,
-                );
-                evm_accum.receipts.push(receipt);
             }
 
-            // Drop the EVM to release the borrow on `state`
-            drop(evm);
+            // Reconstruct the chunk's final accumulator state for hashing.
+            // `blob_gas_used` is derived from `exec.da_footprint_used`,
+            // matching upstream's `BlockExecutionResult.blob_gas_used =
+            // self.da_footprint_used` convention. The entry-time invariant
+            // check above guarantees the seed already had
+            // `blob_gas_used == da_footprint_used`, so this output
+            // preserves that equality and advances both in lockstep with
+            // executed Jovian DA contributions. The next chunk's seed
+            // (host-produced) must carry the same equality; the host's
+            // `ChunkTxMeta::blob_gas_used_delta` must equal
+            // `ChunkTxMeta::da_footprint_delta` per tx on OP Jovian.
+            let evm_accum = crate::precondition::chunking::EvmAccumulatorState {
+                cumulative_gas_used: exec.gas_used,
+                da_footprint_used: exec.da_footprint_used,
+                blob_gas_used: exec.da_footprint_used,
+                logs_bloom,
+                receipts: take(&mut exec.receipts),
+            };
+
+            // Drop the executor to release the borrow on `state` (it owns
+            // the EVM, which borrows `state` mutably).
+            drop(exec);
 
             // (f) Compute tx_hash
             let tx_hash = compute_tx_hash(&cw.transactions);
@@ -1195,6 +1203,193 @@ pub mod tests {
         // Run both chunks and verify they produce valid results
         let (_boot0, _prec0) = test_chunk_execution(make_chunk_boot_info(), cw0);
         let (_boot1, _prec1) = test_chunk_execution(make_chunk_boot_info(), cw1);
+    }
+
+    /// Helper: run `run_core_client` in chunk mode, returning the raw `Result`
+    /// (unlike `test_chunk_execution` which `.expect()`s success). Used by
+    /// the rejection tests below.
+    fn try_chunk_execution(
+        boot_info: BootInfo,
+        chunk_witness: ChunkWitnessData,
+    ) -> anyhow::Result<(BootInfo, Precondition)> {
+        assert_eq!(boot_info.l1_head, B256::repeat_byte(0xFF));
+        let oracle = Arc::new(TestOracle::new(boot_info.clone()));
+        run_core_client(
+            B256::ZERO,
+            oracle.clone(),
+            oracle.clone(),
+            OracleBlobProvider::new(oracle.clone()),
+            EthereumDataSourceProvider,
+            vec![],
+            None,
+            None,
+            None,
+            Some(chunk_witness),
+        )
+    }
+
+    /// OP Jovian invariant: `blob_gas_used` must equal `da_footprint_used`
+    /// at every chunk boundary (`BlockExecutionResult.blob_gas_used =
+    /// self.da_footprint_used`). Any witness where they diverge must be
+    /// rejected before seeding `OpBlockExecutor`, because the guest derives
+    /// the output `blob_gas_used` from `exec.da_footprint_used` and would
+    /// otherwise produce an incoherent chunk trace relative to the next
+    /// chunk's seed (which the host threads in lockstep on real blocks).
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_chunk_mode_rejects_blob_gas_ne_da_footprint() {
+        use crate::precondition::chunking::EvmAccumulatorState;
+        use alloy_evm::revm::database::in_memory_db::Cache;
+
+        let cache = Cache {
+            accounts: Default::default(),
+            contracts: Default::default(),
+            logs: Vec::new(),
+            block_hashes: Default::default(),
+        };
+        // Seed with divergent values (mirrors the synthetic host tests at
+        // `crates/prover/src/chunk.rs` that set blob_gas_used_delta=131072
+        // and da_footprint_delta=500). On OP Jovian these MUST match.
+        let evm_state = EvmAccumulatorState {
+            cumulative_gas_used: 100_000,
+            da_footprint_used: 500,
+            blob_gas_used: 131072,
+            logs_bloom: Default::default(),
+            receipts: Vec::new(),
+        };
+        let mut cw = make_test_chunk_witness(1, 2, cache, evm_state, vec![]);
+        cw.block_env.gas_limit = 30_000_000;
+
+        let result = try_chunk_execution(make_chunk_boot_info(), cw);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("blob_gas_used") && err_msg.contains("da_footprint_used"),
+            "unexpected error: {err_msg}"
+        );
+    }
+
+    /// Trust-boundary check: upstream's `block_available_gas =
+    /// gas_limit - self.gas_used` is unchecked subtraction. If a witness
+    /// seeds `cumulative_gas_used > gas_limit`, the subtraction wraps to
+    /// near-`u64::MAX` in release (silently accepting an impossible budget)
+    /// or panics in debug. The guest MUST reject such witnesses at entry.
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_chunk_mode_rejects_cumulative_gas_above_limit() {
+        use crate::precondition::chunking::EvmAccumulatorState;
+        use alloy_evm::revm::database::in_memory_db::Cache;
+
+        let cache = Cache {
+            accounts: Default::default(),
+            contracts: Default::default(),
+            logs: Vec::new(),
+            block_hashes: Default::default(),
+        };
+        let evm_state = EvmAccumulatorState {
+            cumulative_gas_used: 100, // > gas_limit
+            da_footprint_used: 0,
+            blob_gas_used: 0,
+            logs_bloom: Default::default(),
+            receipts: Vec::new(),
+        };
+        let mut cw = make_test_chunk_witness(0, 1, cache, evm_state, vec![]);
+        cw.block_env.gas_limit = 50;
+
+        let result = try_chunk_execution(make_chunk_boot_info(), cw);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("cumulative_gas_used")
+                && err_msg.contains("exceeds block gas_limit"),
+            "unexpected error: {err_msg}"
+        );
+    }
+
+    /// Trust-boundary check (DA counterpart): same class of wrap/panic
+    /// hazard as the gas-used check, but on the Jovian DA-footprint
+    /// precheck path.
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_chunk_mode_rejects_da_footprint_above_limit() {
+        use crate::precondition::chunking::EvmAccumulatorState;
+        use alloy_evm::revm::database::in_memory_db::Cache;
+
+        let cache = Cache {
+            accounts: Default::default(),
+            contracts: Default::default(),
+            logs: Vec::new(),
+            block_hashes: Default::default(),
+        };
+        let evm_state = EvmAccumulatorState {
+            cumulative_gas_used: 0,
+            da_footprint_used: 100, // > gas_limit
+            blob_gas_used: 100,     // must equal da_footprint_used on OP Jovian
+            logs_bloom: Default::default(),
+            receipts: Vec::new(),
+        };
+        let mut cw = make_test_chunk_witness(0, 1, cache, evm_state, vec![]);
+        cw.block_env.gas_limit = 50;
+
+        let result = try_chunk_execution(make_chunk_boot_info(), cw);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("da_footprint_used")
+                && err_msg.contains("exceeds block gas_limit"),
+            "unexpected error: {err_msg}"
+        );
+    }
+
+    /// Positive case: a non-zero synced seed (representing a later chunk
+    /// whose earlier chunks consumed some gas / DA) is accepted and
+    /// threaded through unchanged when the current chunk is empty. This
+    /// verifies that the invariant admits legitimate mid-block continuity
+    /// (the guest's output preserves `gas_used`, `da_footprint_used`, and
+    /// `blob_gas_used` verbatim when no txs execute, matching the next
+    /// chunk's pre-state seed in a multi-chunk block).
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_chunk_mode_accepts_synced_nonzero_seeds() {
+        use crate::precondition::chunking::{
+            compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state, EvmAccumulatorState,
+        };
+        use alloy_evm::revm::database::in_memory_db::Cache;
+        use risc0_zkvm::sha::Digestible;
+
+        let cache = Cache {
+            accounts: Default::default(),
+            contracts: Default::default(),
+            logs: Vec::new(),
+            block_hashes: Default::default(),
+        };
+        // Seed representing a later chunk in a multi-chunk block: prior
+        // chunks consumed 1M gas and 500 DA; blob_gas tracks DA in lockstep
+        // (OP Jovian invariant).
+        let evm_state = EvmAccumulatorState {
+            cumulative_gas_used: 1_000_000,
+            da_footprint_used: 500,
+            blob_gas_used: 500,
+            logs_bloom: Default::default(),
+            receipts: Vec::new(),
+        };
+        let mut cw = make_test_chunk_witness(1, 2, cache.clone(), evm_state.clone(), vec![]);
+        cw.block_env.gas_limit = 30_000_000;
+
+        // With no transactions, every accumulator field must be preserved
+        // unchanged: post_evm_hash == pre_evm_hash. The next chunk's seed
+        // (chunk index 2 in this hypothetical block) would hash to the same
+        // value, preserving continuity.
+        let tx_hash = compute_tx_hash(&[]);
+        let pre_db_hash = hash_cache(&cache);
+        let pre_evm_hash = hash_evm_state(&evm_state);
+        let expected_trace = compute_chunk_trace(
+            tx_hash,
+            pre_db_hash,
+            pre_db_hash,
+            pre_evm_hash,
+            pre_evm_hash,
+        );
+
+        let (result_boot, precondition) =
+            try_chunk_execution(make_chunk_boot_info(), cw).expect("synced seeds must be accepted");
+
+        assert_eq!(result_boot.l1_head, B256::repeat_byte(0xFF));
+        let expected_precondition = Precondition::default().chunk(expected_trace);
+        assert_eq!(precondition.digest(), expected_precondition.digest());
     }
 
     #[tokio::test(flavor = "multi_thread")]
