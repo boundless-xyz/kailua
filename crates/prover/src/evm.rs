@@ -14,190 +14,23 @@
 
 //! Tracing EVM wrapper for capturing per-transaction execution results.
 //!
-//! [`TracingEvm`] wraps any `E: Evm` and captures full `ResultAndState` (execution result +
-//! state diff) after each successful `transact_raw()` call into a shared trace buffer. System
-//! calls (`transact_system_call`) are delegated transparently without appending to the trace
-//! buffer, since they represent block-level prelude/epilogue work rather than ordered
-//! transaction-body execution.
-//!
-//! [`TracingOpEvmFactory`] wraps `OpEvmFactory` and produces `TracingOpEvm<OpEvm<...>>` instances
-//! that share a single trace buffer. Used on the host to capture per-transaction traces during
-//! `build_block()` for chunk witness construction. The `EvmState` component is used for witness
-//! cache construction; the full `ResultAndState` is used for `Chunk.results` in aggregation.
-//! Callers must drain the shared buffer via [`TracingOpEvmFactory::take_traces`] at the per-block
-//! boundary so stale traces do not leak into later witness construction.
+//! The tracing EVM wrapper types [`TracingEvm`] and [`TracingOpEvmFactory`] live in
+//! `kailua-kona` so both the host (block-level capture for chunk witness construction)
+//! and the guest (chunk-level capture feeding `results_hash` into `chunk_trace`) can
+//! share a single implementation. This module re-exports them for consumers that
+//! previously depended on `kailua_prover::evm`.
 
-use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
-use alloy_evm::precompiles::PrecompilesMap;
-use alloy_evm::revm::context::BlockEnv;
-use alloy_evm::revm::context::TxEnv;
-use alloy_evm::revm::context_interface::result::{EVMError, ResultAndState};
-use alloy_evm::revm::inspector::NoOpInspector;
-use alloy_evm::revm::Inspector;
-use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
-use alloy_op_evm::{OpEvm, OpEvmFactory, OpTxError};
-use alloy_primitives::{Address, Bytes};
-use std::mem;
-use std::sync::{Arc, Mutex};
-
-/// EVM wrapper that captures full per-transaction `ResultAndState` on successful `transact_raw()`.
-///
-/// Follows the proven `CustomEvm` wrapper pattern: implements the `Evm` trait by delegating all
-/// required methods to the inner EVM. No `Deref`/`DerefMut` needed — the block executor accesses
-/// fields through `Evm` trait default methods (`db()`, `db_mut()`, etc.) which delegate to
-/// `components()`/`components_mut()`.
-pub struct TracingEvm<E: Evm> {
-    inner: E,
-    traces: Arc<Mutex<Vec<ResultAndState<E::HaltReason>>>>,
-}
-
-impl<E: Evm> TracingEvm<E> {
-    /// Creates a new tracing wrapper around the given EVM with a shared trace buffer.
-    pub fn new(inner: E, traces: Arc<Mutex<Vec<ResultAndState<E::HaltReason>>>>) -> Self {
-        Self { inner, traces }
-    }
-}
-
-impl<E: Evm> Evm for TracingEvm<E> {
-    type DB = E::DB;
-    type Tx = E::Tx;
-    type Error = E::Error;
-    type HaltReason = E::HaltReason;
-    type Spec = E::Spec;
-    type BlockEnv = E::BlockEnv;
-    type Precompiles = E::Precompiles;
-    type Inspector = E::Inspector;
-
-    fn block(&self) -> &Self::BlockEnv {
-        self.inner.block()
-    }
-
-    fn chain_id(&self) -> u64 {
-        self.inner.chain_id()
-    }
-
-    /// Executes a transaction, captures the full `ResultAndState` on success, then returns
-    /// the original result unmodified.
-    fn transact_raw(
-        &mut self,
-        tx: Self::Tx,
-    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        let result = self.inner.transact_raw(tx)?;
-        self.traces.lock().unwrap().push(result.clone());
-        Ok(result)
-    }
-
-    /// Delegates system calls to the inner EVM without appending to the tx-body trace buffer.
-    /// System calls represent block-level prelude/epilogue work (beacon root, blockhashes,
-    /// Canyon deployer), not ordered transaction-body execution.
-    fn transact_system_call(
-        &mut self,
-        caller: Address,
-        contract: Address,
-        data: Bytes,
-    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        self.inner.transact_system_call(caller, contract, data)
-    }
-
-    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec, Self::BlockEnv>)
-    where
-        Self: Sized,
-    {
-        self.inner.finish()
-    }
-
-    fn set_inspector_enabled(&mut self, enabled: bool) {
-        self.inner.set_inspector_enabled(enabled)
-    }
-
-    fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
-        self.inner.components()
-    }
-
-    fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
-        self.inner.components_mut()
-    }
-}
-
-/// Factory that wraps `OpEvmFactory` and produces `TracingOpEvm<OpEvm<...>>` instances
-/// sharing a single trace buffer.
-///
-/// On the host, callers provide this factory to `KonaExecutor` to capture per-transaction
-/// traces during `build_block()`. In the guest, callers use `OpEvmFactory` directly (zero
-/// tracing overhead). The shared buffer must be drained with [`take_traces`](Self::take_traces)
-/// after each block so traces from prior executions do not accumulate.
-#[derive(Clone, Debug)]
-pub struct TracingOpEvmFactory {
-    inner: OpEvmFactory,
-    traces: Arc<Mutex<Vec<ResultAndState<OpHaltReason>>>>,
-}
-
-impl TracingOpEvmFactory {
-    /// Creates a new tracing factory with a fresh shared trace buffer.
-    pub fn new() -> Self {
-        Self {
-            inner: OpEvmFactory::default(),
-            traces: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    /// Atomically drains and returns the accumulated traces for the current block execution.
-    ///
-    /// Each entry is a full `ResultAndState` capturing both the `ExecutionResult` (gas, logs,
-    /// output) and the `EvmState` (per-tx state diff). The `EvmState` component is used for
-    /// chunk witness cache construction; the full `ResultAndState` is used for `Chunk.results`.
-    ///
-    /// This establishes the per-block trace boundary expected by chunk witness construction.
-    /// Subsequent executions that reuse this factory start with an empty trace buffer.
-    pub fn take_traces(&self) -> Vec<ResultAndState<OpHaltReason>> {
-        mem::take(&mut *self.traces.lock().unwrap())
-    }
-}
-
-impl Default for TracingOpEvmFactory {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EvmFactory for TracingOpEvmFactory {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = TracingEvm<OpEvm<DB, I, PrecompilesMap>>;
-    type Context<DB: Database> = OpContext<DB>;
-    type Tx = OpTransaction<TxEnv>;
-    type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError, OpTxError>;
-    type HaltReason = OpHaltReason;
-    type Spec = OpSpecId;
-    type BlockEnv = BlockEnv;
-    type Precompiles = PrecompilesMap;
-
-    fn create_evm<DB: Database>(
-        &self,
-        db: DB,
-        input: EvmEnv<OpSpecId>,
-    ) -> Self::Evm<DB, NoOpInspector> {
-        TracingEvm::new(self.inner.create_evm(db, input), self.traces.clone())
-    }
-
-    fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
-        &self,
-        db: DB,
-        input: EvmEnv<OpSpecId>,
-        inspector: I,
-    ) -> Self::Evm<DB, I> {
-        TracingEvm::new(
-            self.inner.create_evm_with_inspector(db, input, inspector),
-            self.traces.clone(),
-        )
-    }
-}
+pub use kailua_kona::evm::{TracingEvm, TracingOpEvmFactory};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_evm::revm::context::CfgEnv;
+    use alloy_evm::op_revm::{OpHaltReason, OpSpecId, OpTransaction};
+    use alloy_evm::revm::context::{BlockEnv, CfgEnv, TxEnv};
     use alloy_evm::revm::database::in_memory_db::InMemoryDB;
     use alloy_evm::revm::state::AccountInfo;
-    use alloy_primitives::{address, TxKind, U256};
+    use alloy_evm::{Evm, EvmEnv, EvmFactory};
+    use alloy_primitives::{address, Address, Bytes, TxKind, U256};
 
     fn test_env() -> EvmEnv<OpSpecId> {
         let block_env = BlockEnv {
@@ -264,42 +97,6 @@ mod tests {
     }
 
     #[test]
-    fn multiple_transactions_produce_ordered_traces() {
-        let factory = TracingOpEvmFactory::new();
-        let mut db = InMemoryDB::default();
-
-        let sender = address!("0x1000000000000000000000000000000000000000");
-        let recipient1 = address!("0x2000000000000000000000000000000000000000");
-        let recipient2 = address!("0x3000000000000000000000000000000000000000");
-
-        db.insert_account_info(
-            sender,
-            AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
-                nonce: 0,
-                ..Default::default()
-            },
-        );
-
-        let mut evm = factory.create_evm(db, test_env());
-        evm.transact_commit(make_transfer(sender, recipient1, U256::from(1000), 0))
-            .unwrap();
-        evm.transact_commit(make_transfer(sender, recipient2, U256::from(2000), 1))
-            .unwrap();
-
-        let traces = factory.take_traces();
-        assert_eq!(traces.len(), 2, "should have two trace entries");
-        assert!(
-            traces[0].state.contains_key(&recipient1),
-            "first trace should contain recipient1"
-        );
-        assert!(
-            traces[1].state.contains_key(&recipient2),
-            "second trace should contain recipient2"
-        );
-    }
-
-    #[test]
     fn system_call_does_not_append_trace() {
         let factory = TracingOpEvmFactory::new();
         let db = InMemoryDB::default();
@@ -318,54 +115,18 @@ mod tests {
         );
     }
 
+    /// The factory's trace buffer is shared across clones via `Arc<Mutex<_>>` so that
+    /// the kona executor (which clones the factory internally) accumulates into the
+    /// same buffer the caller drains. This test exercises that sharing contract —
+    /// confirming we inherit it correctly from `kailua-kona`.
     #[test]
-    fn failed_transaction_does_not_append_trace() {
+    fn take_traces_drains_shared_buffer_across_clones() {
         let factory = TracingOpEvmFactory::new();
-        let db = InMemoryDB::default();
-        let mut evm = factory.create_evm(db, test_env());
-
-        // Unfunded sender — should fail
-        let tx = make_transfer(
-            address!("0x0000000000000000000000000000000000000099"),
-            address!("0x0000000000000000000000000000000000000001"),
-            U256::from(1_000_000),
-            0,
-        );
-
-        let result = evm.transact_raw(tx);
-        assert!(
-            result.is_err(),
-            "transaction from unfunded account should fail"
-        );
-
-        let traces = factory.take_traces();
-        assert_eq!(
-            traces.len(),
-            0,
-            "failed transaction should not append to trace buffer"
-        );
-    }
-
-    #[test]
-    fn trait_method_field_access_works() {
-        let factory = TracingOpEvmFactory::new();
-        let db = InMemoryDB::default();
-        let evm = factory.create_evm(db, test_env());
-
-        assert_eq!(evm.block().number, U256::from(1));
-        assert_eq!(evm.chain_id(), 1);
-        let _ = evm.db();
-    }
-
-    #[test]
-    fn take_traces_drains_shared_buffer() {
-        let factory = TracingOpEvmFactory::new();
-        let cloned_factory = factory.clone();
+        let cloned = factory.clone();
         let mut db = InMemoryDB::default();
 
         let sender = address!("0x1000000000000000000000000000000000000000");
         let recipient = address!("0x2000000000000000000000000000000000000000");
-
         db.insert_account_info(
             sender,
             AccountInfo {
@@ -375,19 +136,16 @@ mod tests {
             },
         );
 
-        let mut evm = cloned_factory.create_evm(db, test_env());
-        evm.transact_raw(make_transfer(sender, recipient, U256::from(1000), 0))
+        let mut evm = cloned.create_evm(db, test_env());
+        evm.transact_raw(make_transfer(sender, recipient, U256::from(1), 0))
             .unwrap();
 
-        let traces = factory.take_traces();
-        assert_eq!(
-            traces.len(),
-            1,
-            "take_traces should return the accumulated block traces"
-        );
-        assert!(
-            cloned_factory.take_traces().is_empty(),
-            "take_traces should drain the shared buffer for all factory clones"
-        );
+        // Draining via the original factory observes the clone's traces.
+        assert_eq!(factory.take_traces().len(), 1);
+        assert!(cloned.take_traces().is_empty());
+
+        // Silence unused warning for a halt reason import that's handy to have at
+        // module scope for future tests.
+        let _: Option<OpHaltReason> = None;
     }
 }

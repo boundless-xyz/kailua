@@ -14,16 +14,18 @@
 
 use crate::client::log;
 use crate::precondition::chunking::EvmAccumulatorState;
-use crate::rkyv::chunking::ResultAndStateRkyv;
+use crate::rkyv::chunking::{BlockEnvRkyv, OpBlockExecutionCtxRkyv, ResultAndStateRkyv};
 use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
 use alloy_evm::op_revm::OpHaltReason;
+use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context_interface::result::ResultAndState;
 use alloy_evm::revm::database_interface::DatabaseRef;
 use alloy_evm::revm::state::{AccountInfo, Bytecode};
 use alloy_evm::EvmFactory;
+use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Sealed, B256, U256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
@@ -69,6 +71,14 @@ pub struct Execution {
 /// transactions, along with hash commitments for inter-chunk stitching verification.
 /// `agreed_db`/`agreed_evm` represent the state *before* this chunk's transactions;
 /// `claimed_db`/`claimed_evm` represent the state *after*.
+///
+/// The `agreed_l2_output_root` and `parent_block_number` fields carry the per-block
+/// journal context needed to reconstruct each chunk's `ProofJournal` during
+/// aggregation stitching. Because chunks belonging to different blocks in a
+/// derivation run have different agreed-output-roots and parent block numbers
+/// (per the chunk-proving spec), these must be stored per-chunk rather than
+/// derived from the outer run's final `BootInfo` — which carries only the run's
+/// final claimed output root and last block number.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct Chunk {
     /// Hash of the DB state before this chunk's transactions.
@@ -77,7 +87,18 @@ pub struct Chunk {
     /// Hash of the EVM accumulator state before this chunk's transactions.
     #[rkyv(with = B256Def)]
     pub agreed_evm: B256,
-    /// Number of transactions in this chunk.
+    /// Number of transactions in this chunk. Must equal `results.len()` —
+    /// enforced by `verify_block_chunks` to reject malformed witnesses.
+    ///
+    /// Note (review finding M-8): `u16` bounds per-chunk tx count at 65535. This is
+    /// far above any plausible OP block size today (highest OP Mainnet block to date
+    /// is under 1000 txs), but the protocol does not formally cap block tx count. If
+    /// a block ever exceeds `u16::MAX` txs, its chunks would need a wider type here
+    /// AND the host's `group_transactions_into_chunks` would need to refuse, since
+    /// silent truncation would produce a witness that `verify_block_chunks` rejects
+    /// (tx_count vs results.len() mismatch or missing full coverage). Enforce at
+    /// witness construction time rather than here — this struct is consumed after
+    /// the host already validated the partition.
     pub tx_count: u16,
     /// Hash of the chunk's transaction list.
     #[rkyv(with = B256Def)]
@@ -93,6 +114,28 @@ pub struct Chunk {
     /// Hash of the EVM accumulator state after this chunk's transactions.
     #[rkyv(with = B256Def)]
     pub claimed_evm: B256,
+    /// L2 output root agreed to by this chunk's proof (the parent block's output
+    /// root). Chunks do not advance L2 state, so `claimed_l2_output_root ==
+    /// agreed_l2_output_root` in the chunk's `ProofJournal`.
+    #[rkyv(with = B256Def)]
+    pub agreed_l2_output_root: B256,
+    /// Parent block number — the `claimed_l2_block_number` emitted by this
+    /// chunk's guest (the block whose body the chunk proves starts from).
+    pub parent_block_number: u64,
+    /// Block execution `BlockEnv` under which this chunk's transactions executed
+    /// (timestamp, basefee, prevrandao, coinbase, blob pricing, etc.). Carried so
+    /// the aggregation side can (a) reconstruct `block_ctx_hash` for the chunk's
+    /// `chunk_trace` and (b) cross-check against the derivation pipeline's actual
+    /// block context (see `verify_block_chunks`). Without this binding, an adversary
+    /// could generate a valid chunk proof under a forged context and have aggregation
+    /// accept its env-sensitive results.
+    #[rkyv(with = BlockEnvRkyv)]
+    pub block_env: BlockEnv,
+    /// OP block execution context (parent_hash for BLOCKHASH / EIP-2935,
+    /// parent_beacon_block_root for EIP-4788, extra_data for Holocene/Jovian
+    /// EIP-1559 params). Same binding/verify role as `block_env`.
+    #[rkyv(with = OpBlockExecutionCtxRkyv)]
+    pub op_block_ctx: OpBlockExecutionCtx,
 }
 
 /// A database backend that panics on all reads.
@@ -734,6 +777,10 @@ pub mod tests {
             },
             claimed_db: keccak256("claimed_db"),
             claimed_evm: keccak256("claimed_evm"),
+            agreed_l2_output_root: keccak256("agreed_l2_output_root"),
+            parent_block_number: 1234,
+            block_env: BlockEnv::default(),
+            op_block_ctx: OpBlockExecutionCtx::default(),
         }
     }
 
@@ -752,6 +799,8 @@ pub mod tests {
         assert_eq!(deser.evm_state.da_footprint_used, 100);
         assert_eq!(deser.claimed_db, chunk.claimed_db);
         assert_eq!(deser.claimed_evm, chunk.claimed_evm);
+        assert_eq!(deser.agreed_l2_output_root, chunk.agreed_l2_output_root);
+        assert_eq!(deser.parent_block_number, chunk.parent_block_number);
 
         // Verify the ResultAndState content survived
         match &deser.results[0].result {
@@ -815,6 +864,10 @@ pub mod tests {
             evm_state: crate::precondition::chunking::EvmAccumulatorState::default(),
             claimed_db: keccak256("claimed_db"),
             claimed_evm: keccak256("claimed_evm"),
+            agreed_l2_output_root: B256::ZERO,
+            parent_block_number: 0,
+            block_env: BlockEnv::default(),
+            op_block_ctx: OpBlockExecutionCtx::default(),
         };
         let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
         let deser = rkyv::from_bytes::<super::Chunk, Error>(&bytes).unwrap();

@@ -48,7 +48,7 @@ The guest programs (`kailua-fpvm-kona`, `kailua-fpvm-hana`, `kailua-fpvm-hokulea
 | Field | Value |
 |-------|-------|
 | `payout_recipient` | Identical to block proof |
-| `precondition_hash` | `SHA256(tx_hash \|\| pre_db_hash \|\| post_db_hash \|\| pre_evm_hash \|\| post_evm_hash)` |
+| `precondition_hash` | `SHA256(tx_hash \|\| pre_db_hash \|\| post_db_hash \|\| pre_evm_hash \|\| post_evm_hash \|\| results_hash \|\| block_ctx_hash)` |
 | `l1_head` | `0xFF..FF` (chunk sentinel) |
 | `agreed_l2_output_root` | Current agreed L2 output root |
 | `claimed_l2_output_root` | Same as agreed (chunk doesn't advance L2 state) |
@@ -74,15 +74,23 @@ The guest programs (`kailua-fpvm-kona`, `kailua-fpvm-hana`, `kailua-fpvm-hokulea
 
 **Rationale**: `CacheDB` is the same structure that `State<TrieDB>` uses internally as its cache layer. Reusing it ensures identical data representation. `PanicDB` as the fallback guarantees completeness — if the host's chunk witness is missing any state, the guest panics rather than silently using wrong data.
 
-### Decision 5: Pre/post hashing for both memory DB and EVM state
+### Decision 5: Pre/post hashing plus per-tx results binding plus block-context binding
 
-**Choice**: The chunk `precondition_hash` commits to five values: `tx_hash`, `pre_db_hash`, `post_db_hash`, `pre_evm_state_hash`, `post_evm_state_hash`.
+**Choice**: The chunk `precondition_hash` commits to seven values: `tx_hash`, `pre_db_hash`, `post_db_hash`, `pre_evm_state_hash`, `post_evm_state_hash`, `results_hash`, and `block_ctx_hash` — where `results_hash = SHA256(canonical_encode(Vec<ResultAndState<OpHaltReason>>))` over the per-tx execution trace captured by the chunk guest, and `block_ctx_hash = SHA256(canonical_encode(BlockEnv || OpBlockExecutionCtx))` over the exact block execution context the chunk guest ran under. Aggregation additionally cross-checks each chunk's carried `block_env` / `op_block_ctx` against the derivation pipeline's actual header in `verify_block_chunks`.
 
-**Rationale**: Pre/post splitting enables the block aggregation proof to chain both dimensions in lockstep:
+**Rationale**: Pre/post state splitting enables the block aggregation proof to chain both dimensions in lockstep:
 - `post_db_hash[i] == pre_db_hash[i+1]` (memory DB continuity)
 - `post_evm_hash[i] == pre_evm_hash[i+1]` (EVM accumulator continuity)
 
-The aggregation proof never re-executes transactions — it only verifies hash chains and chunk receipts.
+But pre/post endpoints alone are insufficient for aggregation safety: many distinct per-tx traces can map the same `pre_db_hash` to the same `post_db_hash`, so a witness-supplied `Chunk.results` vec could be substituted by a different-but-endpoint-equivalent trace without detection. The `results_hash` binding closes this gap — the chunk guest hashes its captured `ResultAndState` trace into `chunk_trace`, and the aggregation side recomputes the same hash over `Chunk.results` during `stitch_chunks`; tampering produces a different `chunk_trace` and a different journal identity, causing `env::verify()` to reject the chunk proof.
+
+Similarly, endpoint + results binding alone is insufficient when execution context is adversary-controlled: a malicious prover can generate a valid chunk proof under a forged `block_env` (different timestamp, basefee, prevrandao, coinbase, blob pricing) or `op_block_ctx` (different parent_hash, parent_beacon_block_root, extra_data) and produce results for env-sensitive opcodes (BASEFEE / PREVRANDAO / NUMBER / COINBASE / TIMESTAMP / BLOBBASEFEE / BLOCKHASH / EIP-4788 beacon root / EIP-2935 ring / Holocene-Jovian EIP-1559 params in extra_data) that differ from honest execution under the real block's context. The `block_ctx_hash` binding closes this gap — the chunk guest folds its `BlockEnv` + `OpBlockExecutionCtx` into `chunk_trace`, and the aggregation side both (a) reconstructs the same hash from `Chunk.block_env` / `Chunk.op_block_ctx` during `stitch_chunks`, AND (b) cross-checks those carried fields against the derivation pipeline's actual block header in `verify_block_chunks`. Any mismatch in either direction fails — tampering the carried context without regenerating the proof breaks `env::verify`, while generating a proof under a forged context breaks the header cross-check.
+
+The aggregation proof still never re-executes transactions — it only verifies hash chains, per-chunk journals (including `results_hash` and `block_ctx_hash`), header cross-checks, and the resulting block-level `state_root`.
+
+**Canonical encoding of `results_hash`** (see [`crate::precondition::chunking::hash_results`]): `u64_be(N)` followed by `N` `ResultAndState` encodings. Each encodes `ExecutionResult` (discriminant byte + variant-specific fields — `SuccessReason`, gas values, logs, output bytes; `OpHaltReason` with `HaltReason` sub-discriminants) and then `EvmState` (sorted by address; each account encodes `nonce`, `balance`, `code_hash`, status bitflags, and sorted storage slots with `original_value`/`present_value`). Transient fields (`transaction_id`, `is_cold`, `Account.original_info`, `AccountInfo.code`) are excluded so the same logical trace produces the same hash regardless of execution context.
+
+**Canonical encoding of `block_ctx_hash`** (see [`crate::precondition::chunking::hash_block_ctx`]): `BlockEnv` fields streamed as `u256_be(number) || address(beneficiary) || u256_be(timestamp) || u64_be(gas_limit) || u64_be(basefee) || u256_be(difficulty) || option<B256>(prevrandao) || option<(u64,u128)>(blob_excess_gas_and_price)`, then `OpBlockExecutionCtx` fields as `b256(parent_hash) || option<B256>(parent_beacon_block_root) || length-prefixed bytes(extra_data)`. Each `option<T>` is a 1-byte presence tag followed by the payload if present.
 
 ### Decision 6: Memory DB hash covers the execution-relevant flat state and excludes logs
 
@@ -141,10 +149,11 @@ The aggregation proof never re-executes transactions — it only verifies hash c
 
 Note: `finish()` does NOT construct the header. It returns `(Evm, BlockExecutionResult)` — the epilogue (balance increments) and receipt/gas accumulation. Header construction is performed by `StatelessL2Builder::seal_block()`, called by `build_block()` after `execute_block()` returns. Because `seal_block()` is already part of the `build_block()` pipeline, it runs automatically — no replication of header assembly or EIP-1559 encoding logic is needed.
 
-**Decision 12 addendum (chunk-side):** The chunk guest (`run_core_client` chunk branch) also runs transactions through upstream's `OpBlockExecutor`, but with three differences from aggregation:
+**Decision 12 addendum (chunk-side):** The chunk guest (`run_core_client` chunk branch) also runs transactions through upstream's `OpBlockExecutor`, but with four differences from aggregation:
 1. `apply_pre_execution_changes` is skipped — the chunk witness already encodes post-prelude state (parent-hash ring buffer writes, beacon-root contract call, create2 deployer at the canyon transition). Part 8 aggregation binds `cw.cache` to the target block's post-prelude state.
 2. `finish` is skipped — chunks do not apply the post-block balance increments. The aggregation proof owns that step.
 3. The executor's `gas_used` / `da_footprint_used` / `receipts` accumulator fields (which are explicitly `pub` in upstream) are externally seeded from `witness.evm_state` so cross-chunk continuity holds. Without seeding, `execute_transaction_without_commit`'s block-available-gas and Jovian DA footprint prechecks would compare against a zero baseline, producing incorrect budget decisions for any chunk past the first.
+4. The inner `OpEvm` is wrapped with `TracingOpEvmFactory`, which captures each successful `transact_raw()`'s full `ResultAndState` into a shared buffer. After the tx-body loop, the guest drains the buffer and computes `results_hash = hash_results(&traces)`, folding it into the six-input `compute_chunk_trace`. This is what binds the chunk proof to the exact per-transaction execution trace — without it, the aggregation-side `ChunkingEvm` could replay a substituted `Chunk.results` that shares the same pre/post endpoints but differs per-tx (receipts, gas deltas, state touches, output bytes).
 
 A running `logs_bloom` is tracked separately in the chunk branch by OR-ing each committed receipt's logs into a local accumulator — `OpBlockExecutor` does not expose a per-block running bloom (the standard pipeline recomputes it at `seal_block` time from the final receipts vector).
 

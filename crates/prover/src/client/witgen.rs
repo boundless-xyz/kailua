@@ -97,6 +97,7 @@ where
         derivation_cache.clone(),
         trace_derivation.then(|| derivation_trace.clone()),
         None,
+        Vec::new(),
     )?;
     // Fix claimed output of captured executions
     let stitched_executions =
@@ -135,6 +136,7 @@ where
         stitched_boot_info,
         fpvm_image_id,
         chunk_witness: None,
+        chunks: Vec::new(),
     };
     witness
         .oracle_witness

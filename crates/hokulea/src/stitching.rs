@@ -22,7 +22,7 @@ use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
-use kailua_kona::executor::Execution;
+use kailua_kona::executor::{Chunk, Execution};
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::precondition::Precondition;
@@ -69,6 +69,7 @@ impl<
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
         chunk_witness: Option<ChunkWitnessData>,
+        chunks: Vec<Vec<Chunk>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
@@ -102,6 +103,7 @@ impl<
                 stitched_preconditions,
                 stitched_boot_info,
                 chunk_witness,
+                chunks,
             );
         // Ensure boot record is the same for both oracles
         assert_eq!(boot, kona_boot_info);

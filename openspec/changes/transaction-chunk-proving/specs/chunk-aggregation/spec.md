@@ -84,6 +84,39 @@ For each block's chunks, `stitch_chunks()` SHALL:
 - **WHEN** `stitch_chunks()` reconstructs the expected ProofJournal for a chunk
 - **THEN** it uses `config_hash`, `fpvm_image_id`, `payout_recipient`, `agreed_l2_output_root`, `claimed_l2_block_number` from the `BootInfo` returned by `run_core_client()`
 
+### Requirement: Aggregation-side block-coherence verification via `verify_block_chunks`
+
+**Crate:** `kailua-kona` (`crates/kona/src/precondition/chunking.rs`, `crates/kona/src/client/core.rs`)
+
+Before the aggregation `ProofJournal` is finalized, `run_core_client()` SHALL invoke `verify_block_chunks` on every block whose witness supplied chunks. This helper enforces six coherence checks against the derivation pipeline's actual output, closing the forgery vectors identified by the adversarial review:
+
+1. **Output-root anchor** — `chunk.agreed_l2_output_root == derived_parent_output_root` and `chunk.parent_block_number == safe_head_number + block_position`. Uses the L2 output root as cryptographic anchor (collision-resistant commitment to state_root → all state), functionally equivalent to anchoring via `hash_cache_state(State<TrieDB>)` but without the canonicalization mismatch between chunk-witness `Cache` and aggregation `State<TrieDB>.cache`.
+2. **tx_hash binding** — `compute_tx_hash(block_txs[cursor..cursor+tx_count]) == chunk.tx_hash` for each chunk, where `block_txs` comes from the derivation pipeline's `OpPayloadAttributes.transactions`.
+3. **Full coverage** — `sum(chunk.tx_count) == block_txs.len()`; partial coverage is rejected to keep the aggregation model simple.
+4. **evm_state self-consistency** — `hash_evm_state(&chunk.evm_state) == chunk.claimed_evm`.
+5. **Receipts-root reconstruction** — `calculate_receipt_root(&last_chunk.evm_state.receipts) == block_header.receipts_root`.
+6. **Block-context binding** — each chunk's carried `block_env` and `op_block_ctx` MUST match the derivation pipeline's sealed header (number, beneficiary, timestamp, gas_limit, basefee, difficulty, prevrandao/mix_hash, parent_hash, parent_beacon_block_root, extra_data). Combined with the `block_ctx_hash` folded into `chunk_trace` by `compute_chunk_trace`, this forces chunk proofs to have been generated under the exact execution context the aggregation is using — neither a forged context in the chunk witness nor a chunk proof generated under a wrong context can satisfy both checks.
+
+#### Scenario: chunk from a different block is rejected
+- **WHEN** a witness supplies a chunk whose `agreed_l2_output_root` or `parent_block_number` does not match the aggregation's derived parent for the block position
+- **THEN** `verify_block_chunks` returns an error identifying the mismatched anchor, and `run_core_client` halts before emitting a `ProofJournal`
+
+#### Scenario: chunk proven under forged block context is rejected
+- **WHEN** a witness supplies a chunk whose `block_env` or `op_block_ctx` disagrees with the derivation pipeline's sealed header (e.g. different `timestamp`, `basefee`, `beneficiary`, `prevrandao`, `parent_hash`, `extra_data`)
+- **THEN** the block-context cross-check in `verify_block_chunks` rejects the chunk — closing the env-forgery vector where an adversary runs chunks under an alternate context that produces different env-sensitive opcode results
+
+#### Scenario: chunks failing to cover all block txs are rejected
+- **WHEN** `sum(chunks[block_i].tx_count) < block_txs.len()`
+- **THEN** `verify_block_chunks` returns a "full coverage required" error
+
+#### Scenario: tx_hash tampering caught by derivation-side recomputation
+- **WHEN** a witness's `chunk.tx_hash` does not equal `compute_tx_hash(block_txs[chunk_start..chunk_end])` computed over the derivation-produced tx bytes
+- **THEN** `verify_block_chunks` rejects the chunk — closing the wrong-tx-sequence substitution vector
+
+#### Scenario: authenticated receipts must reconstruct block receipts_root
+- **WHEN** `calculate_receipt_root(&chunks[block_i].last().evm_state.receipts) != block_header.receipts_root`
+- **THEN** `verify_block_chunks` rejects the chunks — the authenticated chunk receipts diverged from the block executor's produced receipts
+
 ### Requirement: Trie root provides ultimate correctness guarantee
 
 During chunk aggregation, correctness is assured by two complementary verification layers:

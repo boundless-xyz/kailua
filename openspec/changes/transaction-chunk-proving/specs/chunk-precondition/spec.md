@@ -32,19 +32,25 @@ The `Digestible` implementation for `Precondition` SHALL treat `chunk_trace` as 
 - **WHEN** `Precondition { execution_trace: ZERO, chunk_trace: ZERO, derivation_cache: A, derivation_trace: B, proposal_blobs: C }.digest()` is called
 - **THEN** the result is identical to the current behavior: `combine(merge(A, B), C)`
 
-### Requirement: chunk_trace is computed from five hashes
+### Requirement: chunk_trace is computed from seven hashes
 
-The `chunk_trace` value for a chunk proof SHALL be `SHA256(tx_hash || pre_db_hash || post_db_hash || pre_evm_state_hash || post_evm_state_hash)` where:
+The `chunk_trace` value for a chunk proof SHALL be `SHA256(tx_hash || pre_db_hash || post_db_hash || pre_evm_state_hash || post_evm_state_hash || results_hash || block_ctx_hash)` where:
 - `tx_hash`: SHA256 of the canonical encoding of the chunk's transaction list
 - `pre_db_hash`: SHA256 of the canonical encoding of the memory DB before chunk execution
 - `post_db_hash`: SHA256 of the canonical encoding of the memory DB after chunk execution
 - `pre_evm_state_hash`: SHA256 of the canonical encoding of the EVM state accumulators before chunk execution
 - `post_evm_state_hash`: SHA256 of the canonical encoding of the EVM state accumulators after chunk execution
+- `results_hash`: SHA256 of the canonical encoding of the per-transaction `ResultAndState` trace captured during chunk execution (see `hash_results` — excludes transient fields `transaction_id`, `is_cold`, `original_info`, `AccountInfo.code`)
+- `block_ctx_hash`: SHA256 of the canonical encoding of the `BlockEnv` and `OpBlockExecutionCtx` under which the chunk guest executed (see `hash_block_ctx` — covers `number`, `beneficiary`, `timestamp`, `gas_limit`, `basefee`, `difficulty`, `prevrandao`, `blob_excess_gas_and_price`, `parent_hash`, `parent_beacon_block_root`, `extra_data`)
+
+The `results_hash` component binds the chunk proof to the exact per-transaction execution trace, not merely the pre→post state endpoints. This is what enables the aggregation proof to safely replay `Chunk.results` verbatim without re-execution while still authenticating each transition.
+
+The `block_ctx_hash` component binds the chunk proof to the exact block execution context that produced those results — without it, an adversary could generate a valid chunk proof under a forged context (different timestamp, basefee, prevrandao, coinbase, blob pricing, parent_hash, etc.) and have aggregation accept env-sensitive opcode results (BASEFEE / PREVRANDAO / NUMBER / COINBASE / TIMESTAMP / BLOBBASEFEE / BLOCKHASH / EIP-4788 beacon root / EIP-2935 ring / Holocene-Jovian EIP-1559 params) for the real block. The aggregation side ALSO verifies each chunk's carried `block_env` / `op_block_ctx` against the derivation pipeline's actual block header, so the chunk must have executed under both the claimed context (binding via `block_ctx_hash` in `chunk_trace`) AND the derivation-produced context (cross-check in `verify_block_chunks`).
 
 #### Scenario: deterministic computation
-- **WHEN** the same five input hashes are provided in the same order
+- **WHEN** the same seven input hashes are provided in the same order
 - **THEN** the resulting `chunk_trace` is identical across invocations
 
 #### Scenario: any input change produces a different chunk_trace
-- **WHEN** any one of the five input hashes differs
+- **WHEN** any one of the seven input hashes differs
 - **THEN** the resulting `chunk_trace` differs (collision resistance of SHA256)

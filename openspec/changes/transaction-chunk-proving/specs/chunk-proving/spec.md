@@ -102,11 +102,45 @@ The chunk guest SHALL compute `tx_hash = SHA256(canonical_encode(transactions))`
 - **WHEN** the same transactions in the same order are provided
 - **THEN** `tx_hash` is identical across invocations
 
+### Requirement: Chunk guest commits to per-tx `results_hash` via `chunk_trace`
+
+The chunk guest SHALL capture the full `ResultAndState` of each executed transaction (via a tracing EVM wrapper around the inner `OpEvm`, e.g. `TracingOpEvmFactory`) and SHALL fold the canonical SHA256 hash of that ordered trace — `results_hash = hash_results(traces)` — into `chunk_trace`. The canonical encoding excludes transient revm fields (`transaction_id`, `is_cold`, `Account.original_info`, `AccountInfo.code`) and sorts per-address and per-storage-slot entries deterministically, matching [`crate::precondition::chunking::hash_results`].
+
+This binding is what permits the aggregation guest (`ChunkingEvm`) to replay `Chunk.results` verbatim rather than re-executing transactions: any alteration of the results vec changes `results_hash`, which changes `chunk_trace`, which changes the chunk `ProofJournal` identity, causing `env::verify()` on the aggregation side to reject the swapped assumption.
+
+#### Scenario: chunk_trace includes results_hash and block_ctx_hash
+- **WHEN** the chunk guest emits its `chunk_trace`
+- **THEN** it is computed as `SHA256(tx_hash || pre_db_hash || post_db_hash || pre_evm_hash || post_evm_hash || results_hash || block_ctx_hash)` where `results_hash = hash_results(captured_traces)` and `block_ctx_hash = hash_block_ctx(&block_env, &op_block_ctx)`
+
+#### Scenario: block_ctx_hash is independent of transient EVM accumulator state
+- **WHEN** two chunks executing the same transaction set under the same `BlockEnv` / `OpBlockExecutionCtx` but with different pre-chunk accumulator seeds compute their `block_ctx_hash`
+- **THEN** both produce the same `block_ctx_hash` — it depends only on the block execution context, not on per-chunk accumulator state (which is already bound via `pre_evm_hash` / `post_evm_hash`)
+
+#### Scenario: chunk_trace changes if any block_env or op_block_ctx field is altered
+- **WHEN** any field in `block_env` (number, beneficiary, timestamp, gas_limit, basefee, difficulty, prevrandao, blob_excess_gas_and_price) or `op_block_ctx` (parent_hash, parent_beacon_block_root, extra_data) changes
+- **THEN** `block_ctx_hash` changes → `chunk_trace` changes → the chunk's `ProofJournal` identity changes, causing `env::verify()` on the aggregation side to reject the mismatched journal
+
+#### Scenario: trace capture is per ordered-tx-body transaction
+- **WHEN** the chunk guest executes `N` transactions through `OpBlockExecutor::execute_transaction`
+- **THEN** exactly `N` `ResultAndState` entries are captured, in execution order; block-level system calls (`transact_system_call`) are NOT captured
+
+#### Scenario: results_hash is independent of transient fields
+- **WHEN** two logically-equivalent `ResultAndState` entries differ only in `transaction_id`, `is_cold`, or `Account.original_info`
+- **THEN** they produce the same `results_hash`, so the same logical trace captured under different executor contexts still matches
+
+#### Scenario: results_hash changes on any material alteration
+- **WHEN** any `result`'s variant, gas values, logs, output bytes, state accounts, status bits, storage slots, or ordering changes
+- **THEN** `results_hash` differs, `chunk_trace` differs, and the reconstructed journal no longer matches the chunk proof
+
+#### Scenario: aggregation reconstructs the same `results_hash`
+- **WHEN** `stitch_chunks` runs on `Chunk.results` supplied by the witness
+- **THEN** it recomputes `hash_results(&chunk.results)` and uses the six-input `compute_chunk_trace` to rebuild the expected journal; `env::verify` accepts the chunk proof only if both sides agree byte-for-byte on `results_hash`
+
 ### Requirement: Chunk guest emits standard ProofJournal with chunk sentinel
 
 The chunk guest SHALL emit a `ProofJournal` with:
 - `payout_recipient`: from witness
-- `precondition_hash`: digest of `Precondition::default().chunk(chunk_trace)` where `chunk_trace = SHA256(tx_hash || pre_db_hash || post_db_hash || pre_evm_state_hash || post_evm_state_hash)`
+- `precondition_hash`: digest of `Precondition::default().chunk(chunk_trace)` where `chunk_trace = SHA256(tx_hash || pre_db_hash || post_db_hash || pre_evm_state_hash || post_evm_state_hash || results_hash || block_ctx_hash)`. The `results_hash` binding commits to the canonical SHA256 encoding of the per-transaction `ResultAndState` trace captured during chunk execution; it is what lets the aggregation proof replay `Chunk.results` without re-execution while still authenticating the exact per-tx transition. The `block_ctx_hash` binding commits to the canonical SHA256 encoding of the exact `BlockEnv` and `OpBlockExecutionCtx` under which the chunk guest executed, so env-sensitive opcode results (BASEFEE / PREVRANDAO / NUMBER / COINBASE / TIMESTAMP / BLOBBASEFEE / BLOCKHASH / EIP-4788 beacon root / EIP-2935 ring / Holocene-Jovian EIP-1559 params in extra_data) cannot be forged under a different context.
 - `l1_head`: `B256::from([0xFF; 32])` (chunk sentinel)
 - `agreed_l2_output_root`: current agreed L2 output root from witness
 - `claimed_l2_output_root`: same as `agreed_l2_output_root`

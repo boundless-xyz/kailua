@@ -14,12 +14,13 @@
 
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::executor::{new_execution_cursor, CachedExecutor, Execution, PanicDB};
+use crate::evm::{ChunkingEvmFactory, TracingOpEvmFactory};
+use crate::executor::{new_execution_cursor, CachedExecutor, Chunk, Execution, PanicDB};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
 use crate::precondition::chunking::{
     compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state, hash_overlay_state,
-    validate_cached_contracts,
+    hash_results, validate_cached_contracts,
 };
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
@@ -109,6 +110,7 @@ pub fn run_core_client<
     derivation_cache: Option<CachedDriver>,
     derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
     chunk_witness: Option<ChunkWitnessData>,
+    chunks: Vec<Vec<Chunk>>,
 ) -> anyhow::Result<(BootInfo, Precondition)>
 where
     <B as BlobProvider>::Error: Debug,
@@ -327,18 +329,18 @@ where
                 .with_spec_and_mainnet_gas_params(spec_id);
             let evm_env = alloy_evm::EvmEnv::new(cfg_env, cw.block_env.clone());
 
-            // Long-lived factory for chunk execution (stateless ZST reused
-            // for the full EVM lifetime of this chunk). The turbofish pins
-            // the EVM's `Tx` type so downstream inference through
-            // `OpBlockExecutor` can uniquely pick a `FromTxWithEncoded`
-            // impl — `OpEvmFactory<Tx>` is generic and has two candidate
-            // transaction types (`TxEnv` vs `OpTransaction<TxEnv>`) whose
-            // ambiguity rustc cannot resolve purely from the default.
-            let op_evm_factory =
-                OpEvmFactory::<alloy_evm::op_revm::OpTransaction<
-                    alloy_evm::revm::context::TxEnv,
-                >>::default();
-            let evm = op_evm_factory.create_evm(&mut state, evm_env);
+            // Long-lived factory for chunk execution. We wrap the underlying
+            // `OpEvmFactory` with `TracingOpEvmFactory` so every
+            // `transact_raw()` call captures the per-tx `ResultAndState` into
+            // a shared buffer. The captured trace is hashed into
+            // `results_hash` below and folded into `chunk_trace`, binding the
+            // chunk proof to the *exact* per-transaction execution trace.
+            // Without this binding, the aggregation guest (`ChunkingEvm`)
+            // could replay a different `results` vec that happens to reach
+            // the same pre→post state endpoints — this is the adversarial
+            // review's finding #1, addressed by task 8.9.
+            let tracing_factory = TracingOpEvmFactory::new();
+            let evm = tracing_factory.create_evm(&mut state, evm_env);
 
             // (e) Construct upstream `OpBlockExecutor` and seed its
             // accumulators from the witness. `RollupConfig` implements
@@ -433,13 +435,48 @@ where
             let post_db_hash = hash_overlay_state(&cw.cache, &state.cache, &state.block_hashes);
             let post_evm_hash = hash_evm_state(&evm_accum);
 
-            // (h) Compute chunk_trace
+            // (g2) Compute results_hash from the per-tx traces captured by
+            // `TracingOpEvmFactory`. Sanity-check that we captured exactly one
+            // trace per transaction — anything else indicates an executor or
+            // wrapper bug.
+            let traces = tracing_factory.take_traces();
+            if traces.len() != cw.transactions.len() {
+                bail!(
+                    "chunk tracing mismatch: captured {} traces for {} transactions",
+                    traces.len(),
+                    cw.transactions.len()
+                );
+            }
+            let results_hash = hash_results(&traces);
+
+            // (g3) Compute block_ctx_hash over the EXACT block execution context
+            // this chunk guest ran under. Folding this into chunk_trace binds the
+            // proof to that context so aggregation cannot accept the results
+            // under a different block context (different timestamp, basefee,
+            // prevrandao, coinbase, blob pricing, parent_hash, etc.). Without
+            // this, env-sensitive opcodes (BASEFEE / PREVRANDAO / NUMBER /
+            // COINBASE / TIMESTAMP / BLOBBASEFEE / BLOCKHASH / EIP-4788 beacon
+            // root / EIP-2935 ring / Holocene-Jovian EIP-1559 params in
+            // extra_data) would all be unchecked, letting a malicious prover
+            // generate a chunk under a forged context and have aggregation
+            // replay those results for a real block.
+            let block_ctx_hash = crate::precondition::chunking::hash_block_ctx(
+                &cw.block_env,
+                &cw.op_block_ctx,
+            );
+
+            // (h) Compute chunk_trace. The seven-input form binds the proof to
+            // the per-tx execution trace (`results_hash`) AND the block
+            // execution context (`block_ctx_hash`), not just the pre/post
+            // state and EVM accumulator endpoints.
             let chunk_trace = compute_chunk_trace(
                 tx_hash,
                 pre_db_hash,
                 post_db_hash,
                 pre_evm_hash,
                 post_evm_hash,
+                results_hash,
+                block_ctx_hash,
             );
 
             // (i) Return
@@ -574,14 +611,74 @@ where
         let da_provider =
             da_source_provider.new_from_parts(l1_provider.clone(), beacon, &rollup_config);
 
-        // Load the Kailua executor with caching support
-        let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, OpEvmFactory>>::new(
+        // Load the Kailua executor with caching support.
+        //
+        // We always use `ChunkingEvmFactory` as the `EvmFactory` parameter. For blocks
+        // with pre-computed chunk data, the factory dispenses a `ChunkingEvm` that
+        // returns host-captured `ResultAndState` entries verbatim for tx-body calls
+        // (Decision 12). Blocks without chunk data get a `ChunkingEvm` with an empty
+        // chunk vec, which is semantically identical to plain `OpEvm` — every
+        // `transact_raw()` delegates straight through. This keeps the executor type
+        // homogeneous whether chunks are present or not.
+        //
+        // Outer index i corresponds to block `safe_head_number + 1 + i` (per witness
+        // convention — see `Witness::chunks` doc).
+        let has_chunks = chunks.iter().any(|v| !v.is_empty());
+        let chunks_by_block: std::collections::HashMap<u64, Vec<Chunk>> = chunks
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| {
+                if v.is_empty() {
+                    None
+                } else {
+                    Some((safe_head_number + 1 + i as u64, v.clone()))
+                }
+            })
+            .collect();
+
+        // When chunks are supplied, we MUST post-verify per-block coherence against
+        // derivation output (output-root anchor, parent block number, tx_hash, and
+        // receipts_root reconstruction — see `verify_block_chunks`). That requires
+        // capturing the `Execution` for each newly-derived block. The `CachedExecutor`
+        // already supports this via its `collection_target` slot; we thread our own
+        // internal vec in for chunk verification.
+        //
+        // Restrictions when chunks are active (kept simple for soundness):
+        //   - `execution_cache` must be empty — mixing stitched-execution caching with
+        //     chunk aggregation is not currently supported (a cache hit would skip
+        //     `collection_target`, leaving a chunk block unverified).
+        //   - `execution_trace` must be `None` — the caller-facing trace slot is
+        //     repurposed here for internal verification capture. Callers that want
+        //     stitched-execution output should not also pass chunks.
+        if has_chunks {
+            assert!(
+                execution_cache.is_empty(),
+                "chunk aggregation does not support combining with stitched execution cache"
+            );
+            assert!(
+                execution_trace.is_none(),
+                "execution_trace must be None when chunks are supplied; chunk verification \
+                 reuses the collection target slot"
+            );
+        }
+        let chunk_verify_target: Option<Arc<Mutex<Vec<Execution>>>> = if has_chunks {
+            Some(Arc::new(Mutex::new(Vec::new())))
+        } else {
+            None
+        };
+        let effective_collection_target = if has_chunks {
+            chunk_verify_target.clone()
+        } else {
+            execution_trace
+        };
+
+        let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, ChunkingEvmFactory>>::new(
             execution_cache,
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider.clone(),
-            OpEvmFactory::default(),
-            execution_trace,
+            ChunkingEvmFactory::new(chunks_by_block),
+            effective_collection_target,
         );
 
         // Resume from cached derivation pipeline or start a new one
@@ -641,6 +738,83 @@ where
                 output_block.block_info.number, boot.claimed_l2_block_number
             ));
             derived_output_roots.push(output_root);
+        }
+
+        ////////////////////////////////////////////////////////////////
+        //              CHUNK → BLOCK COHERENCE CHECK                 //
+        ////////////////////////////////////////////////////////////////
+        //
+        // For each block whose witness supplied chunks, verify:
+        //   (1) chunk.agreed_l2_output_root == derived parent output root  (output-root anchor)
+        //   (2) chunk.parent_block_number == derived parent block number    (block-number anchor)
+        //   (3) sum(chunk.tx_count) == len(block's derived txs) AND each chunk's tx_hash
+        //       matches the SHA256 of the derived tx bytes for its slice   (tx_hash binding)
+        //   (4) hash_evm_state(&chunk.evm_state) == chunk.claimed_evm       (evm_state self-consistency)
+        //   (5) calculate_receipt_root(&last_chunk.evm_state.receipts) matches the
+        //       block's header.receipts_root                                 (receipts reconstruction)
+        //
+        // Collectively these close the forgery-vector chain identified by the
+        // adversarial review:
+        //   - (1)+(2) pin every chunk to THIS specific derived block, preventing a
+        //     wrong-block substitution attack (H-1/H-2 equivalent via output-root,
+        //     cryptographically stronger than `hash_cache_state` anchoring because
+        //     output_root commits to state_root commits to all state — and avoids the
+        //     canonicalization mismatch between chunk-witness `Cache` (preloaded with
+        //     `NotExisting` stubs) and aggregation `State<TrieDB>.cache` at the same
+        //     boundary).
+        //   - (3) prevents substituting Y's tx sequence for X's actual derivation
+        //     output (attacker-chosen T_Y attack).
+        //   - (4) makes `chunk.evm_state.receipts` safely authenticated via
+        //     `claimed_evm`, which in turn enables (5).
+        //   - (5) is a belt-and-suspenders check that the authenticated chunk receipts
+        //     actually reproduce the block's receipts_root — any Frankenstein receipt
+        //     from the chunk replay that diverges from the block executor's honest
+        //     output would be caught here.
+        //
+        // See `precondition::chunking::verify_block_chunks` for the detailed check
+        // implementation and commentary.
+        if has_chunks {
+            log("CHUNK VERIFY");
+            let collected: Vec<Execution> = chunk_verify_target
+                .as_ref()
+                .expect("chunk_verify_target set when has_chunks")
+                .lock()
+                .unwrap()
+                .clone();
+            for (block_idx, chunks_for_block) in chunks.iter().enumerate() {
+                if chunks_for_block.is_empty() {
+                    continue;
+                }
+                let exec = collected.get(block_idx).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "chunks supplied for block position {block_idx} but only {} blocks \
+                         were derived — chunks cannot be verified against an underived block",
+                        collected.len()
+                    )
+                })?;
+                let expected_parent_block_number = safe_head_number + block_idx as u64;
+                let expected_agreed_output_root = exec.agreed_output;
+                let block_txs: Vec<Vec<u8>> = exec
+                    .attributes
+                    .transactions
+                    .as_ref()
+                    .map(|txs| txs.iter().map(|b| b.to_vec()).collect())
+                    .unwrap_or_default();
+                crate::precondition::chunking::verify_block_chunks(
+                    chunks_for_block,
+                    expected_agreed_output_root,
+                    expected_parent_block_number,
+                    &block_txs,
+                    exec.artifacts.header.inner(),
+                )
+                .with_context(|| {
+                    format!(
+                        "chunk verification for block position {block_idx} \
+                         (expected block {})",
+                        safe_head_number + 1 + block_idx as u64
+                    )
+                })?;
+            }
         }
 
         ////////////////////////////////////////////////////////////////
@@ -777,6 +951,7 @@ pub mod tests {
             derivation_cache,
             derivation_trace.clone(),
             None,
+            Vec::new(),
         )
         .context("run_core_client")?;
 
@@ -844,6 +1019,7 @@ pub mod tests {
             None,
             None,
             None,
+            Vec::new(),
         )
         .expect("run_core_client");
 
@@ -1091,6 +1267,7 @@ pub mod tests {
             None,
             None,
             Some(chunk_witness),
+            Vec::new(),
         )
         .expect("run_core_client chunk mode")
     }
@@ -1142,7 +1319,8 @@ pub mod tests {
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_chunk_mode_empty_transactions() {
         use crate::precondition::chunking::{
-            compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state, EvmAccumulatorState,
+            compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state, hash_results,
+            EvmAccumulatorState,
         };
         use alloy_evm::revm::database::in_memory_db::Cache;
         use risc0_zkvm::sha::Digestible;
@@ -1156,16 +1334,23 @@ pub mod tests {
         let evm_state = EvmAccumulatorState::default();
         let cw = make_test_chunk_witness(0, 1, cache.clone(), evm_state.clone(), vec![]);
 
-        // Compute expected chunk trace (no txs → post == pre)
+        // Compute expected chunk trace (no txs → post == pre; empty results_hash).
         let tx_hash = compute_tx_hash(&[]);
         let pre_db_hash = hash_cache(&cache);
         let pre_evm_hash = hash_evm_state(&evm_state);
+        let results_hash = hash_results(&[]);
+        let block_ctx_hash = crate::precondition::chunking::hash_block_ctx(
+            &alloy_evm::revm::context::BlockEnv::default(),
+            &alloy_op_evm::OpBlockExecutionCtx::default(),
+        );
         let expected_trace = compute_chunk_trace(
             tx_hash,
             pre_db_hash,
             pre_db_hash,
             pre_evm_hash,
             pre_evm_hash,
+            results_hash,
+            block_ctx_hash,
         );
 
         let (result_boot, precondition) = test_chunk_execution(make_chunk_boot_info(), cw);
@@ -1225,6 +1410,7 @@ pub mod tests {
             None,
             None,
             Some(chunk_witness),
+            Vec::new(),
         )
     }
 
@@ -1345,7 +1531,8 @@ pub mod tests {
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_chunk_mode_accepts_synced_nonzero_seeds() {
         use crate::precondition::chunking::{
-            compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state, EvmAccumulatorState,
+            compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state, hash_results,
+            EvmAccumulatorState,
         };
         use alloy_evm::revm::database::in_memory_db::Cache;
         use risc0_zkvm::sha::Digestible;
@@ -1376,12 +1563,19 @@ pub mod tests {
         let tx_hash = compute_tx_hash(&[]);
         let pre_db_hash = hash_cache(&cache);
         let pre_evm_hash = hash_evm_state(&evm_state);
+        let results_hash = hash_results(&[]);
+        // Compute block_ctx_hash over the EXACT BlockEnv/OpBlockExecutionCtx the
+        // chunk guest will see (cw.block_env was mutated to gas_limit=30M above).
+        let block_ctx_hash =
+            crate::precondition::chunking::hash_block_ctx(&cw.block_env, &cw.op_block_ctx);
         let expected_trace = compute_chunk_trace(
             tx_hash,
             pre_db_hash,
             pre_db_hash,
             pre_evm_hash,
             pre_evm_hash,
+            results_hash,
+            block_ctx_hash,
         );
 
         let (result_boot, precondition) =
@@ -1432,6 +1626,7 @@ pub mod tests {
             None,
             None,
             None, // No chunk witness!
+            Vec::new(),
         );
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());

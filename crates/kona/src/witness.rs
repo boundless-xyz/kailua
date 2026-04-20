@@ -15,7 +15,7 @@
 use crate::blobs::BlobWitnessData;
 use crate::boot::StitchedBootInfo;
 use crate::driver::CachedDriver;
-use crate::executor::Execution;
+use crate::executor::{Chunk, Execution};
 use crate::oracle::vec::VecOracle;
 use crate::oracle::WitnessOracle;
 use crate::precondition::chunking::EvmAccumulatorState;
@@ -69,6 +69,11 @@ pub struct Witness<O: WitnessOracle> {
     /// When present and the boot sentinel triggers chunk mode, this provides
     /// the pre-populated state, transactions, and metadata for chunk proving.
     pub chunk_witness: Option<ChunkWitnessData>,
+    /// Pre-computed per-block chunk aggregation data. Each outer `Vec<Chunk>` holds the
+    /// ordered chunks for a block produced during derivation+execution; the outer index
+    /// corresponds to block position from `safe_head_number + 1`. Empty inner vectors
+    /// (or blocks past the end of this outer vec) run through monolithic execution.
+    pub chunks: Vec<Vec<Chunk>>,
 }
 
 impl Witness<VecOracle> {
@@ -151,6 +156,7 @@ pub mod tests {
             stitched_boot_info: gen_boot_infos(32, 128),
             fpvm_image_id: keccak256(b"fpvm_image_id"),
             chunk_witness: None,
+            chunks: Vec::new(),
         };
 
         (witness, values)

@@ -16,8 +16,9 @@ use crate::boot::StitchedBootInfo;
 use crate::client::core::DASourceProvider;
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::executor::Execution;
+use crate::executor::{Chunk, Execution};
 use crate::journal::ProofJournal;
+use crate::precondition::chunking::{compute_chunk_trace, hash_block_ctx, hash_results};
 use crate::kona::OracleL1ChainProvider;
 use crate::precondition::Precondition;
 use crate::witness::ChunkWitnessData;
@@ -79,6 +80,7 @@ pub trait StitchingClient<
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
         chunk_witness: Option<ChunkWitnessData>,
+        chunks: Vec<Vec<Chunk>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug;
@@ -107,12 +109,18 @@ impl<
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
         chunk_witness: Option<ChunkWitnessData>,
+        chunks: Vec<Vec<Chunk>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
     {
         // Queue up precomputed executions
         let (stitched_executions, execution_cache) = split_executions(stitched_executions);
+
+        // Capture chunks for post-core stitching verification. `run_core_client` consumes
+        // its own copy when populating `ChunkingEvmFactory`, so we clone here to retain
+        // the pre-execution layout for hash-chain verification below.
+        let chunks_for_stitching = chunks.clone();
 
         // Attempt to recompute the output hash at the target block number using kona
         log("RUN");
@@ -127,6 +135,7 @@ impl<
             derivation_cache,
             derivation_trace.then(Default::default),
             chunk_witness,
+            chunks,
         )
         .expect("Failed to compute output hash.");
 
@@ -140,6 +149,16 @@ impl<
             fpvm_image_id,
             payout_recipient_address,
             &stitched_executions,
+            #[cfg(target_os = "zkvm")]
+            &proven_fpvm_journals,
+        );
+
+        // Stitch recursively composed chunk aggregation proofs
+        stitch_chunks(
+            &boot,
+            fpvm_image_id,
+            payout_recipient_address,
+            &chunks_for_stitching,
             #[cfg(target_os = "zkvm")]
             &proven_fpvm_journals,
         );
@@ -373,6 +392,152 @@ pub fn stitch_executions(
             #[cfg(target_os = "zkvm")]
             proven_fpvm_journals,
         )
+    }
+}
+
+/// Sentinel `l1_head` value identifying chunk-proof journals (see `core.rs` chunk branch).
+const CHUNK_SENTINEL_L1_HEAD: B256 = B256::new([0xFF; 32]);
+
+/// Stitches recursively-composed chunk aggregation proofs into the proof journal.
+///
+/// For each block with at least one chunk, this function:
+///   1. Rejects malformed witnesses whose `tx_count != results.len()`. The chunk guest
+///      applies exactly `tx_count` transactions against the committed `agreed_db` /
+///      `agreed_evm` to produce `claimed_db` / `claimed_evm`; a `results` vec with a
+///      different length cannot correspond to any honest chunk proof.
+///   2. Verifies inter-chunk hash chain continuity:
+///      `chunks[i+1].agreed_db == chunks[i].claimed_db` and the same for `agreed_evm`.
+///   3. Computes each chunk's `chunk_trace` from its committed hashes.
+///   4. Constructs the expected [`ProofJournal`] for that chunk, using the chunk's own
+///      `agreed_l2_output_root` and `parent_block_number` (per-block context stored in
+///      each `Chunk` — the outer run's final `BootInfo` cannot be used because its
+///      `agreed_l2_output_root` and `claimed_l2_block_number` correspond only to the
+///      run's last block, not to each chunked block individually).
+///   5. Calls [`verify_stitching_journal`] so the guest either finds the journal in the
+///      pre-proven set (FOUND) or assumes it via `env::verify()` (ASSUME).
+///
+/// # Binding of `Chunk.results` to the authenticated proof
+///
+/// The chunk proof commits to `chunk_trace = SHA256(tx_hash || pre_db_hash ||
+/// post_db_hash || pre_evm_hash || post_evm_hash || results_hash)`, where
+/// `results_hash = hash_results(results)` is the canonical SHA256 of the per-tx
+/// execution trace (see [`crate::precondition::chunking::hash_results`]). The
+/// chunk guest captures its own `ResultAndState` sequence via a tracing EVM
+/// wrapper during chunk execution and folds `results_hash` into its journal.
+///
+/// On the aggregation side, this function recomputes `hash_results(&chunk.results)`
+/// and feeds it into the same `compute_chunk_trace` formula to rebuild the expected
+/// chunk journal. Any tampering with `chunk.results` — reordering entries,
+/// substituting a different-but-endpoint-equivalent trace, altering per-tx gas /
+/// logs / state — produces a different `results_hash`, a different `chunk_trace`,
+/// and a different journal. `env::verify()` then fails, rejecting the chunk proof's
+/// assumption in the aggregation guest.
+///
+/// With this binding in place, `ChunkingEvm` can safely replay `chunk.results`
+/// verbatim: the six-input `chunk_trace` authenticates the exact per-transaction
+/// execution trace, not merely the pre→post state endpoints.
+///
+/// # Panics
+///
+/// * If any chunk's `tx_count` does not match `results.len()`.
+/// * If adjacent chunks break hash-chain continuity (`agreed_db`/`agreed_evm` mismatch).
+/// * If [`verify_stitching_journal`] rejects any chunk journal.
+pub fn stitch_chunks(
+    boot: &BootInfo,
+    fpvm_image_id: B256,
+    payout_recipient_address: Address,
+    chunks_per_block: &[Vec<Chunk>],
+    #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
+) {
+    // Chunking is only defined for derivation+execution mode (l1_head != 0). For
+    // execution-only or chunk-proving modes, chunks must be empty.
+    if chunks_per_block.iter().all(|c| c.is_empty()) {
+        return;
+    }
+
+    let config_hash = crate::config::config_hash(&boot.rollup_config, &boot.l1_config);
+
+    for block_chunks in chunks_per_block {
+        if block_chunks.is_empty() {
+            continue;
+        }
+
+        // Self-consistency: tx_count must equal results.len() for every chunk. A
+        // malformed witness with more or fewer results than the chunk proof covers
+        // cannot correspond to an honest chunk execution.
+        for (i, chunk) in block_chunks.iter().enumerate() {
+            assert_eq!(
+                chunk.tx_count as usize,
+                chunk.results.len(),
+                "chunk[{i}] tx_count ({}) != results.len() ({}) — malformed witness",
+                chunk.tx_count,
+                chunk.results.len()
+            );
+        }
+
+        // Hash-chain continuity inside the block.
+        for i in 1..block_chunks.len() {
+            assert_eq!(
+                block_chunks[i].agreed_db, block_chunks[i - 1].claimed_db,
+                "chunk hash chain broken: agreed_db[{i}] != claimed_db[{i_minus_1}]",
+                i_minus_1 = i - 1
+            );
+            assert_eq!(
+                block_chunks[i].agreed_evm, block_chunks[i - 1].claimed_evm,
+                "chunk hash chain broken: agreed_evm[{i}] != claimed_evm[{i_minus_1}]",
+                i_minus_1 = i - 1
+            );
+        }
+
+        // Verify each chunk's journal. Each chunk carries its own `agreed_l2_output_root`
+        // (the parent block's output root) and `parent_block_number`, so journals
+        // correctly reflect per-block context across a multi-block derivation run.
+        //
+        // `results_hash` is recomputed from `chunk.results` on the aggregation side;
+        // the chunk guest commits the same hash into its `chunk_trace`. Any tampering
+        // with `chunk.results` (reorder, substitute, forge a transient field) changes
+        // this hash → `chunk_trace` → the expected journal → `env::verify()` fails.
+        // This is what closes the binding gap flagged in the adversarial review.
+        for chunk in block_chunks {
+            let results_hash = hash_results(&chunk.results);
+            let block_ctx_hash = hash_block_ctx(&chunk.block_env, &chunk.op_block_ctx);
+            let chunk_trace = compute_chunk_trace(
+                chunk.tx_hash,
+                chunk.agreed_db,
+                chunk.claimed_db,
+                chunk.agreed_evm,
+                chunk.claimed_evm,
+                results_hash,
+                block_ctx_hash,
+            );
+            let precondition_hash =
+                B256::new(Precondition::default().chunk(chunk_trace).digest().into());
+
+            // Chunk proofs: agreed == claimed L2 output root (no L2 advancement);
+            // block number is the parent block number per the spec.
+            let stitched_boot = StitchedBootInfo {
+                l1_head: CHUNK_SENTINEL_L1_HEAD,
+                agreed_l2_output_root: chunk.agreed_l2_output_root,
+                claimed_l2_output_root: chunk.agreed_l2_output_root,
+                claimed_l2_block_number: chunk.parent_block_number,
+            };
+
+            let encoded_journal = ProofJournal::new_stitched(
+                fpvm_image_id,
+                payout_recipient_address,
+                precondition_hash,
+                B256::from(config_hash),
+                &stitched_boot,
+            )
+            .encode_packed();
+
+            verify_stitching_journal(
+                fpvm_image_id,
+                encoded_journal,
+                #[cfg(target_os = "zkvm")]
+                proven_fpvm_journals,
+            );
+        }
     }
 }
 
@@ -652,6 +817,7 @@ pub mod tests {
                 stitched_preconditions,
                 stitched_boot_info,
                 None,
+                Vec::new(),
             )
             .1
     }
@@ -1072,5 +1238,299 @@ pub mod tests {
             vec![stitched_boot],
         )
         .await;
+    }
+
+    // -- stitch_chunks tests --
+
+    use alloy_primitives::keccak256;
+
+    /// Minimal BootInfo for stitch_chunks tests — derivation+execution mode (`l1_head`
+    /// non-zero). Values do not need to correspond to a real chain; `stitch_chunks`
+    /// only inspects the BootInfo's `agreed_l2_output_root`, `claimed_l2_block_number`,
+    /// and config-hash-derived fields.
+    fn chunks_boot_info() -> BootInfo {
+        BootInfo {
+            l1_head: b256!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            agreed_l2_output_root: b256!(
+                "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+            ),
+            claimed_l2_output_root: b256!(
+                "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+            ),
+            claimed_l2_block_number: 42,
+            chain_id: 1,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        }
+    }
+
+    fn make_chunk(agreed_db: B256, claimed_db: B256, agreed_evm: B256, claimed_evm: B256) -> Chunk {
+        Chunk {
+            agreed_db,
+            agreed_evm,
+            tx_count: 0,
+            tx_hash: B256::ZERO,
+            results: Vec::new(),
+            evm_state: Default::default(),
+            claimed_db,
+            claimed_evm,
+            agreed_l2_output_root: keccak256("test_agreed_output"),
+            parent_block_number: 41,
+            block_env: alloy_evm::revm::context::BlockEnv::default(),
+            op_block_ctx: alloy_op_evm::block::OpBlockExecutionCtx::default(),
+        }
+    }
+
+    /// Empty chunks (no chunk data for any block) → stitch_chunks is a no-op and must
+    /// not panic. This is the degenerate case for witnesses with `chunks = vec![]`.
+    #[test]
+    fn stitch_chunks_empty_is_noop() {
+        let boot = chunks_boot_info();
+        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &[]);
+    }
+
+    /// A single block with a single chunk — no continuity checks are required. The
+    /// chunk journal is constructed and (in non-zkvm builds) `verify_stitching_journal`
+    /// is a no-op, so the function returns cleanly.
+    #[test]
+    fn stitch_chunks_single_block_single_chunk() {
+        let boot = chunks_boot_info();
+        let chunk = make_chunk(
+            keccak256("db0"),
+            keccak256("db1"),
+            keccak256("evm0"),
+            keccak256("evm1"),
+        );
+        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &[vec![chunk]]);
+    }
+
+    /// Valid multi-chunk hash chain: each chunk's `agreed_db` matches the prior
+    /// chunk's `claimed_db`, same for `agreed_evm`/`claimed_evm`. Must not panic.
+    #[test]
+    fn stitch_chunks_valid_hash_chain() {
+        let boot = chunks_boot_info();
+        let db0 = keccak256("db_0");
+        let db1 = keccak256("db_1");
+        let db2 = keccak256("db_2");
+        let evm0 = keccak256("evm_0");
+        let evm1 = keccak256("evm_1");
+        let evm2 = keccak256("evm_2");
+        let chunks = vec![vec![
+            make_chunk(db0, db1, evm0, evm1),
+            make_chunk(db1, db2, evm1, evm2),
+        ]];
+        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &chunks);
+    }
+
+    /// Hash chain break on `agreed_db` (claimed_db of chunk 0 doesn't match agreed_db
+    /// of chunk 1) must panic with a descriptive message.
+    #[test]
+    #[should_panic(expected = "chunk hash chain broken: agreed_db")]
+    fn stitch_chunks_agreed_db_mismatch_panics() {
+        let boot = chunks_boot_info();
+        let chunks = vec![vec![
+            make_chunk(
+                keccak256("db0"),
+                keccak256("db1"),
+                keccak256("evm0"),
+                keccak256("evm1"),
+            ),
+            make_chunk(
+                keccak256("WRONG_DB"),
+                keccak256("db2"),
+                keccak256("evm1"),
+                keccak256("evm2"),
+            ),
+        ]];
+        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &chunks);
+    }
+
+    /// Hash chain break on `agreed_evm` must panic with a descriptive message (even
+    /// when `agreed_db` matches — both chains are enforced independently).
+    #[test]
+    #[should_panic(expected = "chunk hash chain broken: agreed_evm")]
+    fn stitch_chunks_agreed_evm_mismatch_panics() {
+        let boot = chunks_boot_info();
+        let chunks = vec![vec![
+            make_chunk(
+                keccak256("db0"),
+                keccak256("db1"),
+                keccak256("evm0"),
+                keccak256("evm1"),
+            ),
+            make_chunk(
+                keccak256("db1"),
+                keccak256("db2"),
+                keccak256("WRONG_EVM"),
+                keccak256("evm2"),
+            ),
+        ]];
+        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &chunks);
+    }
+
+    /// Self-consistency: a chunk whose `tx_count` disagrees with its `results.len()`
+    /// must be rejected. This is the cheapest adversarial-witness guard —
+    /// an honest chunk proof executes exactly `tx_count` transactions against its
+    /// committed hashes and produces exactly one `ResultAndState` per transaction.
+    #[test]
+    #[should_panic(expected = "tx_count (3) != results.len() (2)")]
+    fn stitch_chunks_tx_count_mismatch_rejected() {
+        let boot = chunks_boot_info();
+        use alloy_evm::op_revm::OpHaltReason;
+        use alloy_evm::revm::context_interface::result::{
+            ExecutionResult, Output, ResultAndState, SuccessReason,
+        };
+        let stub = || ResultAndState::<OpHaltReason> {
+            result: ExecutionResult::Success {
+                reason: SuccessReason::Return,
+                gas_used: 0,
+                gas_refunded: 0,
+                logs: vec![],
+                output: Output::Call(alloy_primitives::Bytes::new()),
+            },
+            state: Default::default(),
+        };
+        let mut chunk = make_chunk(
+            keccak256("db0"),
+            keccak256("db1"),
+            keccak256("evm0"),
+            keccak256("evm1"),
+        );
+        chunk.tx_count = 3;
+        chunk.results = vec![stub(), stub()]; // only 2, not 3
+        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &[vec![chunk]]);
+    }
+
+    /// Binding: altering `chunk.results` must change the reconstructed `chunk_trace`.
+    ///
+    /// This is the linchpin of finding #1's fix — the aggregation's reconstructed
+    /// journal depends on `hash_results(&chunk.results)` via `compute_chunk_trace`, so
+    /// any altered results vec produces a different journal digest. An adversary who
+    /// swaps `results` to a different-but-state-endpoint-equivalent trace would
+    /// generate a different `chunk_trace`, fail `env::verify()` on the swapped journal,
+    /// and the aggregation proof cannot produce a valid witness.
+    ///
+    /// This test exercises the non-zkvm branch (`verify_stitching_journal` is a no-op
+    /// there) but verifies structurally that the reconstructed chunk_trace diverges
+    /// when `chunk.results` is altered — the same computation feeds journal construction
+    /// on the zkvm side.
+    #[test]
+    fn stitch_chunks_results_tampering_changes_chunk_trace() {
+        use crate::precondition::chunking::{compute_chunk_trace, hash_block_ctx, hash_results};
+        use alloy_evm::op_revm::OpHaltReason;
+        use alloy_evm::revm::context_interface::result::{
+            ExecutionResult, Output, ResultAndState, SuccessReason,
+        };
+
+        // Two chunks identical except for a single gas_used value in `results`.
+        let stub = |gas: u64| ResultAndState::<OpHaltReason> {
+            result: ExecutionResult::Success {
+                reason: SuccessReason::Return,
+                gas_used: gas,
+                gas_refunded: 0,
+                logs: vec![],
+                output: Output::Call(alloy_primitives::Bytes::new()),
+            },
+            state: Default::default(),
+        };
+
+        let mut chunk_a = make_chunk(
+            keccak256("db0"),
+            keccak256("db1"),
+            keccak256("evm0"),
+            keccak256("evm1"),
+        );
+        chunk_a.tx_count = 1;
+        chunk_a.results = vec![stub(21000)];
+
+        let mut chunk_b = chunk_a.clone();
+        chunk_b.results = vec![stub(21001)]; // tampered!
+
+        // The two reconstructed chunk_traces must differ — that's what breaks the
+        // journal's identity and makes env::verify fail on tampered witnesses.
+        let trace_a = compute_chunk_trace(
+            chunk_a.tx_hash,
+            chunk_a.agreed_db,
+            chunk_a.claimed_db,
+            chunk_a.agreed_evm,
+            chunk_a.claimed_evm,
+            hash_results(&chunk_a.results),
+            hash_block_ctx(&chunk_a.block_env, &chunk_a.op_block_ctx),
+        );
+        let trace_b = compute_chunk_trace(
+            chunk_b.tx_hash,
+            chunk_b.agreed_db,
+            chunk_b.claimed_db,
+            chunk_b.agreed_evm,
+            chunk_b.claimed_evm,
+            hash_results(&chunk_b.results),
+            hash_block_ctx(&chunk_b.block_env, &chunk_b.op_block_ctx),
+        );
+        assert_ne!(
+            trace_a, trace_b,
+            "tampering with chunk.results must change chunk_trace (binding invariant)"
+        );
+    }
+
+    /// Per-block context: in a multi-block derivation run, each block's chunks carry
+    /// their own `agreed_l2_output_root` and `parent_block_number`. These must flow
+    /// into the constructed chunk journal — not the outer `BootInfo`'s (final) values.
+    ///
+    /// This test does not validate the journal bytes (that would require zkvm-side
+    /// `env::verify`), but it exercises the two-block path and relies on
+    /// `verify_stitching_journal` being a no-op in non-zkvm builds. Any panic would
+    /// indicate a regression in the per-block context plumbing.
+    #[test]
+    fn stitch_chunks_multi_block_uses_per_chunk_context() {
+        let boot = chunks_boot_info();
+        // Block A: parent block 10, agreed output root X.
+        let mut chunk_a = make_chunk(
+            keccak256("db_a0"),
+            keccak256("db_a1"),
+            keccak256("evm_a0"),
+            keccak256("evm_a1"),
+        );
+        chunk_a.agreed_l2_output_root = keccak256("output_root_A");
+        chunk_a.parent_block_number = 10;
+
+        // Block B: parent block 11, agreed output root Y (different from X, and
+        // different from boot.agreed_l2_output_root). If stitch_chunks incorrectly
+        // substituted the outer BootInfo values, the journal for this chunk would
+        // refer to boot.agreed_l2_output_root and boot.claimed_l2_block_number
+        // regardless of the per-chunk values we set here.
+        let mut chunk_b = make_chunk(
+            keccak256("db_b0"),
+            keccak256("db_b1"),
+            keccak256("evm_b0"),
+            keccak256("evm_b1"),
+        );
+        chunk_b.agreed_l2_output_root = keccak256("output_root_B");
+        chunk_b.parent_block_number = 11;
+
+        stitch_chunks(
+            &boot,
+            B256::ZERO,
+            Address::ZERO,
+            &[vec![chunk_a], vec![chunk_b]],
+        );
+    }
+
+    /// Blocks with empty chunk vecs are skipped: a witness that mixes some chunked
+    /// blocks and some non-chunked blocks passes intact.
+    #[test]
+    fn stitch_chunks_empty_block_is_skipped() {
+        let boot = chunks_boot_info();
+        // Block 0 empty, block 1 has a single chunk, block 2 empty.
+        let chunks = vec![
+            vec![],
+            vec![make_chunk(
+                keccak256("db0"),
+                keccak256("db1"),
+                keccak256("evm0"),
+                keccak256("evm1"),
+            )],
+            vec![],
+        ];
+        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &chunks);
     }
 }
