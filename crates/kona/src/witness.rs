@@ -100,11 +100,6 @@ impl Witness<VecOracle> {
 /// required for the chunk prover to re-execute the chunk in isolation.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ChunkWitnessData {
-    pub block_number: u64,
-    pub chunk_index: u16,
-    pub total_chunks: u16,
-    pub tx_start: u16,
-    pub tx_count: u16,
     pub transactions: Vec<Vec<u8>>,
     #[rkyv(with = BlockEnvRkyv)]
     pub block_env: BlockEnv,
@@ -113,14 +108,6 @@ pub struct ChunkWitnessData {
     #[rkyv(with = CacheRkyv)]
     pub cache: Cache,
     pub evm_state: EvmAccumulatorState,
-    #[rkyv(with = B256Def)]
-    pub agreed_l2_output_root: B256,
-    #[rkyv(with = B256Def)]
-    pub config_hash: B256,
-    #[rkyv(with = B256Def)]
-    pub fpvm_image_id: B256,
-    #[rkyv(with = AddressDef)]
-    pub payout_recipient: Address,
 }
 
 #[cfg(test)]

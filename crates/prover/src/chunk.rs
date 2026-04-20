@@ -27,7 +27,7 @@ use alloy_evm::revm::database::in_memory_db::{Cache, DbAccount};
 use alloy_evm::revm::primitives::KECCAK_EMPTY;
 use alloy_evm::revm::state::{AccountStatus, EvmState};
 use alloy_op_evm::block::OpBlockExecutionCtx;
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Bytes, B256, U256};
 use op_alloy_consensus::OpReceiptEnvelope;
 
 use kailua_kona::precondition::chunking::{apply_trace_to_cache, EvmAccumulatorState};
@@ -154,31 +154,21 @@ pub fn build_chunk_witnesses(
     block_env: &BlockEnv,
     op_block_ctx: &OpBlockExecutionCtx,
     evm_state_after_prelude: EvmAccumulatorState,
-    agreed_l2_output_root: B256,
-    config_hash: B256,
-    fpvm_image_id: B256,
-    payout_recipient: Address,
 ) -> Vec<ChunkWitnessData> {
     assert_eq!(traces.len(), block_txs.len());
     assert_eq!(tx_meta.len(), block_txs.len());
     assert_eq!(traces.len(), receipts.len());
 
     let chunks = group_transactions_into_chunks(block_txs.len(), max_txs_per_chunk);
-    let total_chunks = chunks.len() as u16;
 
     let mut cumulative_cache = prepare_cumulative_cache(post_prelude_cache, traces, tx_meta);
     let mut cumulative_evm_state = evm_state_after_prelude;
     let mut witnesses = Vec::with_capacity(chunks.len());
 
-    for (chunk_idx, chunk_range) in chunks.iter().enumerate() {
+    for chunk_range in chunks.iter() {
         let chunk_cache = cumulative_cache.clone();
 
         witnesses.push(ChunkWitnessData {
-            block_number: block_env.number.to::<u64>(),
-            chunk_index: chunk_idx as u16,
-            total_chunks,
-            tx_start: chunk_range.start as u16,
-            tx_count: chunk_range.len() as u16,
             transactions: block_txs[chunk_range.clone()]
                 .iter()
                 .map(|tx| tx.to_vec())
@@ -187,10 +177,6 @@ pub fn build_chunk_witnesses(
             op_block_ctx: op_block_ctx.clone(),
             cache: chunk_cache,
             evm_state: cumulative_evm_state.clone(),
-            agreed_l2_output_root,
-            config_hash,
-            fpvm_image_id,
-            payout_recipient,
         });
 
         // Advance cumulative state through this chunk's transactions
@@ -216,7 +202,7 @@ mod tests {
     use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
     use alloy_evm::revm::database::in_memory_db::AccountState;
     use alloy_evm::revm::state::{Account, AccountInfo, Bytecode, EvmStorageSlot};
-    use alloy_primitives::{address, map::HashMap};
+    use alloy_primitives::{address, map::HashMap, Address};
     use op_alloy_consensus::OpTxType;
     use std::collections::BTreeMap;
 
@@ -427,18 +413,10 @@ mod tests {
             &default_block_env(),
             &default_op_block_ctx(),
             EvmAccumulatorState::default(),
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Address::ZERO,
         );
 
         assert_eq!(witnesses.len(), 1);
         let w = &witnesses[0];
-        assert_eq!(w.chunk_index, 0);
-        assert_eq!(w.total_chunks, 1);
-        assert_eq!(w.tx_start, 0);
-        assert_eq!(w.tx_count, 1);
         // Cache should contain addr with pre-state (from post_prelude)
         let acct = w.cache.accounts.get(&addr).unwrap();
         assert_eq!(acct.info.nonce, 1);
@@ -481,10 +459,6 @@ mod tests {
             &default_block_env(),
             &default_op_block_ctx(),
             EvmAccumulatorState::default(),
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Address::ZERO,
         );
 
         assert_eq!(witnesses.len(), 2);
@@ -532,10 +506,6 @@ mod tests {
             &default_block_env(),
             &default_op_block_ctx(),
             EvmAccumulatorState::default(),
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Address::ZERO,
         );
 
         let w0_acct = witnesses[0].cache.accounts.get(&sender).unwrap();
@@ -598,10 +568,6 @@ mod tests {
             &default_block_env(),
             &default_op_block_ctx(),
             EvmAccumulatorState::default(),
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Address::ZERO,
         );
 
         assert_eq!(
@@ -663,10 +629,6 @@ mod tests {
             &default_block_env(),
             &default_op_block_ctx(),
             EvmAccumulatorState::default(),
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Address::ZERO,
         );
 
         assert!(witnesses[0].cache.accounts.contains_key(&addr));
@@ -716,10 +678,6 @@ mod tests {
             &default_block_env(),
             &default_op_block_ctx(),
             EvmAccumulatorState::default(),
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Address::ZERO,
         );
 
         assert_eq!(
@@ -778,10 +736,6 @@ mod tests {
             &default_block_env(),
             &default_op_block_ctx(),
             base_evm,
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Address::ZERO,
         );
 
         assert_eq!(witnesses[0].evm_state.cumulative_gas_used, 10000);
@@ -815,10 +769,6 @@ mod tests {
             &default_block_env(),
             &default_op_block_ctx(),
             EvmAccumulatorState::default(),
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Address::ZERO,
         );
 
         let account = witnesses[0].cache.accounts.get(&absent).unwrap();
@@ -869,10 +819,6 @@ mod tests {
             &default_block_env(),
             &default_op_block_ctx(),
             EvmAccumulatorState::default(),
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Address::ZERO,
         );
 
         assert_eq!(
@@ -925,10 +871,6 @@ mod tests {
             &default_block_env(),
             &default_op_block_ctx(),
             EvmAccumulatorState::default(),
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Address::ZERO,
         );
 
         assert_eq!(witnesses.len(), 2);

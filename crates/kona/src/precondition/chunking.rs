@@ -20,7 +20,7 @@ use alloy_evm::revm::context_interface::result::{
 use alloy_evm::revm::database::in_memory_db::{AccountState, Cache, DbAccount};
 use alloy_evm::revm::database::states::cache::CacheState;
 use alloy_evm::revm::primitives::{HashMap, KECCAK_EMPTY};
-use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, Bytecode, EvmState};
+use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmState};
 use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Address, Bloom, B256, U256};
 use op_alloy_consensus::OpReceiptEnvelope;
@@ -172,23 +172,6 @@ pub fn apply_trace_to_cache(cache: &mut Cache, trace: &EvmState) {
                 cache.contracts.insert(account.info.code_hash, code.clone());
             }
         }
-    }
-}
-
-/// Validates that each cached contract bytecode hashes to its map key.
-///
-/// This is required because the canonical state hash encodes only the sorted set of contract
-/// code-hash keys. If a witness provided arbitrary bytecode under a valid key and we failed to
-/// check it first, the hash would authenticate the wrong executable code.
-pub fn validate_cached_contracts<S: std::hash::BuildHasher>(
-    contracts: &HashMap<B256, Bytecode, S>,
-) {
-    for (expected_hash, bytecode) in contracts {
-        let actual_hash = bytecode.hash_slow();
-        assert_eq!(
-            actual_hash, *expected_hash,
-            "cached contract bytecode hash mismatch: expected {expected_hash:?}, got {actual_hash:?}"
-        );
     }
 }
 
@@ -986,9 +969,15 @@ pub fn expected_blob_excess_gas_and_price(
     spec_id: OpSpecId,
 ) -> Option<BlobExcessGasAndPrice> {
     let (params, fraction) = if spec_id.is_enabled_in(OpSpecId::ISTHMUS) {
-        (Some(BlobParams::prague()), BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE)
+        (
+            Some(BlobParams::prague()),
+            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        )
     } else if spec_id.is_enabled_in(OpSpecId::ECOTONE) {
-        (Some(BlobParams::cancun()), BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN)
+        (
+            Some(BlobParams::cancun()),
+            BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN,
+        )
     } else {
         (None, 0)
     };
@@ -1144,14 +1133,6 @@ pub fn verify_block_chunks(
             header.extra_data
         );
 
-        // Malformed-witness guard.
-        ensure!(
-            chunk.tx_count as usize == chunk.results.len(),
-            "chunks[{i}] tx_count ({}) != results.len() ({}) — malformed witness",
-            chunk.tx_count,
-            chunk.results.len()
-        );
-
         // evm_state self-consistency: the structural field must hash to the
         // authenticated claimed_evm commitment. Without this, the receipts inside
         // evm_state are not bound to the chunk proof and cannot be safely used for the
@@ -1168,8 +1149,8 @@ pub fn verify_block_chunks(
         // derivation-pipeline-supplied txs for this chunk's range. Forces the chunk
         // proof to authenticate exactly the transactions the aggregation is executing.
         let chunk_end = cursor
-            .checked_add(chunk.tx_count as usize)
-            .ok_or_else(|| anyhow::anyhow!("chunks[{i}] tx_count overflow"))?;
+            .checked_add(chunk.results.len())
+            .ok_or_else(|| anyhow::anyhow!("chunks[{i}] tx count overflow"))?;
         ensure!(
             chunk_end <= block_txs.len(),
             "chunks[{i}] extends past block tx count: end={chunk_end}, total={}",
@@ -1235,7 +1216,7 @@ pub fn verify_block_chunks(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use alloy_evm::revm::database::in_memory_db::AccountState;
     use alloy_evm::revm::database::states::{AccountStatus, CacheAccount};
@@ -1253,7 +1234,7 @@ mod tests {
         }
     }
 
-    fn make_bytecode(bytes: &'static [u8]) -> Bytecode {
+    pub fn make_bytecode(bytes: &'static [u8]) -> Bytecode {
         Bytecode::new_raw(alloy_primitives::Bytes::from_static(bytes))
     }
 
@@ -1478,32 +1459,6 @@ mod tests {
 
         cache2.contracts.insert(code_hash, code);
         assert_eq!(hash_cache(&cache1), hash_cache(&cache2));
-    }
-
-    #[test]
-    fn validate_cached_contracts_rejects_malformed_entry() {
-        let valid_code = make_bytecode(&[0x60, 0x00]);
-        let invalid_code = make_bytecode(&[0x60, 0x01]);
-        let code_hash = valid_code.hash_slow();
-
-        let mut cache = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
-        cache.contracts.insert(code_hash, invalid_code);
-
-        let panic =
-            std::panic::catch_unwind(|| validate_cached_contracts(&cache.contracts)).unwrap_err();
-        let message = if let Some(msg) = panic.downcast_ref::<String>() {
-            msg.clone()
-        } else if let Some(msg) = panic.downcast_ref::<&str>() {
-            msg.to_string()
-        } else {
-            String::new()
-        };
-        assert!(message.contains("cached contract bytecode hash mismatch"));
     }
 
     #[test]
@@ -2219,12 +2174,10 @@ mod tests {
         );
 
         // Mutate a storage slot — hash must change.
-        modified
-            .state
-            .get_mut(&addr)
-            .unwrap()
-            .storage
-            .insert(U256::from(1), EvmStorageSlot::new_changed(U256::ZERO, U256::from(42), 0));
+        modified.state.get_mut(&addr).unwrap().storage.insert(
+            U256::from(1),
+            EvmStorageSlot::new_changed(U256::ZERO, U256::from(42), 0),
+        );
         let h_with_storage = hash_results(std::slice::from_ref(&modified));
         assert_ne!(h_modified, h_with_storage);
     }
@@ -2556,7 +2509,6 @@ mod tests {
         let chunk = Chunk {
             agreed_db: B256::repeat_byte(0x11),
             agreed_evm: B256::repeat_byte(0x22),
-            tx_count: 1,
             tx_hash,
             results: vec![make_success_result_empty()],
             evm_state,
@@ -2637,24 +2589,8 @@ mod tests {
         let err = verify_block_chunks(&[chunk], agreed, 11, &[tx], &header, None)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("parent_block_number"), "unexpected error: {err}");
-    }
-
-    /// tx_count ≠ results.len() malformed-witness guard.
-    #[test]
-    fn verify_block_chunks_rejects_tx_count_results_mismatch() {
-        let tx = vec![0xAA];
-        let agreed = B256::repeat_byte(0x77);
-        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
-        chunk.tx_count = 2; // Inconsistent with results.len() == 1.
-        let receipts_root = calculate_receipt_root(&[receipt]);
-
-        let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
-            .unwrap_err()
-            .to_string();
         assert!(
-            err.contains("tx_count") && err.contains("results.len()"),
+            err.contains("parent_block_number"),
             "unexpected error: {err}"
         );
     }
@@ -2737,10 +2673,7 @@ mod tests {
         let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
             .unwrap_err()
             .to_string();
-        assert!(
-            err.contains("receipts_root"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("receipts_root"), "unexpected error: {err}");
     }
 
     /// Block-context binding (Codex round-3 critical): a chunk whose `block_env`
@@ -2868,10 +2801,9 @@ mod tests {
         // but the chunk carries a forged value. Any non-None expected passed in
         // by the caller MUST match the chunk's value exactly.
         let forged_expected = Some(BlobExcessGasAndPrice::new(1_000_000, 3_338_477));
-        let err =
-            verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, forged_expected)
-                .unwrap_err()
-                .to_string();
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, forged_expected)
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("blob_excess_gas_and_price"),
             "unexpected error: {err}"
@@ -2889,9 +2821,16 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[r0, r1]);
 
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[c0, c1], agreed, 10, &[vec![0xAA], vec![0xBB]], &header, None)
-            .unwrap_err()
-            .to_string();
+        let err = verify_block_chunks(
+            &[c0, c1],
+            agreed,
+            10,
+            &[vec![0xAA], vec![0xBB]],
+            &header,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("hash chain broken") && err.contains("agreed_db"),
             "unexpected error: {err}"

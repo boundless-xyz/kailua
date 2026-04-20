@@ -87,19 +87,6 @@ pub struct Chunk {
     /// Hash of the EVM accumulator state before this chunk's transactions.
     #[rkyv(with = B256Def)]
     pub agreed_evm: B256,
-    /// Number of transactions in this chunk. Must equal `results.len()` —
-    /// enforced by `verify_block_chunks` to reject malformed witnesses.
-    ///
-    /// Note (review finding M-8): `u16` bounds per-chunk tx count at 65535. This is
-    /// far above any plausible OP block size today (highest OP Mainnet block to date
-    /// is under 1000 txs), but the protocol does not formally cap block tx count. If
-    /// a block ever exceeds `u16::MAX` txs, its chunks would need a wider type here
-    /// AND the host's `group_transactions_into_chunks` would need to refuse, since
-    /// silent truncation would produce a witness that `verify_block_chunks` rejects
-    /// (tx_count vs results.len() mismatch or missing full coverage). Enforce at
-    /// witness construction time rather than here — this struct is consumed after
-    /// the host already validated the partition.
-    pub tx_count: u16,
     /// Hash of the chunk's transaction list.
     #[rkyv(with = B256Def)]
     pub tx_hash: B256,
@@ -765,7 +752,6 @@ pub mod tests {
         super::Chunk {
             agreed_db: keccak256("agreed_db"),
             agreed_evm: keccak256("agreed_evm"),
-            tx_count: 1,
             tx_hash: keccak256("tx_hash"),
             results: vec![ras],
             evm_state: crate::precondition::chunking::EvmAccumulatorState {
@@ -792,7 +778,6 @@ pub mod tests {
 
         assert_eq!(deser.agreed_db, chunk.agreed_db);
         assert_eq!(deser.agreed_evm, chunk.agreed_evm);
-        assert_eq!(deser.tx_count, 1);
         assert_eq!(deser.tx_hash, chunk.tx_hash);
         assert_eq!(deser.results.len(), 1);
         assert_eq!(deser.evm_state.cumulative_gas_used, 21000);
@@ -836,12 +821,10 @@ pub mod tests {
             },
             state: Default::default(),
         });
-        chunk.tx_count = 2;
 
         let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
         let deser = rkyv::from_bytes::<super::Chunk, Error>(&bytes).unwrap();
 
-        assert_eq!(deser.tx_count, 2);
         assert_eq!(deser.results.len(), 2);
         assert!(deser.results[0].result.is_success());
         match &deser.results[1].result {
@@ -858,7 +841,6 @@ pub mod tests {
         let chunk = super::Chunk {
             agreed_db: keccak256("agreed_db"),
             agreed_evm: keccak256("agreed_evm"),
-            tx_count: 0,
             tx_hash: keccak256("tx_hash"),
             results: vec![],
             evm_state: crate::precondition::chunking::EvmAccumulatorState::default(),
@@ -872,7 +854,6 @@ pub mod tests {
         let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
         let deser = rkyv::from_bytes::<super::Chunk, Error>(&bytes).unwrap();
 
-        assert_eq!(deser.tx_count, 0);
         assert!(deser.results.is_empty());
         assert_eq!(deser.agreed_db, chunk.agreed_db);
         assert_eq!(deser.claimed_evm, chunk.claimed_evm);

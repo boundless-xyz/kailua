@@ -19,8 +19,8 @@ use crate::executor::{new_execution_cursor, CachedExecutor, Chunk, Execution, Pa
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
 use crate::precondition::chunking::{
-    compute_chunk_trace, compute_tx_hash, hash_cache, hash_evm_state, hash_overlay_state,
-    hash_results, validate_cached_contracts,
+    compute_chunk_trace, compute_tx_hash, hash_block_ctx, hash_cache, hash_evm_state,
+    hash_overlay_state, hash_results, EvmAccumulatorState,
 };
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
@@ -29,10 +29,12 @@ use alloy_consensus::transaction::SignerRecoverable;
 use alloy_consensus::TxReceipt;
 use alloy_eips::eip2718::{Decodable2718, WithEncoded};
 use alloy_evm::block::BlockExecutor;
-use alloy_evm::revm::primitives::Bytes;
+use alloy_evm::revm::bytecode::Bytecode;
+use alloy_evm::revm::database::in_memory_db::CacheDB;
 use alloy_evm::EvmFactory;
 use alloy_op_evm::block::OpAlloyReceiptBuilder;
 use alloy_op_evm::OpBlockExecutor;
+use alloy_primitives::map::HashMap;
 use alloy_primitives::{Sealed, B256};
 use anyhow::{bail, Context};
 use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
@@ -140,264 +142,72 @@ where
         ////////////////////////////////////////////////////////////////
         if boot.l1_head == B256::repeat_byte(0xFF) {
             log("CHUNK EXECUTION");
-            let cw = chunk_witness.context("chunk witness required in chunk mode")?;
+            let ChunkWitnessData {
+                transactions,
+                block_env,
+                op_block_ctx,
+                cache,
+                evm_state,
+            } = chunk_witness.context("chunk witness required in chunk mode")?;
 
-            // ---------------------------------------------------------------
-            // AGGREGATION CONTRACT (Part 7 → Part 8)
-            //
-            // This branch emits a `chunk_trace` that commits to exactly five
-            // hashes: (tx_hash, pre_db_hash, post_db_hash, pre_evm_hash,
-            // post_evm_hash). Any `ChunkWitnessData` field NOT folded into
-            // those five hashes is trusted LOCALLY and MUST be bound by the
-            // aggregation guest (Part 8) to the target block header.
-            //
-            // Expected block_env authentication (Part 8 responsibility)
-            // ---------------------------------------------------------
-            // `cw.block_env` is read here but not committed into `chunk_trace`.
-            // It drives:
-            //   * `spec_id = rollup_config.spec_id(timestamp)` — hardfork
-            //     gating plus EVM semantics (Spurious Dragon, London
-            //     basefee, Shanghai PUSH0, Cancun blob opcodes, Prague, ...).
-            //   * `block_gas_limit = cw.block_env.gas_limit` — per-tx gas
-            //     and DA-footprint budget checks (enforced inside
-            //     `OpBlockExecutor::execute_transaction_without_commit`).
-            //   * `basefee`, `prevrandao`, `coinbase`/`beneficiary`,
-            //     `number`, `blob_excess_gas_and_price` — consumed by the
-            //     EVM during tx execution (e.g. BASEFEE, PREVRANDAO,
-            //     COINBASE opcodes, L1 data-cost pricing).
-            //   * `cw.cache.block_hashes` — contributes to `pre_db_hash`
-            //     (indirectly committed) but the aggregator must still
-            //     verify the initial entries match EIP-2935 / BLOCKHASH
-            //     expectations for the target block.
-            // Without aggregation binding, a malicious prover could pick a
-            // timestamp to skip an unwanted hardfork (e.g. pre-Jovian to
-            // bypass the DA budget check), relax `gas_limit`, forge
-            // `basefee`, etc. Part 8 MUST verify that every chunk's
-            // `block_env` matches the header context of the target block.
-            //
-            // Similarly, `cw.op_block_ctx` (parent_hash, parent_beacon_block_root,
-            // extra_data) is consumed by `OpBlockExecutor::new` but not
-            // committed into `chunk_trace`. Part 8 MUST bind it to the
-            // target block header. It is not *currently* load-bearing for
-            // per-tx execution in this branch (prelude system calls are
-            // skipped), but upstream hardforks may expand its reach.
-            //
-            // Other ChunkWitnessData fields reserved for Part 8 binding:
-            //   `block_number`, `chunk_index`, `total_chunks`, `tx_start`,
-            //   `tx_count`, `agreed_l2_output_root`, `config_hash`,
-            //   `fpvm_image_id`, `payout_recipient`. They are NOT read in
-            //   Part 7.
-            //
-            // Tampering evidence for `cw.evm_state`
-            // -------------------------------------
-            // `cw.evm_state` seeds `OpBlockExecutor`'s running accumulator
-            // (cumulative gas, da_footprint_used, receipts) plus our local
-            // `logs_bloom`. It is trusted LOCALLY but detected if tampered
-            // with via the Part 8 hash chain:
-            //   * `pre_evm_hash = hash_evm_state(&cw.evm_state)` is
-            //     committed into `chunk_trace`. Aggregation requires
-            //     `chunk_i.pre_evm_hash == chunk_{i-1}.post_evm_hash`, and
-            //     `chunk_0.pre_evm_hash` must equal the zeroed accumulator's
-            //     hash.
-            //   * `chunk_last.post_evm_hash` is bound by aggregation to the
-            //     block header's `gas_used`, `logs_bloom`, `receipts_root`,
-            //     and `blob_gas_used`. Any tampering (wrong starting gas,
-            //     missing receipt, mismatched bloom, forged blob_gas) either
-            //     breaks the chain between chunks or fails the final
-            //     header-match step.
-            //
-            // Implementation note: per-transaction execution is driven by
-            // upstream's `OpBlockExecutor` (alloy-op-evm) rather than a
-            // hand-rolled loop. We seed its `pub` accumulator fields
-            // (`gas_used`, `da_footprint_used`, `receipts`) from
-            // `cw.evm_state` and call `execute_transaction_without_commit`
-            // + `commit_transaction` per tx, skipping the per-block hooks
-            // (`apply_pre_execution_changes`, `finish`). This inherits
-            // block-gas-budget and Jovian-DA prechecks, deposit-nonce
-            // handling, receipt construction, and all future upstream
-            // hardfork changes. `logs_bloom` is tracked locally because
-            // `OpBlockExecutor` does not maintain a running bloom.
-            //
-            // Witness-seed validation (trust boundary)
-            // ----------------------------------------
-            // `cw.evm_state.{cumulative_gas_used, da_footprint_used}` seed
-            // `OpBlockExecutor`'s accumulators. Upstream's per-tx prechecks
-            // compute `block_available_gas = gas_limit - self.gas_used` and
-            // `da_footprint_available = gas_limit - self.da_footprint_used`
-            // with *unchecked* subtraction. A malicious or malformed witness
-            // that seeds either value above `block_env.gas_limit` wraps the
-            // subtraction to near-`u64::MAX` in release (silently accepting
-            // an impossible "huge" budget) or panics in debug. We therefore
-            // bail early on any seed that exceeds the block gas limit.
-            //
-            // `blob_gas_used == da_footprint_used` invariant (OP Jovian)
-            // ---------------------------------------------------------
-            // On OP post-Jovian, upstream's `BlockExecutionResult.blob_gas_used
-            // = self.da_footprint_used` (alloy-op-evm/src/block/mod.rs) — the
-            // block header's `blob_gas_used` is repurposed to track DA
-            // footprint. OP L2 user transactions cannot carry EIP-4844 blobs
-            // (`OpTxType` has no `Eip4844` variant: only Legacy / Eip2930 /
-            // Eip1559 / Eip7702 / Deposit), so there is no independent real
-            // blob-gas source. We enforce this invariant at chunk entry
-            // (`blob_gas_used == da_footprint_used`) and derive the output
-            // `blob_gas_used` from `exec.da_footprint_used`, matching
-            // upstream's `BlockExecutionResult` convention by construction.
-            // The host's independent tracking of the two deltas (see
-            // `crates/prover/src/chunk.rs::accumulate_receipt`) is schema
-            // flexibility for the pre-Jovian era / synthetic tests; in
-            // production post-Jovian witnesses the two must agree, and we
-            // fail closed if they don't. If a future hardfork introduces
-            // real per-tx blob gas on OP L2 independent of DA footprint,
-            // the witness schema must be extended to carry a per-chunk
-            // blob-gas-delta total and this invariant relaxed.
-            // ---------------------------------------------------------------
+            // Validate cached contract bytecodes against their code_hash keys.
+            validate_cached_contracts(&cache.contracts);
 
-            // (a) Validate cached contract bytecodes against their code_hash keys.
-            validate_cached_contracts(&cw.cache.contracts);
+            // Compute pre-hashes from the witness state.
+            let tx_hash = compute_tx_hash(&transactions);
+            let block_ctx_hash = hash_block_ctx(&block_env, &op_block_ctx);
+            let pre_db_hash = hash_cache(&cache);
+            let pre_evm_hash = hash_evm_state(&evm_state);
 
-            // (a') Validate the seeded accumulator state against the block
-            // gas limit (trust-boundary check — see Witness-seed validation
-            // above). These values come from witness input; without these
-            // bounds, upstream's unchecked `gas_limit - self.gas_used`
-            // subtraction can wrap or panic.
-            let block_gas_limit = cw.block_env.gas_limit;
-            if cw.evm_state.cumulative_gas_used > block_gas_limit {
-                bail!(
-                    "witness cumulative_gas_used {} exceeds block gas_limit {}",
-                    cw.evm_state.cumulative_gas_used,
-                    block_gas_limit
-                );
-            }
-            if cw.evm_state.da_footprint_used > block_gas_limit {
-                bail!(
-                    "witness da_footprint_used {} exceeds block gas_limit {}",
-                    cw.evm_state.da_footprint_used,
-                    block_gas_limit
-                );
-            }
-            // OP Jovian invariant: blob_gas_used == da_footprint_used (see
-            // `BlockExecutionResult.blob_gas_used = self.da_footprint_used`
-            // in upstream). We fail closed on any divergence to guarantee
-            // the output `blob_gas_used` (derived from `exec.da_footprint_used`)
-            // matches what the host threads as the next chunk's seed.
-            if cw.evm_state.blob_gas_used != cw.evm_state.da_footprint_used {
-                bail!(
-                    "witness blob_gas_used {} != da_footprint_used {} (OP Jovian \
-                     invariant: BlockExecutionResult.blob_gas_used is always \
-                     self.da_footprint_used on OP L2; host must thread them in \
-                     lockstep)",
-                    cw.evm_state.blob_gas_used,
-                    cw.evm_state.da_footprint_used
-                );
-            }
+            // Build CacheDB<PanicDB> from witness cache.
+            let mut cache_db = CacheDB::new(PanicDB);
+            cache_db.cache = cache.clone();
 
-            // (b) Build CacheDB<PanicDB> from witness cache.
-            let mut cache_db = alloy_evm::revm::database::in_memory_db::CacheDB::new(PanicDB);
-            cache_db.cache = cw.cache.clone();
-
-            // (c) Compute pre-hashes from the witness state.
-            let pre_db_hash = hash_cache(&cw.cache);
-            let pre_evm_hash = hash_evm_state(&cw.evm_state);
-
-            // (d) Wrap in State; set state-clear from hardfork.
-            //
-            // We intentionally omit `with_bundle_update()` — the post-state
-            // hash is computed from `state.cache` (live CacheState) and
-            // `state.block_hashes` via `hash_overlay_state`; the bundle
-            // delta is never consumed.
-            //
-            // We also set the state-clear flag manually here because we
-            // skip `OpBlockExecutor::apply_pre_execution_changes` below —
-            // that is where upstream normally sets the flag. All OP spec
-            // IDs (BEDROCK and later) are post-Spurious-Dragon, so the
-            // flag is always active. We verify this by checking that the
-            // spec_id is at least BEDROCK.
+            // Wrap in State
             let mut state = alloy_evm::revm::database::states::State::builder()
                 .with_database(cache_db)
                 .build();
-            let timestamp: u64 = cw.block_env.timestamp.to();
-            let spec_id = rollup_config.spec_id(timestamp);
-            if spec_id < alloy_evm::op_revm::OpSpecId::BEDROCK {
-                bail!("unexpected pre-Bedrock OP spec: state-clear semantics may differ");
-            }
+            // set the state-clear flag manually here because skip `apply_pre_execution_changes`
             state.set_state_clear_flag(true);
 
-            // Set up EVM environment. Mirrors
-            // optimism/rust/kona/crates/proof/executor/src/builder/env.rs
-            // (`evm_cfg_env`).
+            // Set up EVM environment.
+            // ref optimism/rust/kona/crates/proof/executor/src/builder/env.rs (`evm_cfg_env`).
             let cfg_env = alloy_evm::revm::context::CfgEnv::new()
                 .with_chain_id(boot.chain_id)
-                .with_spec_and_mainnet_gas_params(spec_id);
-            let evm_env = alloy_evm::EvmEnv::new(cfg_env, cw.block_env.clone());
+                .with_spec_and_mainnet_gas_params(rollup_config.spec_id(block_env.timestamp.to()));
+            let evm_env = alloy_evm::EvmEnv::new(cfg_env, block_env);
 
-            // Long-lived factory for chunk execution. We wrap the underlying
-            // `OpEvmFactory` with `TracingOpEvmFactory` so every
-            // `transact_raw()` call captures the per-tx `ResultAndState` into
-            // a shared buffer. The captured trace is hashed into
-            // `results_hash` below and folded into `chunk_trace`, binding the
-            // chunk proof to the *exact* per-transaction execution trace.
-            // Without this binding, the aggregation guest (`ChunkingEvm`)
-            // could replay a different `results` vec that happens to reach
-            // the same pre→post state endpoints — this is the adversarial
-            // review's finding #1, addressed by task 8.9.
-            let tracing_factory = TracingOpEvmFactory::new();
-            let evm = tracing_factory.create_evm(&mut state, evm_env);
-
-            // (e) Construct upstream `OpBlockExecutor` and seed its
-            // accumulators from the witness. `RollupConfig` implements
-            // `OpHardforks` (optimism/.../protocol/genesis/src/rollup.rs),
-            // so it drives hardfork gating directly.
-            let spec = rollup_config.as_ref().clone();
-            let mut exec = OpBlockExecutor::new(
-                evm,
-                cw.op_block_ctx.clone(),
-                spec,
+            // (e) Construct upstream `OpBlockExecutor` and seed its accumulators from the witness.
+            let tracing_op_evm_factory = TracingOpEvmFactory::new();
+            let mut op_block_executor = OpBlockExecutor::new(
+                tracing_op_evm_factory.create_evm(&mut state, evm_env),
+                op_block_ctx,
+                rollup_config.clone(),
                 OpAlloyReceiptBuilder::default(),
             );
-            // Seed the executor's running accumulators so `block_available_gas`
-            // and Jovian DA-budget prechecks see the same budget monolithic
-            // execution would at this point in the block.
-            exec.gas_used = cw.evm_state.cumulative_gas_used;
-            exec.da_footprint_used = cw.evm_state.da_footprint_used;
-            exec.receipts = cw.evm_state.receipts.clone();
-            // Local logs_bloom: OpBlockExecutor does not track a running
-            // bloom (upstream computes it at seal_block time from the final
-            // receipts vector). Chunk proofs need it in the accumulator
-            // hash, so we accrue it from each committed receipt.
-            let mut logs_bloom = cw.evm_state.logs_bloom;
-
-            // Skip `apply_pre_execution_changes` — chunk_0 witness already
-            // reflects the prelude (parent-hash ring buffer writes,
-            // beacon-root contract call, create2 deployer at canyon). The
-            // aggregator (Part 8) binds `cw.cache` to the post-prelude state.
-            // Skip `finish` — chunks do not apply post-block balance
-            // increments; the aggregation proof owns that.
-
-            for tx_bytes in &cw.transactions {
-                // Decode the signed transaction envelope, rejecting trailing bytes.
-                // This ensures tx_hash commits to exactly the bytes that were executed.
+            // Seed the executor's running accumulators
+            op_block_executor.gas_used = evm_state.cumulative_gas_used;
+            op_block_executor.da_footprint_used = evm_state.da_footprint_used;
+            op_block_executor.receipts = evm_state.receipts.clone();
+            // Execute transactions
+            let mut logs_bloom = evm_state.logs_bloom;
+            for tx_bytes in transactions {
+                // Decode the signed transaction envelope
                 let mut buf = tx_bytes.as_slice();
-                let tx = OpTxEnvelope::decode_2718(&mut buf)
+                let tx = OpTxEnvelope::decode_2718_exact(&mut buf)
                     .context("invalid transaction encoding in chunk witness")?;
-                if !buf.is_empty() {
-                    bail!("trailing bytes after transaction decoding in chunk witness");
-                }
                 let recovered = tx
                     .try_into_recovered()
                     .context("invalid transaction signature in chunk witness")?;
-                let encoded = Bytes::from(tx_bytes.clone());
-                let wrapped = WithEncoded::new(encoded, recovered);
+                let wrapped = WithEncoded::new(tx_bytes.into(), recovered);
 
                 // Delegates to `execute_transaction_without_commit`
-                // (block-available-gas check, Jovian DA precheck with L1Block
-                // preload) and `commit_transaction` (state commit,
-                // deposit-nonce read, receipt construction via
-                // `OpAlloyReceiptBuilder`, gas/DA accumulation).
-                exec.execute_transaction(wrapped)
+                op_block_executor
+                    .execute_transaction(wrapped)
                     .map_err(|e| anyhow::anyhow!("chunk transaction execution failed: {e}"))?;
 
                 // Accrue logs from the newly-added receipt into the running bloom.
-                if let Some(receipt) = exec.receipts.last() {
+                if let Some(receipt) = op_block_executor.receipts.last() {
                     for log in TxReceipt::logs(receipt) {
                         logs_bloom.accrue_log(log);
                     }
@@ -405,71 +215,25 @@ where
             }
 
             // Reconstruct the chunk's final accumulator state for hashing.
-            // `blob_gas_used` is derived from `exec.da_footprint_used`,
-            // matching upstream's `BlockExecutionResult.blob_gas_used =
-            // self.da_footprint_used` convention. The entry-time invariant
-            // check above guarantees the seed already had
-            // `blob_gas_used == da_footprint_used`, so this output
-            // preserves that equality and advances both in lockstep with
-            // executed Jovian DA contributions. The next chunk's seed
-            // (host-produced) must carry the same equality; the host's
-            // `ChunkTxMeta::blob_gas_used_delta` must equal
-            // `ChunkTxMeta::da_footprint_delta` per tx on OP Jovian.
-            let evm_accum = crate::precondition::chunking::EvmAccumulatorState {
-                cumulative_gas_used: exec.gas_used,
-                da_footprint_used: exec.da_footprint_used,
-                blob_gas_used: exec.da_footprint_used,
+            let evm_accum = EvmAccumulatorState {
+                cumulative_gas_used: op_block_executor.gas_used,
+                da_footprint_used: op_block_executor.da_footprint_used,
+                blob_gas_used: op_block_executor.da_footprint_used,
                 logs_bloom,
-                receipts: take(&mut exec.receipts),
+                receipts: take(&mut op_block_executor.receipts),
             };
 
             // Drop the executor to release the borrow on `state` (it owns
             // the EVM, which borrows `state` mutably).
-            drop(exec);
+            drop(op_block_executor);
 
-            // (f) Compute tx_hash
-            let tx_hash = compute_tx_hash(&cw.transactions);
-
-            // (g) Compute post-hashes.
-            // The State wraps CacheDB<PanicDB>; State.cache has accessed entries,
-            // CacheDB.cache (the witness) has the full base layer.
-            let post_db_hash = hash_overlay_state(&cw.cache, &state.cache, &state.block_hashes);
+            // Compute post-hashes.
+            let post_db_hash = hash_overlay_state(&cache, &state.cache, &state.block_hashes);
             let post_evm_hash = hash_evm_state(&evm_accum);
-
-            // (g2) Compute results_hash from the per-tx traces captured by
-            // `TracingOpEvmFactory`. Sanity-check that we captured exactly one
-            // trace per transaction — anything else indicates an executor or
-            // wrapper bug.
-            let traces = tracing_factory.take_traces();
-            if traces.len() != cw.transactions.len() {
-                bail!(
-                    "chunk tracing mismatch: captured {} traces for {} transactions",
-                    traces.len(),
-                    cw.transactions.len()
-                );
-            }
+            let traces = tracing_op_evm_factory.take_traces();
             let results_hash = hash_results(&traces);
 
-            // (g3) Compute block_ctx_hash over the EXACT block execution context
-            // this chunk guest ran under. Folding this into chunk_trace binds the
-            // proof to that context so aggregation cannot accept the results
-            // under a different block context (different timestamp, basefee,
-            // prevrandao, coinbase, blob pricing, parent_hash, etc.). Without
-            // this, env-sensitive opcodes (BASEFEE / PREVRANDAO / NUMBER /
-            // COINBASE / TIMESTAMP / BLOBBASEFEE / BLOCKHASH / EIP-4788 beacon
-            // root / EIP-2935 ring / Holocene-Jovian EIP-1559 params in
-            // extra_data) would all be unchecked, letting a malicious prover
-            // generate a chunk under a forged context and have aggregation
-            // replay those results for a real block.
-            let block_ctx_hash = crate::precondition::chunking::hash_block_ctx(
-                &cw.block_env,
-                &cw.op_block_ctx,
-            );
-
-            // (h) Compute chunk_trace. The seven-input form binds the proof to
-            // the per-tx execution trace (`results_hash`) AND the block
-            // execution context (`block_ctx_hash`), not just the pre/post
-            // state and EVM accumulator endpoints.
+            // Compute chunk_trace
             let chunk_trace = compute_chunk_trace(
                 tx_hash,
                 pre_db_hash,
@@ -480,7 +244,7 @@ where
                 block_ctx_hash,
             );
 
-            // (i) Return
+            // Return
             return Ok((boot, Precondition::default().chunk(chunk_trace)));
         }
 
@@ -808,7 +572,7 @@ where
         // For each block whose witness supplied chunks, verify:
         //   (1) chunk.agreed_l2_output_root == derived parent output root  (output-root anchor)
         //   (2) chunk.parent_block_number == derived parent block number    (block-number anchor)
-        //   (3) sum(chunk.tx_count) == len(block's derived txs) AND each chunk's tx_hash
+        //   (3) sum(chunk.results.len()) == len(block's derived txs) AND each chunk's tx_hash
         //       matches the SHA256 of the derived tx bytes for its slice   (tx_hash binding)
         //   (4) hash_evm_state(&chunk.evm_state) == chunk.claimed_evm       (evm_state self-consistency)
         //   (5) calculate_receipt_root(&last_chunk.evm_state.receipts) matches the
@@ -947,12 +711,30 @@ pub fn recover_collected_executions(
     take::<Vec<Execution>>(executions.as_mut())
 }
 
+/// Validates that each cached contract bytecode hashes to its map key.
+///
+/// This is required because the canonical state hash encodes only the sorted set of contract
+/// code-hash keys. If a witness provided arbitrary bytecode under a valid key and we failed to
+/// check it first, the hash would authenticate the wrong executable code.
+pub fn validate_cached_contracts<S: std::hash::BuildHasher>(
+    contracts: &HashMap<B256, Bytecode, S>,
+) {
+    for (expected_hash, bytecode) in contracts {
+        let actual_hash = bytecode.hash_slow();
+        assert_eq!(
+            actual_hash, *expected_hash,
+            "cached contract bytecode hash mismatch: expected {expected_hash:?}, got {actual_hash:?}"
+        );
+    }
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
+    use alloy_evm::revm::database::Cache;
     use alloy_primitives::{b256, B256};
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::BootInfo;
@@ -1268,7 +1050,11 @@ pub mod tests {
     pub fn build_single_chunk_for_block(
         execution: &Execution,
         parent_block_number: u64,
-        traces: Vec<alloy_evm::revm::context_interface::result::ResultAndState<alloy_evm::op_revm::OpHaltReason>>,
+        traces: Vec<
+            alloy_evm::revm::context_interface::result::ResultAndState<
+                alloy_evm::op_revm::OpHaltReason,
+            >,
+        >,
         parent_header: &alloy_consensus::Header,
         spec_id: alloy_evm::op_revm::OpSpecId,
     ) -> Chunk {
@@ -1344,10 +1130,6 @@ pub mod tests {
         Chunk {
             agreed_db: B256::ZERO,
             agreed_evm: B256::ZERO,
-            tx_count: block_txs
-                .len()
-                .try_into()
-                .expect("block tx count fits in u16"),
             tx_hash,
             results: traces,
             evm_state,
@@ -1433,9 +1215,9 @@ pub mod tests {
             .enumerate()
             .map(|(i, exec)| {
                 let block_number = safe_head_number + 1 + i as u64;
-                let traces = captured.remove(&block_number).unwrap_or_else(|| {
-                    panic!("no captured traces for block {block_number}")
-                });
+                let traces = captured
+                    .remove(&block_number)
+                    .unwrap_or_else(|| panic!("no captured traces for block {block_number}"));
                 let parent_header = if i == 0 {
                     &safe_head_header
                 } else {
@@ -1480,7 +1262,11 @@ pub mod tests {
     pub fn build_n_chunks_for_block(
         execution: &Execution,
         parent_block_number: u64,
-        traces: Vec<alloy_evm::revm::context_interface::result::ResultAndState<alloy_evm::op_revm::OpHaltReason>>,
+        traces: Vec<
+            alloy_evm::revm::context_interface::result::ResultAndState<
+                alloy_evm::op_revm::OpHaltReason,
+            >,
+        >,
         n: usize,
         parent_header: &alloy_consensus::Header,
         spec_id: alloy_evm::op_revm::OpSpecId,
@@ -1594,9 +1380,6 @@ pub mod tests {
             chunks.push(Chunk {
                 agreed_db: B256::ZERO,
                 agreed_evm: prev_claimed_evm,
-                tx_count: (end - start)
-                    .try_into()
-                    .expect("chunk tx count fits in u16"),
                 tx_hash,
                 results: chunk_traces,
                 evm_state,
@@ -1796,14 +1579,8 @@ pub mod tests {
         // `OpEvm`, identical to the monolithic path.
         let chunks = vec![Vec::<Chunk>::new(); 100];
 
-        test_derivation_with_chunks(
-            boot_info,
-            None,
-            None,
-            Some(Default::default()),
-            chunks,
-        )
-        .unwrap();
+        test_derivation_with_chunks(boot_info, None, None, Some(Default::default()), chunks)
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2011,29 +1788,16 @@ pub mod tests {
 
     /// Creates a chunk witness with default empty state for testing.
     fn make_test_chunk_witness(
-        chunk_index: u16,
-        total_chunks: u16,
         cache: alloy_evm::revm::database::in_memory_db::Cache,
         evm_state: crate::precondition::chunking::EvmAccumulatorState,
         transactions: Vec<Vec<u8>>,
     ) -> ChunkWitnessData {
         ChunkWitnessData {
-            block_number: 16491250,
-            chunk_index,
-            total_chunks,
-            tx_start: 0,
-            tx_count: transactions.len() as u16,
             transactions,
             block_env: alloy_evm::revm::context::BlockEnv::default(),
             op_block_ctx: alloy_op_evm::OpBlockExecutionCtx::default(),
             cache,
             evm_state,
-            agreed_l2_output_root: b256!(
-                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-            ),
-            config_hash: B256::ZERO,
-            fpvm_image_id: B256::ZERO,
-            payout_recipient: alloy_primitives::Address::ZERO,
         }
     }
 
@@ -2069,7 +1833,7 @@ pub mod tests {
             block_hashes: Default::default(),
         };
         let evm_state = EvmAccumulatorState::default();
-        let cw = make_test_chunk_witness(0, 1, cache.clone(), evm_state.clone(), vec![]);
+        let cw = make_test_chunk_witness(cache.clone(), evm_state.clone(), vec![]);
 
         // Compute expected chunk trace (no txs → post == pre; empty results_hash).
         let tx_hash = compute_tx_hash(&[]);
@@ -2112,8 +1876,8 @@ pub mod tests {
         };
         let evm_state = EvmAccumulatorState::default();
 
-        let cw0 = make_test_chunk_witness(0, 2, cache.clone(), evm_state.clone(), vec![]);
-        let cw1 = make_test_chunk_witness(1, 2, cache.clone(), evm_state.clone(), vec![]);
+        let cw0 = make_test_chunk_witness(cache.clone(), evm_state.clone(), vec![]);
+        let cw1 = make_test_chunk_witness(cache.clone(), evm_state.clone(), vec![]);
 
         let pre_db_hash_0 = hash_cache(&cw0.cache);
         let pre_db_hash_1 = hash_cache(&cw1.cache);
@@ -2152,113 +1916,6 @@ pub mod tests {
         )
     }
 
-    /// OP Jovian invariant: `blob_gas_used` must equal `da_footprint_used`
-    /// at every chunk boundary (`BlockExecutionResult.blob_gas_used =
-    /// self.da_footprint_used`). Any witness where they diverge must be
-    /// rejected before seeding `OpBlockExecutor`, because the guest derives
-    /// the output `blob_gas_used` from `exec.da_footprint_used` and would
-    /// otherwise produce an incoherent chunk trace relative to the next
-    /// chunk's seed (which the host threads in lockstep on real blocks).
-    #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_chunk_mode_rejects_blob_gas_ne_da_footprint() {
-        use crate::precondition::chunking::EvmAccumulatorState;
-        use alloy_evm::revm::database::in_memory_db::Cache;
-
-        let cache = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
-        // Seed with divergent values (mirrors the synthetic host tests at
-        // `crates/prover/src/chunk.rs` that set blob_gas_used_delta=131072
-        // and da_footprint_delta=500). On OP Jovian these MUST match.
-        let evm_state = EvmAccumulatorState {
-            cumulative_gas_used: 100_000,
-            da_footprint_used: 500,
-            blob_gas_used: 131072,
-            logs_bloom: Default::default(),
-            receipts: Vec::new(),
-        };
-        let mut cw = make_test_chunk_witness(1, 2, cache, evm_state, vec![]);
-        cw.block_env.gas_limit = 30_000_000;
-
-        let result = try_chunk_execution(make_chunk_boot_info(), cw);
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("blob_gas_used") && err_msg.contains("da_footprint_used"),
-            "unexpected error: {err_msg}"
-        );
-    }
-
-    /// Trust-boundary check: upstream's `block_available_gas =
-    /// gas_limit - self.gas_used` is unchecked subtraction. If a witness
-    /// seeds `cumulative_gas_used > gas_limit`, the subtraction wraps to
-    /// near-`u64::MAX` in release (silently accepting an impossible budget)
-    /// or panics in debug. The guest MUST reject such witnesses at entry.
-    #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_chunk_mode_rejects_cumulative_gas_above_limit() {
-        use crate::precondition::chunking::EvmAccumulatorState;
-        use alloy_evm::revm::database::in_memory_db::Cache;
-
-        let cache = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
-        let evm_state = EvmAccumulatorState {
-            cumulative_gas_used: 100, // > gas_limit
-            da_footprint_used: 0,
-            blob_gas_used: 0,
-            logs_bloom: Default::default(),
-            receipts: Vec::new(),
-        };
-        let mut cw = make_test_chunk_witness(0, 1, cache, evm_state, vec![]);
-        cw.block_env.gas_limit = 50;
-
-        let result = try_chunk_execution(make_chunk_boot_info(), cw);
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("cumulative_gas_used")
-                && err_msg.contains("exceeds block gas_limit"),
-            "unexpected error: {err_msg}"
-        );
-    }
-
-    /// Trust-boundary check (DA counterpart): same class of wrap/panic
-    /// hazard as the gas-used check, but on the Jovian DA-footprint
-    /// precheck path.
-    #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_chunk_mode_rejects_da_footprint_above_limit() {
-        use crate::precondition::chunking::EvmAccumulatorState;
-        use alloy_evm::revm::database::in_memory_db::Cache;
-
-        let cache = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
-        let evm_state = EvmAccumulatorState {
-            cumulative_gas_used: 0,
-            da_footprint_used: 100, // > gas_limit
-            blob_gas_used: 100,     // must equal da_footprint_used on OP Jovian
-            logs_bloom: Default::default(),
-            receipts: Vec::new(),
-        };
-        let mut cw = make_test_chunk_witness(0, 1, cache, evm_state, vec![]);
-        cw.block_env.gas_limit = 50;
-
-        let result = try_chunk_execution(make_chunk_boot_info(), cw);
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("da_footprint_used")
-                && err_msg.contains("exceeds block gas_limit"),
-            "unexpected error: {err_msg}"
-        );
-    }
-
     /// Positive case: a non-zero synced seed (representing a later chunk
     /// whose earlier chunks consumed some gas / DA) is accepted and
     /// threaded through unchanged when the current chunk is empty. This
@@ -2291,7 +1948,7 @@ pub mod tests {
             logs_bloom: Default::default(),
             receipts: Vec::new(),
         };
-        let mut cw = make_test_chunk_witness(1, 2, cache.clone(), evm_state.clone(), vec![]);
+        let mut cw = make_test_chunk_witness(cache.clone(), evm_state.clone(), vec![]);
         cw.block_env.gas_limit = 30_000_000;
 
         // With no transactions, every accumulator field must be preserved
@@ -2342,7 +1999,7 @@ pub mod tests {
         let wrong_hash = B256::repeat_byte(0xAB); // Not the actual hash of the bytecode
         cache.contracts.insert(wrong_hash, code);
 
-        let cw = make_test_chunk_witness(0, 1, cache, EvmAccumulatorState::default(), vec![]);
+        let cw = make_test_chunk_witness(cache, EvmAccumulatorState::default(), vec![]);
 
         // This should panic before execution due to contract validation
         let _ = test_chunk_execution(make_chunk_boot_info(), cw);
@@ -2373,5 +2030,31 @@ pub mod tests {
             err_msg.contains("chunk witness required"),
             "unexpected error: {err_msg}"
         );
+    }
+
+    #[test]
+    fn validate_cached_contracts_rejects_malformed_entry() {
+        let valid_code = crate::precondition::chunking::tests::make_bytecode(&[0x60, 0x00]);
+        let invalid_code = crate::precondition::chunking::tests::make_bytecode(&[0x60, 0x01]);
+        let code_hash = valid_code.hash_slow();
+
+        let mut cache = Cache {
+            accounts: Default::default(),
+            contracts: Default::default(),
+            logs: Vec::new(),
+            block_hashes: Default::default(),
+        };
+        cache.contracts.insert(code_hash, invalid_code);
+
+        let panic =
+            std::panic::catch_unwind(|| validate_cached_contracts(&cache.contracts)).unwrap_err();
+        let message = if let Some(msg) = panic.downcast_ref::<String>() {
+            msg.clone()
+        } else if let Some(msg) = panic.downcast_ref::<&str>() {
+            msg.to_string()
+        } else {
+            String::new()
+        };
+        assert!(message.contains("cached contract bytecode hash mismatch"));
     }
 }

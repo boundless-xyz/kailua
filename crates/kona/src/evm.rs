@@ -16,10 +16,7 @@
 //!
 //! [`ChunkingEvm`] wraps any `E: Evm` and intercepts `transact_raw()` to return pre-computed
 //! [`ResultAndState`] entries (captured by `TracingEvmFactory` on the host) for transactions
-//! covered by the supplied [`Chunk`] set, instead of re-executing them. System calls
-//! (`transact_system_call`) are delegated transparently so the prelude (parent-hash ring
-//! buffer, beacon-root contract, create2 deployer) and epilogue (post-block balance
-//! increments via `finish`) run through the inner EVM unchanged.
+//! covered by the supplied [`Chunk`] set, instead of re-executing them.
 //!
 //! [`ChunkingEvmFactory`] wraps [`OpEvmFactory`] and dispenses [`ChunkingEvm`] instances
 //! keyed by the target block number (`input.block_env.number`). This lets the aggregation
@@ -32,14 +29,6 @@
 use crate::executor::Chunk;
 use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
 
-/// Shared trace buffer keyed by L2 block number. Used by [`ChunkingEvmFactory`] and
-/// [`run_core_client`](crate::client::core::run_core_client) to optionally capture
-/// per-block `ResultAndState` traces during a monolithic pass so a subsequent run can
-/// be replayed with `Chunk` entries built from the captured data. Alias exists to
-/// keep the clippy `type_complexity` lint happy across call sites.
-pub type ChunkTraceCollector = Arc<
-    Mutex<HashMap<u64, Vec<ResultAndState<OpHaltReason>>>>,
->;
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_evm::revm::context::{BlockEnv, TxEnv};
 use alloy_evm::revm::context_interface::result::{EVMError, ResultAndState};
@@ -52,50 +41,24 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
+/// Shared trace buffer keyed by L2 block number. Used by [`ChunkingEvmFactory`] and
+/// [`run_core_client`](crate::client::core::run_core_client) to optionally capture
+/// per-block `ResultAndState` traces during a monolithic pass so a subsequent run can
+/// be replayed with `Chunk` entries built from the captured data. Alias exists to
+/// keep the clippy `type_complexity` lint happy across call sites.
+pub type ChunkTraceCollector = Arc<Mutex<HashMap<u64, Vec<ResultAndState<OpHaltReason>>>>>;
+
 /// EVM wrapper that serves pre-computed `ResultAndState` entries from a set of
 /// [`Chunk`]s covering this block's ordered transaction body.
-///
-/// The wrapper holds `chunks` in *reverse* order — the next chunk to consume is at the
-/// end of the vector. Chunks are assumed to cover consecutive txs starting at index 0
-/// (full-block coverage, per Decision 12). On each `transact_raw()`:
-///
-/// 1. If the active chunk is exhausted, drop it.
-/// 2. If no active chunk but pending chunks remain, pop the next one into active.
-/// 3. If an active chunk exists, return its next pre-computed `ResultAndState`.
-/// 4. Otherwise (chunks exhausted or never supplied), delegate to the inner EVM.
-///
-/// # Full-coverage is enforced upstream (review finding M-9)
-///
-/// Step 4 is a structural fallback, not a supported partial-coverage mode. The
-/// aggregation's `verify_block_chunks` rejects witnesses whose `sum(chunk.tx_count)`
-/// differs from `block_txs.len()`. If that check passes, step 4 is unreachable during
-/// ordered tx-body execution (every tx is covered by some chunk). Blocks without any
-/// chunks fall through to step 4 for every tx — semantically identical to plain
-/// `OpEvm` and intentionally transparent.
-///
-/// # Empty-block / dangling-journal edge case (review finding M-10)
-///
-/// If a witness supplies chunks for a block whose derivation-output tx count is zero
-/// (empty payload), `ChunkingEvm` never consumes them — `transact_raw` is never
-/// called. The chunks sit in `self.chunks` and are dropped at `finish()`. The chunk
-/// journals still pass through `stitch_chunks` and `env::verify` (they are real,
-/// valid chunk proofs), but they never affect aggregation state. Not a soundness
-/// issue — the authenticated chunks are "unused assumptions" — but it does waste
-/// verification work. The upstream `verify_block_chunks` full-coverage check also
-/// catches this: empty block has `block_txs.len() == 0`, so `sum(tx_count) == 0` is
-/// required; any non-empty chunks on an empty block would be rejected with a
-/// coverage error.
 pub struct ChunkingEvm<E: Evm> {
+    /// Actual EVM implementation
     inner: E,
-    /// Remaining chunks for this block in *reverse* execution order — `pop()` yields the
-    /// next chunk to consume.
+    /// Remaining chunks for this block in *reverse* execution order — `last()` is the
+    /// currently-active chunk, `pop()` discards it once exhausted.
     chunks: Vec<Chunk>,
-    /// Cursor into the currently-active chunk: `(chunk, next_result_index)`. When
-    /// `next_result_index == chunk.results.len()` the chunk is exhausted.
-    active: Option<(Chunk, usize)>,
-    /// Block-local ordered-tx-body index — advances on every `transact_raw()` and is
-    /// unaffected by `transact_system_call()`. Exposed for tests that assert progression.
-    tx_index: u16,
+    /// Cursor into `chunks.last().results`. Reset to 0 whenever a chunk is exhausted
+    /// and popped off.
+    cursor: usize,
     /// Block number this EVM is executing. Set at construction time from
     /// `input.block_env.number`; used as the key when appending captured
     /// `ResultAndState` into `block_traces` below (test/host trace capture).
@@ -112,27 +75,15 @@ pub struct ChunkingEvm<E: Evm> {
 }
 
 impl<E: Evm> ChunkingEvm<E> {
-    /// Wraps `inner` and prepares the chunk cursor. `chunks` must be in ascending
-    /// execution order (matching `tx_start`); this constructor reverses the vec so
-    /// `pop()` yields the next chunk.
-    pub fn new(inner: E, mut chunks: Vec<Chunk>) -> Self {
-        chunks.reverse();
-        Self {
-            inner,
-            chunks,
-            active: None,
-            tx_index: 0,
-            block_number: 0,
-            block_traces: None,
-        }
-    }
-
-    /// Variant of [`new`](Self::new) that also configures per-block trace capture.
-    /// On each successful `transact_raw()` the `ResultAndState` is appended to
-    /// `block_traces[block_number]`. Used by the integration test harness to
-    /// capture ground-truth traces from a monolithic `run_core_client` run
-    /// (empty chunks → `ChunkingEvm` delegates to inner `OpEvm`, results are
-    /// captured exactly as `TracingEvm` would).
+    /// Wraps `inner` and prepares the chunk cursor, optionally attaching a per-block
+    /// trace collector. `chunks` must be in ascending execution order (matching
+    /// `tx_start`); this constructor reverses the vec so `pop()` yields the next chunk.
+    ///
+    /// When `block_traces` is `Some`, each successful `transact_raw()` appends its
+    /// `ResultAndState` into `block_traces[block_number]`. Used by the integration test
+    /// harness to capture ground-truth traces from a monolithic `run_core_client` run
+    /// (empty chunks → `ChunkingEvm` delegates to inner `OpEvm`, results are captured
+    /// exactly as `TracingEvm` would).
     pub fn new_with_traces(
         inner: E,
         mut chunks: Vec<Chunk>,
@@ -143,8 +94,7 @@ impl<E: Evm> ChunkingEvm<E> {
         Self {
             inner,
             chunks,
-            active: None,
-            tx_index: 0,
+            cursor: 0,
             block_number,
             block_traces,
         }
@@ -172,9 +122,8 @@ where
         self.inner.chain_id()
     }
 
-    /// Returns the next pre-computed `ResultAndState` if the current tx index is covered
-    /// by an available chunk; otherwise delegates to the inner EVM. Advances the
-    /// block-local `tx_index` on every call, regardless of which path is taken.
+    /// Returns the next pre-computed `ResultAndState` if an available chunk still has
+    /// results to serve; otherwise delegates to the inner EVM.
     ///
     /// # Binding of replayed results to the chunk proof
     ///
@@ -202,24 +151,19 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        // Drop an exhausted active chunk.
-        if let Some((chunk, pos)) = &self.active {
-            if *pos >= chunk.results.len() {
-                self.active = None;
-            }
-        }
-
-        // If no active chunk, promote the next pending chunk (assumes consecutive coverage).
-        if self.active.is_none() {
-            if let Some(chunk) = self.chunks.pop() {
-                self.active = Some((chunk, 0));
+        // Drop the active chunk (`chunks.last()`) once its results are exhausted,
+        // resetting the cursor for whatever chunk comes next.
+        if let Some(chunk) = self.chunks.last() {
+            if self.cursor >= chunk.results.len() {
+                self.chunks.pop();
+                self.cursor = 0;
             }
         }
 
         // Serve from the active chunk when possible.
-        let result = if let Some((chunk, pos)) = self.active.as_mut() {
-            let out = chunk.results[*pos].clone();
-            *pos += 1;
+        let result = if let Some(chunk) = self.chunks.last() {
+            let out = chunk.results[self.cursor].clone();
+            self.cursor += 1;
 
             // Pre-load every account referenced by the replayed state diff into
             // the database's cache. `State<TrieDB>::commit` panics if the
@@ -251,30 +195,25 @@ where
             self.inner.transact_raw(tx)
         };
 
-        // Advance block-local tx index regardless of success/failure — mirrors the
-        // executor's view of ordered-tx-body progression.
-        if result.is_ok() {
-            self.tx_index = self.tx_index.saturating_add(1);
-            // Optional capture: when a per-block trace collector was attached via
-            // `new_with_traces`, append the ResultAndState keyed by this block's
-            // number. The chunk replay path (served from chunk.results) also
-            // captures — benign since the captured trace equals the authenticated
-            // `chunk.results` and callers choose whether to consume the buffer.
-            if let (Ok(r), Some(traces)) = (&result, &self.block_traces) {
-                traces
-                    .lock()
-                    .unwrap()
-                    .entry(self.block_number)
-                    .or_default()
-                    .push(r.clone());
-            }
+        // Optional capture: when a per-block trace collector was attached via
+        // `new_with_traces`, append the ResultAndState keyed by this block's
+        // number. The chunk replay path (served from chunk.results) also
+        // captures — benign since the captured trace equals the authenticated
+        // `chunk.results` and callers choose whether to consume the buffer.
+        if let (Ok(r), Some(traces)) = (&result, &self.block_traces) {
+            traces
+                .lock()
+                .unwrap()
+                .entry(self.block_number)
+                .or_default()
+                .push(r.clone());
         }
         result
     }
 
     /// Delegates system calls to the inner EVM. Block-level prelude and epilogue work
     /// (beacon root, blockhash ring, Canyon deployer, post-block balance increments)
-    /// runs through the inner OpEvm unchanged and does not advance `tx_index`.
+    /// runs through the inner OpEvm unchanged and does not consume chunk results.
     fn transact_system_call(
         &mut self,
         caller: Address,
@@ -369,8 +308,7 @@ impl ChunkingEvmFactory {
 }
 
 impl EvmFactory for ChunkingEvmFactory {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> =
-        ChunkingEvm<OpEvm<DB, I, PrecompilesMap>>;
+    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = ChunkingEvm<OpEvm<DB, I, PrecompilesMap>>;
     type Context<DB: Database> = OpContext<DB>;
     type Tx = OpTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError, OpTxError>;
@@ -638,7 +576,6 @@ mod tests {
         Chunk {
             agreed_db: keccak256(format!("agreed_db_{tag}")),
             agreed_evm: keccak256(format!("agreed_evm_{tag}")),
-            tx_count: gas_used_markers.len() as u16,
             tx_hash: keccak256(format!("tx_hash_{tag}")),
             results: gas_used_markers
                 .iter()

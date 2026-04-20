@@ -189,8 +189,7 @@ pub mod tests {
         // ---- Pass 1 (capture): test_derivation_with_chunks_and_traces runs the full
         // derivation through `run_core_client`, captures per-tx `ResultAndState`,
         // returns the Executions.
-        let collector: crate::evm::ChunkTraceCollector =
-            Arc::new(Mutex::new(HashMap::new()));
+        let collector: crate::evm::ChunkTraceCollector = Arc::new(Mutex::new(HashMap::new()));
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
             None,
@@ -231,10 +230,8 @@ pub mod tests {
             .collect();
         drop(captured);
 
-        let stitched_executions: Vec<crate::executor::Execution> = executions
-            .into_iter()
-            .map(|e| e.as_ref().clone())
-            .collect();
+        let stitched_executions: Vec<crate::executor::Execution> =
+            executions.into_iter().map(|e| e.as_ref().clone()).collect();
 
         // ---- Pass 2 (stateless replay): l1_head = ZERO routes through the
         // EXECUTION-ONLY branch, which now supports chunks via ChunkingEvmFactory.
