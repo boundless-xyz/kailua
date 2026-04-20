@@ -52,6 +52,11 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
     witness: Witness<O>,
     stitching_client: S,
 ) -> ProofJournal {
+    // Install the R0VM-accelerated revm Crypto provider for EVM precompiles.
+    // Only compiled on the zkvm target; host tests keep DefaultCrypto.
+    #[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+    crate::crypto::install_r0vm_crypto();
+
     log(&format!(
         "ORACLE: {} PREIMAGES",
         witness.oracle_witness.preimage_count()
