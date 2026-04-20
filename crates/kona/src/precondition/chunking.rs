@@ -883,10 +883,121 @@ pub fn hash_results(results: &[ResultAndState<OpHaltReason>]) -> B256 {
 //     proof rejection by the existing hash-chain and env continuity checks.
 
 use alloy_consensus::proofs::calculate_receipt_root;
-use alloy_consensus::Header;
+use alloy_consensus::{BlockHeader, Header};
+use alloy_eips::eip7840::BlobParams;
+use alloy_evm::op_revm::OpSpecId;
+use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
+use alloy_evm::revm::primitives::eip4844::{
+    BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+};
 use anyhow::{bail, ensure};
 
 use crate::executor::Chunk;
+
+/// Iterate a block-indexed `chunks` vec and call [`verify_block_chunks`] for each
+/// non-empty entry, deriving the `parent_header`, `spec_id`, and expected
+/// `BlobExcessGasAndPrice` from derivation (or cached-execution) output.
+///
+/// Shared by both `run_core_client` CHUNK VERIFY phases (DERIVATION and
+/// EXECUTION-ONLY branches) so the per-block cross-check logic lives in one place.
+/// Without this helper the two callers duplicate ~25 lines of field-access and
+/// context plumbing — a drift hazard any time the verification rules evolve.
+///
+/// ## Arguments
+/// - `chunks_per_block` — outer index `i` corresponds to the block at
+///   `safe_head_number + 1 + i`. Empty inner vecs are skipped.
+/// - `executions` — derivation or cached-execution output, one entry per block in
+///   the same order. `executions[block_idx]` is the `Execution` for block
+///   `safe_head_number + 1 + block_idx`. Must be at least as long as the
+///   longest non-empty chunks-for-block position (caller's responsibility; this
+///   function returns a descriptive error if the bound is exceeded).
+/// - `safe_head_parent` — the parent header for `executions[0]` (i.e., the
+///   safe_head header itself). For later blocks the parent is taken from
+///   `executions[block_idx - 1].artifacts.header`.
+/// - `safe_head_number` — the block number of `safe_head_parent`.
+/// - `rollup_config` — used to select the `spec_id` for each block's timestamp
+///   (drives the hardfork-gated blob_gasprice update fraction).
+pub fn verify_chunks_against_blocks(
+    chunks_per_block: &[Vec<Chunk>],
+    executions: &[&crate::executor::Execution],
+    safe_head_parent: &Header,
+    safe_head_number: u64,
+    rollup_config: &kona_genesis::RollupConfig,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+    for (block_idx, chunks_for_block) in chunks_per_block.iter().enumerate() {
+        if chunks_for_block.is_empty() {
+            continue;
+        }
+        let exec = executions.get(block_idx).copied().ok_or_else(|| {
+            anyhow::anyhow!(
+                "chunks supplied for block position {block_idx} but only {} blocks \
+                 available for verification",
+                executions.len()
+            )
+        })?;
+        let expected_parent_block_number = safe_head_number + block_idx as u64;
+        let expected_agreed_output_root = exec.agreed_output;
+        let block_txs: Vec<Vec<u8>> = exec
+            .attributes
+            .transactions
+            .as_ref()
+            .map(|txs| txs.iter().map(|b| b.to_vec()).collect())
+            .unwrap_or_default();
+        let parent_header: &Header = if block_idx == 0 {
+            safe_head_parent
+        } else {
+            executions[block_idx - 1].artifacts.header.inner()
+        };
+        let current_timestamp = exec.artifacts.header.inner().timestamp;
+        let spec_id = rollup_config.spec_id(current_timestamp);
+        let expected_blob = expected_blob_excess_gas_and_price(parent_header, spec_id);
+        verify_block_chunks(
+            chunks_for_block,
+            expected_agreed_output_root,
+            expected_parent_block_number,
+            &block_txs,
+            exec.artifacts.header.inner(),
+            expected_blob,
+        )
+        .with_context(|| {
+            format!(
+                "chunk verification for block position {block_idx} \
+                 (expected block {})",
+                safe_head_number + 1 + block_idx as u64
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Compute the `BlobExcessGasAndPrice` that kona's `prepare_block_env` would assign
+/// to `BlockEnv.blob_excess_gas_and_price` for a block with the given parent header
+/// and spec_id. Mirrors `kona/proof/executor/src/builder/env.rs::prepare_block_env`
+/// exactly — if that implementation changes in upstream, this must too.
+///
+/// Used by [`run_core_client`](crate::client::core::run_core_client) to derive the
+/// expected value to compare against `chunk.block_env.blob_excess_gas_and_price` in
+/// [`verify_block_chunks`]. Authenticating this field is critical: on OP L2 the
+/// BLOBBASEFEE opcode reads the blob gasprice, so a mismatched value changes
+/// execution semantics for any contract that reads it.
+pub fn expected_blob_excess_gas_and_price(
+    parent_header: &Header,
+    spec_id: OpSpecId,
+) -> Option<BlobExcessGasAndPrice> {
+    let (params, fraction) = if spec_id.is_enabled_in(OpSpecId::ISTHMUS) {
+        (Some(BlobParams::prague()), BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE)
+    } else if spec_id.is_enabled_in(OpSpecId::ECOTONE) {
+        (Some(BlobParams::cancun()), BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN)
+    } else {
+        (None, 0)
+    };
+
+    parent_header
+        .maybe_next_block_excess_blob_gas(params)
+        .or_else(|| spec_id.is_enabled_in(OpSpecId::ECOTONE).then_some(0))
+        .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
+}
 
 /// Verify that a single block's chunks are coherent with the aggregation's derived block.
 ///
@@ -905,6 +1016,7 @@ pub fn verify_block_chunks(
     expected_parent_block_number: u64,
     block_txs: &[Vec<u8>],
     block_header: &Header,
+    expected_blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
 ) -> anyhow::Result<()> {
     if chunks.is_empty() {
         // Nothing to verify — block runs fully live through the inner EVM.
@@ -991,13 +1103,24 @@ pub fn verify_block_chunks(
             chunk.block_env.prevrandao,
             Some(header.mix_hash)
         );
-        // BlockEnv.blob_excess_gas_and_price — derived from parent header's
-        // excess_blob_gas, which we do not have at this layer. Its effect on
-        // execution (blob tx gas accounting) is captured through the chunk's
-        // `pre_evm_hash` / `post_evm_hash` + hash-chain continuity: any blob
-        // pricing divergence would surface as mismatched cumulative EVM state
-        // at chunk boundaries and be rejected by the existing hash-chain check.
-        // The `block_ctx_hash` in chunk_trace also commits to this field.
+        // BlockEnv.blob_excess_gas_and_price — must match what kona's block
+        // builder would compute from the parent header + hardfork-selected
+        // update fraction (see `prepare_block_env` in
+        // `kona/proof/executor/src/builder/env.rs`). This closes the Codex
+        // round-4 critical finding: the aggregation path replays witness-
+        // supplied `chunk.results`, so pre/post EVM hash continuity alone is
+        // only internal consistency between attacker-controlled chunks, not
+        // binding to the real block context. On any block where blob pricing
+        // affects execution (BLOBBASEFEE opcode, blob tx gas accounting) a
+        // prover could otherwise generate a valid chunk proof under a forged
+        // blob-pricing context and have aggregation accept the wrong post-
+        // state/output root. We now reject on any mismatch.
+        ensure!(
+            chunk.block_env.blob_excess_gas_and_price == expected_blob_excess_gas_and_price,
+            "chunks[{i}].block_env.blob_excess_gas_and_price {:?} != expected {:?}",
+            chunk.block_env.blob_excess_gas_and_price,
+            expected_blob_excess_gas_and_price
+        );
 
         // OpBlockExecutionCtx.parent_hash — header.parent_hash.
         ensure!(
@@ -2421,10 +2544,15 @@ mod tests {
         let claimed_evm = hash_evm_state(&evm_state);
         let tx_hash = compute_tx_hash(std::slice::from_ref(&tx_bytes));
         // BlockEnv::default() has: number=0, beneficiary=zero, timestamp=1,
-        // gas_limit=u64::MAX, basefee=0, difficulty=0, prevrandao=Some(B256::ZERO),
-        // blob_excess_gas_and_price=Some(default). `make_consistent_header` is built
-        // to match exactly.
-        let block_env = BlockEnv::default();
+        // gas_limit=u64::MAX, basefee=0, difficulty=0, prevrandao=Some(B256::ZERO).
+        // Explicitly zero `blob_excess_gas_and_price` to None so the tests'
+        // default `expected_blob_excess_gas_and_price = None` matches the
+        // chunk's carried value — if upstream changes BlockEnv's default to
+        // carry Some(_), we override here.
+        let block_env = BlockEnv {
+            blob_excess_gas_and_price: None,
+            ..BlockEnv::default()
+        };
         let chunk = Chunk {
             agreed_db: B256::repeat_byte(0x11),
             agreed_evm: B256::repeat_byte(0x22),
@@ -2465,13 +2593,13 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root);
-        verify_block_chunks(&[chunk], agreed, parent, &[tx], &header).unwrap();
+        verify_block_chunks(&[chunk], agreed, parent, &[tx], &header, None).unwrap();
     }
 
     /// Empty chunks vec is a no-op and must not error.
     #[test]
     fn verify_block_chunks_empty_is_ok() {
-        verify_block_chunks(&[], B256::ZERO, 0, &[], &Header::default()).unwrap();
+        verify_block_chunks(&[], B256::ZERO, 0, &[], &Header::default(), None).unwrap();
     }
 
     /// Output-root mismatch: adversary substitutes Y's chunk (different
@@ -2487,7 +2615,7 @@ mod tests {
         // Aggregation expects a DIFFERENT output root for this block.
         let wrong_expected = B256::repeat_byte(0x88);
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], wrong_expected, 10, &[tx], &header)
+        let err = verify_block_chunks(&[chunk], wrong_expected, 10, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2506,7 +2634,7 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], agreed, 11, &[tx], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 11, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(err.contains("parent_block_number"), "unexpected error: {err}");
@@ -2522,7 +2650,7 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2544,7 +2672,7 @@ mod tests {
 
         // Now run verification with derivation's tx (0xAA), which hashes differently.
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[derivation_tx], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[derivation_tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(err.contains("tx_hash"), "unexpected error: {err}");
@@ -2563,7 +2691,7 @@ mod tests {
 
         // Block has 2 txs but chunks only cover 1.
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx1, tx2], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx1, tx2], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2585,7 +2713,7 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2606,7 +2734,7 @@ mod tests {
         // Pretend the block's header.receipts_root is something else entirely.
         let wrong_root = B256::repeat_byte(0xFF);
         let header = make_consistent_header(wrong_root);
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2630,7 +2758,7 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root); // header.timestamp = 0
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2651,7 +2779,7 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root); // header.base_fee_per_gas = None
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(err.contains("block_env.basefee"), "unexpected error: {err}");
@@ -2669,7 +2797,7 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root); // header.beneficiary = zero
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2690,7 +2818,7 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root); // header.parent_hash = zero
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2711,7 +2839,7 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root); // header.extra_data = empty
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header)
+        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2722,6 +2850,34 @@ mod tests {
 
     /// Hash-chain continuity: chunks[1].agreed_db must equal chunks[0].claimed_db.
     /// Broken chains are rejected.
+    /// Codex round-4 critical regression test: a chunk whose
+    /// `block_env.blob_excess_gas_and_price` differs from the expected (derivation-
+    /// supplied) value must be rejected. This is the linchpin check that prevents a
+    /// prover from authenticating a chunk proof under a forged blob-pricing context
+    /// and then replaying those results during aggregation — see
+    /// `verify_block_chunks`'s blob pricing block for the full rationale.
+    #[test]
+    fn verify_block_chunks_rejects_blob_price_forgery() {
+        use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
+        let agreed = B256::repeat_byte(0x77);
+        let tx = vec![0xAA];
+        let (chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
+        let receipts_root = calculate_receipt_root(&[receipt]);
+        let header = make_consistent_header(receipts_root);
+        // Expected is None (no blob pricing supplied for this pre-Ecotone context),
+        // but the chunk carries a forged value. Any non-None expected passed in
+        // by the caller MUST match the chunk's value exactly.
+        let forged_expected = Some(BlobExcessGasAndPrice::new(1_000_000, 3_338_477));
+        let err =
+            verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, forged_expected)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            err.contains("blob_excess_gas_and_price"),
+            "unexpected error: {err}"
+        );
+    }
+
     #[test]
     fn verify_block_chunks_rejects_hash_chain_break_db() {
         let agreed = B256::repeat_byte(0x77);
@@ -2733,7 +2889,7 @@ mod tests {
         let receipts_root = calculate_receipt_root(&[r0, r1]);
 
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[c0, c1], agreed, 10, &[vec![0xAA], vec![0xBB]], &header)
+        let err = verify_block_chunks(&[c0, c1], agreed, 10, &[vec![0xAA], vec![0xBB]], &header, None)
             .unwrap_err()
             .to_string();
         assert!(

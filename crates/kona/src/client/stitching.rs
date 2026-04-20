@@ -136,6 +136,7 @@ impl<
             derivation_trace.then(Default::default),
             chunk_witness,
             chunks,
+            None,
         )
         .expect("Failed to compute output hash.");
 

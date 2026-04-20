@@ -88,7 +88,7 @@ For each block's chunks, `stitch_chunks()` SHALL:
 
 **Crate:** `kailua-kona` (`crates/kona/src/precondition/chunking.rs`, `crates/kona/src/client/core.rs`)
 
-Before the aggregation `ProofJournal` is finalized, `run_core_client()` SHALL invoke `verify_block_chunks` on every block whose witness supplied chunks. This helper enforces six coherence checks against the derivation pipeline's actual output, closing the forgery vectors identified by the adversarial review:
+Before the aggregation `ProofJournal` is finalized, `run_core_client()` SHALL invoke `verify_block_chunks` on every block whose witness supplied chunks. This helper enforces seven coherence checks against the derivation pipeline's actual output, closing the forgery vectors identified by the adversarial review:
 
 1. **Output-root anchor** — `chunk.agreed_l2_output_root == derived_parent_output_root` and `chunk.parent_block_number == safe_head_number + block_position`. Uses the L2 output root as cryptographic anchor (collision-resistant commitment to state_root → all state), functionally equivalent to anchoring via `hash_cache_state(State<TrieDB>)` but without the canonicalization mismatch between chunk-witness `Cache` and aggregation `State<TrieDB>.cache`.
 2. **tx_hash binding** — `compute_tx_hash(block_txs[cursor..cursor+tx_count]) == chunk.tx_hash` for each chunk, where `block_txs` comes from the derivation pipeline's `OpPayloadAttributes.transactions`.
@@ -96,6 +96,7 @@ Before the aggregation `ProofJournal` is finalized, `run_core_client()` SHALL in
 4. **evm_state self-consistency** — `hash_evm_state(&chunk.evm_state) == chunk.claimed_evm`.
 5. **Receipts-root reconstruction** — `calculate_receipt_root(&last_chunk.evm_state.receipts) == block_header.receipts_root`.
 6. **Block-context binding** — each chunk's carried `block_env` and `op_block_ctx` MUST match the derivation pipeline's sealed header (number, beneficiary, timestamp, gas_limit, basefee, difficulty, prevrandao/mix_hash, parent_hash, parent_beacon_block_root, extra_data). Combined with the `block_ctx_hash` folded into `chunk_trace` by `compute_chunk_trace`, this forces chunk proofs to have been generated under the exact execution context the aggregation is using — neither a forged context in the chunk witness nor a chunk proof generated under a wrong context can satisfy both checks.
+7. **Blob-pricing authentication** — `chunk.block_env.blob_excess_gas_and_price` MUST equal the `BlobExcessGasAndPrice` that kona's block builder would derive from the derivation pipeline's parent header + the current block's hardfork (`spec_id`) — mirroring `kona/proof/executor/src/builder/env.rs::prepare_block_env`. `run_core_client` computes this expected value by calling `expected_blob_excess_gas_and_price(parent_header, spec_id)` and passes it into `verify_block_chunks`; the helper enforces exact equality. Without this check, the aggregation's replay-only semantic (we replay `chunk.results` rather than re-executing) would allow a prover to authenticate a chunk proof under a forged blob-pricing context (wrong BLOBBASEFEE, wrong blob-gas accounting) and have aggregation accept the wrong post-state. Internal pre/post EVM hash continuity is NOT a substitute because it is only self-consistency between attacker-controlled chunks.
 
 #### Scenario: chunk from a different block is rejected
 - **WHEN** a witness supplies a chunk whose `agreed_l2_output_root` or `parent_block_number` does not match the aggregation's derived parent for the block position
@@ -116,6 +117,10 @@ Before the aggregation `ProofJournal` is finalized, `run_core_client()` SHALL in
 #### Scenario: authenticated receipts must reconstruct block receipts_root
 - **WHEN** `calculate_receipt_root(&chunks[block_i].last().evm_state.receipts) != block_header.receipts_root`
 - **THEN** `verify_block_chunks` rejects the chunks — the authenticated chunk receipts diverged from the block executor's produced receipts
+
+#### Scenario: chunk with forged blob pricing is rejected
+- **WHEN** a witness supplies a chunk whose `block_env.blob_excess_gas_and_price` does not equal `expected_blob_excess_gas_and_price(parent_header, spec_id)` — either absent when the hardfork expects `Some(...)`, present when it expects `None`, or present with the wrong `excess_blob_gas` / `blob_gasprice` (wrong update fraction for the hardfork)
+- **THEN** `verify_block_chunks` rejects the chunk — closing the blob-pricing forgery vector where an adversary authenticates a chunk proof under a wrong BLOBBASEFEE / blob-gas-accounting context and has aggregation accept the wrong post-state
 
 ### Requirement: Trie root provides ultimate correctness guarantee
 

@@ -212,6 +212,9 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
+                    // Chunks are dispatched in Part 9 (ProvingArgs.max_txs_per_chunk).
+                    // Until then, the default is monolithic execution (empty chunks).
+                    Vec::new(),
                 )
                 .await
                 .context("Failed to run kona vec witgen client.")

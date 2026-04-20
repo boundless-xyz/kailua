@@ -52,6 +52,12 @@ pub async fn run_witgen_client<P, B, O, D>(
     trace_derivation: bool,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
+    // Per-block `Chunk` entries (one inner vec per block, index i → block
+    // safe_head_number + 1 + i). Passed through to `run_core_client` for CHUNK
+    // VERIFY phase AND serialized into the returned `Witness.chunks` so the
+    // downstream stateless client can consume them. Default `Vec::new()` = no
+    // chunks = monolithic execution (same as before the chunk-proving feature).
+    chunks: Vec<Vec<kailua_kona::executor::Chunk>>,
 ) -> anyhow::Result<(
     BootInfo,
     ProofJournal,
@@ -86,6 +92,23 @@ where
     // Run client
     let execution_trace = Arc::new(Mutex::new(Vec::new()));
     let derivation_trace = Arc::new(Mutex::new(None));
+    // `run_core_client` enforces that when any inner `chunks` vec is non-empty,
+    // `execution_trace` must be `None` (the collection target slot is repurposed
+    // internally for chunk verification capture). We honor that here: drop our
+    // own `Some(execution_trace)` when chunk data is present. The caller-facing
+    // `stitched_executions` output is still produced, just as an empty vec in
+    // that case (chunks and stitched executions aren't combined today — see
+    // Witness.chunks doc in kailua-kona).
+    let has_chunks = chunks.iter().any(|v| !v.is_empty());
+    let effective_execution_trace = if has_chunks {
+        None
+    } else {
+        Some(execution_trace.clone())
+    };
+    // Clone chunks once up front — `run_core_client` consumes its copy when
+    // populating `ChunkingEvmFactory`, and we need to serialize the ORIGINAL
+    // (pre-consume) layout into `Witness.chunks` for the stateless replay.
+    let chunks_for_witness = chunks.clone();
     let (boot, precondition) = kailua_kona::client::core::run_core_client(
         proposal_data_hash,
         oracle,
@@ -93,11 +116,12 @@ where
         beacon,
         da_source_provider,
         execution_cache,
-        Some(execution_trace.clone()),
+        effective_execution_trace,
         derivation_cache.clone(),
         trace_derivation.then(|| derivation_trace.clone()),
         None,
-        Vec::new(),
+        chunks,
+        None,
     )?;
     // Fix claimed output of captured executions
     let stitched_executions =
@@ -136,7 +160,7 @@ where
         stitched_boot_info,
         fpvm_image_id,
         chunk_witness: None,
-        chunks: Vec::new(),
+        chunks: chunks_for_witness,
     };
     witness
         .oracle_witness

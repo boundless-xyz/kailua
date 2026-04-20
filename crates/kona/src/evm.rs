@@ -31,6 +31,15 @@
 
 use crate::executor::Chunk;
 use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
+
+/// Shared trace buffer keyed by L2 block number. Used by [`ChunkingEvmFactory`] and
+/// [`run_core_client`](crate::client::core::run_core_client) to optionally capture
+/// per-block `ResultAndState` traces during a monolithic pass so a subsequent run can
+/// be replayed with `Chunk` entries built from the captured data. Alias exists to
+/// keep the clippy `type_complexity` lint happy across call sites.
+pub type ChunkTraceCollector = Arc<
+    Mutex<HashMap<u64, Vec<ResultAndState<OpHaltReason>>>>,
+>;
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_evm::revm::context::{BlockEnv, TxEnv};
 use alloy_evm::revm::context_interface::result::{EVMError, ResultAndState};
@@ -87,6 +96,19 @@ pub struct ChunkingEvm<E: Evm> {
     /// Block-local ordered-tx-body index — advances on every `transact_raw()` and is
     /// unaffected by `transact_system_call()`. Exposed for tests that assert progression.
     tx_index: u16,
+    /// Block number this EVM is executing. Set at construction time from
+    /// `input.block_env.number`; used as the key when appending captured
+    /// `ResultAndState` into `block_traces` below (test/host trace capture).
+    block_number: u64,
+    /// Optional per-block trace collector. When `Some`, every successful
+    /// `transact_raw()` pushes its `ResultAndState` into
+    /// `block_traces.lock()[&block_number]` (Vec created on demand). This is the
+    /// same capture semantic as `TracingEvm`, but folded directly into
+    /// `ChunkingEvm` so a single factory can be configured for capture during a
+    /// monolithic run (empty chunks map → every call delegates to inner OpEvm and
+    /// is captured as ground truth) and for replay during a second run (chunks
+    /// populated → replayed `ResultAndState` entries served from `chunk.results`).
+    block_traces: Option<ChunkTraceCollector>,
 }
 
 impl<E: Evm> ChunkingEvm<E> {
@@ -100,11 +122,39 @@ impl<E: Evm> ChunkingEvm<E> {
             chunks,
             active: None,
             tx_index: 0,
+            block_number: 0,
+            block_traces: None,
+        }
+    }
+
+    /// Variant of [`new`](Self::new) that also configures per-block trace capture.
+    /// On each successful `transact_raw()` the `ResultAndState` is appended to
+    /// `block_traces[block_number]`. Used by the integration test harness to
+    /// capture ground-truth traces from a monolithic `run_core_client` run
+    /// (empty chunks → `ChunkingEvm` delegates to inner `OpEvm`, results are
+    /// captured exactly as `TracingEvm` would).
+    pub fn new_with_traces(
+        inner: E,
+        mut chunks: Vec<Chunk>,
+        block_number: u64,
+        block_traces: Option<ChunkTraceCollector>,
+    ) -> Self {
+        chunks.reverse();
+        Self {
+            inner,
+            chunks,
+            active: None,
+            tx_index: 0,
+            block_number,
+            block_traces,
         }
     }
 }
 
-impl<E: Evm<HaltReason = OpHaltReason>> Evm for ChunkingEvm<E> {
+impl<E: Evm<HaltReason = OpHaltReason>> Evm for ChunkingEvm<E>
+where
+    E::DB: alloy_evm::revm::Database,
+{
     type DB = E::DB;
     type Tx = E::Tx;
     type Error = E::Error;
@@ -170,6 +220,32 @@ impl<E: Evm<HaltReason = OpHaltReason>> Evm for ChunkingEvm<E> {
         let result = if let Some((chunk, pos)) = self.active.as_mut() {
             let out = chunk.results[*pos].clone();
             *pos += 1;
+
+            // Pre-load every account referenced by the replayed state diff into
+            // the database's cache. `State<TrieDB>::commit` panics if the
+            // executor later tries to mutate an account that was never loaded
+            // via a `basic()` / `storage()` call (revm's `apply_account_state`
+            // requires the address to be present). In the monolithic path
+            // these reads happen naturally as the EVM executes; here we skip
+            // execution and return pre-computed state, so we must ensure every
+            // touched account — and every touched storage slot — is cache-
+            // resident before returning. This restores the invariant that the
+            // executor's commit step can rely on without behaving differently
+            // between the monolithic and chunked paths.
+            //
+            // NOTE: `Database` here is `alloy_evm::revm::Database` (re-exported
+            // from revm), which is the trait whose `basic`/`storage` methods
+            // State<TrieDB> implements. The outer `Database` imported at the top
+            // of this file is `alloy_evm::Database`, a thinner wrapper.
+            use alloy_evm::revm::Database as RevmDatabase;
+            let db = self.inner.db_mut();
+            for (addr, account) in out.state.iter() {
+                let _ = RevmDatabase::basic(db, *addr);
+                for slot in account.storage.keys() {
+                    let _ = RevmDatabase::storage(db, *addr, *slot);
+                }
+            }
+
             Ok(out)
         } else {
             self.inner.transact_raw(tx)
@@ -179,6 +255,19 @@ impl<E: Evm<HaltReason = OpHaltReason>> Evm for ChunkingEvm<E> {
         // executor's view of ordered-tx-body progression.
         if result.is_ok() {
             self.tx_index = self.tx_index.saturating_add(1);
+            // Optional capture: when a per-block trace collector was attached via
+            // `new_with_traces`, append the ResultAndState keyed by this block's
+            // number. The chunk replay path (served from chunk.results) also
+            // captures — benign since the captured trace equals the authenticated
+            // `chunk.results` and callers choose whether to consume the buffer.
+            if let (Ok(r), Some(traces)) = (&result, &self.block_traces) {
+                traces
+                    .lock()
+                    .unwrap()
+                    .entry(self.block_number)
+                    .or_default()
+                    .push(r.clone());
+            }
         }
         result
     }
@@ -233,6 +322,13 @@ pub struct ChunkingEvmFactory {
     /// requires `Clone + Send + Sync + 'static` and the factory is cloned by the
     /// executor pipeline.
     chunks: Arc<Mutex<HashMap<u64, Vec<Chunk>>>>,
+    /// Optional per-block `ResultAndState` trace collector threaded into every
+    /// `ChunkingEvm` this factory produces. When `Some`, each `ChunkingEvm`
+    /// appends successful `transact_raw()` results into
+    /// `block_traces[block_number]`. Used by the integration test harness to
+    /// capture ground-truth traces during a monolithic run (empty chunks) and
+    /// then rebuild `Chunk` entries for a subsequent replay run.
+    block_traces: Option<ChunkTraceCollector>,
 }
 
 impl ChunkingEvmFactory {
@@ -242,6 +338,23 @@ impl ChunkingEvmFactory {
         Self {
             inner: OpEvmFactory::default(),
             chunks: Arc::new(Mutex::new(chunks)),
+            block_traces: None,
+        }
+    }
+
+    /// Variant of [`new`](Self::new) that also attaches a per-block trace collector.
+    /// Every `ChunkingEvm` produced by this factory will append successful
+    /// `transact_raw()` results into `block_traces[block_number]`. Drain via
+    /// `block_traces.lock()` at the per-block boundary the caller chooses (see
+    /// the integration test in `crates/kona/src/client/core.rs`).
+    pub fn new_with_traces(
+        chunks: HashMap<u64, Vec<Chunk>>,
+        block_traces: Option<ChunkTraceCollector>,
+    ) -> Self {
+        Self {
+            inner: OpEvmFactory::default(),
+            chunks: Arc::new(Mutex::new(chunks)),
+            block_traces,
         }
     }
 
@@ -273,7 +386,12 @@ impl EvmFactory for ChunkingEvmFactory {
     ) -> Self::Evm<DB, NoOpInspector> {
         let block_number = input.block_env.number.to::<u64>();
         let chunks = self.take_chunks(block_number);
-        ChunkingEvm::new(self.inner.create_evm(db, input), chunks)
+        ChunkingEvm::new_with_traces(
+            self.inner.create_evm(db, input),
+            chunks,
+            block_number,
+            self.block_traces.clone(),
+        )
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -284,9 +402,11 @@ impl EvmFactory for ChunkingEvmFactory {
     ) -> Self::Evm<DB, I> {
         let block_number = input.block_env.number.to::<u64>();
         let chunks = self.take_chunks(block_number);
-        ChunkingEvm::new(
+        ChunkingEvm::new_with_traces(
             self.inner.create_evm_with_inspector(db, input, inspector),
             chunks,
+            block_number,
+            self.block_traces.clone(),
         )
     }
 }

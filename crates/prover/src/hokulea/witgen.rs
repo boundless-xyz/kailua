@@ -91,6 +91,7 @@ where
             trace_derivation,
             stitched_preconditions,
             stitched_boot_info,
+            Vec::new(),
         )
         .await?;
     // Finalize witness

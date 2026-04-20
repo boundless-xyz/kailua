@@ -14,7 +14,7 @@
 
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::evm::{ChunkingEvmFactory, TracingOpEvmFactory};
+use crate::evm::{ChunkTraceCollector, ChunkingEvmFactory, TracingOpEvmFactory};
 use crate::executor::{new_execution_cursor, CachedExecutor, Chunk, Execution, PanicDB};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
@@ -32,7 +32,7 @@ use alloy_evm::block::BlockExecutor;
 use alloy_evm::revm::primitives::Bytes;
 use alloy_evm::EvmFactory;
 use alloy_op_evm::block::OpAlloyReceiptBuilder;
-use alloy_op_evm::{OpBlockExecutor, OpEvmFactory};
+use alloy_op_evm::OpBlockExecutor;
 use alloy_primitives::{Sealed, B256};
 use anyhow::{bail, Context};
 use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
@@ -111,6 +111,7 @@ pub fn run_core_client<
     derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
     chunk_witness: Option<ChunkWitnessData>,
     chunks: Vec<Vec<Chunk>>,
+    chunk_trace_collector: Option<ChunkTraceCollector>,
 ) -> anyhow::Result<(BootInfo, Precondition)>
 where
     <B as BlobProvider>::Error: Debug,
@@ -520,11 +521,43 @@ where
                     .context("new_execution_cursor")?;
             l2_provider.set_cursor(cursor.clone());
 
-            let mut kona_executor: KonaExecutor<'_, _, _, OpEvmFactory> = KonaExecutor::new(
+            // Build the block-number → chunks map for this EXECUTION-ONLY run. When
+            // chunks are supplied, use `ChunkingEvmFactory` so that per-tx execution
+            // is served from `chunk.results` (with account/storage pre-load on the
+            // replay path, see `ChunkingEvm::transact_raw`). When no chunks are
+            // supplied the factory's map is empty → every `transact_raw()` delegates
+            // to inner `OpEvm`, identical to plain `OpEvmFactory`.
+            //
+            // Running the EXECUTION-ONLY branch with chunks populated also unlocks
+            // `run_stateless_client(Witness { stitched_executions, chunks, .. })`:
+            // pass 1 captures both via `test_derivation_with_chunks_and_traces`,
+            // pass 2 sets `l1_head = ZERO` to take this branch, and no L1 blobs are
+            // needed since derivation doesn't run. The CHUNK VERIFY phase below
+            // authenticates each chunk against its Execution (same cross-checks as
+            // the DERIVATION branch: output-root anchor, tx_hash, block_env,
+            // blob pricing, hash_evm_state, receipts_root).
+            let safe_head_parent_exec: alloy_consensus::Header = safe_head.inner().clone();
+            let has_chunks_exec = chunks.iter().any(|v| !v.is_empty());
+            let chunks_by_block_exec: std::collections::HashMap<u64, Vec<Chunk>> = chunks
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| {
+                    if v.is_empty() {
+                        None
+                    } else {
+                        Some((safe_head_number + 1 + i as u64, v.clone()))
+                    }
+                })
+                .collect();
+            let factory = ChunkingEvmFactory::new_with_traces(
+                chunks_by_block_exec,
+                chunk_trace_collector.clone(),
+            );
+            let mut kona_executor: KonaExecutor<'_, _, _, ChunkingEvmFactory> = KonaExecutor::new(
                 rollup_config.as_ref(),
                 l2_provider.clone(),
                 l2_provider.clone(),
-                OpEvmFactory::default(),
+                factory,
                 None,
             );
             kona_executor.update_safe_head(safe_head);
@@ -543,6 +576,11 @@ where
                 execution_cache.last().unwrap().artifacts.header.number,
                 boot.claimed_l2_block_number
             );
+
+            // Retain references to each Execution for the CHUNK VERIFY phase —
+            // the loop below consumes `execution_cache` via `for execution in
+            // execution_cache`, but `Arc::clone` lets us keep a cheap handle.
+            let executions_for_verify: Vec<Arc<Execution>> = execution_cache.to_vec();
 
             // Validate executed chain
             let mut latest_output_root = boot.agreed_l2_output_root;
@@ -576,6 +614,24 @@ where
                 ));
             }
 
+            // CHUNK VERIFY phase (EXECUTION-ONLY variant). Delegates the per-block
+            // cross-checks to `verify_chunks_against_blocks` — shared with the
+            // DERIVATION branch below so both paths use identical authentication
+            // logic (output-root anchor, block_env fields, blob pricing, tx_hash,
+            // hash_evm_state, receipts_root, hash-chain continuity).
+            if has_chunks_exec {
+                log("CHUNK VERIFY");
+                let exec_refs: Vec<&Execution> =
+                    executions_for_verify.iter().map(|e| e.as_ref()).collect();
+                crate::precondition::chunking::verify_chunks_against_blocks(
+                    &chunks,
+                    &exec_refs,
+                    &safe_head_parent_exec,
+                    safe_head_number,
+                    rollup_config.as_ref(),
+                )?;
+            }
+
             // Validate claimed_l2_output_root against latest_output_root
             assert_eq!(boot.claimed_l2_output_root, latest_output_root);
             // Return result
@@ -595,6 +651,11 @@ where
                 .context("load_precondition_data")?;
 
         log("DERIVATION & EXECUTION");
+        // Retain an unsealed copy of the safe head so the CHUNK VERIFY phase below
+        // can use it as the parent header for block_idx == 0 (deriving expected
+        // blob_excess_gas_and_price). `new_oracle_pipeline_cursor` consumes its
+        // `safe_head` argument, so we clone before handing ownership over.
+        let safe_head_parent: alloy_consensus::Header = safe_head.inner().clone();
         // Create a new derivation driver with the given boot information and oracle.
         let cursor = new_oracle_pipeline_cursor(
             rollup_config.as_ref(),
@@ -677,7 +738,7 @@ where
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider.clone(),
-            ChunkingEvmFactory::new(chunks_by_block),
+            ChunkingEvmFactory::new_with_traces(chunks_by_block, chunk_trace_collector.clone()),
             effective_collection_target,
         );
 
@@ -781,40 +842,14 @@ where
                 .lock()
                 .unwrap()
                 .clone();
-            for (block_idx, chunks_for_block) in chunks.iter().enumerate() {
-                if chunks_for_block.is_empty() {
-                    continue;
-                }
-                let exec = collected.get(block_idx).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "chunks supplied for block position {block_idx} but only {} blocks \
-                         were derived — chunks cannot be verified against an underived block",
-                        collected.len()
-                    )
-                })?;
-                let expected_parent_block_number = safe_head_number + block_idx as u64;
-                let expected_agreed_output_root = exec.agreed_output;
-                let block_txs: Vec<Vec<u8>> = exec
-                    .attributes
-                    .transactions
-                    .as_ref()
-                    .map(|txs| txs.iter().map(|b| b.to_vec()).collect())
-                    .unwrap_or_default();
-                crate::precondition::chunking::verify_block_chunks(
-                    chunks_for_block,
-                    expected_agreed_output_root,
-                    expected_parent_block_number,
-                    &block_txs,
-                    exec.artifacts.header.inner(),
-                )
-                .with_context(|| {
-                    format!(
-                        "chunk verification for block position {block_idx} \
-                         (expected block {})",
-                        safe_head_number + 1 + block_idx as u64
-                    )
-                })?;
-            }
+            let exec_refs: Vec<&Execution> = collected.iter().collect();
+            crate::precondition::chunking::verify_chunks_against_blocks(
+                &chunks,
+                &exec_refs,
+                &safe_head_parent,
+                safe_head_number,
+                rollup_config.as_ref(),
+            )?;
         }
 
         ////////////////////////////////////////////////////////////////
@@ -929,6 +964,60 @@ pub mod tests {
         derivation_cache: Option<CachedDriver>,
         derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
     ) -> anyhow::Result<Vec<Arc<Execution>>> {
+        test_derivation_with_chunks(
+            boot_info,
+            proposal_data,
+            derivation_cache,
+            derivation_trace,
+            Vec::new(),
+        )
+    }
+
+    /// Variant of [`test_derivation`] that threads a `chunks: Vec<Vec<Chunk>>` through to
+    /// [`run_core_client`]. When `chunks` is `Vec::new()` (or every inner vec is empty),
+    /// `run_core_client`'s `has_chunks` check returns `false` and the aggregation path is
+    /// completely skipped — `ChunkingEvmFactory::new(empty_map)` delegates every
+    /// `transact_raw()` straight through to the wrapped `OpEvmFactory`, so derivation
+    /// output must be byte-identical to the no-chunks run. When any inner vec is
+    /// non-empty, `run_core_client` runs the `CHUNK VERIFY` phase after derivation and
+    /// calls `verify_block_chunks` for each such block.
+    ///
+    /// Caller constraint: when `chunks` is supplied non-empty, the outer index `i`
+    /// corresponds to block `safe_head_number + 1 + i` (see `Witness::chunks` doc).
+    /// Supplying chunks for an underived block position errors out of the CHUNK VERIFY
+    /// phase.
+    pub fn test_derivation_with_chunks(
+        boot_info: BootInfo,
+        proposal_data: Option<ProposalPrecondition>,
+        derivation_cache: Option<CachedDriver>,
+        derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
+        chunks: Vec<Vec<Chunk>>,
+    ) -> anyhow::Result<Vec<Arc<Execution>>> {
+        test_derivation_with_chunks_and_traces(
+            boot_info,
+            proposal_data,
+            derivation_cache,
+            derivation_trace,
+            chunks,
+            None,
+        )
+    }
+
+    /// Extended variant of [`test_derivation_with_chunks`] that also threads an optional
+    /// per-block `ResultAndState` trace collector through to `run_core_client`'s
+    /// `ChunkingEvmFactory`. When supplied, the factory captures every successful
+    /// `transact_raw()` into the buffer keyed by block number — both the monolithic
+    /// delegate path (empty chunks) and the chunk replay path. Used by the round-trip
+    /// integration test to capture ground truth on a first (empty-chunks) pass, build
+    /// `Chunk` entries from the captured traces, then replay on a second pass.
+    pub fn test_derivation_with_chunks_and_traces(
+        boot_info: BootInfo,
+        proposal_data: Option<ProposalPrecondition>,
+        derivation_cache: Option<CachedDriver>,
+        derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
+        chunks: Vec<Vec<Chunk>>,
+        chunk_trace_collector: Option<crate::evm::ChunkTraceCollector>,
+    ) -> anyhow::Result<Vec<Arc<Execution>>> {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let (proposal_precondition_hash, proposal_data_hash) = if let Some(data) = proposal_data {
             (data.precondition_hash(), oracle.add_precondition_data(data))
@@ -940,6 +1029,15 @@ pub mod tests {
             .map(|c| c.digest())
             .unwrap_or_default();
         let collection_target = Arc::new(Mutex::new(Vec::new()));
+        // When any inner chunks vec is non-empty, `run_core_client` repurposes the
+        // collection target internally for chunk verification and forbids both
+        // `execution_cache` and `execution_trace` being Some. Keep
+        // `collection_target` None in that path — the helper still returns a
+        // (possibly empty) `Vec<Arc<Execution>>` at the end by virtue of the
+        // returned `Vec::new()`, which matches the intent of exercising the
+        // chunks-aware derivation path rather than capturing executions.
+        let has_chunks = chunks.iter().any(|v| !v.is_empty());
+        let execution_trace = (!has_chunks).then(|| collection_target.clone());
         let (result_boot_info, precondition) = run_core_client(
             proposal_data_hash,
             oracle.clone(),
@@ -947,11 +1045,12 @@ pub mod tests {
             OracleBlobProvider::new(oracle.clone()),
             EthereumDataSourceProvider,
             vec![],
-            Some(collection_target.clone()),
+            execution_trace,
             derivation_cache,
             derivation_trace.clone(),
             None,
-            Vec::new(),
+            chunks,
+            chunk_trace_collector,
         )
         .context("run_core_client")?;
 
@@ -1020,6 +1119,7 @@ pub mod tests {
             None,
             None,
             Vec::new(),
+            None,
         )
         .expect("run_core_client");
 
@@ -1066,6 +1166,642 @@ pub mod tests {
             None,
             None,
             Some(Default::default()),
+        )
+        .unwrap();
+    }
+
+    /// Integration test for task 8.7: exercises the `chunks` parameter plumbing through
+    /// `run_core_client` and the `ChunkingEvmFactory` dispatch path end-to-end against a
+    /// real OP Sepolia fixture.
+    ///
+    /// Supplies `chunks: vec![vec![]]` — one entry for the single derived block, with the
+    /// inner vec empty. This case is the interesting one for `ChunkingEvmFactory`:
+    /// `run_core_client`'s `has_chunks` check (`any(|v| !v.is_empty())`) returns `false`,
+    /// so the CHUNK VERIFY phase is skipped, but the chunks vec is still threaded through
+    /// to `ChunkingEvmFactory::new(...)`. The factory's block-number → chunks map is
+    /// empty, so every `create_evm()` call falls through to `OpEvmFactory::create_evm()`
+    /// and every `transact_raw()` delegates straight to `OpEvm`. Derivation output must
+    /// therefore be byte-identical to the no-chunks run in
+    /// `test_op_sepolia_16491249_16491250` above.
+    ///
+    /// This closes task 8.7 at the "ChunkingEvmFactory in the real derivation path"
+    /// integration level. The stronger variant — supplying a non-empty chunk with a real
+    /// pre-computed `ResultAndState` vec and verifying `BlockBuildingOutcome` matches
+    /// monolithic execution byte-for-byte — requires the host-side `TracingEvmFactory`
+    /// → `build_chunk_witnesses` → `Chunk` assembly path that lives in Part 9. See
+    /// `crates/prover/src/chunk.rs::build_chunk_witnesses` unit tests and the Part 9/10
+    /// end-to-end tests for the full host-capture → guest-replay equivalence chain.
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491250_with_empty_chunks() {
+        let boot_info = BootInfo {
+            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
+            agreed_l2_output_root: b256!(
+                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+            ),
+            claimed_l2_output_root: b256!(
+                "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
+            ),
+            claimed_l2_block_number: 16491250,
+            chain_id: 11155420,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        };
+
+        // `vec![vec![]]` — one per-block entry for the single block this fixture derives
+        // (16491249 → 16491250). The empty inner vec means "no chunks for this block",
+        // so `has_chunks == false` and the factory's map is empty → pure pass-through.
+        test_derivation_with_chunks(
+            boot_info,
+            None,
+            None,
+            Some(Default::default()),
+            vec![vec![]],
+        )
+        .unwrap();
+    }
+
+    /// Fetches the safe head header and the fully loaded `RollupConfig` via the same
+    /// oracle-backed path `run_core_client` uses. Needed by the round-trip tests to
+    /// supply (a) the parent header for block[0] when computing
+    /// `expected_blob_excess_gas_and_price` and (b) a rollup_config whose
+    /// `spec_id(timestamp)` returns the actual hardfork (not the `Default::default()`
+    /// placeholder used in `BootInfo` fixtures). Codex round-4 critical patch.
+    pub async fn test_fetch_safe_head_context(
+        boot_info: &BootInfo,
+    ) -> anyhow::Result<(alloy_consensus::Header, kona_genesis::RollupConfig)> {
+        use crate::oracle::local::LocalOnceOracle;
+        let test_oracle = Arc::new(TestOracle::new(boot_info.clone()));
+        let oracle = Arc::new(LocalOnceOracle::new(test_oracle.clone()));
+        let boot = BootInfo::load(oracle.as_ref())
+            .await
+            .context("BootInfo::load")?;
+        let safe_head_hash = fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root)
+            .await
+            .context("fetch_safe_head_hash")?;
+        let rollup_config = Arc::new(boot.rollup_config.clone());
+        let l2_provider =
+            OracleL2ChainProvider::new(safe_head_hash, rollup_config.clone(), oracle.clone());
+        let header = l2_provider
+            .header_by_hash(safe_head_hash)
+            .context("l2_provider.header_by_hash")?;
+        Ok((header, boot.rollup_config))
+    }
+
+    /// Builds a single-chunk `Chunk` covering all transactions of a derived block,
+    /// populated from (a) the `Execution` (header, attributes, agreed_output) returned
+    /// by `test_derivation_with_chunks_and_traces`, and (b) the per-tx `ResultAndState`
+    /// vector captured by `ChunkingEvmFactory::new_with_traces` during the monolithic
+    /// first pass.
+    ///
+    /// `agreed_db`, `claimed_db`, and `agreed_evm` are set to `B256::ZERO` because
+    /// `verify_block_chunks` does not cross-check these against any derivation output —
+    /// they are authenticated only through `stitch_chunks`'s `chunk_trace`
+    /// reconstruction, which is not exercised by `test_derivation_with_chunks_and_traces`
+    /// (stitching runs in `run_stitching_client`, one layer up from `run_core_client`).
+    /// `claimed_evm` IS verified structurally (`hash_evm_state(&evm_state) ==
+    /// claimed_evm`), so it must be computed over the same `evm_state` we store.
+    ///
+    /// `block_env.blob_excess_gas_and_price` is unused by `verify_block_chunks`
+    /// (documented inline there — blob pricing only affects execution semantics, which
+    /// are already bound through the cumulative EVM state; the field is captured into
+    /// `block_ctx_hash` only when the stitching layer runs).
+    pub fn build_single_chunk_for_block(
+        execution: &Execution,
+        parent_block_number: u64,
+        traces: Vec<alloy_evm::revm::context_interface::result::ResultAndState<alloy_evm::op_revm::OpHaltReason>>,
+        parent_header: &alloy_consensus::Header,
+        spec_id: alloy_evm::op_revm::OpSpecId,
+    ) -> Chunk {
+        use crate::precondition::chunking::{hash_evm_state, EvmAccumulatorState};
+        use alloy_consensus::TxReceipt;
+        use alloy_evm::revm::context::BlockEnv;
+        use alloy_op_evm::block::OpBlockExecutionCtx;
+        use alloy_primitives::{Bloom, U256};
+
+        let header = execution.artifacts.header.inner();
+        let block_txs: Vec<Vec<u8>> = execution
+            .attributes
+            .transactions
+            .as_ref()
+            .map(|txs| txs.iter().map(|b| b.to_vec()).collect())
+            .unwrap_or_default();
+        assert_eq!(
+            block_txs.len(),
+            traces.len(),
+            "captured trace count must match derivation-output tx count"
+        );
+
+        // Rebuild block_env from the sealed header. These fields are cross-checked in
+        // verify_block_chunks — any mismatch would reject the chunk. The blob pricing
+        // is derived from the parent header via the EIP-4844 formula, mirroring what
+        // kona's block builder does (see
+        // `crate::precondition::chunking::expected_blob_excess_gas_and_price`).
+        let block_env = BlockEnv {
+            number: U256::from(header.number),
+            beneficiary: header.beneficiary,
+            timestamp: U256::from(header.timestamp),
+            gas_limit: header.gas_limit,
+            basefee: header.base_fee_per_gas.unwrap_or(0),
+            difficulty: header.difficulty,
+            prevrandao: Some(header.mix_hash),
+            blob_excess_gas_and_price:
+                crate::precondition::chunking::expected_blob_excess_gas_and_price(
+                    parent_header,
+                    spec_id,
+                ),
+        };
+        let op_block_ctx = OpBlockExecutionCtx {
+            parent_hash: header.parent_hash,
+            parent_beacon_block_root: header.parent_beacon_block_root,
+            extra_data: header.extra_data.clone(),
+        };
+
+        // Reconstruct the cumulative logs_bloom from the block's receipts — matches
+        // what the chunk guest would have computed running through `OpBlockExecutor`.
+        let receipts = execution.artifacts.execution_result.receipts.clone();
+        let mut logs_bloom = Bloom::default();
+        for receipt in &receipts {
+            for log in TxReceipt::logs(receipt) {
+                logs_bloom.accrue_log(log);
+            }
+        }
+
+        // OP Jovian invariant: blob_gas_used == da_footprint_used — see run_core_client
+        // chunk branch for the rationale. execution.artifacts.execution_result.blob_gas_used
+        // is the upstream-set `self.da_footprint_used` on OP.
+        let block_blob_gas_used = execution.artifacts.execution_result.blob_gas_used;
+        let evm_state = EvmAccumulatorState {
+            cumulative_gas_used: execution.artifacts.execution_result.gas_used,
+            da_footprint_used: block_blob_gas_used,
+            blob_gas_used: block_blob_gas_used,
+            logs_bloom,
+            receipts,
+        };
+        let claimed_evm = hash_evm_state(&evm_state);
+
+        let tx_hash = crate::precondition::chunking::compute_tx_hash(&block_txs);
+
+        Chunk {
+            agreed_db: B256::ZERO,
+            agreed_evm: B256::ZERO,
+            tx_count: block_txs
+                .len()
+                .try_into()
+                .expect("block tx count fits in u16"),
+            tx_hash,
+            results: traces,
+            evm_state,
+            claimed_db: B256::ZERO,
+            claimed_evm,
+            agreed_l2_output_root: execution.agreed_output,
+            parent_block_number,
+            block_env,
+            op_block_ctx,
+        }
+    }
+
+    /// Round-trip integration test for task 8.7 (step 2 — non-empty chunks).
+    ///
+    /// Runs the full derivation path *twice* against a real OP Sepolia fixture:
+    ///   1. **Capture pass.** `chunks = Vec::new()`, `collector = Some(buf)`.
+    ///      `ChunkingEvmFactory`'s chunks map is empty so every `transact_raw()`
+    ///      delegates to inner `OpEvm`; the collector captures the full per-tx
+    ///      `ResultAndState` trace keyed by block number.
+    ///   2. **Replay pass.** Build one full-block `Chunk` per derived block using
+    ///      `build_single_chunk_for_block` (traces + header + attributes +
+    ///      agreed_output). Run again with `chunks = Vec::of those chunks`,
+    ///      `collector = None`. `ChunkingEvm` now serves the replayed
+    ///      `ResultAndState` entries from `chunk.results`, and `run_core_client`'s
+    ///      CHUNK VERIFY phase cross-checks each chunk against the derivation
+    ///      pipeline's authentic header (block_env fields, tx_hash binding,
+    ///      hash_evm_state(&chunk.evm_state) == chunk.claimed_evm, receipts_root
+    ///      reconstruction). Success ⇒ chunked-replay derivation produced
+    ///      block-identical output to the monolithic pass.
+    ///
+    /// This is the "host-capture → guest-replay" equivalence round-trip that task 8.7
+    /// requested. The 1-block fixture `16491249 → 16491250` exercises the full code
+    /// path once; the 100-block fixture variant below exercises it on a deeper
+    /// derivation window.
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491250_chunks_roundtrip() {
+        use std::collections::HashMap;
+
+        let boot_info = BootInfo {
+            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
+            agreed_l2_output_root: b256!(
+                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+            ),
+            claimed_l2_output_root: b256!(
+                "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
+            ),
+            claimed_l2_block_number: 16491250,
+            chain_id: 11155420,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        };
+        let safe_head_number = 16491249u64;
+
+        // ---- Pass 1: capture ground-truth per-tx ResultAndState via ChunkingEvmFactory
+        // in pass-through (empty chunks) mode with a trace collector attached.
+        let collector: crate::evm::ChunkTraceCollector = Arc::new(Mutex::new(HashMap::new()));
+
+        let executions = test_derivation_with_chunks_and_traces(
+            boot_info.clone(),
+            None,
+            None,
+            Some(Default::default()),
+            Vec::new(),
+            Some(collector.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            executions.len(),
+            1,
+            "fixture derives exactly one block (16491249 → 16491250)"
+        );
+
+        // Fetch the safe head header to use as the parent for block[0]'s chunk builder.
+        let (safe_head_header, real_rollup_config) =
+            test_fetch_safe_head_context(&boot_info).await.unwrap();
+        let rollup_config_arc = Arc::new(real_rollup_config);
+
+        // ---- Build chunks: one Chunk per derived block, consuming the captured traces.
+        let mut captured = collector.lock().unwrap();
+        let chunks: Vec<Vec<Chunk>> = executions
+            .iter()
+            .enumerate()
+            .map(|(i, exec)| {
+                let block_number = safe_head_number + 1 + i as u64;
+                let traces = captured.remove(&block_number).unwrap_or_else(|| {
+                    panic!("no captured traces for block {block_number}")
+                });
+                let parent_header = if i == 0 {
+                    &safe_head_header
+                } else {
+                    executions[i - 1].artifacts.header.inner()
+                };
+                let spec_id = rollup_config_arc.spec_id(exec.artifacts.header.inner().timestamp);
+                vec![build_single_chunk_for_block(
+                    exec,
+                    safe_head_number + i as u64,
+                    traces,
+                    parent_header,
+                    spec_id,
+                )]
+            })
+            .collect();
+        drop(captured);
+
+        // ---- Pass 2: replay through ChunkingEvm with populated chunks. The CHUNK VERIFY
+        // phase in run_core_client performs the coherence cross-checks; if any mismatch
+        // is detected, the whole run fails. Success proves the replayed chunks produce
+        // the same derivation output as the monolithic pass.
+        test_derivation_with_chunks_and_traces(
+            boot_info,
+            None,
+            None,
+            Some(Default::default()),
+            chunks,
+            None,
+        )
+        .unwrap();
+    }
+
+    /// Builds `n` sequential `Chunk` entries covering all transactions of a derived
+    /// block. Splits the tx list as evenly as possible (last chunk may be smaller).
+    /// Each chunk's `evm_state` carries the cumulative `EvmAccumulatorState` up to and
+    /// including the chunk's last tx, reconstructed per tx from the captured receipts;
+    /// `hash_chain_continuity` between chunks is trivially satisfied because `agreed_db`
+    /// / `agreed_evm` are set to `ZERO` uniformly (verify_block_chunks checks
+    /// `chunks[i].agreed_db == chunks[i-1].claimed_db`, which holds with all-zero).
+    /// The last chunk's `evm_state` matches the full-block accumulator, so the
+    /// receipts-root reconstruction check passes.
+    pub fn build_n_chunks_for_block(
+        execution: &Execution,
+        parent_block_number: u64,
+        traces: Vec<alloy_evm::revm::context_interface::result::ResultAndState<alloy_evm::op_revm::OpHaltReason>>,
+        n: usize,
+        parent_header: &alloy_consensus::Header,
+        spec_id: alloy_evm::op_revm::OpSpecId,
+    ) -> Vec<Chunk> {
+        use crate::precondition::chunking::{hash_evm_state, EvmAccumulatorState};
+        use alloy_consensus::TxReceipt;
+        use alloy_evm::revm::context::BlockEnv;
+        use alloy_op_evm::block::OpBlockExecutionCtx;
+        use alloy_primitives::{Bloom, U256};
+
+        assert!(n >= 1, "n must be >= 1");
+        let header = execution.artifacts.header.inner();
+        let block_txs: Vec<Vec<u8>> = execution
+            .attributes
+            .transactions
+            .as_ref()
+            .map(|txs| txs.iter().map(|b| b.to_vec()).collect())
+            .unwrap_or_default();
+        assert_eq!(
+            block_txs.len(),
+            traces.len(),
+            "captured trace count must match derivation-output tx count"
+        );
+        // With n > tx_count, later chunks would be empty and the M-10 empty-tx guard
+        // in ChunkingEvm applies. For the integration test, collapse n down to
+        // max(1, tx_count).
+        let n = n.min(block_txs.len().max(1));
+
+        let block_env = BlockEnv {
+            number: U256::from(header.number),
+            beneficiary: header.beneficiary,
+            timestamp: U256::from(header.timestamp),
+            gas_limit: header.gas_limit,
+            basefee: header.base_fee_per_gas.unwrap_or(0),
+            difficulty: header.difficulty,
+            prevrandao: Some(header.mix_hash),
+            blob_excess_gas_and_price:
+                crate::precondition::chunking::expected_blob_excess_gas_and_price(
+                    parent_header,
+                    spec_id,
+                ),
+        };
+        let op_block_ctx = OpBlockExecutionCtx {
+            parent_hash: header.parent_hash,
+            parent_beacon_block_root: header.parent_beacon_block_root,
+            extra_data: header.extra_data.clone(),
+        };
+
+        // Compute chunk boundaries — [tx_start..tx_end) per chunk, covering all txs.
+        let tx_count = block_txs.len();
+        let base = tx_count / n;
+        let rem = tx_count % n;
+        let mut boundaries = Vec::with_capacity(n + 1);
+        boundaries.push(0usize);
+        for i in 0..n {
+            let size = base + usize::from(i < rem);
+            boundaries.push(boundaries[i] + size);
+        }
+
+        // Accumulate cumulative receipts / logs_bloom tx-by-tx so each chunk carries
+        // its post-chunk state, and the last chunk matches the block total.
+        let receipts = &execution.artifacts.execution_result.receipts;
+        let block_blob_gas_used = execution.artifacts.execution_result.blob_gas_used;
+
+        let mut chunks = Vec::with_capacity(n);
+        // Track the previous chunk's claimed_evm so each new chunk's agreed_evm
+        // matches — verify_block_chunks enforces hash-chain continuity between
+        // consecutive chunks.
+        let mut prev_claimed_evm = B256::ZERO;
+        for chunk_idx in 0..n {
+            let start = boundaries[chunk_idx];
+            let end = boundaries[chunk_idx + 1];
+            let chunk_receipts: Vec<_> = receipts[..end].to_vec();
+            let mut logs_bloom = Bloom::default();
+            for r in &chunk_receipts {
+                for log in TxReceipt::logs(r) {
+                    logs_bloom.accrue_log(log);
+                }
+            }
+            // cumulative_gas_used comes directly from the last receipt in the chunk's
+            // cumulative prefix (OpReceiptEnvelope.cumulative_gas_used is block-
+            // cumulative by EIP-658). On the last chunk this equals the block total,
+            // so the `hash_evm_state` + receipts-root checks pass.
+            let cumulative_gas_used = chunk_receipts
+                .last()
+                .map(|r| r.cumulative_gas_used())
+                .unwrap_or(0);
+            // On OP Jovian, blob_gas_used == da_footprint_used, scaled proportionally
+            // across the block. For the test, just split linearly by tx index — the
+            // LAST chunk must match the block total, which it does because
+            // `end == tx_count` for the last iteration.
+            let (chunk_da_used, chunk_blob_used) = if chunk_idx == n - 1 {
+                (block_blob_gas_used, block_blob_gas_used)
+            } else if tx_count == 0 {
+                (0, 0)
+            } else {
+                let v = block_blob_gas_used * (end as u64) / (tx_count as u64);
+                (v, v)
+            };
+            let evm_state = EvmAccumulatorState {
+                cumulative_gas_used,
+                da_footprint_used: chunk_da_used,
+                blob_gas_used: chunk_blob_used,
+                logs_bloom,
+                receipts: chunk_receipts,
+            };
+            let claimed_evm = hash_evm_state(&evm_state);
+            let chunk_txs = &block_txs[start..end];
+            let tx_hash = crate::precondition::chunking::compute_tx_hash(chunk_txs);
+            let chunk_traces: Vec<_> = traces[start..end].to_vec();
+            chunks.push(Chunk {
+                agreed_db: B256::ZERO,
+                agreed_evm: prev_claimed_evm,
+                tx_count: (end - start)
+                    .try_into()
+                    .expect("chunk tx count fits in u16"),
+                tx_hash,
+                results: chunk_traces,
+                evm_state,
+                claimed_db: B256::ZERO,
+                claimed_evm,
+                agreed_l2_output_root: execution.agreed_output,
+                parent_block_number,
+                block_env: block_env.clone(),
+                op_block_ctx: op_block_ctx.clone(),
+            });
+            prev_claimed_evm = claimed_evm;
+        }
+        chunks
+    }
+
+    /// Multi-chunk round-trip for task 8.7. Splits each block into up to 2 chunks —
+    /// exercising `ChunkingEvm`'s cursor advance across chunks, hash-chain continuity
+    /// (`chunks[i].agreed_db == chunks[i-1].claimed_db`, and likewise for `agreed_evm`),
+    /// per-chunk `tx_hash` binding over tx slices, and incremental `evm_state` /
+    /// receipts-root construction where only the LAST chunk's state must match the
+    /// block totals.
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491250_two_chunks_roundtrip() {
+        use std::collections::HashMap;
+
+        let boot_info = BootInfo {
+            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
+            agreed_l2_output_root: b256!(
+                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+            ),
+            claimed_l2_output_root: b256!(
+                "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
+            ),
+            claimed_l2_block_number: 16491250,
+            chain_id: 11155420,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        };
+        let safe_head_number = 16491249u64;
+
+        let collector: crate::evm::ChunkTraceCollector = Arc::new(Mutex::new(HashMap::new()));
+
+        let executions = test_derivation_with_chunks_and_traces(
+            boot_info.clone(),
+            None,
+            None,
+            Some(Default::default()),
+            Vec::new(),
+            Some(collector.clone()),
+        )
+        .unwrap();
+
+        let (safe_head_header, real_rollup_config) =
+            test_fetch_safe_head_context(&boot_info).await.unwrap();
+        let rollup_config_arc = Arc::new(real_rollup_config);
+
+        let mut captured = collector.lock().unwrap();
+        let chunks: Vec<Vec<Chunk>> = executions
+            .iter()
+            .enumerate()
+            .map(|(i, exec)| {
+                let block_number = safe_head_number + 1 + i as u64;
+                let traces = captured.remove(&block_number).unwrap_or_default();
+                let parent_header = if i == 0 {
+                    &safe_head_header
+                } else {
+                    executions[i - 1].artifacts.header.inner()
+                };
+                let spec_id = rollup_config_arc.spec_id(exec.artifacts.header.inner().timestamp);
+                build_n_chunks_for_block(
+                    exec,
+                    safe_head_number + i as u64,
+                    traces,
+                    2,
+                    parent_header,
+                    spec_id,
+                )
+            })
+            .collect();
+        drop(captured);
+
+        test_derivation_with_chunks_and_traces(
+            boot_info,
+            None,
+            None,
+            Some(Default::default()),
+            chunks,
+            None,
+        )
+        .unwrap();
+    }
+
+    /// Round-trip integration test for task 8.7 (step 2 — non-empty chunks, longer run).
+    /// Same structure as `test_op_sepolia_16491249_16491250_chunks_roundtrip` above but
+    /// on the 100-block fixture. Exercises per-block Chunk construction across a deeper
+    /// derivation window: 100 independent block_env / op_block_ctx cross-checks, 100
+    /// tx_hash bindings, 100 receipts_root reconstructions, etc.
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491349_chunks_roundtrip() {
+        use std::collections::HashMap;
+
+        let boot_info = BootInfo {
+            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
+            agreed_l2_output_root: b256!(
+                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+            ),
+            claimed_l2_output_root: b256!(
+                "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+            ),
+            claimed_l2_block_number: 16491349,
+            chain_id: 11155420,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        };
+        let safe_head_number = 16491249u64;
+
+        let collector: crate::evm::ChunkTraceCollector = Arc::new(Mutex::new(HashMap::new()));
+
+        let executions = test_derivation_with_chunks_and_traces(
+            boot_info.clone(),
+            None,
+            None,
+            Some(Default::default()),
+            Vec::new(),
+            Some(collector.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(executions.len(), 100, "fixture derives 100 blocks");
+
+        let (safe_head_header, real_rollup_config) =
+            test_fetch_safe_head_context(&boot_info).await.unwrap();
+        let rollup_config_arc = Arc::new(real_rollup_config);
+
+        let mut captured = collector.lock().unwrap();
+        let chunks: Vec<Vec<Chunk>> = executions
+            .iter()
+            .enumerate()
+            .map(|(i, exec)| {
+                let block_number = safe_head_number + 1 + i as u64;
+                // Some blocks may have zero user txs (rare on OP Sepolia, but we
+                // must tolerate it — empty trace vec is a valid capture and the
+                // resulting single chunk has tx_count=0, results=[]).
+                let traces = captured.remove(&block_number).unwrap_or_default();
+                let parent_header = if i == 0 {
+                    &safe_head_header
+                } else {
+                    executions[i - 1].artifacts.header.inner()
+                };
+                let spec_id = rollup_config_arc.spec_id(exec.artifacts.header.inner().timestamp);
+                vec![build_single_chunk_for_block(
+                    exec,
+                    safe_head_number + i as u64,
+                    traces,
+                    parent_header,
+                    spec_id,
+                )]
+            })
+            .collect();
+        drop(captured);
+
+        test_derivation_with_chunks_and_traces(
+            boot_info,
+            None,
+            None,
+            Some(Default::default()),
+            chunks,
+            None,
+        )
+        .unwrap();
+    }
+
+    /// Integration test for task 8.7: same as above but on the longer 100-block fixture,
+    /// to exercise the chunks-parameter pass-through across many derived blocks. Supplies
+    /// 100 empty inner vecs (one per block from 16491250..=16491349). Every block's
+    /// `chunks_by_block` lookup misses, every `transact_raw()` delegates, and derivation
+    /// output must match the no-chunks baseline
+    /// (`test_op_sepolia_16491249_16491349` above) exactly.
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491349_with_empty_chunks() {
+        let boot_info = BootInfo {
+            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
+            agreed_l2_output_root: b256!(
+                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+            ),
+            claimed_l2_output_root: b256!(
+                "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+            ),
+            claimed_l2_block_number: 16491349,
+            chain_id: 11155420,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        };
+
+        // 100 empty inner vecs — one per block in the 16491249..16491349 derivation
+        // window. All map lookups miss → `ChunkingEvm` delegates every call to inner
+        // `OpEvm`, identical to the monolithic path.
+        let chunks = vec![Vec::<Chunk>::new(); 100];
+
+        test_derivation_with_chunks(
+            boot_info,
+            None,
+            None,
+            Some(Default::default()),
+            chunks,
         )
         .unwrap();
     }
@@ -1268,6 +2004,7 @@ pub mod tests {
             None,
             Some(chunk_witness),
             Vec::new(),
+            None,
         )
         .expect("run_core_client chunk mode")
     }
@@ -1411,6 +2148,7 @@ pub mod tests {
             None,
             Some(chunk_witness),
             Vec::new(),
+            None,
         )
     }
 
@@ -1627,6 +2365,7 @@ pub mod tests {
             None,
             None, // No chunk witness!
             Vec::new(),
+            None,
         );
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());

@@ -147,4 +147,119 @@ pub mod tests {
 
         Ok(())
     }
+
+    /// End-to-end round-trip through `run_stateless_client` with a non-empty
+    /// `Witness.chunks`. Codex round-4 [high] finding regression test — proves the
+    /// transaction-chunk-proving code path is reachable in the standard stateless
+    /// replay, not just the `run_core_client` integration tests.
+    ///
+    /// Follows the existing `test_stateless_client` pattern exactly — captures real
+    /// derivation data via `test_derivation_with_chunks_and_traces` (using the
+    /// cached `testdata/` `TestOracle` fixture), then sets `l1_head = ZERO` for pass
+    /// 2 to route through the EXECUTION-ONLY branch. No blob witness required
+    /// because derivation isn't re-run — we replay each Execution from the cache
+    /// through `ChunkingEvmFactory` (seeded with the built chunks), and the CHUNK
+    /// VERIFY phase in EXECUTION-ONLY authenticates each chunk against its
+    /// Execution (same cross-checks as the DERIVATION branch).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_stateless_client_with_chunks() -> anyhow::Result<()> {
+        use crate::client::core::tests::{
+            build_single_chunk_for_block, test_derivation_with_chunks_and_traces,
+            test_fetch_safe_head_context,
+        };
+        use crate::executor::Chunk;
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        let mut boot_info = BootInfo {
+            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
+            agreed_l2_output_root: b256!(
+                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+            ),
+            claimed_l2_output_root: b256!(
+                "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+            ),
+            claimed_l2_block_number: 16491349,
+            chain_id: 11155420,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        };
+        let safe_head_number = 16491249u64;
+
+        // ---- Pass 1 (capture): test_derivation_with_chunks_and_traces runs the full
+        // derivation through `run_core_client`, captures per-tx `ResultAndState`,
+        // returns the Executions.
+        let collector: crate::evm::ChunkTraceCollector =
+            Arc::new(Mutex::new(HashMap::new()));
+        let executions = test_derivation_with_chunks_and_traces(
+            boot_info.clone(),
+            None,
+            None,
+            Some(Default::default()),
+            Vec::new(),
+            Some(collector.clone()),
+        )
+        .context("capture pass")?;
+        assert!(!executions.is_empty());
+
+        let (safe_head_header, real_rollup_config) =
+            test_fetch_safe_head_context(&boot_info).await?;
+        let rollup_config = Arc::new(real_rollup_config);
+
+        // ---- Build Chunks (one single-chunk per block).
+        let mut captured = collector.lock().unwrap();
+        let chunks: Vec<Vec<Chunk>> = executions
+            .iter()
+            .enumerate()
+            .map(|(i, exec)| {
+                let block_number = safe_head_number + 1 + i as u64;
+                let traces = captured.remove(&block_number).unwrap_or_default();
+                let parent_header = if i == 0 {
+                    &safe_head_header
+                } else {
+                    executions[i - 1].artifacts.header.inner()
+                };
+                let spec_id = rollup_config.spec_id(exec.artifacts.header.inner().timestamp);
+                vec![build_single_chunk_for_block(
+                    exec,
+                    safe_head_number + i as u64,
+                    traces,
+                    parent_header,
+                    spec_id,
+                )]
+            })
+            .collect();
+        drop(captured);
+
+        let stitched_executions: Vec<crate::executor::Execution> = executions
+            .into_iter()
+            .map(|e| e.as_ref().clone())
+            .collect();
+
+        // ---- Pass 2 (stateless replay): l1_head = ZERO routes through the
+        // EXECUTION-ONLY branch, which now supports chunks via ChunkingEvmFactory.
+        // No blobs_witness required — derivation isn't re-run in this branch.
+        boot_info.l1_head = B256::ZERO;
+        let oracle_witness = TestOracle::new(boot_info.clone());
+        let stream_witness = oracle_witness.clone();
+        let witness = Witness {
+            oracle_witness,
+            stream_witness,
+            blobs_witness: Default::default(),
+            payout_recipient_address: Default::default(),
+            precondition_validation_data_hash: Default::default(),
+            stitched_executions: vec![stitched_executions],
+            derivation_cache: None,
+            trace_derivation: false,
+            stitched_preconditions: vec![],
+            stitched_boot_info: vec![],
+            fpvm_image_id: Default::default(),
+            chunk_witness: None,
+            chunks,
+        };
+
+        run_stateless_client(witness, KonaStitchingClient(EthereumDataSourceProvider));
+
+        Ok(())
+    }
 }
