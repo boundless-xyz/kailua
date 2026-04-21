@@ -1,10 +1,10 @@
 //! Chunking EVM wrapper for injecting pre-computed per-transaction results.
 //!
-//! [`ChunkingEvm`] wraps any `E: Evm` and intercepts `transact_raw()` to return pre-computed
+//! [`CachedEvm`] wraps any `E: Evm` and intercepts `transact_raw()` to return pre-computed
 //! [`ResultAndState`] entries (captured by `TracingEvmFactory` on the host) for transactions
 //! covered by the supplied [`PartialExecution`] set, instead of re-executing them.
 //!
-//! [`ChunkingEvmFactory`] wraps [`OpEvmFactory`] and dispenses [`ChunkingEvm`] instances
+//! [`CachedEvmFactory`] wraps [`OpEvmFactory`] and dispenses [`CachedEvm`] instances
 //! keyed by the target block number (`input.block_env.number`). This lets the aggregation
 //! guest run blocks through the standard `CachedExecutor` → `StatelessL2Builder::build_block`
 //! → `OpBlockExecutor` pipeline, substituting pre-computed chunk results for the tx-body
@@ -28,15 +28,14 @@ use std::sync::{Arc, Mutex};
 
 /// EVM wrapper that serves pre-computed `ResultAndState` entries from a set of
 /// [`PartialExecution`]s covering this block's ordered transaction body.
-pub struct ChunkingEvm<E: Evm> {
-    /// Actual EVM implementation
-    pub inner: E,
+pub struct CachedEvm<E: Evm> {
     /// Remaining chunks for this block in *reverse* execution order — `last()` is the
-    /// currently-active chunk, `pop()` discards it once exhausted.
-    pub chunks: Vec<PartialExecution>,
-    /// Cursor into `chunks.last().results`. Reset to 0 whenever a chunk is exhausted
-    /// and popped off.
-    pub cursor: usize,
+    /// currently-active chunk and its `.results` is itself stored reversed, so
+    /// `results.pop()` yields the next transaction's output. A chunk with an empty
+    /// `results` vec is exhausted and is popped off the cache on the next call.
+    pub cache: Vec<PartialExecution>,
+    /// Actual EVM implementation
+    pub evm: E,
     /// Block number this EVM is executing. Set at construction time from
     /// `input.block_env.number`; used as the key when appending captured
     /// `ResultAndState` into `block_traces` below (test/host trace capture).
@@ -49,18 +48,20 @@ pub struct ChunkingEvm<E: Evm> {
     /// monolithic run (empty chunks map → every call delegates to inner OpEvm and
     /// is captured as ground truth) and for replay during a second run (chunks
     /// populated → replayed `ResultAndState` entries served from `chunk.results`).
-    pub block_traces: Option<ChunkTraceCollector>,
+    pub collection_target: Option<ChunkTraceCollector>,
 }
 
-impl<E: Evm> ChunkingEvm<E> {
-    /// Wraps `inner` and prepares the chunk cursor, optionally attaching a per-block
+impl<E: Evm> CachedEvm<E> {
+    /// Wraps `inner` and prepares the chunk cache, optionally attaching a per-block
     /// trace collector. `chunks` must be in ascending execution order (matching
-    /// `tx_start`); this constructor reverses the vec so `pop()` yields the next chunk.
+    /// `tx_start`); this constructor reverses the outer vec so `pop()` yields the
+    /// next chunk, and each chunk's `results` vec so `results.pop()` yields the
+    /// next pre-computed `ResultAndState` within that chunk.
     ///
     /// When `block_traces` is `Some`, each successful `transact_raw()` appends its
     /// `ResultAndState` into `block_traces[block_number]`. Used by the integration test
     /// harness to capture ground-truth traces from a monolithic `run_core_client` run
-    /// (empty chunks → `ChunkingEvm` delegates to inner `OpEvm`, results are captured
+    /// (empty chunks → `CachedEvm` delegates to inner `OpEvm`, results are captured
     /// exactly as `TracingEvm` would).
     pub fn new_with_traces(
         inner: E,
@@ -69,17 +70,19 @@ impl<E: Evm> ChunkingEvm<E> {
         block_traces: Option<ChunkTraceCollector>,
     ) -> Self {
         chunks.reverse();
+        for chunk in &mut chunks {
+            chunk.results.reverse();
+        }
         Self {
-            inner,
-            chunks,
-            cursor: 0,
+            evm: inner,
+            cache: chunks,
             block_number,
-            block_traces,
+            collection_target: block_traces,
         }
     }
 }
 
-impl<E: Evm<HaltReason = OpHaltReason>> Evm for ChunkingEvm<E>
+impl<E: Evm<HaltReason = OpHaltReason>> Evm for CachedEvm<E>
 where
     E::DB: alloy_evm::revm::Database,
 {
@@ -93,11 +96,11 @@ where
     type Inspector = E::Inspector;
 
     fn block(&self) -> &Self::BlockEnv {
-        self.inner.block()
+        self.evm.block()
     }
 
     fn chain_id(&self) -> u64 {
-        self.inner.chain_id()
+        self.evm.chain_id()
     }
 
     /// Returns the next pre-computed `ResultAndState` if an available chunk still has
@@ -129,19 +132,16 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        // Drop the active chunk (`chunks.last()`) once its results are exhausted,
-        // resetting the cursor for whatever chunk comes next.
-        if let Some(chunk) = self.chunks.last() {
-            if self.cursor >= chunk.results.len() {
-                self.chunks.pop();
-                self.cursor = 0;
-            }
+        // Peel off any exhausted chunks (empty `results`) from the cache so that
+        // `last_mut()` below either yields an active chunk with work left, or `None`.
+        while self.cache.last().is_some_and(|c| c.results.is_empty()) {
+            self.cache.pop();
         }
 
-        // Serve from the active chunk when possible.
-        let result = if let Some(chunk) = self.chunks.last() {
-            let out = chunk.results[self.cursor].clone();
-            self.cursor += 1;
+        // Serve from the active chunk when possible. `results.pop()` yields the
+        // next pre-computed entry (chunks were stored reversed at construction).
+        let result = if let Some(chunk) = self.cache.last_mut() {
+            let out = chunk.results.pop().expect("peel loop ensures non-empty");
 
             // Pre-load every account referenced by the replayed state diff into
             // the database's cache. `State<TrieDB>::commit` panics if the
@@ -160,7 +160,7 @@ where
             // State<TrieDB> implements. The outer `Database` imported at the top
             // of this file is `alloy_evm::Database`, a thinner wrapper.
             use alloy_evm::revm::Database as RevmDatabase;
-            let db = self.inner.db_mut();
+            let db = self.evm.db_mut();
             for (addr, account) in out.state.iter() {
                 let _ = RevmDatabase::basic(db, *addr);
                 for slot in account.storage.keys() {
@@ -170,7 +170,7 @@ where
 
             Ok(out)
         } else {
-            self.inner.transact_raw(tx)
+            self.evm.transact_raw(tx)
         };
 
         // Optional capture: when a per-block trace collector was attached via
@@ -178,7 +178,7 @@ where
         // number. The chunk replay path (served from chunk.results) also
         // captures — benign since the captured trace equals the authenticated
         // `chunk.results` and callers choose whether to consume the buffer.
-        if let (Ok(r), Some(traces)) = (&result, &self.block_traces) {
+        if let (Ok(r), Some(traces)) = (&result, &self.collection_target) {
             traces
                 .lock()
                 .unwrap()
@@ -198,30 +198,30 @@ where
         contract: Address,
         data: Bytes,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        self.inner.transact_system_call(caller, contract, data)
+        self.evm.transact_system_call(caller, contract, data)
     }
 
     fn finish(self) -> (Self::DB, EvmEnv<Self::Spec, Self::BlockEnv>)
     where
         Self: Sized,
     {
-        self.inner.finish()
+        self.evm.finish()
     }
 
     fn set_inspector_enabled(&mut self, enabled: bool) {
-        self.inner.set_inspector_enabled(enabled)
+        self.evm.set_inspector_enabled(enabled)
     }
 
     fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
-        self.inner.components()
+        self.evm.components()
     }
 
     fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
-        self.inner.components_mut()
+        self.evm.components_mut()
     }
 }
 
-/// Factory that wraps `OpEvmFactory` and dispenses [`ChunkingEvm`] instances seeded with
+/// Factory that wraps `OpEvmFactory` and dispenses [`CachedEvm`] instances seeded with
 /// per-block chunk data keyed by `input.block_env.number`.
 ///
 /// The chunk map is consumed destructively per block: `create_evm` removes the entry for
@@ -233,12 +233,13 @@ where
 /// chunk vec, which is semantically identical to the plain `OpEvm` path — every
 /// `transact_raw()` delegates to the inner.
 #[derive(Clone, Debug)]
-pub struct ChunkingEvmFactory {
+pub struct CachedEvmFactory {
+    /// The underlying EVM used when a transaction is not found in the cache.
     pub inner: OpEvmFactory,
     /// Per-block chunk data keyed by block number. Arc<Mutex<...>> because `EvmFactory`
     /// requires `Clone + Send + Sync + 'static` and the factory is cloned by the
     /// executor pipeline.
-    pub chunks: Arc<Mutex<HashMap<u64, Vec<PartialExecution>>>>,
+    pub cache: Arc<Mutex<HashMap<u64, Vec<PartialExecution>>>>,
     /// Optional per-block `ResultAndState` trace collector threaded into every
     /// `ChunkingEvm` this factory produces. When `Some`, each `ChunkingEvm`
     /// appends successful `transact_raw()` results into
@@ -248,13 +249,13 @@ pub struct ChunkingEvmFactory {
     pub block_traces: Option<ChunkTraceCollector>,
 }
 
-impl ChunkingEvmFactory {
+impl CachedEvmFactory {
     /// Constructs a factory with the given block-keyed chunk data. The map is consumed
     /// destructively on each `create_evm` call.
-    pub fn new(chunks: HashMap<u64, Vec<PartialExecution>>) -> Self {
+    pub fn new(cache: HashMap<u64, Vec<PartialExecution>>) -> Self {
         Self {
             inner: OpEvmFactory::default(),
-            chunks: Arc::new(Mutex::new(chunks)),
+            cache: Arc::new(Mutex::new(cache)),
             block_traces: None,
         }
     }
@@ -270,14 +271,14 @@ impl ChunkingEvmFactory {
     ) -> Self {
         Self {
             inner: OpEvmFactory::default(),
-            chunks: Arc::new(Mutex::new(chunks)),
+            cache: Arc::new(Mutex::new(chunks)),
             block_traces,
         }
     }
 
     /// Removes and returns the chunks for the given block number, or an empty vec.
     pub fn take_chunks(&self, block_number: u64) -> Vec<PartialExecution> {
-        self.chunks
+        self.cache
             .lock()
             .unwrap()
             .remove(&block_number)
@@ -285,8 +286,8 @@ impl ChunkingEvmFactory {
     }
 }
 
-impl EvmFactory for ChunkingEvmFactory {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = ChunkingEvm<OpEvm<DB, I, PrecompilesMap>>;
+impl EvmFactory for CachedEvmFactory {
+    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = CachedEvm<OpEvm<DB, I, PrecompilesMap>>;
     type Context<DB: Database> = OpContext<DB>;
     type Tx = OpTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError, OpTxError>;
@@ -302,7 +303,7 @@ impl EvmFactory for ChunkingEvmFactory {
     ) -> Self::Evm<DB, NoOpInspector> {
         let block_number = input.block_env.number.to::<u64>();
         let chunks = self.take_chunks(block_number);
-        ChunkingEvm::new_with_traces(
+        CachedEvm::new_with_traces(
             self.inner.create_evm(db, input),
             chunks,
             block_number,
@@ -318,7 +319,7 @@ impl EvmFactory for ChunkingEvmFactory {
     ) -> Self::Evm<DB, I> {
         let block_number = input.block_env.number.to::<u64>();
         let chunks = self.take_chunks(block_number);
-        ChunkingEvm::new_with_traces(
+        CachedEvm::new_with_traces(
             self.inner.create_evm_with_inspector(db, input, inspector),
             chunks,
             block_number,

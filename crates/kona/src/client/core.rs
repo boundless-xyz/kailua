@@ -14,7 +14,7 @@
 
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::evm::caching::ChunkingEvmFactory;
+use crate::evm::cached::CachedEvmFactory;
 use crate::evm::db::PanicDB;
 use crate::evm::tracing::ChunkTraceCollector;
 use crate::evm::tracing::TracingOpEvmFactory;
@@ -318,11 +318,11 @@ where
                         }
                     })
                     .collect();
-            let factory = ChunkingEvmFactory::new_with_traces(
+            let factory = CachedEvmFactory::new_with_traces(
                 chunks_by_block_exec,
                 chunk_trace_collector.clone(),
             );
-            let mut kona_executor: KonaExecutor<'_, _, _, ChunkingEvmFactory> = KonaExecutor::new(
+            let mut kona_executor: KonaExecutor<'_, _, _, CachedEvmFactory> = KonaExecutor::new(
                 rollup_config.as_ref(),
                 l2_provider.clone(),
                 l2_provider.clone(),
@@ -502,12 +502,12 @@ where
             execution_trace
         };
 
-        let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, ChunkingEvmFactory>>::new(
+        let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, CachedEvmFactory>>::new(
             execution_cache,
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider.clone(),
-            ChunkingEvmFactory::new_with_traces(chunks_by_block, chunk_trace_collector.clone()),
+            CachedEvmFactory::new_with_traces(chunks_by_block, chunk_trace_collector.clone()),
             effective_collection_target,
         );
 
