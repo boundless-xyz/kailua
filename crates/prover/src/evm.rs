@@ -99,12 +99,13 @@ mod tests {
         assert_eq!(block_traces.len(), 1, "should have one EVM slot");
         let traces = &block_traces[0];
         assert_eq!(traces.len(), 1, "should have exactly one trace entry");
+        let (_tx_hash, ras) = &traces[0];
         assert!(
-            traces[0].state.contains_key(&sender),
+            ras.state.contains_key(&sender),
             "trace should contain sender"
         );
         assert!(
-            traces[0].state.contains_key(&recipient),
+            ras.state.contains_key(&recipient),
             "trace should contain recipient"
         );
     }

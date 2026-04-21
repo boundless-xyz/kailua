@@ -357,20 +357,7 @@ pub fn hash_evm_state(evm_state: &EvmAccumulatorState) -> B256 {
     B256::from_slice(&hasher.finalize())
 }
 
-/// Compute a deterministic hash of a transaction list.
-/// Encoding: `SHA256(u64_be(len) || for each tx: u64_be(tx.len()) || tx_bytes)`.
-/// This matches the length-prefix pattern used by the existing memdb hashing functions.
-pub fn compute_tx_hash(transactions: &[Vec<u8>]) -> B256 {
-    let mut hasher = Sha256::new();
-    hasher.update((transactions.len() as u64).to_be_bytes());
-    for tx in transactions {
-        hasher.update((tx.len() as u64).to_be_bytes());
-        hasher.update(tx);
-    }
-    B256::from_slice(&hasher.finalize())
-}
-
-/// Compute the chunk_trace commitment from the seven input hashes.
+/// Compute the chunk_trace commitment from the six input hashes.
 ///
 /// Returns:
 /// ```text
@@ -411,7 +398,6 @@ pub fn compute_tx_hash(transactions: &[Vec<u8>]) -> B256 {
 ///   `verify_block_chunks`), rejecting any chunk whose context doesn't match the
 ///   block being aggregated.
 pub fn compute_chunk_trace(
-    tx_hash: B256,
     pre_db_hash: B256,
     post_db_hash: B256,
     pre_evm_hash: B256,
@@ -419,8 +405,12 @@ pub fn compute_chunk_trace(
     results_hash: B256,
     block_ctx_hash: B256,
 ) -> B256 {
+    // Note: per-tx identity is authenticated via `results_hash`, which folds in
+    // `tx_hashes` (one SHA256 contribution per `(tx_hash, result, state)` tuple).
+    // That makes a separate aggregated tx_hash input redundant — any chunk-tx
+    // identity tampering already changes `results_hash` and invalidates the
+    // chunk_trace.
     let mut hasher = Sha256::new();
-    hasher.update(tx_hash.as_slice());
     hasher.update(pre_db_hash.as_slice());
     hasher.update(post_db_hash.as_slice());
     hasher.update(pre_evm_hash.as_slice());
@@ -786,10 +776,16 @@ fn write_evm_state(hasher: &mut Sha256, state: &EvmState) {
 /// not correspond to any honestly-generated chunk proof, so `env::verify` would
 /// reject it regardless. We rely on EVM semantics rather than a defensive assert
 /// here; a future hardening pass could add the bound as a cheap extra guard.
-pub fn hash_results(results: &[ResultAndState<OpHaltReason>]) -> B256 {
+pub fn hash_results(tx_hashes: &[B256], results: &[ResultAndState<OpHaltReason>]) -> B256 {
+    assert_eq!(
+        tx_hashes.len(),
+        results.len(),
+        "hash_results: tx_hashes and results must have the same length",
+    );
     let mut hasher = Sha256::new();
     write_u64(&mut hasher, results.len() as u64);
-    for ras in results {
+    for (tx_hash, ras) in tx_hashes.iter().zip(results) {
+        hasher.update(tx_hash.as_slice());
         write_execution_result(&mut hasher, &ras.result);
         write_evm_state(&mut hasher, &ras.state);
     }
@@ -1123,9 +1119,12 @@ pub fn verify_block_chunks(
             chunk.claimed_evm
         );
 
-        // tx_hash binding: the chunk's committed tx_hash must match the hash of the
-        // derivation-pipeline-supplied txs for this chunk's range. Forces the chunk
-        // proof to authenticate exactly the transactions the aggregation is executing.
+        // tx identity binding: each `chunk.tx_hashes[j]` must equal the EIP-2718
+        // hash of `block_txs[cursor + j]` (the derivation-pipeline-supplied tx at
+        // the same position). Forces the chunk proof to authenticate exactly the
+        // transactions the aggregation is executing. Combined with `results_hash`
+        // folding `tx_hashes` into `chunk_trace`, this closes the "T_Y ≠ T_X"
+        // substitution attack per-element.
         let chunk_end = cursor
             .checked_add(chunk.results.len())
             .ok_or_else(|| anyhow::anyhow!("chunks[{i}] tx count overflow"))?;
@@ -1134,13 +1133,27 @@ pub fn verify_block_chunks(
             "chunks[{i}] extends past block tx count: end={chunk_end}, total={}",
             block_txs.len()
         );
-        let expected_tx_hash = compute_tx_hash(&block_txs[cursor..chunk_end]);
         ensure!(
-            chunk.tx_hash == expected_tx_hash,
-            "chunks[{i}] tx_hash {} != expected {} over txs[{cursor}..{chunk_end}]",
-            chunk.tx_hash,
-            expected_tx_hash
+            chunk.tx_hashes.len() == chunk.results.len(),
+            "chunks[{i}] tx_hashes.len()={} != results.len()={}",
+            chunk.tx_hashes.len(),
+            chunk.results.len()
         );
+        for (j, (chunk_tx_hash, tx_bytes)) in chunk
+            .tx_hashes
+            .iter()
+            .zip(&block_txs[cursor..chunk_end])
+            .enumerate()
+        {
+            let expected = alloy_primitives::keccak256(tx_bytes);
+            ensure!(
+                *chunk_tx_hash == expected,
+                "chunks[{i}] tx_hashes[{j}] {} != keccak256(block_txs[{}]) {}",
+                chunk_tx_hash,
+                cursor + j,
+                expected
+            );
+        }
         cursor = chunk_end;
     }
 
@@ -2008,10 +2021,9 @@ pub mod tests {
         let d = B256::repeat_byte(0x04);
         let e = B256::repeat_byte(0x05);
         let f = B256::repeat_byte(0x06);
-        let g = B256::repeat_byte(0x07);
 
-        let t1 = compute_chunk_trace(a, b, c, d, e, f, g);
-        let t2 = compute_chunk_trace(a, b, c, d, e, f, g);
+        let t1 = compute_chunk_trace(a, b, c, d, e, f);
+        let t2 = compute_chunk_trace(a, b, c, d, e, f);
         assert_eq!(t1, t2);
         assert!(!t1.is_zero());
     }
@@ -2025,13 +2037,11 @@ pub mod tests {
             B256::repeat_byte(0x04),
             B256::repeat_byte(0x05),
             B256::repeat_byte(0x06),
-            B256::repeat_byte(0x07),
         ];
-        let baseline = compute_chunk_trace(
-            base[0], base[1], base[2], base[3], base[4], base[5], base[6],
-        );
+        let baseline =
+            compute_chunk_trace(base[0], base[1], base[2], base[3], base[4], base[5]);
 
-        for i in 0..7 {
+        for i in 0..6 {
             let mut modified = base;
             modified[i] = B256::repeat_byte(0xFF);
             let h = compute_chunk_trace(
@@ -2041,7 +2051,6 @@ pub mod tests {
                 modified[3],
                 modified[4],
                 modified[5],
-                modified[6],
             );
             assert_ne!(
                 baseline, h,
@@ -2077,8 +2086,8 @@ pub mod tests {
 
     #[test]
     fn hash_results_empty_is_deterministic() {
-        let h1 = hash_results(&[]);
-        let h2 = hash_results(&[]);
+        let h1 = hash_results(&[], &[]);
+        let h2 = hash_results(&[], &[]);
         assert_eq!(h1, h2);
         assert!(!h1.is_zero(), "hash of empty trace is u64_be(0) hash");
     }
@@ -2086,8 +2095,8 @@ pub mod tests {
     #[test]
     fn hash_results_single_entry_deterministic() {
         let entry = stub_success(21000);
-        let h1 = hash_results(std::slice::from_ref(&entry));
-        let h2 = hash_results(std::slice::from_ref(&entry));
+        let h1 = hash_results(&[B256::ZERO], std::slice::from_ref(&entry));
+        let h2 = hash_results(&[B256::ZERO], std::slice::from_ref(&entry));
         assert_eq!(h1, h2);
     }
 
@@ -2095,8 +2104,8 @@ pub mod tests {
     fn hash_results_order_sensitive() {
         let a = stub_success(21000);
         let b = stub_success(42000);
-        let h_ab = hash_results(&[a.clone(), b.clone()]);
-        let h_ba = hash_results(&[b, a]);
+        let h_ab = hash_results(&[B256::ZERO, B256::ZERO], &[a.clone(), b.clone()]);
+        let h_ba = hash_results(&[B256::ZERO, B256::ZERO], &[b, a]);
         assert_ne!(
             h_ab, h_ba,
             "reordering results must change the hash (prevents aggregator-side reordering)"
@@ -2105,15 +2114,15 @@ pub mod tests {
 
     #[test]
     fn hash_results_gas_change_different() {
-        let h1 = hash_results(&[stub_success(21000)]);
-        let h2 = hash_results(&[stub_success(21001)]);
+        let h1 = hash_results(&[B256::ZERO], &[stub_success(21000)]);
+        let h2 = hash_results(&[B256::ZERO], &[stub_success(21001)]);
         assert_ne!(h1, h2);
     }
 
     #[test]
     fn hash_results_variant_change_different() {
-        let success = hash_results(&[stub_success(21000)]);
-        let revert = hash_results(&[stub_revert(21000, &[])]);
+        let success = hash_results(&[B256::ZERO], &[stub_success(21000)]);
+        let revert = hash_results(&[B256::ZERO], &[stub_revert(21000, &[])]);
         assert_ne!(success, revert);
     }
 
@@ -2124,7 +2133,7 @@ pub mod tests {
 
         // Baseline: empty state.
         let base = stub_success(21000);
-        let h_base = hash_results(std::slice::from_ref(&base));
+        let h_base = hash_results(&[B256::ZERO], std::slice::from_ref(&base));
 
         // Same result but with one account added to state.
         let mut modified = stub_success(21000);
@@ -2144,7 +2153,7 @@ pub mod tests {
                 status: alloy_evm::revm::state::AccountStatus::Touched,
             },
         );
-        let h_modified = hash_results(std::slice::from_ref(&modified));
+        let h_modified = hash_results(&[B256::ZERO], std::slice::from_ref(&modified));
 
         assert_ne!(
             h_base, h_modified,
@@ -2156,7 +2165,7 @@ pub mod tests {
             U256::from(1),
             EvmStorageSlot::new_changed(U256::ZERO, U256::from(42), 0),
         );
-        let h_with_storage = hash_results(std::slice::from_ref(&modified));
+        let h_with_storage = hash_results(&[B256::ZERO], std::slice::from_ref(&modified));
         assert_ne!(h_modified, h_with_storage);
     }
 
@@ -2228,8 +2237,8 @@ pub mod tests {
         );
 
         assert_eq!(
-            hash_results(std::slice::from_ref(&ras1)),
-            hash_results(std::slice::from_ref(&ras2)),
+            hash_results(&[B256::ZERO], std::slice::from_ref(&ras1)),
+            hash_results(&[B256::ZERO], std::slice::from_ref(&ras2)),
             "transient fields must not affect the canonical hash"
         );
     }
@@ -2366,47 +2375,6 @@ pub mod tests {
         );
     }
 
-    // ========== compute_tx_hash tests (7.0) ==========
-
-    #[test]
-    fn tx_hash_deterministic() {
-        let txs = vec![vec![0x01, 0x02], vec![0x03]];
-        let h1 = compute_tx_hash(&txs);
-        let h2 = compute_tx_hash(&txs);
-        assert_eq!(h1, h2);
-        assert!(!h1.is_zero());
-    }
-
-    #[test]
-    fn tx_hash_ordering_sensitivity() {
-        let txs_ab = vec![vec![0x01], vec![0x02]];
-        let txs_ba = vec![vec![0x02], vec![0x01]];
-        assert_ne!(compute_tx_hash(&txs_ab), compute_tx_hash(&txs_ba));
-    }
-
-    #[test]
-    fn tx_hash_content_sensitivity() {
-        let txs1 = vec![vec![0x01, 0x02]];
-        let txs2 = vec![vec![0x01, 0x03]];
-        assert_ne!(compute_tx_hash(&txs1), compute_tx_hash(&txs2));
-    }
-
-    #[test]
-    fn tx_hash_empty_list() {
-        let h = compute_tx_hash(&[]);
-        assert!(!h.is_zero());
-        // Empty list still produces a valid hash (just hashing the zero-length prefix)
-        assert_eq!(h, compute_tx_hash(&[]));
-    }
-
-    #[test]
-    fn tx_hash_length_prefix_prevents_ambiguity() {
-        // [0x01, 0x02] as one tx vs [0x01], [0x02] as two txs must differ
-        let single = vec![vec![0x01, 0x02]];
-        let double = vec![vec![0x01], vec![0x02]];
-        assert_ne!(compute_tx_hash(&single), compute_tx_hash(&double));
-    }
-
     #[test]
     fn chunk_trace_integration_with_precondition() {
         let trace = compute_chunk_trace(
@@ -2416,7 +2384,6 @@ pub mod tests {
             B256::repeat_byte(0x04),
             B256::repeat_byte(0x05),
             B256::repeat_byte(0x06),
-            B256::repeat_byte(0x07),
         );
         let p = crate::precondition::Precondition::default().chunk(trace);
         assert_eq!(p.digest(), risc0_zkvm::Digest::from_bytes(trace.0));
@@ -2471,7 +2438,6 @@ pub mod tests {
             receipts: vec![receipt.clone()],
         };
         let claimed_evm = hash_evm_state(&evm_state);
-        let tx_hash = compute_tx_hash(std::slice::from_ref(&tx_bytes));
         // BlockEnv::default() has: number=0, beneficiary=zero, timestamp=1,
         // gas_limit=u64::MAX, basefee=0, difficulty=0, prevrandao=Some(B256::ZERO).
         // Explicitly zero `blob_excess_gas_and_price` to None so the tests'
@@ -2482,10 +2448,12 @@ pub mod tests {
             blob_excess_gas_and_price: None,
             ..BlockEnv::default()
         };
+        // Chunk commits to the EIP-2718 hash of the single tx; `verify_block_chunks`
+        // will cross-check this against `keccak256(derivation_tx_bytes)`.
         let chunk = PartialExecution {
             agreed_db: B256::repeat_byte(0x11),
             agreed_evm: B256::repeat_byte(0x22),
-            tx_hash,
+            tx_hashes: vec![alloy_primitives::keccak256(&tx_bytes)],
             results: vec![make_success_result_empty()],
             evm_state,
             claimed_db: B256::repeat_byte(0x33),
@@ -2526,14 +2494,14 @@ pub mod tests {
         verify_block_chunks(&[], &[], &Header::default(), None).unwrap();
     }
 
-    /// tx_hash binding: chunk committed a tx_hash for a different tx sequence. The
-    /// bytes fed by derivation compute a different hash, so rejection.
+    /// tx identity binding: chunk committed `tx_hashes` for a different tx sequence
+    /// than the derivation-supplied bytes. Per-element `keccak256(tx_bytes) ==
+    /// chunk.tx_hashes[j]` check must reject.
     #[test]
     fn verify_block_chunks_rejects_tx_hash_mismatch() {
         let derivation_tx = vec![0xAA];
-        // Chunk has committed tx_hash for a DIFFERENT tx.
-        let (mut chunk, receipt) = make_honest_chunk(vec![0xBB], 21000);
-        chunk.tx_hash = compute_tx_hash(&[vec![0xBB]]);
+        // `make_honest_chunk(0xBB, ...)` sets `tx_hashes[0] = keccak256(&[0xBB])`.
+        let (chunk, receipt) = make_honest_chunk(vec![0xBB], 21000);
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         // Now run verification with derivation's tx (0xAA), which hashes differently.
@@ -2541,7 +2509,10 @@ pub mod tests {
         let err = verify_block_chunks(&[chunk], &[derivation_tx], &header, None)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("tx_hash"), "unexpected error: {err}");
+        assert!(
+            err.contains("tx_hashes"),
+            "unexpected error: {err}"
+        );
     }
 
     /// Full-coverage: if the sum of chunks' tx_counts is less than the block's tx

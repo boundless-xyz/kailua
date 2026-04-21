@@ -33,9 +33,10 @@ pub struct PartialExecution {
     /// Hash of the EVM accumulator state before this chunk's transactions.
     #[rkyv(with = B256Def)]
     pub agreed_evm: B256,
-    /// Hash of the chunk's transaction list.
-    #[rkyv(with = B256Def)]
-    pub tx_hash: B256,
+    /// The EIP-2718 tx hash for each entry in `results`. Authenticates which
+    /// transactions this chunk covers (per-element via fold into `results_hash`).
+    #[rkyv(with = rkyv::with::Map<B256Def>)]
+    pub tx_hashes: Vec<B256>,
     /// Full per-tx execution results (ExecutionResult + EvmState), in order.
     #[rkyv(with = rkyv::with::Map<ResultAndStateRkyv>)]
     pub results: Vec<ResultAndState<OpHaltReason>>,
@@ -122,10 +123,17 @@ mod tests {
     }
 
     fn stub_chunk(tag: u16, gas_used_markers: &[u64]) -> PartialExecution {
+        // The tests construct incoming txs via `make_transfer(...)`, which is
+        // `OpTransaction { base: TxEnv { .. }, ..Default::default() }`. The
+        // default sets `enveloped_tx: Some(vec![0x00].into())`, so every
+        // incoming tx hashes to `keccak256(&[0x00])`. To make `CachedEvm`'s
+        // per-tx validation accept all test txs, populate each `tx_hashes[i]`
+        // with that same value.
+        let default_tx_hash = keccak256([0x00u8]);
         PartialExecution {
             agreed_db: keccak256(format!("agreed_db_{tag}")),
             agreed_evm: keccak256(format!("agreed_evm_{tag}")),
-            tx_hash: keccak256(format!("tx_hash_{tag}")),
+            tx_hashes: vec![default_tx_hash; gas_used_markers.len()],
             results: gas_used_markers
                 .iter()
                 .copied()

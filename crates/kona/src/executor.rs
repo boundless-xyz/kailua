@@ -653,7 +653,7 @@ pub mod tests {
         PartialExecution {
             agreed_db: keccak256("agreed_db"),
             agreed_evm: keccak256("agreed_evm"),
-            tx_hash: keccak256("tx_hash"),
+            tx_hashes: vec![keccak256([0x00u8])],
             results: vec![ras],
             evm_state: crate::precondition::chunking::EvmAccumulatorState {
                 cumulative_gas_used: 21000,
@@ -677,7 +677,6 @@ pub mod tests {
 
         assert_eq!(deser.agreed_db, chunk.agreed_db);
         assert_eq!(deser.agreed_evm, chunk.agreed_evm);
-        assert_eq!(deser.tx_hash, chunk.tx_hash);
         assert_eq!(deser.results.len(), 1);
         assert_eq!(deser.evm_state.cumulative_gas_used, 21000);
         assert_eq!(deser.evm_state.da_footprint_used, 100);
@@ -739,7 +738,7 @@ pub mod tests {
         let chunk = PartialExecution {
             agreed_db: keccak256("agreed_db"),
             agreed_evm: keccak256("agreed_evm"),
-            tx_hash: keccak256("tx_hash"),
+            tx_hashes: vec![],
             results: vec![],
             evm_state: crate::precondition::chunking::EvmAccumulatorState::default(),
             claimed_db: keccak256("claimed_db"),

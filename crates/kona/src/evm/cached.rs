@@ -1,23 +1,4 @@
-//! Chunking EVM wrapper for injecting pre-computed per-transaction results.
-//!
-//! [`CachedEvm`] wraps any `E: Evm` and intercepts `transact_raw()` to return pre-computed
-//! [`ResultAndState`] entries for transactions covered by the supplied
-//! [`PartialExecution`] set, instead of re-executing them.
-//!
-//! The same type also serves as the *capture* wrapper: constructed with an empty chunk
-//! map and a `Some(block_traces)` collector via
-//! [`CachedEvmFactory::new_with_traces`], every `transact_raw()` delegates to the inner
-//! `OpEvm` and its `ResultAndState` is appended to `block_traces[block_number]`. The
-//! chunk guest uses this mode to fold per-tx results into `chunk_trace` via
-//! `hash_results(&traces)`.
-//!
-//! [`CachedEvmFactory`] wraps [`OpEvmFactory`] and dispenses [`CachedEvm`] instances
-//! keyed by the target block number (`input.block_env.number`). This lets the aggregation
-//! guest run blocks through the standard `CachedExecutor` → `StatelessL2Builder::build_block`
-//! → `OpBlockExecutor` pipeline, substituting pre-computed chunk results for the tx-body
-//! transactions while prelude and epilogue continue to execute normally. The resulting
-//! `BlockBuildingOutcome` (state root, receipts root, gas used) is byte-exact with
-//! monolithic execution.
+//! Cached EVM wrapper for capturing and injecting pre-computed per-transaction results.
 
 use crate::evm::PartialExecution;
 use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
@@ -25,19 +6,20 @@ use alloy_evm::precompiles::PrecompilesMap;
 use alloy_evm::revm::context::result::{EVMError, ResultAndState};
 use alloy_evm::revm::context::{BlockEnv, TxEnv};
 use alloy_evm::revm::inspector::NoOpInspector;
+use alloy_evm::revm::Database as RevmDatabase;
 use alloy_evm::revm::Inspector;
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::{OpEvm, OpEvmFactory, OpTxError};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{keccak256, Address, Bytes, B256};
 use std::sync::{Arc, Mutex};
 
 /// Shared trace buffer, one inner `Vec` per EVM instance created by
 /// [`CachedEvmFactory`] in ascending creation order (which, during normal
-/// derivation, matches ascending L2 block order). Each `CachedEvm` appends its
-/// per-tx `ResultAndState` entries to the last inner `Vec` via
-/// `last_mut().push(...)`; the factory pushes a fresh empty inner `Vec` on every
-/// `create_evm` / `create_evm_with_inspector` call.
-pub type TransactionResultCollector = Arc<Mutex<Vec<Vec<ResultAndState<OpHaltReason>>>>>;
+/// derivation, matches ascending L2 block order). Each inner entry pairs the
+/// per-tx identity hash (`keccak256(tx.enveloped_tx)` — the EIP-2718 tx hash)
+/// with its captured `ResultAndState`, so downstream `PartialExecution`
+/// construction can populate both `tx_hashes` and `results` from one drain.
+pub type TransactionResultCollector = Arc<Mutex<Vec<Vec<(B256, ResultAndState<OpHaltReason>)>>>>;
 
 /// EVM wrapper that serves pre-computed `ResultAndState` entries from a set of
 /// [`PartialExecution`]s covering this block's ordered transaction body.
@@ -47,14 +29,7 @@ pub struct CachedEvm<E: Evm> {
     /// Actual EVM implementation
     pub evm: E,
     /// Optional trace collector shared across all `CachedEvm` instances produced
-    /// by one [`CachedEvmFactory`]. When `Some`, every successful
-    /// `transact_raw()` pushes its `ResultAndState` into the **last** inner `Vec`
-    /// of the shared buffer — the factory pushes a fresh empty slot on every
-    /// `create_evm` call, so `last_mut()` always targets "this EVM's slot". This
-    /// lets one factory type serve both passes: capture during a monolithic run
-    /// (empty chunks map → every call delegates to inner `OpEvm` and is captured
-    /// as ground truth) and replay during a second run (chunks populated →
-    /// replayed `ResultAndState` entries served from `chunk.results`).
+    /// by one [`CachedEvmFactory`].
     pub collection_target: Option<TransactionResultCollector>,
 }
 
@@ -62,36 +37,33 @@ impl<E: Evm> CachedEvm<E> {
     /// Wraps `inner` and prepares the chunk cache, optionally attaching a shared
     /// trace collector. `chunks` must be in ascending execution order (matching
     /// `tx_start`); this constructor reverses the outer vec so `pop()` yields the
-    /// next chunk, and each chunk's `results` vec so `results.pop()` yields the
-    /// next pre-computed `ResultAndState` within that chunk.
-    ///
-    /// When `block_traces` is `Some`, each successful `transact_raw()` appends its
-    /// `ResultAndState` into the last inner `Vec` of `block_traces`. Used both by
-    /// the chunk guest (single-block capture for `chunk_trace`) and by the
-    /// integration test harness (capture ground-truth traces from a monolithic
-    /// `run_core_client` run with empty chunks; `CachedEvm` then delegates every
-    /// call to the inner `OpEvm`). The caller is responsible for ensuring the
-    /// last slot of `block_traces` is the one this EVM should append to —
-    /// `CachedEvmFactory` handles this by pushing a fresh empty slot on each
-    /// `create_evm` call before constructing the `CachedEvm`.
+    /// next chunk, and each chunk's `results`/`tx_hashes` vecs so `results.pop()`
+    /// (and the parallel `tx_hashes.pop()`) yield the next pre-computed entry in
+    /// execution order.
     pub fn new_with_traces(
-        inner: E,
-        mut chunks: Vec<PartialExecution>,
-        block_traces: Option<TransactionResultCollector>,
+        evm: E,
+        mut cache: Vec<PartialExecution>,
+        collection_target: Option<TransactionResultCollector>,
     ) -> Self {
-        chunks.reverse();
-        for chunk in &mut chunks {
+        cache.reverse();
+        for chunk in &mut cache {
             chunk.results.reverse();
+            chunk.tx_hashes.reverse();
         }
         Self {
-            evm: inner,
-            cache: chunks,
-            collection_target: block_traces,
+            evm,
+            cache,
+            collection_target,
         }
     }
 }
 
-impl<E: Evm<HaltReason = OpHaltReason>> Evm for CachedEvm<E>
+// The `Tx = OpTransaction<TxEnv>` bound below lets us peek `enveloped_tx` to
+// compute the EIP-2718 tx hash without abstracting a new trait. All
+// `CachedEvm` instances produced by `CachedEvmFactory` wrap `OpEvm<...>` whose
+// `Tx` is exactly this type, so the constraint doesn't narrow what the factory
+// can construct — it just names the shape already in use.
+impl<E: Evm<HaltReason = OpHaltReason, Tx = OpTransaction<TxEnv>>> Evm for CachedEvm<E>
 where
     E::DB: alloy_evm::revm::Database,
 {
@@ -112,84 +84,78 @@ where
         self.evm.chain_id()
     }
 
-    /// Returns the next pre-computed `ResultAndState` if an available chunk still has
-    /// results to serve; otherwise delegates to the inner EVM.
+    /// Returns the next pre-computed `ResultAndState` if the top of the cache has an
+    /// entry whose `tx_hash` matches the incoming tx's EIP-2718 hash; otherwise
+    /// delegates to the inner EVM without consuming a cache entry.
     ///
-    /// # Binding of replayed results to the chunk proof
+    /// # Per-tx validation (mix-and-match safety)
     ///
-    /// Each returned `ResultAndState` is taken verbatim from `chunk.results`, but the
-    /// chunk is authenticated by [`crate::client::stitching::stitch_chunks`] through
-    /// the six-input `chunk_trace`:
+    /// The incoming tx's identity hash is `keccak256(tx.enveloped_tx)` — the canonical
+    /// EIP-2718 tx hash. The cache keeps a parallel `tx_hashes` vec reversed alongside
+    /// `results`, so `tx_hashes.last() == Some(expected)` names the tx the next
+    /// `results.last()` was captured for. If the incoming hash doesn't match the
+    /// expected hash, we treat the cache as inapplicable to this tx and delegate to
+    /// the inner EVM — leaving the cache intact for a later matching tx. This is the
+    /// safety condition that lets a block mix cached and uncached tx-body calls.
     ///
-    /// ```text
-    /// chunk_trace = SHA256(tx_hash || pre_db_hash || post_db_hash
-    ///                      || pre_evm_hash || post_evm_hash || results_hash)
-    /// ```
-    ///
-    /// where `results_hash` is the canonical SHA256 of the per-tx `ResultAndState`
-    /// trace (see [`crate::precondition::chunking::hash_results`]). The chunk guest
-    /// captures its own trace via [`CachedEvmFactory`] in capture-only mode (empty
-    /// chunk map + `Some(collector)`) during execution and folds the hash into its
-    /// journal. The aggregation side recomputes `hash_results`
-    /// over `chunk.results` and uses the same formula to reconstruct the expected
-    /// chunk journal — so any tampering with `chunk.results` (reorder,
-    /// substitution, forged value, variant change) produces a mismatching journal
-    /// and `env::verify()` rejects the chunk proof's assumption. The replayed
-    /// `ResultAndState` entries are therefore cryptographically bound to the
-    /// authenticated chunk proof; `ChunkingEvm` is safe to use them without
-    /// per-call verification.
+    /// `results_hash` (folded into `chunk_trace`) commits to both the `tx_hashes` and
+    /// the `results` sequences, so any tampering by an adversary that rewires which
+    /// tx a result claims to belong to invalidates the chunk journal and
+    /// `env::verify()` rejects the chunk proof's assumption.
     fn transact_raw(
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        // Peel off any exhausted chunks (empty `results`) from the cache so that
-        // `last_mut()` below either yields an active chunk with work left, or `None`.
+        // Compute the incoming tx's identity hash
+        let incoming_hash = tx
+            .enveloped_tx
+            .as_ref()
+            .map(|b| keccak256(b.as_ref()))
+            .expect("CachedEvm::transact_raw: OpTransaction.enveloped_tx must be populated");
+
+        // Peel off any exhausted chunks
         while self.cache.last().is_some_and(|c| c.results.is_empty()) {
             self.cache.pop();
         }
 
-        // Serve from the active chunk when possible. `results.pop()` yields the
-        // next pre-computed entry (chunks were stored reversed at construction).
-        let result = if let Some(chunk) = self.cache.last_mut() {
-            let out = chunk.results.pop().expect("peel loop ensures non-empty");
+        // Serve from the active chunk only if tx hashes match
+        let serve_cached = self
+            .cache
+            .last()
+            .and_then(|c| c.tx_hashes.last())
+            .is_some_and(|expected| *expected == incoming_hash);
+
+        let result = if serve_cached {
+            let chunk = self
+                .cache
+                .last_mut()
+                .expect("serve_cached implies cache is non-empty");
+            // Parallel pop — `tx_hashes` and `results` stay synchronized.
+            let _consumed_hash = chunk
+                .tx_hashes
+                .pop()
+                .expect("serve_cached implies tx_hashes is non-empty");
+            let res_state = chunk
+                .results
+                .pop()
+                .expect("serve_cached implies results is non-empty");
 
             // Pre-load every account referenced by the replayed state diff into
-            // the database's cache. `State<TrieDB>::commit` panics if the
-            // executor later tries to mutate an account that was never loaded
-            // via a `basic()` / `storage()` call (revm's `apply_account_state`
-            // requires the address to be present). In the monolithic path
-            // these reads happen naturally as the EVM executes; here we skip
-            // execution and return pre-computed state, so we must ensure every
-            // touched account — and every touched storage slot — is cache-
-            // resident before returning. This restores the invariant that the
-            // executor's commit step can rely on without behaving differently
-            // between the monolithic and chunked paths.
-            //
-            // NOTE: `Database` here is `alloy_evm::revm::Database` (re-exported
-            // from revm), which is the trait whose `basic`/`storage` methods
-            // State<TrieDB> implements. The outer `Database` imported at the top
-            // of this file is `alloy_evm::Database`, a thinner wrapper.
-            use alloy_evm::revm::Database as RevmDatabase;
+            // the database's cache
             let db = self.evm.db_mut();
-            for (addr, account) in out.state.iter() {
+            for (addr, account) in res_state.state.iter() {
                 let _ = RevmDatabase::basic(db, *addr);
                 for slot in account.storage.keys() {
                     let _ = RevmDatabase::storage(db, *addr, *slot);
                 }
             }
 
-            Ok(out)
+            Ok(res_state)
         } else {
             self.evm.transact_raw(tx)
         };
 
-        // Optional capture: when a shared trace collector was attached via
-        // `new_with_traces`, append the ResultAndState to the *last* inner `Vec`
-        // of the shared buffer. `CachedEvmFactory` pushes a fresh empty slot on
-        // each `create_evm` call, so `last_mut()` always targets "this EVM's
-        // slot". The chunk replay path (served from chunk.results) also captures
-        // — benign since the captured trace equals the authenticated
-        // `chunk.results` and callers choose whether to consume the buffer.
+        // Capture results
         if let (Ok(r), Some(traces)) = (&result, &self.collection_target) {
             let mut guard = traces.lock().unwrap();
             guard
@@ -198,7 +164,7 @@ where
                     "CachedEvmFactory pushes an empty slot before constructing \
                      a CachedEvm; last_mut() must exist",
                 )
-                .push(r.clone());
+                .push((incoming_hash, r.clone()));
         }
         result
     }
@@ -237,20 +203,6 @@ where
 
 /// Factory that wraps `OpEvmFactory` and dispenses [`CachedEvm`] instances seeded with
 /// positional per-block chunk data.
-///
-/// The `cache` field holds an outer `Vec<Vec<PartialExecution>>` in **reverse** execution
-/// order so that `create_evm` can `pop()` the next block's chunks off the end in O(1)
-/// and move them into the new [`CachedEvm`]. During normal derivation `create_evm` is
-/// called exactly once per L2 block in ascending block order, so positional index
-/// (input-order, pre-reversal) maps 1:1 to block position.
-///
-/// Blocks without chunk data are represented by an empty inner `Vec`, which produces a
-/// `CachedEvm` with an empty cache — every `transact_raw()` then delegates to the inner
-/// `OpEvm`, semantically identical to the plain `OpEvm` path.
-///
-/// If `create_evm` is called more times than there are chunk entries (or called after
-/// the cache is drained), `take_next_chunks()` returns an empty `Vec`, and the
-/// resulting EVM falls through to the inner `OpEvm`.
 #[derive(Clone, Debug)]
 pub struct CachedEvmFactory {
     /// The factory used to instantiate the underlying EVM instances
@@ -301,7 +253,7 @@ impl CachedEvmFactory {
     /// when no trace collector is attached. During normal derivation one EVM is
     /// created per L2 block in ascending block order, so the returned outer index
     /// maps 1:1 to block position starting from the first block the factory served.
-    pub fn take_all_block_traces(&self) -> Vec<Vec<ResultAndState<OpHaltReason>>> {
+    pub fn take_all_block_traces(&self) -> Vec<Vec<(B256, ResultAndState<OpHaltReason>)>> {
         self.block_traces
             .as_ref()
             .map(|t| std::mem::take(&mut *t.lock().unwrap()))
