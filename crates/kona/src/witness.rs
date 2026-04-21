@@ -15,7 +15,8 @@
 use crate::blobs::BlobWitnessData;
 use crate::boot::StitchedBootInfo;
 use crate::driver::CachedDriver;
-use crate::executor::{Chunk, Execution};
+use crate::evm::PartialExecution;
+use crate::executor::Execution;
 use crate::oracle::vec::VecOracle;
 use crate::oracle::WitnessOracle;
 use crate::precondition::chunking::EvmAccumulatorState;
@@ -73,7 +74,7 @@ pub struct Witness<O: WitnessOracle> {
     /// ordered chunks for a block produced during derivation+execution; the outer index
     /// corresponds to block position from `safe_head_number + 1`. Empty inner vectors
     /// (or blocks past the end of this outer vec) run through monolithic execution.
-    pub chunks: Vec<Vec<Chunk>>,
+    pub chunks: Vec<Vec<PartialExecution>>,
 }
 
 impl Witness<VecOracle> {

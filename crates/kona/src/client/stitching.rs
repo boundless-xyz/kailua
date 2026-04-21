@@ -16,7 +16,8 @@ use crate::boot::StitchedBootInfo;
 use crate::client::core::DASourceProvider;
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::executor::{Chunk, Execution};
+use crate::evm::PartialExecution;
+use crate::executor::Execution;
 use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
 use crate::precondition::chunking::{compute_chunk_trace, hash_block_ctx, hash_results};
@@ -80,7 +81,7 @@ pub trait StitchingClient<
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
         chunk_witness: Option<ChunkWitnessData>,
-        chunks: Vec<Vec<Chunk>>,
+        chunks: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug;
@@ -109,7 +110,7 @@ impl<
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
         chunk_witness: Option<ChunkWitnessData>,
-        chunks: Vec<Vec<Chunk>>,
+        chunks: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
@@ -404,7 +405,7 @@ const CHUNK_SENTINEL_L1_HEAD: B256 = B256::new([0xFF; 32]);
 /// For each block with at least one chunk, this function:
 ///   1. Computes each chunk's `chunk_trace` from its committed hashes.
 ///   2. Constructs the expected [`ProofJournal`] for that chunk, using the chunk's own
-///      `agreed_l2_output_root` and `parent_block_number` (per-block context stored in
+///      `agreed_l2_output_root` and `block_env.number - 1` (per-block context stored in
 ///      each `Chunk` — the outer run's final `BootInfo` cannot be used because its
 ///      `agreed_l2_output_root` and `claimed_l2_block_number` correspond only to the
 ///      run's last block, not to each chunked block individually).
@@ -439,7 +440,7 @@ pub fn stitch_chunks(
     boot: &BootInfo,
     fpvm_image_id: B256,
     payout_recipient_address: Address,
-    chunks_per_block: &[Vec<Chunk>],
+    chunks_per_block: &[Vec<PartialExecution>],
     #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
 ) {
     // Chunking is only defined for derivation+execution mode (l1_head != 0). For
@@ -472,12 +473,13 @@ pub fn stitch_chunks(
                 B256::new(Precondition::default().chunk(chunk_trace).digest().into());
 
             // Chunk proofs: agreed == claimed L2 output root (no L2 advancement);
-            // block number is the parent block number per the spec.
+            // block number is the parent block number (one below the executed block,
+            // which `chunk.block_env.number` commits to).
             let stitched_boot = StitchedBootInfo {
                 l1_head: CHUNK_SENTINEL_L1_HEAD,
                 agreed_l2_output_root: chunk.agreed_l2_output_root,
                 claimed_l2_output_root: chunk.agreed_l2_output_root,
-                claimed_l2_block_number: chunk.parent_block_number,
+                claimed_l2_block_number: chunk.block_env.number.to::<u64>().saturating_sub(1),
             };
 
             let encoded_journal = ProofJournal::new_stitched(
@@ -1222,8 +1224,8 @@ pub mod tests {
         }
     }
 
-    fn make_chunk(agreed_db: B256, claimed_db: B256, agreed_evm: B256, claimed_evm: B256) -> Chunk {
-        Chunk {
+    fn make_chunk(agreed_db: B256, claimed_db: B256, agreed_evm: B256, claimed_evm: B256) -> PartialExecution {
+        PartialExecution {
             agreed_db,
             agreed_evm,
             tx_hash: B256::ZERO,
@@ -1232,7 +1234,6 @@ pub mod tests {
             claimed_db,
             claimed_evm,
             agreed_l2_output_root: keccak256("test_agreed_output"),
-            parent_block_number: 41,
             block_env: alloy_evm::revm::context::BlockEnv::default(),
             op_block_ctx: alloy_op_evm::block::OpBlockExecutionCtx::default(),
         }
@@ -1350,7 +1351,8 @@ pub mod tests {
     }
 
     /// Per-block context: in a multi-block derivation run, each block's chunks carry
-    /// their own `agreed_l2_output_root` and `parent_block_number`. These must flow
+    /// their own `agreed_l2_output_root` and `block_env.number` (which drives the
+    /// journal's `claimed_l2_block_number = block_env.number - 1`). These must flow
     /// into the constructed chunk journal — not the outer `BootInfo`'s (final) values.
     ///
     /// This test does not validate the journal bytes (that would require zkvm-side
@@ -1359,8 +1361,9 @@ pub mod tests {
     /// indicate a regression in the per-block context plumbing.
     #[test]
     fn stitch_chunks_multi_block_uses_per_chunk_context() {
+        use alloy_primitives::U256;
         let boot = chunks_boot_info();
-        // Block A: parent block 10, agreed output root X.
+        // Block A: block 11 (parent = 10), agreed output root X.
         let mut chunk_a = make_chunk(
             keccak256("db_a0"),
             keccak256("db_a1"),
@@ -1368,9 +1371,9 @@ pub mod tests {
             keccak256("evm_a1"),
         );
         chunk_a.agreed_l2_output_root = keccak256("output_root_A");
-        chunk_a.parent_block_number = 10;
+        chunk_a.block_env.number = U256::from(11u64);
 
-        // Block B: parent block 11, agreed output root Y (different from X, and
+        // Block B: block 12 (parent = 11), agreed output root Y (different from X, and
         // different from boot.agreed_l2_output_root). If stitch_chunks incorrectly
         // substituted the outer BootInfo values, the journal for this chunk would
         // refer to boot.agreed_l2_output_root and boot.claimed_l2_block_number
@@ -1382,7 +1385,7 @@ pub mod tests {
             keccak256("evm_b1"),
         );
         chunk_b.agreed_l2_output_root = keccak256("output_root_B");
-        chunk_b.parent_block_number = 11;
+        chunk_b.block_env.number = U256::from(12u64);
 
         stitch_chunks(
             &boot,

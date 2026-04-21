@@ -20,7 +20,8 @@
 //! share a single implementation. This module re-exports them for consumers that
 //! previously depended on `kailua_prover::evm`.
 
-pub use kailua_kona::evm::{TracingEvm, TracingOpEvmFactory};
+pub use kailua_kona::evm::tracing::TracingEvm;
+pub use kailua_kona::evm::tracing::TracingOpEvmFactory;
 
 #[cfg(test)]
 mod tests {

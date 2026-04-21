@@ -14,8 +14,12 @@
 
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::evm::{ChunkTraceCollector, ChunkingEvmFactory, TracingOpEvmFactory};
-use crate::executor::{new_execution_cursor, CachedExecutor, Chunk, Execution, PanicDB};
+use crate::evm::caching::ChunkingEvmFactory;
+use crate::evm::db::PanicDB;
+use crate::evm::tracing::ChunkTraceCollector;
+use crate::evm::tracing::TracingOpEvmFactory;
+use crate::evm::PartialExecution;
+use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
 use crate::precondition::chunking::{
@@ -112,7 +116,7 @@ pub fn run_core_client<
     derivation_cache: Option<CachedDriver>,
     derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
     chunk_witness: Option<ChunkWitnessData>,
-    chunks: Vec<Vec<Chunk>>,
+    chunks: Vec<Vec<PartialExecution>>,
     chunk_trace_collector: Option<ChunkTraceCollector>,
 ) -> anyhow::Result<(BootInfo, Precondition)>
 where
@@ -302,7 +306,7 @@ where
             // blob pricing, hash_evm_state, receipts_root).
             let safe_head_parent_exec: alloy_consensus::Header = safe_head.inner().clone();
             let has_chunks_exec = chunks.iter().any(|v| !v.is_empty());
-            let chunks_by_block_exec: std::collections::HashMap<u64, Vec<Chunk>> = chunks
+            let chunks_by_block_exec: std::collections::HashMap<u64, Vec<PartialExecution>> = chunks
                 .iter()
                 .enumerate()
                 .filter_map(|(i, v)| {
@@ -449,7 +453,7 @@ where
         // Outer index i corresponds to block `safe_head_number + 1 + i` (per witness
         // convention — see `Witness::chunks` doc).
         let has_chunks = chunks.iter().any(|v| !v.is_empty());
-        let chunks_by_block: std::collections::HashMap<u64, Vec<Chunk>> = chunks
+        let chunks_by_block: std::collections::HashMap<u64, Vec<PartialExecution>> = chunks
             .iter()
             .enumerate()
             .filter_map(|(i, v)| {
@@ -571,7 +575,7 @@ where
         //
         // For each block whose witness supplied chunks, verify:
         //   (1) chunk.agreed_l2_output_root == derived parent output root  (output-root anchor)
-        //   (2) chunk.parent_block_number == derived parent block number    (block-number anchor)
+        //   (2) chunk.block_env.number == derived block.header.number      (block-number anchor)
         //   (3) sum(chunk.results.len()) == len(block's derived txs) AND each chunk's tx_hash
         //       matches the SHA256 of the derived tx bytes for its slice   (tx_hash binding)
         //   (4) hash_evm_state(&chunk.evm_state) == chunk.claimed_evm       (evm_state self-consistency)
@@ -773,7 +777,7 @@ pub mod tests {
         proposal_data: Option<ProposalPrecondition>,
         derivation_cache: Option<CachedDriver>,
         derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
-        chunks: Vec<Vec<Chunk>>,
+        chunks: Vec<Vec<PartialExecution>>,
     ) -> anyhow::Result<Vec<Arc<Execution>>> {
         test_derivation_with_chunks_and_traces(
             boot_info,
@@ -797,8 +801,8 @@ pub mod tests {
         proposal_data: Option<ProposalPrecondition>,
         derivation_cache: Option<CachedDriver>,
         derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
-        chunks: Vec<Vec<Chunk>>,
-        chunk_trace_collector: Option<crate::evm::ChunkTraceCollector>,
+        chunks: Vec<Vec<PartialExecution>>,
+        chunk_trace_collector: Option<crate::evm::tracing::ChunkTraceCollector>,
     ) -> anyhow::Result<Vec<Arc<Execution>>> {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let (proposal_precondition_hash, proposal_data_hash) = if let Some(data) = proposal_data {
@@ -1049,7 +1053,6 @@ pub mod tests {
     /// `block_ctx_hash` only when the stitching layer runs).
     pub fn build_single_chunk_for_block(
         execution: &Execution,
-        parent_block_number: u64,
         traces: Vec<
             alloy_evm::revm::context_interface::result::ResultAndState<
                 alloy_evm::op_revm::OpHaltReason,
@@ -1057,7 +1060,7 @@ pub mod tests {
         >,
         parent_header: &alloy_consensus::Header,
         spec_id: alloy_evm::op_revm::OpSpecId,
-    ) -> Chunk {
+    ) -> PartialExecution {
         use crate::precondition::chunking::{hash_evm_state, EvmAccumulatorState};
         use alloy_consensus::TxReceipt;
         use alloy_evm::revm::context::BlockEnv;
@@ -1127,7 +1130,7 @@ pub mod tests {
 
         let tx_hash = crate::precondition::chunking::compute_tx_hash(&block_txs);
 
-        Chunk {
+        PartialExecution {
             agreed_db: B256::ZERO,
             agreed_evm: B256::ZERO,
             tx_hash,
@@ -1136,7 +1139,6 @@ pub mod tests {
             claimed_db: B256::ZERO,
             claimed_evm,
             agreed_l2_output_root: execution.agreed_output,
-            parent_block_number,
             block_env,
             op_block_ctx,
         }
@@ -1185,7 +1187,8 @@ pub mod tests {
 
         // ---- Pass 1: capture ground-truth per-tx ResultAndState via ChunkingEvmFactory
         // in pass-through (empty chunks) mode with a trace collector attached.
-        let collector: crate::evm::ChunkTraceCollector = Arc::new(Mutex::new(HashMap::new()));
+        let collector: crate::evm::tracing::ChunkTraceCollector =
+            Arc::new(Mutex::new(HashMap::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
@@ -1210,7 +1213,7 @@ pub mod tests {
 
         // ---- Build chunks: one Chunk per derived block, consuming the captured traces.
         let mut captured = collector.lock().unwrap();
-        let chunks: Vec<Vec<Chunk>> = executions
+        let chunks: Vec<Vec<PartialExecution>> = executions
             .iter()
             .enumerate()
             .map(|(i, exec)| {
@@ -1226,7 +1229,6 @@ pub mod tests {
                 let spec_id = rollup_config_arc.spec_id(exec.artifacts.header.inner().timestamp);
                 vec![build_single_chunk_for_block(
                     exec,
-                    safe_head_number + i as u64,
                     traces,
                     parent_header,
                     spec_id,
@@ -1261,7 +1263,6 @@ pub mod tests {
     /// receipts-root reconstruction check passes.
     pub fn build_n_chunks_for_block(
         execution: &Execution,
-        parent_block_number: u64,
         traces: Vec<
             alloy_evm::revm::context_interface::result::ResultAndState<
                 alloy_evm::op_revm::OpHaltReason,
@@ -1270,7 +1271,7 @@ pub mod tests {
         n: usize,
         parent_header: &alloy_consensus::Header,
         spec_id: alloy_evm::op_revm::OpSpecId,
-    ) -> Vec<Chunk> {
+    ) -> Vec<PartialExecution> {
         use crate::precondition::chunking::{hash_evm_state, EvmAccumulatorState};
         use alloy_consensus::TxReceipt;
         use alloy_evm::revm::context::BlockEnv;
@@ -1377,7 +1378,7 @@ pub mod tests {
             let chunk_txs = &block_txs[start..end];
             let tx_hash = crate::precondition::chunking::compute_tx_hash(chunk_txs);
             let chunk_traces: Vec<_> = traces[start..end].to_vec();
-            chunks.push(Chunk {
+            chunks.push(PartialExecution {
                 agreed_db: B256::ZERO,
                 agreed_evm: prev_claimed_evm,
                 tx_hash,
@@ -1386,7 +1387,6 @@ pub mod tests {
                 claimed_db: B256::ZERO,
                 claimed_evm,
                 agreed_l2_output_root: execution.agreed_output,
-                parent_block_number,
                 block_env: block_env.clone(),
                 op_block_ctx: op_block_ctx.clone(),
             });
@@ -1420,7 +1420,8 @@ pub mod tests {
         };
         let safe_head_number = 16491249u64;
 
-        let collector: crate::evm::ChunkTraceCollector = Arc::new(Mutex::new(HashMap::new()));
+        let collector: crate::evm::tracing::ChunkTraceCollector =
+            Arc::new(Mutex::new(HashMap::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
@@ -1437,7 +1438,7 @@ pub mod tests {
         let rollup_config_arc = Arc::new(real_rollup_config);
 
         let mut captured = collector.lock().unwrap();
-        let chunks: Vec<Vec<Chunk>> = executions
+        let chunks: Vec<Vec<PartialExecution>> = executions
             .iter()
             .enumerate()
             .map(|(i, exec)| {
@@ -1449,14 +1450,7 @@ pub mod tests {
                     executions[i - 1].artifacts.header.inner()
                 };
                 let spec_id = rollup_config_arc.spec_id(exec.artifacts.header.inner().timestamp);
-                build_n_chunks_for_block(
-                    exec,
-                    safe_head_number + i as u64,
-                    traces,
-                    2,
-                    parent_header,
-                    spec_id,
-                )
+                build_n_chunks_for_block(exec, traces, 2, parent_header, spec_id)
             })
             .collect();
         drop(captured);
@@ -1496,7 +1490,8 @@ pub mod tests {
         };
         let safe_head_number = 16491249u64;
 
-        let collector: crate::evm::ChunkTraceCollector = Arc::new(Mutex::new(HashMap::new()));
+        let collector: crate::evm::tracing::ChunkTraceCollector =
+            Arc::new(Mutex::new(HashMap::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
@@ -1515,7 +1510,7 @@ pub mod tests {
         let rollup_config_arc = Arc::new(real_rollup_config);
 
         let mut captured = collector.lock().unwrap();
-        let chunks: Vec<Vec<Chunk>> = executions
+        let chunks: Vec<Vec<PartialExecution>> = executions
             .iter()
             .enumerate()
             .map(|(i, exec)| {
@@ -1532,7 +1527,6 @@ pub mod tests {
                 let spec_id = rollup_config_arc.spec_id(exec.artifacts.header.inner().timestamp);
                 vec![build_single_chunk_for_block(
                     exec,
-                    safe_head_number + i as u64,
                     traces,
                     parent_header,
                     spec_id,
@@ -1577,7 +1571,7 @@ pub mod tests {
         // 100 empty inner vecs — one per block in the 16491249..16491349 derivation
         // window. All map lookups miss → `ChunkingEvm` delegates every call to inner
         // `OpEvm`, identical to the monolithic path.
-        let chunks = vec![Vec::<Chunk>::new(); 100];
+        let chunks = vec![Vec::<PartialExecution>::new(); 100];
 
         test_derivation_with_chunks(boot_info, None, None, Some(Default::default()), chunks)
             .unwrap();

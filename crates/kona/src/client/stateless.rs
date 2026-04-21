@@ -167,7 +167,7 @@ pub mod tests {
             build_single_chunk_for_block, test_derivation_with_chunks_and_traces,
             test_fetch_safe_head_context,
         };
-        use crate::executor::Chunk;
+        use crate::evm::PartialExecution;
         use std::collections::HashMap;
         use std::sync::{Arc, Mutex};
 
@@ -189,7 +189,8 @@ pub mod tests {
         // ---- Pass 1 (capture): test_derivation_with_chunks_and_traces runs the full
         // derivation through `run_core_client`, captures per-tx `ResultAndState`,
         // returns the Executions.
-        let collector: crate::evm::ChunkTraceCollector = Arc::new(Mutex::new(HashMap::new()));
+        let collector: crate::evm::tracing::ChunkTraceCollector =
+            Arc::new(Mutex::new(HashMap::new()));
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
             None,
@@ -207,7 +208,7 @@ pub mod tests {
 
         // ---- Build Chunks (one single-chunk per block).
         let mut captured = collector.lock().unwrap();
-        let chunks: Vec<Vec<Chunk>> = executions
+        let chunks: Vec<Vec<PartialExecution>> = executions
             .iter()
             .enumerate()
             .map(|(i, exec)| {
@@ -221,7 +222,6 @@ pub mod tests {
                 let spec_id = rollup_config.spec_id(exec.artifacts.header.inner().timestamp);
                 vec![build_single_chunk_for_block(
                     exec,
-                    safe_head_number + i as u64,
                     traces,
                     parent_header,
                     spec_id,

@@ -57,7 +57,7 @@ pub async fn run_witgen_client<P, B, O, D>(
     // VERIFY phase AND serialized into the returned `Witness.chunks` so the
     // downstream stateless client can consume them. Default `Vec::new()` = no
     // chunks = monolithic execution (same as before the chunk-proving feature).
-    chunks: Vec<Vec<kailua_kona::executor::Chunk>>,
+    chunks: Vec<Vec<kailua_kona::evm::PartialExecution>>,
 ) -> anyhow::Result<(
     BootInfo,
     ProofJournal,

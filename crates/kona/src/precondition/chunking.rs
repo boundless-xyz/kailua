@@ -124,7 +124,7 @@ pub fn account_state_from_evm_status(status: AccountStatus, info: &AccountInfo) 
 ///
 /// This is used by both host-side witness construction (advancing the cumulative cache
 /// through each chunk's traces) and guest-side chunk verification (applying the merged
-/// state delta from a [`Chunk`] proof to advance state during aggregation).
+/// state delta from a [`PartialExecution`] proof to advance state during aggregation).
 ///
 /// # `KECCAK_EMPTY` edge case (review finding L-2)
 ///
@@ -803,7 +803,7 @@ pub fn hash_results(results: &[ResultAndState<OpHaltReason>]) -> B256 {
 // Verifies that a block's chunks (as supplied in the witness) are coherent with the
 // block the aggregation pipeline actually derived. The chunk proof itself authenticates
 // a `chunk_trace` containing `tx_hash`, pre/post DB + EVM hashes, and `results_hash`,
-// but the *fields* `chunk.agreed_l2_output_root` and `chunk.parent_block_number` used
+// but the *fields* `chunk.agreed_l2_output_root` and `chunk.block_env.number` used
 // by `stitch_chunks` to reconstruct the chunk's `ProofJournal` are witness-supplied —
 // as is the assumption that `chunk.tx_hash` corresponds to the actual derivation-output
 // txs. Without the checks below, an adversary could supply a valid chunk proof for
@@ -822,9 +822,10 @@ pub fn hash_results(results: &[ResultAndState<OpHaltReason>]) -> B256 {
 //      the canonicalization mismatch between chunk-witness `Cache` (preloaded with
 //      `NotExisting` stubs for all block-accessed addresses) and aggregation's
 //      `State<TrieDB>.cache` (only prelude-touched addresses at the same boundary).
-//   2. **Block number anchor** — `chunk.parent_block_number` must equal the derived
-//      block's parent number. Combined with output-root equality, this pins the chunk
-//      to this specific block in the derived chain.
+//   2. **Block number anchor** — `chunk.block_env.number` must equal the derived
+//      block's header.number (checked alongside the rest of the block-context
+//      fields below). Combined with output-root equality, this pins the chunk to
+//      this specific block in the derived chain.
 //   3. **`tx_hash` binding** — `compute_tx_hash(txs[chunk_start..chunk_end])` over the
 //      derivation-pipeline-supplied txs must equal `chunk.tx_hash`. This forces the
 //      chunk proof to authenticate *exactly* the transactions the aggregation is
@@ -875,7 +876,7 @@ use alloy_evm::revm::primitives::eip4844::{
 };
 use anyhow::{bail, ensure};
 
-use crate::executor::Chunk;
+use crate::evm::PartialExecution;
 
 /// Iterate a block-indexed `chunks` vec and call [`verify_block_chunks`] for each
 /// non-empty entry, deriving the `parent_header`, `spec_id`, and expected
@@ -901,7 +902,7 @@ use crate::executor::Chunk;
 /// - `rollup_config` — used to select the `spec_id` for each block's timestamp
 ///   (drives the hardfork-gated blob_gasprice update fraction).
 pub fn verify_chunks_against_blocks(
-    chunks_per_block: &[Vec<Chunk>],
+    chunks_per_block: &[Vec<PartialExecution>],
     executions: &[&crate::executor::Execution],
     safe_head_parent: &Header,
     safe_head_number: u64,
@@ -919,7 +920,6 @@ pub fn verify_chunks_against_blocks(
                 executions.len()
             )
         })?;
-        let expected_parent_block_number = safe_head_number + block_idx as u64;
         let expected_agreed_output_root = exec.agreed_output;
         let block_txs: Vec<Vec<u8>> = exec
             .attributes
@@ -938,7 +938,6 @@ pub fn verify_chunks_against_blocks(
         verify_block_chunks(
             chunks_for_block,
             expected_agreed_output_root,
-            expected_parent_block_number,
             &block_txs,
             exec.artifacts.header.inner(),
             expected_blob,
@@ -1000,9 +999,8 @@ pub fn expected_blob_excess_gas_and_price(
 /// the first failing chunk / block index; all checks are preconditions for soundness,
 /// so any failure must halt the aggregation proof.
 pub fn verify_block_chunks(
-    chunks: &[Chunk],
+    chunks: &[PartialExecution],
     expected_agreed_output_root: B256,
-    expected_parent_block_number: u64,
     block_txs: &[Vec<u8>],
     block_header: &Header,
     expected_blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
@@ -1022,14 +1020,6 @@ pub fn verify_block_chunks(
              different L2 block; this is the 'wrong-block substitution' attack vector",
             chunk.agreed_l2_output_root,
             expected_agreed_output_root
-        );
-
-        // Anchor 2: chunk commits to the expected parent block number.
-        ensure!(
-            chunk.parent_block_number == expected_parent_block_number,
-            "chunks[{i}].parent_block_number {} != expected {}",
-            chunk.parent_block_number,
-            expected_parent_block_number
         );
 
         // Block context binding (Codex round-3 critical).
@@ -2446,7 +2436,7 @@ pub mod tests {
 
     // ========== verify_block_chunks tests (items 1-3 adversarial review fix) ==========
 
-    use crate::executor::Chunk;
+    use crate::evm::PartialExecution;
     use op_alloy_consensus::{OpReceiptEnvelope, OpTxType};
 
     /// Build a Header whose fields are consistent with revm's `BlockEnv::default()`
@@ -2476,9 +2466,8 @@ pub mod tests {
     fn make_honest_chunk(
         tx_bytes: Vec<u8>,
         agreed_output: B256,
-        parent_block: u64,
         cumulative_gas: u64,
-    ) -> (Chunk, OpReceiptEnvelope) {
+    ) -> (PartialExecution, OpReceiptEnvelope) {
         let receipt = OpReceiptEnvelope::from_parts(
             true,
             cumulative_gas,
@@ -2506,7 +2495,7 @@ pub mod tests {
             blob_excess_gas_and_price: None,
             ..BlockEnv::default()
         };
-        let chunk = Chunk {
+        let chunk = PartialExecution {
             agreed_db: B256::repeat_byte(0x11),
             agreed_evm: B256::repeat_byte(0x22),
             tx_hash,
@@ -2515,7 +2504,6 @@ pub mod tests {
             claimed_db: B256::repeat_byte(0x33),
             claimed_evm,
             agreed_l2_output_root: agreed_output,
-            parent_block_number: parent_block,
             block_env,
             op_block_ctx: OpBlockExecutionCtx::default(),
         };
@@ -2540,18 +2528,17 @@ pub mod tests {
     fn verify_block_chunks_happy_path() {
         let tx = vec![0xAA, 0xBB];
         let agreed = B256::repeat_byte(0x77);
-        let parent = 1000u64;
-        let (chunk, receipt) = make_honest_chunk(tx.clone(), agreed, parent, 21000);
+        let (chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 21000);
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root);
-        verify_block_chunks(&[chunk], agreed, parent, &[tx], &header, None).unwrap();
+        verify_block_chunks(&[chunk], agreed, &[tx], &header, None).unwrap();
     }
 
     /// Empty chunks vec is a no-op and must not error.
     #[test]
     fn verify_block_chunks_empty_is_ok() {
-        verify_block_chunks(&[], B256::ZERO, 0, &[], &Header::default(), None).unwrap();
+        verify_block_chunks(&[], B256::ZERO, &[], &Header::default(), None).unwrap();
     }
 
     /// Output-root mismatch: adversary substitutes Y's chunk (different
@@ -2561,36 +2548,17 @@ pub mod tests {
     fn verify_block_chunks_rejects_output_root_mismatch() {
         let tx = vec![0xAA];
         let agreed = B256::repeat_byte(0x77);
-        let (chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
+        let (chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 21000);
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         // Aggregation expects a DIFFERENT output root for this block.
         let wrong_expected = B256::repeat_byte(0x88);
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], wrong_expected, 10, &[tx], &header, None)
+        let err = verify_block_chunks(&[chunk], wrong_expected, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
             err.contains("agreed_l2_output_root") && err.contains("wrong-block substitution"),
-            "unexpected error: {err}"
-        );
-    }
-
-    /// Parent block number mismatch: chunk claims to be for block N-1 but aggregation
-    /// is at block M-1.
-    #[test]
-    fn verify_block_chunks_rejects_parent_block_mismatch() {
-        let tx = vec![0xAA];
-        let agreed = B256::repeat_byte(0x77);
-        let (chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
-        let receipts_root = calculate_receipt_root(&[receipt]);
-
-        let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], agreed, 11, &[tx], &header, None)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("parent_block_number"),
             "unexpected error: {err}"
         );
     }
@@ -2602,13 +2570,13 @@ pub mod tests {
         let derivation_tx = vec![0xAA];
         let agreed = B256::repeat_byte(0x77);
         // Chunk has committed tx_hash for a DIFFERENT tx.
-        let (mut chunk, receipt) = make_honest_chunk(vec![0xBB], agreed, 10, 21000);
+        let (mut chunk, receipt) = make_honest_chunk(vec![0xBB], agreed, 21000);
         chunk.tx_hash = compute_tx_hash(&[vec![0xBB]]);
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         // Now run verification with derivation's tx (0xAA), which hashes differently.
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[derivation_tx], &header, None)
+        let err = verify_block_chunks(&[chunk], agreed, &[derivation_tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(err.contains("tx_hash"), "unexpected error: {err}");
@@ -2622,12 +2590,12 @@ pub mod tests {
         let tx1 = vec![0xAA];
         let tx2 = vec![0xBB];
         let agreed = B256::repeat_byte(0x77);
-        let (chunk, receipt) = make_honest_chunk(tx1.clone(), agreed, 10, 21000);
+        let (chunk, receipt) = make_honest_chunk(tx1.clone(), agreed, 21000);
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         // Block has 2 txs but chunks only cover 1.
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx1, tx2], &header, None)
+        let err = verify_block_chunks(&[chunk], agreed, &[tx1, tx2], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2643,13 +2611,13 @@ pub mod tests {
     fn verify_block_chunks_rejects_evm_state_tampering() {
         let tx = vec![0xAA];
         let agreed = B256::repeat_byte(0x77);
-        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
+        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 21000);
         // Mutate evm_state (bump gas_used) without updating claimed_evm.
         chunk.evm_state.cumulative_gas_used += 1;
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
+        let err = verify_block_chunks(&[chunk], agreed, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2665,12 +2633,12 @@ pub mod tests {
     fn verify_block_chunks_rejects_receipts_root_divergence() {
         let tx = vec![0xAA];
         let agreed = B256::repeat_byte(0x77);
-        let (chunk, _) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
+        let (chunk, _) = make_honest_chunk(tx.clone(), agreed, 21000);
 
         // Pretend the block's header.receipts_root is something else entirely.
         let wrong_root = B256::repeat_byte(0xFF);
         let header = make_consistent_header(wrong_root);
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
+        let err = verify_block_chunks(&[chunk], agreed, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(err.contains("receipts_root"), "unexpected error: {err}");
@@ -2685,13 +2653,13 @@ pub mod tests {
     fn verify_block_chunks_rejects_block_env_timestamp_mismatch() {
         let tx = vec![0xAA];
         let agreed = B256::repeat_byte(0x77);
-        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
+        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 21000);
         // Adversary: chunk was proven under timestamp=5 but derivation says 0.
         chunk.block_env.timestamp = U256::from(5);
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root); // header.timestamp = 0
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
+        let err = verify_block_chunks(&[chunk], agreed, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2707,12 +2675,12 @@ pub mod tests {
     fn verify_block_chunks_rejects_block_env_basefee_mismatch() {
         let tx = vec![0xAA];
         let agreed = B256::repeat_byte(0x77);
-        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
+        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 21000);
         chunk.block_env.basefee = 777;
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root); // header.base_fee_per_gas = None
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
+        let err = verify_block_chunks(&[chunk], agreed, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(err.contains("block_env.basefee"), "unexpected error: {err}");
@@ -2725,12 +2693,12 @@ pub mod tests {
     fn verify_block_chunks_rejects_block_env_coinbase_mismatch() {
         let tx = vec![0xAA];
         let agreed = B256::repeat_byte(0x77);
-        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
+        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 21000);
         chunk.block_env.beneficiary = Address::from([0xAB; 20]);
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root); // header.beneficiary = zero
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
+        let err = verify_block_chunks(&[chunk], agreed, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2746,12 +2714,12 @@ pub mod tests {
     fn verify_block_chunks_rejects_op_block_ctx_parent_hash_mismatch() {
         let tx = vec![0xAA];
         let agreed = B256::repeat_byte(0x77);
-        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
+        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 21000);
         chunk.op_block_ctx.parent_hash = B256::repeat_byte(0xDE);
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root); // header.parent_hash = zero
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
+        let err = verify_block_chunks(&[chunk], agreed, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2767,12 +2735,12 @@ pub mod tests {
     fn verify_block_chunks_rejects_op_block_ctx_extra_data_mismatch() {
         let tx = vec![0xAA];
         let agreed = B256::repeat_byte(0x77);
-        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
+        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 21000);
         chunk.op_block_ctx.extra_data = alloy_primitives::Bytes::from_static(&[1, 2, 3]);
         let receipts_root = calculate_receipt_root(&[receipt]);
 
         let header = make_consistent_header(receipts_root); // header.extra_data = empty
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, None)
+        let err = verify_block_chunks(&[chunk], agreed, &[tx], &header, None)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2794,14 +2762,14 @@ pub mod tests {
         use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
         let agreed = B256::repeat_byte(0x77);
         let tx = vec![0xAA];
-        let (chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 10, 21000);
+        let (chunk, receipt) = make_honest_chunk(tx.clone(), agreed, 21000);
         let receipts_root = calculate_receipt_root(&[receipt]);
         let header = make_consistent_header(receipts_root);
         // Expected is None (no blob pricing supplied for this pre-Ecotone context),
         // but the chunk carries a forged value. Any non-None expected passed in
         // by the caller MUST match the chunk's value exactly.
         let forged_expected = Some(BlobExcessGasAndPrice::new(1_000_000, 3_338_477));
-        let err = verify_block_chunks(&[chunk], agreed, 10, &[tx], &header, forged_expected)
+        let err = verify_block_chunks(&[chunk], agreed, &[tx], &header, forged_expected)
             .unwrap_err()
             .to_string();
         assert!(
@@ -2813,24 +2781,17 @@ pub mod tests {
     #[test]
     fn verify_block_chunks_rejects_hash_chain_break_db() {
         let agreed = B256::repeat_byte(0x77);
-        let (mut c0, r0) = make_honest_chunk(vec![0xAA], agreed, 10, 21000);
-        let (mut c1, r1) = make_honest_chunk(vec![0xBB], agreed, 10, 42000);
+        let (mut c0, r0) = make_honest_chunk(vec![0xAA], agreed, 21000);
+        let (mut c1, r1) = make_honest_chunk(vec![0xBB], agreed, 42000);
         // Stitch chunks to cover both txs honestly, but break the db chain.
         c0.claimed_db = B256::repeat_byte(0xAA);
         c1.agreed_db = B256::repeat_byte(0xBB); // ≠ c0.claimed_db
         let receipts_root = calculate_receipt_root(&[r0, r1]);
 
         let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(
-            &[c0, c1],
-            agreed,
-            10,
-            &[vec![0xAA], vec![0xBB]],
-            &header,
-            None,
-        )
-        .unwrap_err()
-        .to_string();
+        let err = verify_block_chunks(&[c0, c1], agreed, &[vec![0xAA], vec![0xBB]], &header, None)
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("hash chain broken") && err.contains("agreed_db"),
             "unexpected error: {err}"

@@ -13,20 +13,12 @@
 // limitations under the License.
 
 use crate::client::log;
-use crate::precondition::chunking::EvmAccumulatorState;
-use crate::rkyv::chunking::{BlockEnvRkyv, OpBlockExecutionCtxRkyv, ResultAndStateRkyv};
 use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
-use alloy_evm::op_revm::OpHaltReason;
-use alloy_evm::revm::context::BlockEnv;
-use alloy_evm::revm::context_interface::result::ResultAndState;
-use alloy_evm::revm::database_interface::DatabaseRef;
-use alloy_evm::revm::state::{AccountInfo, Bytecode};
 use alloy_evm::EvmFactory;
-use alloy_op_evm::block::OpBlockExecutionCtx;
-use alloy_primitives::{Sealed, B256, U256};
+use alloy_primitives::{Sealed, B256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
 use kona_executor::{BlockBuildingOutcome, TrieDBProvider};
@@ -40,7 +32,6 @@ use kona_proof::FlushableCache;
 use kona_protocol::{BatchValidationProvider, BlockInfo};
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use spin::RwLock;
-use std::convert::Infallible;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
@@ -63,103 +54,6 @@ pub struct Execution {
     /// Output root after execution
     #[rkyv(with = B256Def)]
     pub claimed_output: B256,
-}
-
-/// Represents a proven transaction chunk within a block.
-///
-/// Each chunk contains the pre-computed execution results for a contiguous range of
-/// transactions, along with hash commitments for inter-chunk stitching verification.
-/// `agreed_db`/`agreed_evm` represent the state *before* this chunk's transactions;
-/// `claimed_db`/`claimed_evm` represent the state *after*.
-///
-/// The `agreed_l2_output_root` and `parent_block_number` fields carry the per-block
-/// journal context needed to reconstruct each chunk's `ProofJournal` during
-/// aggregation stitching. Because chunks belonging to different blocks in a
-/// derivation run have different agreed-output-roots and parent block numbers
-/// (per the chunk-proving spec), these must be stored per-chunk rather than
-/// derived from the outer run's final `BootInfo` — which carries only the run's
-/// final claimed output root and last block number.
-#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub struct Chunk {
-    /// Hash of the DB state before this chunk's transactions.
-    #[rkyv(with = B256Def)]
-    pub agreed_db: B256,
-    /// Hash of the EVM accumulator state before this chunk's transactions.
-    #[rkyv(with = B256Def)]
-    pub agreed_evm: B256,
-    /// Hash of the chunk's transaction list.
-    #[rkyv(with = B256Def)]
-    pub tx_hash: B256,
-    /// Full per-tx execution results (ExecutionResult + EvmState), in order.
-    #[rkyv(with = rkyv::with::Map<ResultAndStateRkyv>)]
-    pub results: Vec<ResultAndState<OpHaltReason>>,
-    /// EVM accumulator state at the chunk boundary (post-execution).
-    pub evm_state: EvmAccumulatorState,
-    /// Hash of the DB state after this chunk's transactions.
-    #[rkyv(with = B256Def)]
-    pub claimed_db: B256,
-    /// Hash of the EVM accumulator state after this chunk's transactions.
-    #[rkyv(with = B256Def)]
-    pub claimed_evm: B256,
-    /// L2 output root agreed to by this chunk's proof (the parent block's output
-    /// root). Chunks do not advance L2 state, so `claimed_l2_output_root ==
-    /// agreed_l2_output_root` in the chunk's `ProofJournal`.
-    #[rkyv(with = B256Def)]
-    pub agreed_l2_output_root: B256,
-    /// Parent block number — the `claimed_l2_block_number` emitted by this
-    /// chunk's guest (the block whose body the chunk proves starts from).
-    pub parent_block_number: u64,
-    /// Block execution `BlockEnv` under which this chunk's transactions executed
-    /// (timestamp, basefee, prevrandao, coinbase, blob pricing, etc.). Carried so
-    /// the aggregation side can (a) reconstruct `block_ctx_hash` for the chunk's
-    /// `chunk_trace` and (b) cross-check against the derivation pipeline's actual
-    /// block context (see `verify_block_chunks`). Without this binding, an adversary
-    /// could generate a valid chunk proof under a forged context and have aggregation
-    /// accept its env-sensitive results.
-    #[rkyv(with = BlockEnvRkyv)]
-    pub block_env: BlockEnv,
-    /// OP block execution context (parent_hash for BLOCKHASH / EIP-2935,
-    /// parent_beacon_block_root for EIP-4788, extra_data for Holocene/Jovian
-    /// EIP-1559 params). Same binding/verify role as `block_env`.
-    #[rkyv(with = OpBlockExecutionCtxRkyv)]
-    pub op_block_ctx: OpBlockExecutionCtx,
-}
-
-/// A database backend that panics on all reads.
-///
-/// Used with `CacheDB<PanicDB>` for chunk proving: the cache must contain all required
-/// state. Any missing entry indicates an incomplete witness and must fail loudly rather
-/// than silently returning defaults (which `EmptyDB` would do).
-#[derive(Clone, Debug, Default)]
-pub struct PanicDB;
-
-impl DatabaseRef for PanicDB {
-    type Error = Infallible;
-
-    fn basic_ref(
-        &self,
-        address: alloy_primitives::Address,
-    ) -> Result<Option<AccountInfo>, Self::Error> {
-        panic!("PanicDB: missing account {address} in chunk witness cache");
-    }
-
-    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        panic!("PanicDB: missing code for hash {code_hash} in chunk witness cache");
-    }
-
-    fn storage_ref(
-        &self,
-        address: alloy_primitives::Address,
-        index: U256,
-    ) -> Result<U256, Self::Error> {
-        panic!(
-            "PanicDB: missing storage slot {index} for account {address} in chunk witness cache"
-        );
-    }
-
-    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
-        panic!("PanicDB: missing block hash for block {number} in chunk witness cache");
-    }
 }
 
 /// A structure that provides a caching layer for an `Executor` implementation.
@@ -413,11 +307,17 @@ where
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
+    use crate::evm::db::PanicDB;
+    use crate::evm::PartialExecution;
     use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::oracle::WitnessOracle;
     use crate::precondition::execution::{attributes_hash, exec_precondition_hash};
     use crate::rkyv::execution::tests::gen_execution_outcomes;
     use alloy_eips::eip4895::Withdrawal;
+    use alloy_evm::revm::context::BlockEnv;
+    use alloy_evm::revm::DatabaseRef;
+    use alloy_op_evm::block::OpBlockExecutionCtx;
+    use alloy_primitives::U256;
     use alloy_primitives::{keccak256, Address, Sealable, B64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use kona_mpt::TrieNode;
@@ -705,7 +605,8 @@ pub mod tests {
             .unwrap();
     }
 
-    fn make_test_chunk() -> super::Chunk {
+    fn make_test_chunk() -> PartialExecution {
+        use crate::evm::PartialExecution;
         use alloy_evm::revm::context_interface::result::{ExecutionResult, Output, SuccessReason};
         use alloy_evm::revm::state::{Account, AccountStatus, EvmStorageSlot};
         use alloy_primitives::Bytes;
@@ -749,7 +650,7 @@ pub mod tests {
             state,
         };
 
-        super::Chunk {
+        PartialExecution {
             agreed_db: keccak256("agreed_db"),
             agreed_evm: keccak256("agreed_evm"),
             tx_hash: keccak256("tx_hash"),
@@ -764,7 +665,6 @@ pub mod tests {
             claimed_db: keccak256("claimed_db"),
             claimed_evm: keccak256("claimed_evm"),
             agreed_l2_output_root: keccak256("agreed_l2_output_root"),
-            parent_block_number: 1234,
             block_env: BlockEnv::default(),
             op_block_ctx: OpBlockExecutionCtx::default(),
         }
@@ -774,7 +674,7 @@ pub mod tests {
     fn chunk_rkyv_round_trip() {
         let chunk = make_test_chunk();
         let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
-        let deser = rkyv::from_bytes::<super::Chunk, Error>(&bytes).unwrap();
+        let deser = rkyv::from_bytes::<PartialExecution, Error>(&bytes).unwrap();
 
         assert_eq!(deser.agreed_db, chunk.agreed_db);
         assert_eq!(deser.agreed_evm, chunk.agreed_evm);
@@ -785,7 +685,6 @@ pub mod tests {
         assert_eq!(deser.claimed_db, chunk.claimed_db);
         assert_eq!(deser.claimed_evm, chunk.claimed_evm);
         assert_eq!(deser.agreed_l2_output_root, chunk.agreed_l2_output_root);
-        assert_eq!(deser.parent_block_number, chunk.parent_block_number);
 
         // Verify the ResultAndState content survived
         match &deser.results[0].result {
@@ -809,6 +708,7 @@ pub mod tests {
 
     #[test]
     fn chunk_multi_result_round_trip() {
+        use crate::evm::PartialExecution;
         use alloy_evm::revm::context_interface::result::{ExecutionResult, ResultAndState};
         use alloy_primitives::Bytes;
 
@@ -823,7 +723,7 @@ pub mod tests {
         });
 
         let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
-        let deser = rkyv::from_bytes::<super::Chunk, Error>(&bytes).unwrap();
+        let deser = rkyv::from_bytes::<PartialExecution, Error>(&bytes).unwrap();
 
         assert_eq!(deser.results.len(), 2);
         assert!(deser.results[0].result.is_success());
@@ -838,7 +738,7 @@ pub mod tests {
 
     #[test]
     fn chunk_empty_results_round_trip() {
-        let chunk = super::Chunk {
+        let chunk = PartialExecution {
             agreed_db: keccak256("agreed_db"),
             agreed_evm: keccak256("agreed_evm"),
             tx_hash: keccak256("tx_hash"),
@@ -847,12 +747,11 @@ pub mod tests {
             claimed_db: keccak256("claimed_db"),
             claimed_evm: keccak256("claimed_evm"),
             agreed_l2_output_root: B256::ZERO,
-            parent_block_number: 0,
             block_env: BlockEnv::default(),
             op_block_ctx: OpBlockExecutionCtx::default(),
         };
         let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
-        let deser = rkyv::from_bytes::<super::Chunk, Error>(&bytes).unwrap();
+        let deser = rkyv::from_bytes::<PartialExecution, Error>(&bytes).unwrap();
 
         assert!(deser.results.is_empty());
         assert_eq!(deser.agreed_db, chunk.agreed_db);
