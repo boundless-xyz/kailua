@@ -15,9 +15,8 @@
 use crate::client::log;
 use crate::driver::CachedDriver;
 use crate::evm::cached::CachedEvmFactory;
+use crate::evm::cached::TransactionResultCollector;
 use crate::evm::db::PanicDB;
-use crate::evm::tracing::ChunkTraceCollector;
-use crate::evm::tracing::TracingOpEvmFactory;
 use crate::evm::PartialExecution;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
@@ -117,7 +116,7 @@ pub fn run_core_client<
     derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
     chunk_witness: Option<ChunkWitnessData>,
     chunks: Vec<Vec<PartialExecution>>,
-    chunk_trace_collector: Option<ChunkTraceCollector>,
+    chunk_trace_collector: Option<TransactionResultCollector>,
 ) -> anyhow::Result<(BootInfo, Precondition)>
 where
     <B as BlobProvider>::Error: Debug,
@@ -181,10 +180,21 @@ where
                 .with_spec_and_mainnet_gas_params(rollup_config.spec_id(block_env.timestamp.to()));
             let evm_env = alloy_evm::EvmEnv::new(cfg_env, block_env);
 
-            // (e) Construct upstream `OpBlockExecutor` and seed its accumulators from the witness.
-            let tracing_op_evm_factory = TracingOpEvmFactory::new();
+            // (e) Construct upstream `OpBlockExecutor` and seed its accumulators from
+            // the witness. We use `CachedEvmFactory` in capture-only mode (empty
+            // chunk map + `Some(collector)`) so every `transact_raw` delegates to
+            // the inner `OpEvm` while pushing its `ResultAndState` into
+            // `collector[block_number]`. Equivalent semantic to the old
+            // `TracingEvmFactory`, consolidated onto one factory type.
+            let block_number = evm_env.block_env.number.to::<u64>();
+            let chunk_trace_collector: TransactionResultCollector =
+                Arc::new(Mutex::new(std::collections::HashMap::new()));
+            let cached_evm_factory = CachedEvmFactory::new_with_traces(
+                std::collections::HashMap::new(),
+                Some(chunk_trace_collector.clone()),
+            );
             let mut op_block_executor = OpBlockExecutor::new(
-                tracing_op_evm_factory.create_evm(&mut state, evm_env),
+                cached_evm_factory.create_evm(&mut state, evm_env),
                 op_block_ctx,
                 rollup_config.clone(),
                 OpAlloyReceiptBuilder::default(),
@@ -234,7 +244,7 @@ where
             // Compute post-hashes.
             let post_db_hash = hash_overlay_state(&cache, &state.cache, &state.block_hashes);
             let post_evm_hash = hash_evm_state(&evm_accum);
-            let traces = tracing_op_evm_factory.take_traces();
+            let traces = cached_evm_factory.take_block_traces(block_number);
             let results_hash = hash_results(&traces);
 
             // Compute chunk_trace
@@ -803,7 +813,7 @@ pub mod tests {
         derivation_cache: Option<CachedDriver>,
         derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
         chunks: Vec<Vec<PartialExecution>>,
-        chunk_trace_collector: Option<crate::evm::tracing::ChunkTraceCollector>,
+        chunk_trace_collector: Option<crate::evm::cached::TransactionResultCollector>,
     ) -> anyhow::Result<Vec<Arc<Execution>>> {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let (proposal_precondition_hash, proposal_data_hash) = if let Some(data) = proposal_data {
@@ -1187,7 +1197,7 @@ pub mod tests {
 
         // ---- Pass 1: capture ground-truth per-tx ResultAndState via ChunkingEvmFactory
         // in pass-through (empty chunks) mode with a trace collector attached.
-        let collector: crate::evm::tracing::ChunkTraceCollector =
+        let collector: crate::evm::cached::TransactionResultCollector =
             Arc::new(Mutex::new(HashMap::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
@@ -1419,7 +1429,7 @@ pub mod tests {
         };
         let safe_head_number = 16491249u64;
 
-        let collector: crate::evm::tracing::ChunkTraceCollector =
+        let collector: crate::evm::cached::TransactionResultCollector =
             Arc::new(Mutex::new(HashMap::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
@@ -1489,7 +1499,7 @@ pub mod tests {
         };
         let safe_head_number = 16491249u64;
 
-        let collector: crate::evm::tracing::ChunkTraceCollector =
+        let collector: crate::evm::cached::TransactionResultCollector =
             Arc::new(Mutex::new(HashMap::new()));
 
         let executions = test_derivation_with_chunks_and_traces(

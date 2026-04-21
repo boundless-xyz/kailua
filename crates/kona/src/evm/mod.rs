@@ -23,7 +23,6 @@ use alloy_primitives::B256;
 
 pub mod cached;
 pub mod db;
-pub mod tracing;
 
 /// Represents a proven transaction subsequence within a block.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]

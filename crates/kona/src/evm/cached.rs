@@ -1,8 +1,15 @@
 //! Chunking EVM wrapper for injecting pre-computed per-transaction results.
 //!
 //! [`CachedEvm`] wraps any `E: Evm` and intercepts `transact_raw()` to return pre-computed
-//! [`ResultAndState`] entries (captured by `TracingEvmFactory` on the host) for transactions
-//! covered by the supplied [`PartialExecution`] set, instead of re-executing them.
+//! [`ResultAndState`] entries for transactions covered by the supplied
+//! [`PartialExecution`] set, instead of re-executing them.
+//!
+//! The same type also serves as the *capture* wrapper: constructed with an empty chunk
+//! map and a `Some(block_traces)` collector via
+//! [`CachedEvmFactory::new_with_traces`], every `transact_raw()` delegates to the inner
+//! `OpEvm` and its `ResultAndState` is appended to `block_traces[block_number]`. The
+//! chunk guest uses this mode to fold per-tx results into `chunk_trace` via
+//! `hash_results(&traces)`.
 //!
 //! [`CachedEvmFactory`] wraps [`OpEvmFactory`] and dispenses [`CachedEvm`] instances
 //! keyed by the target block number (`input.block_env.number`). This lets the aggregation
@@ -12,7 +19,6 @@
 //! `BlockBuildingOutcome` (state root, receipts root, gas used) is byte-exact with
 //! monolithic execution.
 
-use crate::evm::tracing::ChunkTraceCollector;
 use crate::evm::PartialExecution;
 use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
 use alloy_evm::precompiles::PrecompilesMap;
@@ -25,6 +31,9 @@ use alloy_op_evm::{OpEvm, OpEvmFactory, OpTxError};
 use alloy_primitives::{Address, Bytes};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+/// Shared trace buffer keyed by L2 block number.
+pub type TransactionResultCollector = Arc<Mutex<HashMap<u64, Vec<ResultAndState<OpHaltReason>>>>>;
 
 /// EVM wrapper that serves pre-computed `ResultAndState` entries from a set of
 /// [`PartialExecution`]s covering this block's ordered transaction body.
@@ -42,13 +51,12 @@ pub struct CachedEvm<E: Evm> {
     pub block_number: u64,
     /// Optional per-block trace collector. When `Some`, every successful
     /// `transact_raw()` pushes its `ResultAndState` into
-    /// `block_traces.lock()[&block_number]` (Vec created on demand). This is the
-    /// same capture semantic as `TracingEvm`, but folded directly into
-    /// `ChunkingEvm` so a single factory can be configured for capture during a
-    /// monolithic run (empty chunks map → every call delegates to inner OpEvm and
-    /// is captured as ground truth) and for replay during a second run (chunks
-    /// populated → replayed `ResultAndState` entries served from `chunk.results`).
-    pub collection_target: Option<ChunkTraceCollector>,
+    /// `block_traces.lock()[&block_number]` (Vec created on demand). This lets one
+    /// factory type serve both passes: capture during a monolithic run (empty
+    /// chunks map → every call delegates to inner `OpEvm` and is captured as
+    /// ground truth) and replay during a second run (chunks populated → replayed
+    /// `ResultAndState` entries served from `chunk.results`).
+    pub collection_target: Option<TransactionResultCollector>,
 }
 
 impl<E: Evm> CachedEvm<E> {
@@ -59,15 +67,15 @@ impl<E: Evm> CachedEvm<E> {
     /// next pre-computed `ResultAndState` within that chunk.
     ///
     /// When `block_traces` is `Some`, each successful `transact_raw()` appends its
-    /// `ResultAndState` into `block_traces[block_number]`. Used by the integration test
-    /// harness to capture ground-truth traces from a monolithic `run_core_client` run
-    /// (empty chunks → `CachedEvm` delegates to inner `OpEvm`, results are captured
-    /// exactly as `TracingEvm` would).
+    /// `ResultAndState` into `block_traces[block_number]`. Used both by the chunk
+    /// guest (single-block capture for `chunk_trace`) and by the integration test
+    /// harness (capture ground-truth traces from a monolithic `run_core_client` run
+    /// with empty chunks; `CachedEvm` then delegates every call to the inner `OpEvm`).
     pub fn new_with_traces(
         inner: E,
         mut chunks: Vec<PartialExecution>,
         block_number: u64,
-        block_traces: Option<ChunkTraceCollector>,
+        block_traces: Option<TransactionResultCollector>,
     ) -> Self {
         chunks.reverse();
         for chunk in &mut chunks {
@@ -119,8 +127,9 @@ where
     ///
     /// where `results_hash` is the canonical SHA256 of the per-tx `ResultAndState`
     /// trace (see [`crate::precondition::chunking::hash_results`]). The chunk guest
-    /// captures its own trace via `TracingOpEvmFactory` during execution and folds
-    /// the hash into its journal. The aggregation side recomputes `hash_results`
+    /// captures its own trace via [`CachedEvmFactory`] in capture-only mode (empty
+    /// chunk map + `Some(collector)`) during execution and folds the hash into its
+    /// journal. The aggregation side recomputes `hash_results`
     /// over `chunk.results` and uses the same formula to reconstruct the expected
     /// chunk journal — so any tampering with `chunk.results` (reorder,
     /// substitution, forged value, variant change) produces a mismatching journal
@@ -246,7 +255,7 @@ pub struct CachedEvmFactory {
     /// `block_traces[block_number]`. Used by the integration test harness to
     /// capture ground-truth traces during a monolithic run (empty chunks) and
     /// then rebuild `Chunk` entries for a subsequent replay run.
-    pub block_traces: Option<ChunkTraceCollector>,
+    pub block_traces: Option<TransactionResultCollector>,
 }
 
 impl CachedEvmFactory {
@@ -267,7 +276,7 @@ impl CachedEvmFactory {
     /// the integration test in `crates/kona/src/client/core.rs`).
     pub fn new_with_traces(
         chunks: HashMap<u64, Vec<PartialExecution>>,
-        block_traces: Option<ChunkTraceCollector>,
+        block_traces: Option<TransactionResultCollector>,
     ) -> Self {
         Self {
             inner: OpEvmFactory::default(),
@@ -282,6 +291,18 @@ impl CachedEvmFactory {
             .lock()
             .unwrap()
             .remove(&block_number)
+            .unwrap_or_default()
+    }
+
+    /// Removes and returns the captured per-tx `ResultAndState` entries for the given
+    /// block number. Returns an empty vec when no trace collector is attached
+    /// (`block_traces == None`) or when this block has no captured entries. Symmetric
+    /// with [`take_chunks`](Self::take_chunks): the caller drains a block's worth of
+    /// capture state at the per-block boundary it chooses.
+    pub fn take_block_traces(&self, block_number: u64) -> Vec<ResultAndState<OpHaltReason>> {
+        self.block_traces
+            .as_ref()
+            .and_then(|t| t.lock().unwrap().remove(&block_number))
             .unwrap_or_default()
     }
 }
