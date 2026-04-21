@@ -74,7 +74,6 @@ mod tests {
     use alloy_evm::{Evm, EvmEnv, EvmFactory};
     use alloy_primitives::Address;
     use alloy_primitives::{address, keccak256, TxKind, B256, U256};
-    use std::collections::HashMap;
 
     fn test_env_for_block(block_number: u64) -> EvmEnv<OpSpecId> {
         let block_env = BlockEnv {
@@ -144,7 +143,7 @@ mod tests {
     /// bypassing inner-EVM execution. The marker gas_used proves it came from the chunk.
     #[test]
     fn precomputed_results_returned_in_order() {
-        let chunks = HashMap::from([(1u64, vec![stub_chunk(0, &[100_001, 100_002, 100_003])])]);
+        let chunks = vec![vec![stub_chunk(0, &[100_001, 100_002, 100_003])]];
         let factory = CachedEvmFactory::new(chunks);
 
         let sender = address!("0x1000000000000000000000000000000000000000");
@@ -181,7 +180,7 @@ mod tests {
     /// `transact_raw()` delegates, and the state diff carries real account changes.
     #[test]
     fn empty_chunks_delegate_to_inner() {
-        let factory = CachedEvmFactory::new(HashMap::new());
+        let factory = CachedEvmFactory::new(Vec::new());
 
         let sender = address!("0x1000000000000000000000000000000000000000");
         let recipient = address!("0x2000000000000000000000000000000000000000");
@@ -210,7 +209,7 @@ mod tests {
     /// result index 0.
     #[test]
     fn system_calls_delegate_and_do_not_advance_tx_index() {
-        let chunks = HashMap::from([(1u64, vec![stub_chunk(0, &[42])])]);
+        let chunks = vec![vec![stub_chunk(0, &[42])]];
         let factory = CachedEvmFactory::new(chunks);
 
         let db = InMemoryDB::default();
@@ -237,10 +236,7 @@ mod tests {
     #[test]
     fn multi_chunk_within_block_crosses_boundary() {
         // Chunk 0: txs 0..2, markers [10, 20]. Chunk 1: txs 2..4, markers [30, 40].
-        let chunks = HashMap::from([(
-            1u64,
-            vec![stub_chunk(0, &[10, 20]), stub_chunk(2, &[30, 40])],
-        )]);
+        let chunks = vec![vec![stub_chunk(0, &[10, 20]), stub_chunk(2, &[30, 40])]];
         let factory = CachedEvmFactory::new(chunks);
 
         let db = InMemoryDB::default();
@@ -258,18 +254,21 @@ mod tests {
         }
     }
 
-    /// `create_evm` is keyed by `input.block_env.number`: block N's chunks must not leak
-    /// into block M's factory call.
+    /// `create_evm` serves chunks in input positional order: slot 0 flows to the
+    /// first `create_evm` call, slot 1 to the second, etc. During normal
+    /// derivation `CachedExecutor` calls `create_evm` once per block in
+    /// ascending order, so outer index `i` maps to the `i`-th block served.
     #[test]
-    fn factory_routes_by_block_number() {
-        // Only block 5 has chunks.
-        let chunks = HashMap::from([(5u64, vec![stub_chunk(0, &[777])])]);
+    fn factory_serves_chunks_in_creation_order() {
+        // Slot 0: empty (first EVM created gets no pre-computed results).
+        // Slot 1: one chunk with marker 777 (second EVM gets the pre-computed result).
+        let chunks = vec![vec![], vec![stub_chunk(0, &[777])]];
         let factory = CachedEvmFactory::new(chunks);
 
-        // create_evm for block 7 → no chunks → delegate to inner.
+        // First create_evm → empty chunks → delegate to inner (live execution).
         let sender = address!("0x1000000000000000000000000000000000000000");
-        let mut db7 = InMemoryDB::default();
-        db7.insert_account_info(
+        let mut db_first = InMemoryDB::default();
+        db_first.insert_account_info(
             sender,
             AccountInfo {
                 balance: U256::from(1_000_000_000_000_000_000u128),
@@ -277,20 +276,20 @@ mod tests {
                 ..Default::default()
             },
         );
-        let mut evm7 = factory.create_evm(db7, test_env_for_block(7));
-        let r7 = evm7
+        let mut evm_first = factory.create_evm(db_first, test_env_for_block(7));
+        let r_first = evm_first
             .transact_raw(make_transfer(sender, Address::ZERO, U256::from(1), 0))
             .unwrap();
         // Live execution — non-empty state.
-        assert!(!r7.state.is_empty());
+        assert!(!r_first.state.is_empty());
 
-        // create_evm for block 5 → returns the pre-computed result.
-        let db5 = InMemoryDB::default();
-        let mut evm5 = factory.create_evm(db5, test_env_for_block(5));
-        let r5 = evm5
+        // Second create_evm → pops the next slot → returns the pre-computed result.
+        let db_second = InMemoryDB::default();
+        let mut evm_second = factory.create_evm(db_second, test_env_for_block(5));
+        let r_second = evm_second
             .transact_raw(make_transfer(sender, Address::ZERO, U256::from(1), 0))
             .unwrap();
-        match r5.result {
+        match r_second.result {
             ExecutionResult::Success { gas_used, .. } => assert_eq!(gas_used, 777),
             _ => panic!("expected pre-computed Success result"),
         }
@@ -300,7 +299,7 @@ mod tests {
     /// methods and reach the inner `OpEvm`.
     #[test]
     fn trait_method_field_access_works() {
-        let factory = CachedEvmFactory::new(HashMap::new());
+        let factory = CachedEvmFactory::new(Vec::new());
         let db = InMemoryDB::default();
         let evm = factory.create_evm(db, test_env_for_block(42));
         assert_eq!(evm.block().number, U256::from(42));
@@ -308,18 +307,19 @@ mod tests {
         let _ = evm.db();
     }
 
-    /// `take_chunks` is destructive: a second `create_evm` for the same block number
-    /// returns a ChunkingEvm with an empty chunk vec (delegates to inner).
+    /// `take_next_chunks` pops the next block's chunks in execution order. After
+    /// the cache is drained, subsequent calls return empty vecs (matching the
+    /// "graceful fall-through to inner EVM" behavior).
     #[test]
-    fn take_chunks_is_destructive_per_block() {
-        let chunks = HashMap::from([(9u64, vec![stub_chunk(0, &[123])])]);
+    fn take_next_chunks_pops_in_order() {
+        let chunks = vec![vec![stub_chunk(0, &[123])]];
         let factory = CachedEvmFactory::new(chunks);
 
-        // First call drains the chunks for block 9.
-        let drained = factory.take_chunks(9);
+        // First call drains the single block's chunks.
+        let drained = factory.take_next_chunks();
         assert_eq!(drained.len(), 1);
         // Second call returns empty.
-        assert!(factory.take_chunks(9).is_empty());
+        assert!(factory.take_next_chunks().is_empty());
     }
 
     /// When a block's chunks are exhausted, further `transact_raw()` calls delegate to
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn exhausted_chunks_delegate_to_inner() {
         // Chunk has only one result.
-        let chunks = HashMap::from([(1u64, vec![stub_chunk(0, &[999])])]);
+        let chunks = vec![vec![stub_chunk(0, &[999])]];
         let factory = CachedEvmFactory::new(chunks);
 
         let sender = address!("0x1000000000000000000000000000000000000000");

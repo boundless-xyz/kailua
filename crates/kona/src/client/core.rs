@@ -183,14 +183,16 @@ where
             // (e) Construct upstream `OpBlockExecutor` and seed its accumulators from
             // the witness. We use `CachedEvmFactory` in capture-only mode (empty
             // chunk map + `Some(collector)`) so every `transact_raw` delegates to
-            // the inner `OpEvm` while pushing its `ResultAndState` into
-            // `collector[block_number]`. Equivalent semantic to the old
-            // `TracingEvmFactory`, consolidated onto one factory type.
-            let block_number = evm_env.block_env.number.to::<u64>();
+            // the inner `OpEvm` while appending its `ResultAndState` to the
+            // last inner `Vec` of the shared collector. The factory pushes a
+            // fresh empty slot on every `create_evm` call; since the chunk
+            // guest creates exactly one EVM, there is exactly one slot to drain.
+            // Equivalent semantic to the old `TracingEvmFactory`, consolidated
+            // onto one factory type.
             let chunk_trace_collector: TransactionResultCollector =
-                Arc::new(Mutex::new(std::collections::HashMap::new()));
+                Arc::new(Mutex::new(Vec::new()));
             let cached_evm_factory = CachedEvmFactory::new_with_traces(
-                std::collections::HashMap::new(),
+                Vec::new(),
                 Some(chunk_trace_collector.clone()),
             );
             let mut op_block_executor = OpBlockExecutor::new(
@@ -244,7 +246,13 @@ where
             // Compute post-hashes.
             let post_db_hash = hash_overlay_state(&cache, &state.cache, &state.block_hashes);
             let post_evm_hash = hash_evm_state(&evm_accum);
-            let traces = cached_evm_factory.take_block_traces(block_number);
+            // Chunk guest creates exactly one EVM, so the collector holds
+            // exactly one inner Vec of ordered tx-body `ResultAndState` entries.
+            let traces = cached_evm_factory
+                .take_all_block_traces()
+                .into_iter()
+                .next()
+                .unwrap_or_default();
             let results_hash = hash_results(&traces);
 
             // Compute chunk_trace
@@ -316,22 +324,12 @@ where
             // blob pricing, hash_evm_state, receipts_root).
             let safe_head_parent_exec: alloy_consensus::Header = safe_head.inner().clone();
             let has_chunks_exec = chunks.iter().any(|v| !v.is_empty());
-            let chunks_by_block_exec: std::collections::HashMap<u64, Vec<PartialExecution>> =
-                chunks
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, v)| {
-                        if v.is_empty() {
-                            None
-                        } else {
-                            Some((safe_head_number + 1 + i as u64, v.clone()))
-                        }
-                    })
-                    .collect();
-            let factory = CachedEvmFactory::new_with_traces(
-                chunks_by_block_exec,
-                chunk_trace_collector.clone(),
-            );
+            // Positional index `i` → block `safe_head_number + 1 + i`. The factory
+            // reverses internally so `pop()` yields blocks in ascending order;
+            // empty inner Vecs produce `CachedEvm`s with empty caches that
+            // delegate every `transact_raw` to the inner `OpEvm`.
+            let factory =
+                CachedEvmFactory::new_with_traces(chunks.clone(), chunk_trace_collector.clone());
             let mut kona_executor: KonaExecutor<'_, _, _, CachedEvmFactory> = KonaExecutor::new(
                 rollup_config.as_ref(),
                 l2_provider.clone(),
@@ -464,17 +462,6 @@ where
         // Outer index i corresponds to block `safe_head_number + 1 + i` (per witness
         // convention — see `Witness::chunks` doc).
         let has_chunks = chunks.iter().any(|v| !v.is_empty());
-        let chunks_by_block: std::collections::HashMap<u64, Vec<PartialExecution>> = chunks
-            .iter()
-            .enumerate()
-            .filter_map(|(i, v)| {
-                if v.is_empty() {
-                    None
-                } else {
-                    Some((safe_head_number + 1 + i as u64, v.clone()))
-                }
-            })
-            .collect();
 
         // When chunks are supplied, we MUST post-verify per-block coherence against
         // derivation output (output-root anchor, parent block number, tx_hash, and
@@ -517,7 +504,7 @@ where
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider.clone(),
-            CachedEvmFactory::new_with_traces(chunks_by_block, chunk_trace_collector.clone()),
+            CachedEvmFactory::new_with_traces(chunks.clone(), chunk_trace_collector.clone()),
             effective_collection_target,
         );
 
@@ -1178,8 +1165,6 @@ pub mod tests {
     /// derivation window.
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491250_chunks_roundtrip() {
-        use std::collections::HashMap;
-
         let boot_info = BootInfo {
             l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
             agreed_l2_output_root: b256!(
@@ -1198,7 +1183,7 @@ pub mod tests {
         // ---- Pass 1: capture ground-truth per-tx ResultAndState via ChunkingEvmFactory
         // in pass-through (empty chunks) mode with a trace collector attached.
         let collector: crate::evm::cached::TransactionResultCollector =
-            Arc::new(Mutex::new(HashMap::new()));
+            Arc::new(Mutex::new(Vec::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
@@ -1221,16 +1206,21 @@ pub mod tests {
             test_fetch_safe_head_context(&boot_info).await.unwrap();
         let rollup_config_arc = Arc::new(real_rollup_config);
 
-        // ---- Build chunks: one Chunk per derived block, consuming the captured traces.
-        let mut captured = collector.lock().unwrap();
+        // ---- Build chunks: one Chunk per derived block, consuming the captured
+        // traces. Collector ordering matches execution ordering (one `create_evm`
+        // call per block in ascending block order).
+        let captured: Vec<Vec<_>> = std::mem::take(&mut *collector.lock().unwrap());
+        assert_eq!(
+            captured.len(),
+            executions.len(),
+            "captured block-trace count must match execution count"
+        );
+        let _ = safe_head_number;
         let chunks: Vec<Vec<PartialExecution>> = executions
             .iter()
             .enumerate()
-            .map(|(i, exec)| {
-                let block_number = safe_head_number + 1 + i as u64;
-                let traces = captured
-                    .remove(&block_number)
-                    .unwrap_or_else(|| panic!("no captured traces for block {block_number}"));
+            .zip(captured)
+            .map(|((i, exec), traces)| {
                 let parent_header = if i == 0 {
                     &safe_head_header
                 } else {
@@ -1245,7 +1235,6 @@ pub mod tests {
                 )]
             })
             .collect();
-        drop(captured);
 
         // ---- Pass 2: replay through ChunkingEvm with populated chunks. The CHUNK VERIFY
         // phase in run_core_client performs the coherence cross-checks; if any mismatch
@@ -1412,8 +1401,6 @@ pub mod tests {
     /// block totals.
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491250_two_chunks_roundtrip() {
-        use std::collections::HashMap;
-
         let boot_info = BootInfo {
             l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
             agreed_l2_output_root: b256!(
@@ -1430,7 +1417,7 @@ pub mod tests {
         let safe_head_number = 16491249u64;
 
         let collector: crate::evm::cached::TransactionResultCollector =
-            Arc::new(Mutex::new(HashMap::new()));
+            Arc::new(Mutex::new(Vec::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
@@ -1446,13 +1433,14 @@ pub mod tests {
             test_fetch_safe_head_context(&boot_info).await.unwrap();
         let rollup_config_arc = Arc::new(real_rollup_config);
 
-        let mut captured = collector.lock().unwrap();
+        let captured: Vec<Vec<_>> = std::mem::take(&mut *collector.lock().unwrap());
+        assert_eq!(captured.len(), executions.len());
+        let _ = safe_head_number;
         let chunks: Vec<Vec<PartialExecution>> = executions
             .iter()
             .enumerate()
-            .map(|(i, exec)| {
-                let block_number = safe_head_number + 1 + i as u64;
-                let traces = captured.remove(&block_number).unwrap_or_default();
+            .zip(captured)
+            .map(|((i, exec), traces)| {
                 let parent_header = if i == 0 {
                     &safe_head_header
                 } else {
@@ -1462,7 +1450,6 @@ pub mod tests {
                 build_n_chunks_for_block(exec, traces, 2, parent_header, spec_id)
             })
             .collect();
-        drop(captured);
 
         test_derivation_with_chunks_and_traces(
             boot_info,
@@ -1482,8 +1469,6 @@ pub mod tests {
     /// tx_hash bindings, 100 receipts_root reconstructions, etc.
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491349_chunks_roundtrip() {
-        use std::collections::HashMap;
-
         let boot_info = BootInfo {
             l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
             agreed_l2_output_root: b256!(
@@ -1500,7 +1485,7 @@ pub mod tests {
         let safe_head_number = 16491249u64;
 
         let collector: crate::evm::cached::TransactionResultCollector =
-            Arc::new(Mutex::new(HashMap::new()));
+            Arc::new(Mutex::new(Vec::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
@@ -1518,16 +1503,17 @@ pub mod tests {
             test_fetch_safe_head_context(&boot_info).await.unwrap();
         let rollup_config_arc = Arc::new(real_rollup_config);
 
-        let mut captured = collector.lock().unwrap();
+        // Some blocks may have zero user txs (rare on OP Sepolia); those slots
+        // are empty Vecs, which is a valid capture and yields chunks with
+        // results=[].
+        let captured: Vec<Vec<_>> = std::mem::take(&mut *collector.lock().unwrap());
+        assert_eq!(captured.len(), executions.len());
+        let _ = safe_head_number;
         let chunks: Vec<Vec<PartialExecution>> = executions
             .iter()
             .enumerate()
-            .map(|(i, exec)| {
-                let block_number = safe_head_number + 1 + i as u64;
-                // Some blocks may have zero user txs (rare on OP Sepolia, but we
-                // must tolerate it — empty trace vec is a valid capture and the
-                // resulting single chunk has tx_count=0, results=[]).
-                let traces = captured.remove(&block_number).unwrap_or_default();
+            .zip(captured)
+            .map(|((i, exec), traces)| {
                 let parent_header = if i == 0 {
                     &safe_head_header
                 } else {
@@ -1542,7 +1528,6 @@ pub mod tests {
                 )]
             })
             .collect();
-        drop(captured);
 
         test_derivation_with_chunks_and_traces(
             boot_info,

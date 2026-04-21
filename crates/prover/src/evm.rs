@@ -31,14 +31,11 @@ mod tests {
     use alloy_evm::revm::state::AccountInfo;
     use alloy_evm::{Evm, EvmEnv, EvmFactory};
     use alloy_primitives::{address, Address, Bytes, TxKind, U256};
-    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
-
-    const BLOCK_NUMBER: u64 = 1;
 
     fn test_env() -> EvmEnv<OpSpecId> {
         let block_env = BlockEnv {
-            number: U256::from(BLOCK_NUMBER),
+            number: U256::from(1u64),
             ..Default::default()
         };
         let mut cfg_env = CfgEnv::default();
@@ -72,8 +69,8 @@ mod tests {
     /// and the collector records the `ResultAndState`. Returns the factory and
     /// the shared collector Arc for later draining.
     fn capture_factory() -> (CachedEvmFactory, TransactionResultCollector) {
-        let collector: TransactionResultCollector = Arc::new(Mutex::new(HashMap::new()));
-        let factory = CachedEvmFactory::new_with_traces(HashMap::new(), Some(collector.clone()));
+        let collector: TransactionResultCollector = Arc::new(Mutex::new(Vec::new()));
+        let factory = CachedEvmFactory::new_with_traces(Vec::new(), Some(collector.clone()));
         (factory, collector)
     }
 
@@ -98,7 +95,9 @@ mod tests {
         let result = evm.transact_raw(make_transfer(sender, recipient, U256::from(1000), 0));
         assert!(result.is_ok());
 
-        let traces = factory.take_block_traces(BLOCK_NUMBER);
+        let block_traces = factory.take_all_block_traces();
+        assert_eq!(block_traces.len(), 1, "should have one EVM slot");
+        let traces = &block_traces[0];
         assert_eq!(traces.len(), 1, "should have exactly one trace entry");
         assert!(
             traces[0].state.contains_key(&sender),
@@ -121,9 +120,13 @@ mod tests {
 
         let _ = evm.transact_system_call(caller, contract, Bytes::new());
 
-        let traces = factory.take_block_traces(BLOCK_NUMBER);
+        let block_traces = factory.take_all_block_traces();
+        // `create_evm` pushed a fresh slot, so block_traces has exactly one
+        // inner Vec — which should be empty because system calls bypass the
+        // per-tx capture path.
+        assert_eq!(block_traces.len(), 1, "one EVM slot pushed by create_evm");
         assert_eq!(
-            traces.len(),
+            block_traces[0].len(),
             0,
             "system_call should not append to trace buffer"
         );
@@ -134,7 +137,7 @@ mod tests {
     /// same buffer the caller drains. This test exercises that sharing contract —
     /// confirming we inherit it correctly from `kailua-kona`.
     #[test]
-    fn take_block_traces_drains_shared_buffer_across_clones() {
+    fn take_all_block_traces_drains_shared_buffer_across_clones() {
         let (factory, _collector) = capture_factory();
         let cloned = factory.clone();
         let mut db = InMemoryDB::default();
@@ -155,9 +158,12 @@ mod tests {
             .unwrap();
 
         // Draining via the original factory observes the clone's traces because
-        // the `block_traces` Arc is shared.
-        assert_eq!(factory.take_block_traces(BLOCK_NUMBER).len(), 1);
-        assert!(cloned.take_block_traces(BLOCK_NUMBER).is_empty());
+        // the `block_traces` Arc is shared. One slot pushed by `create_evm`,
+        // containing one entry from the one `transact_raw` call.
+        let drained = factory.take_all_block_traces();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].len(), 1);
+        assert!(cloned.take_all_block_traces().is_empty());
 
         // Silence unused warning for a halt reason import that's handy to have at
         // module scope for future tests.

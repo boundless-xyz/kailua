@@ -168,7 +168,6 @@ pub mod tests {
             test_fetch_safe_head_context,
         };
         use crate::evm::PartialExecution;
-        use std::collections::HashMap;
         use std::sync::{Arc, Mutex};
 
         let mut boot_info = BootInfo {
@@ -190,7 +189,7 @@ pub mod tests {
         // derivation through `run_core_client`, captures per-tx `ResultAndState`,
         // returns the Executions.
         let collector: crate::evm::cached::TransactionResultCollector =
-            Arc::new(Mutex::new(HashMap::new()));
+            Arc::new(Mutex::new(Vec::new()));
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
             None,
@@ -206,14 +205,22 @@ pub mod tests {
             test_fetch_safe_head_context(&boot_info).await?;
         let rollup_config = Arc::new(real_rollup_config);
 
-        // ---- Build Chunks (one single-chunk per block).
-        let mut captured = collector.lock().unwrap();
+        // ---- Build Chunks (one single-chunk per block). Collector ordering
+        // matches execution ordering: `CachedEvmFactory::create_evm` is called
+        // exactly once per block during derivation, in ascending block order, so
+        // the outer-vec index `i` corresponds to `executions[i]`.
+        let captured: Vec<Vec<_>> = std::mem::take(&mut *collector.lock().unwrap());
+        assert_eq!(
+            captured.len(),
+            executions.len(),
+            "captured block-trace count must match execution count"
+        );
+        let _ = safe_head_number;
         let chunks: Vec<Vec<PartialExecution>> = executions
             .iter()
             .enumerate()
-            .map(|(i, exec)| {
-                let block_number = safe_head_number + 1 + i as u64;
-                let traces = captured.remove(&block_number).unwrap_or_default();
+            .zip(captured)
+            .map(|((i, exec), traces)| {
                 let parent_header = if i == 0 {
                     &safe_head_header
                 } else {
@@ -228,7 +235,6 @@ pub mod tests {
                 )]
             })
             .collect();
-        drop(captured);
 
         let stitched_executions: Vec<crate::executor::Execution> =
             executions.into_iter().map(|e| e.as_ref().clone()).collect();

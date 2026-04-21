@@ -29,52 +29,54 @@ use alloy_evm::revm::Inspector;
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::{OpEvm, OpEvmFactory, OpTxError};
 use alloy_primitives::{Address, Bytes};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Shared trace buffer keyed by L2 block number.
-pub type TransactionResultCollector = Arc<Mutex<HashMap<u64, Vec<ResultAndState<OpHaltReason>>>>>;
+/// Shared trace buffer, one inner `Vec` per EVM instance created by
+/// [`CachedEvmFactory`] in ascending creation order (which, during normal
+/// derivation, matches ascending L2 block order). Each `CachedEvm` appends its
+/// per-tx `ResultAndState` entries to the last inner `Vec` via
+/// `last_mut().push(...)`; the factory pushes a fresh empty inner `Vec` on every
+/// `create_evm` / `create_evm_with_inspector` call.
+pub type TransactionResultCollector = Arc<Mutex<Vec<Vec<ResultAndState<OpHaltReason>>>>>;
 
 /// EVM wrapper that serves pre-computed `ResultAndState` entries from a set of
 /// [`PartialExecution`]s covering this block's ordered transaction body.
 pub struct CachedEvm<E: Evm> {
-    /// Remaining chunks for this block in *reverse* execution order — `last()` is the
-    /// currently-active chunk and its `.results` is itself stored reversed, so
-    /// `results.pop()` yields the next transaction's output. A chunk with an empty
-    /// `results` vec is exhausted and is popped off the cache on the next call.
+    /// Remaining chunks for this block in *reverse* execution order
     pub cache: Vec<PartialExecution>,
     /// Actual EVM implementation
     pub evm: E,
-    /// Block number this EVM is executing. Set at construction time from
-    /// `input.block_env.number`; used as the key when appending captured
-    /// `ResultAndState` into `block_traces` below (test/host trace capture).
-    pub block_number: u64,
-    /// Optional per-block trace collector. When `Some`, every successful
-    /// `transact_raw()` pushes its `ResultAndState` into
-    /// `block_traces.lock()[&block_number]` (Vec created on demand). This lets one
-    /// factory type serve both passes: capture during a monolithic run (empty
-    /// chunks map → every call delegates to inner `OpEvm` and is captured as
-    /// ground truth) and replay during a second run (chunks populated → replayed
-    /// `ResultAndState` entries served from `chunk.results`).
+    /// Optional trace collector shared across all `CachedEvm` instances produced
+    /// by one [`CachedEvmFactory`]. When `Some`, every successful
+    /// `transact_raw()` pushes its `ResultAndState` into the **last** inner `Vec`
+    /// of the shared buffer — the factory pushes a fresh empty slot on every
+    /// `create_evm` call, so `last_mut()` always targets "this EVM's slot". This
+    /// lets one factory type serve both passes: capture during a monolithic run
+    /// (empty chunks map → every call delegates to inner `OpEvm` and is captured
+    /// as ground truth) and replay during a second run (chunks populated →
+    /// replayed `ResultAndState` entries served from `chunk.results`).
     pub collection_target: Option<TransactionResultCollector>,
 }
 
 impl<E: Evm> CachedEvm<E> {
-    /// Wraps `inner` and prepares the chunk cache, optionally attaching a per-block
+    /// Wraps `inner` and prepares the chunk cache, optionally attaching a shared
     /// trace collector. `chunks` must be in ascending execution order (matching
     /// `tx_start`); this constructor reverses the outer vec so `pop()` yields the
     /// next chunk, and each chunk's `results` vec so `results.pop()` yields the
     /// next pre-computed `ResultAndState` within that chunk.
     ///
     /// When `block_traces` is `Some`, each successful `transact_raw()` appends its
-    /// `ResultAndState` into `block_traces[block_number]`. Used both by the chunk
-    /// guest (single-block capture for `chunk_trace`) and by the integration test
-    /// harness (capture ground-truth traces from a monolithic `run_core_client` run
-    /// with empty chunks; `CachedEvm` then delegates every call to the inner `OpEvm`).
+    /// `ResultAndState` into the last inner `Vec` of `block_traces`. Used both by
+    /// the chunk guest (single-block capture for `chunk_trace`) and by the
+    /// integration test harness (capture ground-truth traces from a monolithic
+    /// `run_core_client` run with empty chunks; `CachedEvm` then delegates every
+    /// call to the inner `OpEvm`). The caller is responsible for ensuring the
+    /// last slot of `block_traces` is the one this EVM should append to —
+    /// `CachedEvmFactory` handles this by pushing a fresh empty slot on each
+    /// `create_evm` call before constructing the `CachedEvm`.
     pub fn new_with_traces(
         inner: E,
         mut chunks: Vec<PartialExecution>,
-        block_number: u64,
         block_traces: Option<TransactionResultCollector>,
     ) -> Self {
         chunks.reverse();
@@ -84,7 +86,6 @@ impl<E: Evm> CachedEvm<E> {
         Self {
             evm: inner,
             cache: chunks,
-            block_number,
             collection_target: block_traces,
         }
     }
@@ -182,17 +183,21 @@ where
             self.evm.transact_raw(tx)
         };
 
-        // Optional capture: when a per-block trace collector was attached via
-        // `new_with_traces`, append the ResultAndState keyed by this block's
-        // number. The chunk replay path (served from chunk.results) also
-        // captures — benign since the captured trace equals the authenticated
+        // Optional capture: when a shared trace collector was attached via
+        // `new_with_traces`, append the ResultAndState to the *last* inner `Vec`
+        // of the shared buffer. `CachedEvmFactory` pushes a fresh empty slot on
+        // each `create_evm` call, so `last_mut()` always targets "this EVM's
+        // slot". The chunk replay path (served from chunk.results) also captures
+        // — benign since the captured trace equals the authenticated
         // `chunk.results` and callers choose whether to consume the buffer.
         if let (Ok(r), Some(traces)) = (&result, &self.collection_target) {
-            traces
-                .lock()
-                .unwrap()
-                .entry(self.block_number)
-                .or_default()
+            let mut guard = traces.lock().unwrap();
+            guard
+                .last_mut()
+                .expect(
+                    "CachedEvmFactory pushes an empty slot before constructing \
+                     a CachedEvm; last_mut() must exist",
+                )
                 .push(r.clone());
         }
         result
@@ -231,79 +236,86 @@ where
 }
 
 /// Factory that wraps `OpEvmFactory` and dispenses [`CachedEvm`] instances seeded with
-/// per-block chunk data keyed by `input.block_env.number`.
+/// positional per-block chunk data.
 ///
-/// The chunk map is consumed destructively per block: `create_evm` removes the entry for
-/// the target block so repeated calls for the same block would receive an empty chunk
-/// vec (and therefore fall through to the inner EVM). In practice each block creates a
-/// fresh `ChunkingEvm` via one `create_evm` call from `StatelessL2Builder::build_block`.
+/// The `cache` field holds an outer `Vec<Vec<PartialExecution>>` in **reverse** execution
+/// order so that `create_evm` can `pop()` the next block's chunks off the end in O(1)
+/// and move them into the new [`CachedEvm`]. During normal derivation `create_evm` is
+/// called exactly once per L2 block in ascending block order, so positional index
+/// (input-order, pre-reversal) maps 1:1 to block position.
 ///
-/// Blocks without chunk data (no entry in the map) get a `ChunkingEvm` with an empty
-/// chunk vec, which is semantically identical to the plain `OpEvm` path — every
-/// `transact_raw()` delegates to the inner.
+/// Blocks without chunk data are represented by an empty inner `Vec`, which produces a
+/// `CachedEvm` with an empty cache — every `transact_raw()` then delegates to the inner
+/// `OpEvm`, semantically identical to the plain `OpEvm` path.
+///
+/// If `create_evm` is called more times than there are chunk entries (or called after
+/// the cache is drained), `take_next_chunks()` returns an empty `Vec`, and the
+/// resulting EVM falls through to the inner `OpEvm`.
 #[derive(Clone, Debug)]
 pub struct CachedEvmFactory {
-    /// The underlying EVM used when a transaction is not found in the cache.
+    /// The factory used to instantiate the underlying EVM instances
     pub inner: OpEvmFactory,
-    /// Per-block chunk data keyed by block number. Arc<Mutex<...>> because `EvmFactory`
-    /// requires `Clone + Send + Sync + 'static` and the factory is cloned by the
-    /// executor pipeline.
-    pub cache: Arc<Mutex<HashMap<u64, Vec<PartialExecution>>>>,
-    /// Optional per-block `ResultAndState` trace collector threaded into every
-    /// `ChunkingEvm` this factory produces. When `Some`, each `ChunkingEvm`
-    /// appends successful `transact_raw()` results into
-    /// `block_traces[block_number]`. Used by the integration test harness to
-    /// capture ground-truth traces during a monolithic run (empty chunks) and
-    /// then rebuild `Chunk` entries for a subsequent replay run.
+    /// Per-block chunk data stored in **reverse** execution order.
+    pub cache: Arc<Mutex<Vec<Vec<PartialExecution>>>>,
+    /// Optional per-transaction `ResultAndState` collector
     pub block_traces: Option<TransactionResultCollector>,
 }
 
 impl CachedEvmFactory {
-    /// Constructs a factory with the given block-keyed chunk data. The map is consumed
-    /// destructively on each `create_evm` call.
-    pub fn new(cache: HashMap<u64, Vec<PartialExecution>>) -> Self {
+    /// Constructs a factory with the given positional per-block chunk data. The
+    /// input is expected in **execution order** (outer index 0 = first block
+    /// served); the constructor reverses it internally so that `create_evm`
+    /// pops from the end in execution order.
+    pub fn new(cache: Vec<Vec<PartialExecution>>) -> Self {
+        Self::new_with_traces(cache, None)
+    }
+
+    /// Variant of [`new`](Self::new) that also attaches a shared trace collector.
+    /// Every `CachedEvm` produced by this factory will append successful
+    /// `transact_raw()` results into the last inner `Vec` of the collector (the
+    /// factory pushes a fresh slot on each `create_evm` call). Drain via
+    /// [`take_all_block_traces`](Self::take_all_block_traces) or by
+    /// `std::mem::take` on the shared buffer at the per-block boundary the
+    /// caller chooses (see the integration test in `crates/kona/src/client/core.rs`).
+    pub fn new_with_traces(
+        mut cache: Vec<Vec<PartialExecution>>,
+        block_traces: Option<TransactionResultCollector>,
+    ) -> Self {
+        cache.reverse();
         Self {
             inner: OpEvmFactory::default(),
             cache: Arc::new(Mutex::new(cache)),
-            block_traces: None,
-        }
-    }
-
-    /// Variant of [`new`](Self::new) that also attaches a per-block trace collector.
-    /// Every `ChunkingEvm` produced by this factory will append successful
-    /// `transact_raw()` results into `block_traces[block_number]`. Drain via
-    /// `block_traces.lock()` at the per-block boundary the caller chooses (see
-    /// the integration test in `crates/kona/src/client/core.rs`).
-    pub fn new_with_traces(
-        chunks: HashMap<u64, Vec<PartialExecution>>,
-        block_traces: Option<TransactionResultCollector>,
-    ) -> Self {
-        Self {
-            inner: OpEvmFactory::default(),
-            cache: Arc::new(Mutex::new(chunks)),
             block_traces,
         }
     }
 
-    /// Removes and returns the chunks for the given block number, or an empty vec.
-    pub fn take_chunks(&self, block_number: u64) -> Vec<PartialExecution> {
-        self.cache
-            .lock()
-            .unwrap()
-            .remove(&block_number)
+    /// Pops and returns the next block's chunks from the cache, or an empty vec
+    /// when the cache is exhausted. The outer `Vec` was reversed at construction
+    /// time so `pop()` yields blocks in execution order.
+    pub fn take_next_chunks(&self) -> Vec<PartialExecution> {
+        self.cache.lock().unwrap().pop().unwrap_or_default()
+    }
+
+    /// Atomically drains and returns the shared trace buffer — one inner `Vec` per
+    /// EVM instance this factory produced, in creation order. Returns an empty vec
+    /// when no trace collector is attached. During normal derivation one EVM is
+    /// created per L2 block in ascending block order, so the returned outer index
+    /// maps 1:1 to block position starting from the first block the factory served.
+    pub fn take_all_block_traces(&self) -> Vec<Vec<ResultAndState<OpHaltReason>>> {
+        self.block_traces
+            .as_ref()
+            .map(|t| std::mem::take(&mut *t.lock().unwrap()))
             .unwrap_or_default()
     }
 
-    /// Removes and returns the captured per-tx `ResultAndState` entries for the given
-    /// block number. Returns an empty vec when no trace collector is attached
-    /// (`block_traces == None`) or when this block has no captured entries. Symmetric
-    /// with [`take_chunks`](Self::take_chunks): the caller drains a block's worth of
-    /// capture state at the per-block boundary it chooses.
-    pub fn take_block_traces(&self, block_number: u64) -> Vec<ResultAndState<OpHaltReason>> {
-        self.block_traces
-            .as_ref()
-            .and_then(|t| t.lock().unwrap().remove(&block_number))
-            .unwrap_or_default()
+    /// Push an empty slot onto the shared trace buffer so that the next
+    /// `CachedEvm`'s `transact_raw` captures land in a fresh per-EVM `Vec`. No-op
+    /// when no collector is attached. Called from both `create_evm` and
+    /// `create_evm_with_inspector`.
+    fn push_trace_slot(&self) {
+        if let Some(traces) = &self.block_traces {
+            traces.lock().unwrap().push(Vec::new());
+        }
     }
 }
 
@@ -322,12 +334,11 @@ impl EvmFactory for CachedEvmFactory {
         db: DB,
         input: EvmEnv<OpSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
-        let block_number = input.block_env.number.to::<u64>();
-        let chunks = self.take_chunks(block_number);
+        let chunks = self.take_next_chunks();
+        self.push_trace_slot();
         CachedEvm::new_with_traces(
             self.inner.create_evm(db, input),
             chunks,
-            block_number,
             self.block_traces.clone(),
         )
     }
@@ -338,12 +349,11 @@ impl EvmFactory for CachedEvmFactory {
         input: EvmEnv<OpSpecId>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        let block_number = input.block_env.number.to::<u64>();
-        let chunks = self.take_chunks(block_number);
+        let chunks = self.take_next_chunks();
+        self.push_trace_slot();
         CachedEvm::new_with_traces(
             self.inner.create_evm_with_inspector(db, input, inspector),
             chunks,
-            block_number,
             self.block_traces.clone(),
         )
     }
