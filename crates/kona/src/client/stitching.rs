@@ -477,8 +477,8 @@ pub fn stitch_chunks(
             // which `chunk.block_env.number` commits to).
             let stitched_boot = StitchedBootInfo {
                 l1_head: CHUNK_SENTINEL_L1_HEAD,
-                agreed_l2_output_root: chunk.agreed_l2_output_root,
-                claimed_l2_output_root: chunk.agreed_l2_output_root,
+                agreed_l2_output_root: chunk.op_block_ctx.parent_hash,
+                claimed_l2_output_root: chunk.op_block_ctx.parent_hash,
                 claimed_l2_block_number: chunk.block_env.number.to::<u64>().saturating_sub(1),
             };
 
@@ -1224,7 +1224,12 @@ pub mod tests {
         }
     }
 
-    fn make_chunk(agreed_db: B256, claimed_db: B256, agreed_evm: B256, claimed_evm: B256) -> PartialExecution {
+    fn make_chunk(
+        agreed_db: B256,
+        claimed_db: B256,
+        agreed_evm: B256,
+        claimed_evm: B256,
+    ) -> PartialExecution {
         PartialExecution {
             agreed_db,
             agreed_evm,
@@ -1233,7 +1238,6 @@ pub mod tests {
             evm_state: Default::default(),
             claimed_db,
             claimed_evm,
-            agreed_l2_output_root: keccak256("test_agreed_output"),
             block_env: alloy_evm::revm::context::BlockEnv::default(),
             op_block_ctx: alloy_op_evm::block::OpBlockExecutionCtx::default(),
         }
@@ -1370,7 +1374,6 @@ pub mod tests {
             keccak256("evm_a0"),
             keccak256("evm_a1"),
         );
-        chunk_a.agreed_l2_output_root = keccak256("output_root_A");
         chunk_a.block_env.number = U256::from(11u64);
 
         // Block B: block 12 (parent = 11), agreed output root Y (different from X, and
@@ -1384,7 +1387,6 @@ pub mod tests {
             keccak256("evm_b0"),
             keccak256("evm_b1"),
         );
-        chunk_b.agreed_l2_output_root = keccak256("output_root_B");
         chunk_b.block_env.number = U256::from(12u64);
 
         stitch_chunks(

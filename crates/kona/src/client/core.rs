@@ -306,17 +306,18 @@ where
             // blob pricing, hash_evm_state, receipts_root).
             let safe_head_parent_exec: alloy_consensus::Header = safe_head.inner().clone();
             let has_chunks_exec = chunks.iter().any(|v| !v.is_empty());
-            let chunks_by_block_exec: std::collections::HashMap<u64, Vec<PartialExecution>> = chunks
-                .iter()
-                .enumerate()
-                .filter_map(|(i, v)| {
-                    if v.is_empty() {
-                        None
-                    } else {
-                        Some((safe_head_number + 1 + i as u64, v.clone()))
-                    }
-                })
-                .collect();
+            let chunks_by_block_exec: std::collections::HashMap<u64, Vec<PartialExecution>> =
+                chunks
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, v)| {
+                        if v.is_empty() {
+                            None
+                        } else {
+                            Some((safe_head_number + 1 + i as u64, v.clone()))
+                        }
+                    })
+                    .collect();
             let factory = ChunkingEvmFactory::new_with_traces(
                 chunks_by_block_exec,
                 chunk_trace_collector.clone(),
@@ -1138,7 +1139,6 @@ pub mod tests {
             evm_state,
             claimed_db: B256::ZERO,
             claimed_evm,
-            agreed_l2_output_root: execution.agreed_output,
             block_env,
             op_block_ctx,
         }
@@ -1386,7 +1386,6 @@ pub mod tests {
                 evm_state,
                 claimed_db: B256::ZERO,
                 claimed_evm,
-                agreed_l2_output_root: execution.agreed_output,
                 block_env: block_env.clone(),
                 op_block_ctx: op_block_ctx.clone(),
             });

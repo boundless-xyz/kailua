@@ -664,7 +664,6 @@ pub mod tests {
             },
             claimed_db: keccak256("claimed_db"),
             claimed_evm: keccak256("claimed_evm"),
-            agreed_l2_output_root: keccak256("agreed_l2_output_root"),
             block_env: BlockEnv::default(),
             op_block_ctx: OpBlockExecutionCtx::default(),
         }
@@ -684,7 +683,6 @@ pub mod tests {
         assert_eq!(deser.evm_state.da_footprint_used, 100);
         assert_eq!(deser.claimed_db, chunk.claimed_db);
         assert_eq!(deser.claimed_evm, chunk.claimed_evm);
-        assert_eq!(deser.agreed_l2_output_root, chunk.agreed_l2_output_root);
 
         // Verify the ResultAndState content survived
         match &deser.results[0].result {
@@ -746,7 +744,6 @@ pub mod tests {
             evm_state: crate::precondition::chunking::EvmAccumulatorState::default(),
             claimed_db: keccak256("claimed_db"),
             claimed_evm: keccak256("claimed_evm"),
-            agreed_l2_output_root: B256::ZERO,
             block_env: BlockEnv::default(),
             op_block_ctx: OpBlockExecutionCtx::default(),
         };

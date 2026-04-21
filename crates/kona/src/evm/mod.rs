@@ -48,11 +48,6 @@ pub struct PartialExecution {
     /// Hash of the EVM accumulator state after this chunk's transactions.
     #[rkyv(with = B256Def)]
     pub claimed_evm: B256,
-    /// L2 output root agreed to by this chunk's proof (the parent block's output
-    /// root). Chunks do not advance L2 state, so `claimed_l2_output_root ==
-    /// agreed_l2_output_root` in the chunk's `ProofJournal`.
-    #[rkyv(with = B256Def)]
-    pub agreed_l2_output_root: B256,
     /// Block execution `BlockEnv` under which this chunk's transactions executed
     /// (timestamp, basefee, prevrandao, coinbase, blob pricing, etc.).
     #[rkyv(with = BlockEnvRkyv)]
@@ -141,7 +136,6 @@ mod tests {
             evm_state: EvmAccumulatorState::default(),
             claimed_db: keccak256(format!("claimed_db_{tag}")),
             claimed_evm: keccak256(format!("claimed_evm_{tag}")),
-            agreed_l2_output_root: keccak256(format!("agreed_out_{tag}")),
             block_env: alloy_evm::revm::context::BlockEnv::default(),
             op_block_ctx: alloy_op_evm::block::OpBlockExecutionCtx::default(),
         }
