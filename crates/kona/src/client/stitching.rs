@@ -65,6 +65,8 @@ pub trait StitchingClient<
     /// * `stitched_preconditions`: A vector of `Precondition` objects for the stitched proofs.
     /// * `stitched_boot_info` - A vector of `StitchedBootInfo` objects describing proofs
     ///   to be stitched together.
+    /// * `chunk_witness`: An optional witness for running a partial execution
+    /// * `chunks`: A list of partial executions to reuse
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     fn run_stitching_client(
@@ -80,8 +82,8 @@ pub trait StitchingClient<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        chunk_witness: Option<PartialExecutionWitness>,
-        chunks: Vec<Vec<PartialExecution>>,
+        pe_witness: Option<PartialExecutionWitness>,
+        partial_executions: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug;
@@ -109,8 +111,8 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        chunk_witness: Option<PartialExecutionWitness>,
-        chunks: Vec<Vec<PartialExecution>>,
+        pe_witness: Option<PartialExecutionWitness>,
+        partial_executions: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
@@ -118,10 +120,8 @@ impl<
         // Queue up precomputed executions
         let (stitched_executions, execution_cache) = split_executions(stitched_executions);
 
-        // Capture chunks for post-core stitching verification. `run_core_client` consumes
-        // its own copy when populating `ChunkingEvmFactory`, so we clone here to retain
-        // the pre-execution layout for hash-chain verification below.
-        let chunks_for_stitching = chunks.clone();
+        // Precompute binding data for stitching partial executions before they are moved
+        let pe_boots = precompute_pe_boots(&partial_executions);
 
         // Attempt to recompute the output hash at the target block number using kona
         log("RUN");
@@ -135,8 +135,8 @@ impl<
             None,
             derivation_cache,
             derivation_trace.then(Default::default),
-            chunk_witness,
-            chunks,
+            pe_witness,
+            partial_executions,
             None,
         )
         .expect("Failed to compute output hash.");
@@ -145,12 +145,12 @@ impl<
         #[cfg(target_os = "zkvm")]
         let proven_fpvm_journals = load_stitching_journals(fpvm_image_id);
 
-        // Stitch recursively composed chunk aggregation proofs
-        stitch_chunks(
+        // Stitch recursively composed partial executions
+        stitch_partial_executions(
             &boot,
             fpvm_image_id,
             payout_recipient_address,
-            &chunks_for_stitching,
+            pe_boots,
             #[cfg(target_os = "zkvm")]
             &proven_fpvm_journals,
         );
@@ -400,96 +400,68 @@ pub fn stitch_executions(
 /// Sentinel `l1_head` value identifying chunk-proof journals (see `core.rs` chunk branch).
 const CHUNK_SENTINEL_L1_HEAD: B256 = B256::new([0xFF; 32]);
 
-/// Stitches recursively-composed chunk aggregation proofs into the proof journal.
-///
-/// For each block with at least one chunk, this function:
-///   1. Computes each chunk's `chunk_trace` from its committed hashes.
-///   2. Constructs the expected [`ProofJournal`] for that chunk, using the chunk's own
-///      `agreed_l2_output_root` and `block_env.number - 1` (per-block context stored in
-///      each `Chunk` — the outer run's final `BootInfo` cannot be used because its
-///      `agreed_l2_output_root` and `claimed_l2_block_number` correspond only to the
-///      run's last block, not to each chunked block individually).
-///   3. Calls [`verify_stitching_journal`] so the guest either finds the journal in the
-///      pre-proven set (FOUND) or assumes it via `env::verify()` (ASSUME).
-///
-/// # Binding of `Chunk.results` to the authenticated proof
-///
-/// The chunk proof commits to `chunk_trace = SHA256(tx_hash || pre_db_hash ||
-/// post_db_hash || pre_evm_hash || post_evm_hash || results_hash)`, where
-/// `results_hash = hash_results(results)` is the canonical SHA256 of the per-tx
-/// execution trace (see [`crate::precondition::chunking::hash_results`]). The
-/// chunk guest captures its own `ResultAndState` sequence via a tracing EVM
-/// wrapper during chunk execution and folds `results_hash` into its journal.
-///
-/// On the aggregation side, this function recomputes `hash_results(&chunk.results)`
-/// and feeds it into the same `compute_chunk_trace` formula to rebuild the expected
-/// chunk journal. Any tampering with `chunk.results` — reordering entries,
-/// substituting a different-but-endpoint-equivalent trace, altering per-tx gas /
-/// logs / state — produces a different `results_hash`, a different `chunk_trace`,
-/// and a different journal. `env::verify()` then fails, rejecting the chunk proof's
-/// assumption in the aggregation guest.
-///
-/// With this binding in place, `ChunkingEvm` can safely replay `chunk.results`
-/// verbatim: the six-input `chunk_trace` authenticates the exact per-transaction
-/// execution trace, not merely the pre→post state endpoints.
-///
-/// # Panics
-///
-/// * If [`verify_stitching_journal`] rejects any chunk journal.
-pub fn stitch_chunks(
-    boot: &BootInfo,
-    fpvm_image_id: B256,
-    payout_recipient_address: Address,
-    chunks_per_block: &[Vec<PartialExecution>],
-    #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
-) {
-    // Chunking is only defined for derivation+execution mode (l1_head != 0). For
-    // execution-only or chunk-proving modes, chunks must be empty.
-    if chunks_per_block.iter().all(|c| c.is_empty()) {
-        return;
-    }
+/// Precomputes precondition and stitched boot info data for partial executions
+pub fn precompute_pe_boots(
+    partial_executions: &[Vec<PartialExecution>],
+) -> Vec<(B256, StitchedBootInfo)> {
+    let mut result = vec![];
 
-    let config_hash = crate::config::config_hash(&boot.rollup_config, &boot.l1_config);
-
-    for block_chunks in chunks_per_block {
-        if block_chunks.is_empty() {
+    for block_partials in partial_executions {
+        if block_partials.is_empty() {
             continue;
         }
 
         // Verify each chunk's journal.
-        for chunk in block_chunks {
-            let results_hash = hash_results(&chunk.tx_hashes, &chunk.results);
-            let block_ctx_hash = hash_block_ctx(&chunk.block_env, &chunk.op_block_ctx);
+        for partial in block_partials {
+            // Compute precondition hash
+            let results_hash = hash_results(&partial.tx_hashes, &partial.results);
+            let block_ctx_hash = hash_block_ctx(&partial.block_env, &partial.op_block_ctx);
             let chunk_trace = compute_chunk_trace(results_hash, block_ctx_hash);
             let precondition_hash =
                 B256::new(Precondition::default().chunk(chunk_trace).digest().into());
 
-            // Chunk proofs: agreed == claimed L2 output root (no L2 advancement);
-            // block number is the parent block number (one below the executed block,
-            // which `chunk.block_env.number` commits to).
+            // Create required boot info
             let stitched_boot = StitchedBootInfo {
                 l1_head: CHUNK_SENTINEL_L1_HEAD,
-                agreed_l2_output_root: chunk.op_block_ctx.parent_hash,
-                claimed_l2_output_root: chunk.op_block_ctx.parent_hash,
-                claimed_l2_block_number: chunk.block_env.number.to::<u64>().saturating_sub(1),
+                agreed_l2_output_root: partial.op_block_ctx.parent_hash,
+                claimed_l2_output_root: partial.op_block_ctx.parent_hash,
+                claimed_l2_block_number: partial.block_env.number.to::<u64>().saturating_sub(1),
             };
 
-            let encoded_journal = ProofJournal::new_stitched(
-                fpvm_image_id,
-                payout_recipient_address,
-                precondition_hash,
-                B256::from(config_hash),
-                &stitched_boot,
-            )
-            .encode_packed();
-
-            verify_stitching_journal(
-                fpvm_image_id,
-                encoded_journal,
-                #[cfg(target_os = "zkvm")]
-                proven_fpvm_journals,
-            );
+            result.push((precondition_hash, stitched_boot));
         }
+    }
+
+    result
+}
+
+/// Stitches recursively-composed partial execution proofs into the proof journal.
+pub fn stitch_partial_executions(
+    boot: &BootInfo,
+    fpvm_image_id: B256,
+    payout_recipient_address: Address,
+    pe_boots: Vec<(B256, StitchedBootInfo)>,
+    #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
+) {
+    let config_hash = crate::config::config_hash(&boot.rollup_config, &boot.l1_config);
+
+    for (precondition_hash, stitched_boot) in pe_boots {
+        // Create journal
+        let encoded_journal = ProofJournal::new_stitched(
+            fpvm_image_id,
+            payout_recipient_address,
+            precondition_hash,
+            B256::from(config_hash),
+            &stitched_boot,
+        )
+        .encode_packed();
+
+        verify_stitching_journal(
+            fpvm_image_id,
+            encoded_journal,
+            #[cfg(target_os = "zkvm")]
+            proven_fpvm_journals,
+        );
     }
 }
 
@@ -1235,7 +1207,7 @@ pub mod tests {
     #[test]
     fn stitch_chunks_empty_is_noop() {
         let boot = chunks_boot_info();
-        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &[]);
+        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, &[]);
     }
 
     /// A single block with a single chunk — no continuity checks are required. The
@@ -1250,7 +1222,7 @@ pub mod tests {
             keccak256("evm0"),
             keccak256("evm1"),
         );
-        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &[vec![chunk]]);
+        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, &[vec![chunk]]);
     }
 
     /// Valid multi-chunk hash chain: each chunk's `agreed_db` matches the prior
@@ -1268,7 +1240,7 @@ pub mod tests {
             make_chunk(db0, db1, evm0, evm1),
             make_chunk(db1, db2, evm1, evm2),
         ]];
-        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &chunks);
+        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, &chunks);
     }
 
     /// Binding: altering `chunk.results` must change the reconstructed `chunk_trace`.
@@ -1365,7 +1337,7 @@ pub mod tests {
         );
         chunk_b.block_env.number = U256::from(12u64);
 
-        stitch_chunks(
+        stitch_partial_executions(
             &boot,
             B256::ZERO,
             Address::ZERO,
@@ -1389,6 +1361,6 @@ pub mod tests {
             )],
             vec![],
         ];
-        stitch_chunks(&boot, B256::ZERO, Address::ZERO, &chunks);
+        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, &chunks);
     }
 }

@@ -52,8 +52,8 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        chunk_witness: Option<PartialExecutionWitness>,
-        chunks: Vec<Vec<PartialExecution>>,
+        pe_witness: Option<PartialExecutionWitness>,
+        partial_executions: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
@@ -78,8 +78,8 @@ impl<
                 derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
-                chunk_witness,
-                chunks,
+                pe_witness,
+                partial_executions,
             );
         // Ensure boot record is the same for both oracles
         assert_eq!(boot, kona_boot_info);
