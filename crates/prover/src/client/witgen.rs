@@ -106,7 +106,7 @@ where
         Some(execution_trace.clone())
     };
     // Clone chunks once up front — `run_core_client` consumes its copy when
-    // populating `ChunkingEvmFactory`, and we need to serialize the ORIGINAL
+    // populating `CachedEvmFactory`, and we need to serialize the ORIGINAL
     // (pre-consume) layout into `Witness.chunks` for the stateless replay.
     let chunks_for_witness = chunks.clone();
     let (boot, precondition) = kailua_kona::client::core::run_core_client(

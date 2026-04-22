@@ -30,8 +30,8 @@ use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Bytes, B256, U256};
 use op_alloy_consensus::OpReceiptEnvelope;
 
+use kailua_kona::evm::state::apply_trace_to_cache;
 use kailua_kona::evm::PartialExecutionWitness;
-use kailua_kona::precondition::evm::apply_trace_to_cache;
 
 /// Groups `tx_count` transactions into sequential, non-overlapping chunks of at most
 /// `max_txs_per_chunk` transactions each. The last chunk may have fewer transactions.
@@ -67,8 +67,8 @@ pub struct ChunkTxMeta {
 /// Pre-populates the cumulative cache with all accounts, contracts, and block hashes
 /// that any chunk in the block will access. Addresses absent from the post-prelude cache
 /// are inserted as [`AccountState::NotExisting`]. This ensures every chunk's witness
-/// carries the full cumulative state at its boundary, which is required for hash chain
-/// continuity (`post_db_hash[i] == pre_db_hash[i+1]`).
+/// carries the full cumulative pre-state view at its boundary, so the chunk guest can
+/// re-execute its tx slice against an authentic snapshot.
 fn prepare_cumulative_cache(
     post_prelude_cache: &Cache,
     all_traces: &[EvmState],
@@ -115,9 +115,9 @@ fn prepare_cumulative_cache(
 /// 2. Advances the cumulative state through the chunk's traces for the next chunk
 ///
 /// Each chunk receives the **full** cumulative cache (not a filtered subset) so later
-/// chunks see all account touches from prior chunks. `ChunkWitnessData` no longer
-/// carries any executor accumulator state — receipts and cumulative gas are rederived
-/// on the aggregation side from the authenticated `results` stream.
+/// chunks see all account touches from prior chunks. `PartialExecutionWitness` carries
+/// no executor accumulator state — receipts and cumulative gas are rederived on the
+/// aggregation side from the authenticated `results` stream.
 #[allow(clippy::too_many_arguments)]
 pub fn build_chunk_witnesses(
     traces: &[EvmState],
@@ -729,5 +729,4 @@ mod tests {
             code.original_bytes()
         );
     }
-
 }

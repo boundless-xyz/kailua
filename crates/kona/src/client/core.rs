@@ -524,7 +524,14 @@ pub mod tests {
     use super::*;
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
+    use alloy_consensus::{BlockHeader, Header};
+    use alloy_eips::eip7840::BlobParams;
+    use alloy_evm::op_revm::OpSpecId;
+    use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
     use alloy_evm::revm::database::Cache;
+    use alloy_evm::revm::primitives::eip4844::{
+        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+    };
     use alloy_primitives::{b256, B256};
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::BootInfo;
@@ -545,19 +552,16 @@ pub mod tests {
         )
     }
 
-    /// Variant of [`test_derivation`] that threads a `chunks: Vec<Vec<Chunk>>` through to
-    /// [`run_core_client`]. When `chunks` is `Vec::new()` (or every inner vec is empty),
-    /// `run_core_client`'s `has_chunks` check returns `false` and the aggregation path is
-    /// completely skipped — `ChunkingEvmFactory::new(empty_map)` delegates every
-    /// `transact_raw()` straight through to the wrapped `OpEvmFactory`, so derivation
-    /// output must be byte-identical to the no-chunks run. When any inner vec is
-    /// non-empty, `run_core_client` runs the `CHUNK VERIFY` phase after derivation and
-    /// calls `verify_block_chunks` for each such block.
+    /// Variant of [`test_derivation`] that threads a `chunks: Vec<Vec<PartialExecution>>`
+    /// through to [`run_core_client`]. When `chunks` is empty, `CachedEvmFactory::new`
+    /// produces EVMs that delegate every `transact_raw()` straight through to the
+    /// wrapped `OpEvmFactory`, so derivation output is byte-identical to a no-chunks
+    /// run. When non-empty, each inner vec's chunks are consumed at the matching block
+    /// position; per-tx authentication of the served results happens inside
+    /// `CachedEvm::transact_raw`.
     ///
-    /// Caller constraint: when `chunks` is supplied non-empty, the outer index `i`
-    /// corresponds to block `safe_head_number + 1 + i` (see `Witness::chunks` doc).
-    /// Supplying chunks for an underived block position errors out of the CHUNK VERIFY
-    /// phase.
+    /// Caller constraint: the outer index `i` corresponds to block
+    /// `safe_head_number + 1 + i` (see `Witness::chunks` doc).
     pub fn test_derivation_with_chunks(
         boot_info: BootInfo,
         proposal_data: Option<ProposalPrecondition>,
@@ -577,11 +581,12 @@ pub mod tests {
 
     /// Extended variant of [`test_derivation_with_chunks`] that also threads an optional
     /// per-block `ResultAndState` trace collector through to `run_core_client`'s
-    /// `ChunkingEvmFactory`. When supplied, the factory captures every successful
-    /// `transact_raw()` into the buffer keyed by block number — both the monolithic
-    /// delegate path (empty chunks) and the chunk replay path. Used by the round-trip
-    /// integration test to capture ground truth on a first (empty-chunks) pass, build
-    /// `Chunk` entries from the captured traces, then replay on a second pass.
+    /// `CachedEvmFactory`. When supplied, the factory captures every successful
+    /// `transact_raw()` into the buffer keyed by block number — both the delegate path
+    /// (empty chunks) and the chunk replay path. Used by the round-trip integration
+    /// test to capture ground truth on a first (empty-chunks) pass, build
+    /// `PartialExecution` entries from the captured traces, then replay on a second
+    /// pass.
     pub fn test_derivation_with_chunks_and_traces(
         boot_info: BootInfo,
         proposal_data: Option<ProposalPrecondition>,
@@ -742,27 +747,16 @@ pub mod tests {
         .unwrap();
     }
 
-    /// Integration test for task 8.7: exercises the `chunks` parameter plumbing through
-    /// `run_core_client` and the `ChunkingEvmFactory` dispatch path end-to-end against a
+    /// Integration test exercising the `chunks` parameter plumbing through
+    /// `run_core_client` and the `CachedEvmFactory` dispatch path end-to-end against a
     /// real OP Sepolia fixture.
     ///
-    /// Supplies `chunks: vec![vec![]]` — one entry for the single derived block, with the
-    /// inner vec empty. This case is the interesting one for `ChunkingEvmFactory`:
-    /// `run_core_client`'s `has_chunks` check (`any(|v| !v.is_empty())`) returns `false`,
-    /// so the CHUNK VERIFY phase is skipped, but the chunks vec is still threaded through
-    /// to `ChunkingEvmFactory::new(...)`. The factory's block-number → chunks map is
-    /// empty, so every `create_evm()` call falls through to `OpEvmFactory::create_evm()`
-    /// and every `transact_raw()` delegates straight to `OpEvm`. Derivation output must
-    /// therefore be byte-identical to the no-chunks run in
-    /// `test_op_sepolia_16491249_16491250` above.
-    ///
-    /// This closes task 8.7 at the "ChunkingEvmFactory in the real derivation path"
-    /// integration level. The stronger variant — supplying a non-empty chunk with a real
-    /// pre-computed `ResultAndState` vec and verifying `BlockBuildingOutcome` matches
-    /// monolithic execution byte-for-byte — requires the host-side `TracingEvmFactory`
-    /// → `build_chunk_witnesses` → `Chunk` assembly path that lives in Part 9. See
-    /// `crates/prover/src/chunk.rs::build_chunk_witnesses` unit tests and the Part 9/10
-    /// end-to-end tests for the full host-capture → guest-replay equivalence chain.
+    /// Supplies `chunks: vec![vec![]]` — one entry for the single derived block, with
+    /// the inner vec empty. The chunks vec is threaded through to
+    /// `CachedEvmFactory::new(...)`; because its per-block slot is empty, every
+    /// `transact_raw()` falls through to inner `OpEvm`, so derivation output must be
+    /// byte-identical to the no-chunks run in `test_op_sepolia_16491249_16491250`
+    /// above.
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491250_with_empty_chunks() {
         let boot_info = BootInfo {
@@ -819,24 +813,43 @@ pub mod tests {
         Ok((header, boot.rollup_config))
     }
 
-    /// Builds a single-chunk `Chunk` covering all transactions of a derived block,
-    /// populated from (a) the `Execution` (header, attributes, agreed_output) returned
+    /// Compute the `BlobExcessGasAndPrice` that kona's `prepare_block_env` would assign
+    /// to `BlockEnv.blob_excess_gas_and_price` for a block with the given parent header
+    /// and spec_id. Mirrors `kona/proof/executor/src/builder/env.rs::prepare_block_env`
+    /// exactly — if that implementation changes in upstream, this must too.
+    fn expected_blob_excess_gas_and_price(
+        parent_header: &Header,
+        spec_id: OpSpecId,
+    ) -> Option<BlobExcessGasAndPrice> {
+        let (params, fraction) = if spec_id.is_enabled_in(OpSpecId::ISTHMUS) {
+            (
+                Some(BlobParams::prague()),
+                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+            )
+        } else if spec_id.is_enabled_in(OpSpecId::ECOTONE) {
+            (
+                Some(BlobParams::cancun()),
+                BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN,
+            )
+        } else {
+            (None, 0)
+        };
+
+        parent_header
+            .maybe_next_block_excess_blob_gas(params)
+            .or_else(|| spec_id.is_enabled_in(OpSpecId::ECOTONE).then_some(0))
+            .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
+    }
+
+    /// Builds a single-chunk [`PartialExecution`] covering all transactions of a
+    /// derived block, populated from (a) the `Execution` (header, attributes) returned
     /// by `test_derivation_with_chunks_and_traces`, and (b) the per-tx `ResultAndState`
-    /// vector captured by `ChunkingEvmFactory::new_with_traces` during the monolithic
+    /// vector captured by `CachedEvmFactory::new_with_traces` during the monolithic
     /// first pass.
     ///
-    /// `agreed_db`, `claimed_db`, and `agreed_evm` are set to `B256::ZERO` because
-    /// `verify_block_chunks` does not cross-check these against any derivation output —
-    /// they are authenticated only through `stitch_chunks`'s `chunk_trace`
-    /// reconstruction, which is not exercised by `test_derivation_with_chunks_and_traces`
-    /// (stitching runs in `run_stitching_client`, one layer up from `run_core_client`).
-    /// `claimed_evm` IS verified structurally (`hash_evm_state(&evm_state) ==
-    /// claimed_evm`), so it must be computed over the same `evm_state` we store.
-    ///
-    /// `block_env.blob_excess_gas_and_price` is unused by `verify_block_chunks`
-    /// (documented inline there — blob pricing only affects execution semantics, which
-    /// are already bound through the cumulative EVM state; the field is captured into
-    /// `block_ctx_hash` only when the stitching layer runs).
+    /// The chunk's `block_env.blob_excess_gas_and_price` is derived from the parent
+    /// header + spec_id via `expected_blob_excess_gas_and_price` so the chunk's
+    /// `block_env` matches what `CachedEvm::transact_raw` sees at serve time.
     pub fn build_single_chunk_for_block(
         execution: &Execution,
         traces: Vec<(
@@ -876,11 +889,7 @@ pub mod tests {
             basefee: header.base_fee_per_gas.unwrap_or(0),
             difficulty: header.difficulty,
             prevrandao: Some(header.mix_hash),
-            blob_excess_gas_and_price:
-                crate::precondition::evm::expected_blob_excess_gas_and_price(
-                    parent_header,
-                    spec_id,
-                ),
+            blob_excess_gas_and_price: expected_blob_excess_gas_and_price(parent_header, spec_id),
         };
         let op_block_ctx = OpBlockExecutionCtx {
             parent_hash: header.parent_hash,
@@ -896,28 +905,25 @@ pub mod tests {
         }
     }
 
-    /// Round-trip integration test for task 8.7 (step 2 — non-empty chunks).
+    /// Round-trip integration test for non-empty chunks.
     ///
     /// Runs the full derivation path *twice* against a real OP Sepolia fixture:
     ///   1. **Capture pass.** `chunks = Vec::new()`, `collector = Some(buf)`.
-    ///      `ChunkingEvmFactory`'s chunks map is empty so every `transact_raw()`
-    ///      delegates to inner `OpEvm`; the collector captures the full per-tx
+    ///      The factory's chunks map is empty so every `transact_raw()` delegates
+    ///      to inner `OpEvm`; the collector captures the full per-tx
     ///      `ResultAndState` trace keyed by block number.
-    ///   2. **Replay pass.** Build one full-block `Chunk` per derived block using
-    ///      `build_single_chunk_for_block` (traces + header + attributes +
-    ///      agreed_output). Run again with `chunks = Vec::of those chunks`,
-    ///      `collector = None`. `ChunkingEvm` now serves the replayed
-    ///      `ResultAndState` entries from `chunk.results`, and `run_core_client`'s
-    ///      CHUNK VERIFY phase cross-checks each chunk against the derivation
-    ///      pipeline's authentic header (block_env fields, tx_hash binding,
-    ///      hash_evm_state(&chunk.evm_state) == chunk.claimed_evm, receipts_root
-    ///      reconstruction). Success ⇒ chunked-replay derivation produced
-    ///      block-identical output to the monolithic pass.
+    ///   2. **Replay pass.** Build one full-block `PartialExecution` per derived
+    ///      block using `build_single_chunk_for_block`. Run again with the chunks
+    ///      populated and `collector = None`. `CachedEvm::transact_raw` now serves
+    ///      the replayed `ResultAndState` entries from `chunk.results`, asserts
+    ///      `BlockEnv` equality, and runs per-tx prestate authentication
+    ///      (`original_info` / `original_value` vs. live DB) before returning each
+    ///      result. Success ⇒ chunked-replay derivation produced block-identical
+    ///      output to the monolithic pass.
     ///
-    /// This is the "host-capture → guest-replay" equivalence round-trip that task 8.7
-    /// requested. The 1-block fixture `16491249 → 16491250` exercises the full code
-    /// path once; the 100-block fixture variant below exercises it on a deeper
-    /// derivation window.
+    /// The 1-block fixture `16491249 → 16491250` exercises the full code path once;
+    /// the 100-block fixture variant below exercises it on a deeper derivation
+    /// window.
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491250_chunks_roundtrip() {
         let boot_info = BootInfo {
@@ -935,7 +941,7 @@ pub mod tests {
         };
         let safe_head_number = 16491249u64;
 
-        // ---- Pass 1: capture ground-truth per-tx ResultAndState via ChunkingEvmFactory
+        // ---- Pass 1: capture ground-truth per-tx ResultAndState via CachedEvmFactory
         // in pass-through (empty chunks) mode with a trace collector attached.
         let collector: crate::evm::cached::TransactionResultCollector =
             Arc::new(Mutex::new(Vec::new()));
@@ -991,10 +997,10 @@ pub mod tests {
             })
             .collect();
 
-        // ---- Pass 2: replay through ChunkingEvm with populated chunks. The CHUNK VERIFY
-        // phase in run_core_client performs the coherence cross-checks; if any mismatch
-        // is detected, the whole run fails. Success proves the replayed chunks produce
-        // the same derivation output as the monolithic pass.
+        // ---- Pass 2: replay through CachedEvm with populated chunks. Per-tx
+        // authentication inside `CachedEvm::transact_raw` validates each serve;
+        // any prestate mismatch fails the whole run. Success proves the replayed
+        // chunks produce the same derivation output as the monolithic pass.
         test_derivation_with_chunks_and_traces(
             boot_info,
             None,
@@ -1008,9 +1014,8 @@ pub mod tests {
 
     /// Builds `n` sequential `PartialExecution` entries covering all transactions of
     /// a derived block. Splits the tx list as evenly as possible (last chunk may be
-    /// smaller). No per-chunk accumulator state is carried — `results_hash` (folding
-    /// per-tx `tx_hashes`, `pre_account_infos`, and `results`) is the only chunk-
-    /// level authentication commitment in the new scheme.
+    /// smaller). The only chunk-level authentication commitment is `results_hash`
+    /// (folding per-tx `tx_hashes` and `results`) composed with `block_ctx_hash`.
     pub fn build_n_chunks_for_block(
         execution: &Execution,
         traces: Vec<(
@@ -1050,11 +1055,7 @@ pub mod tests {
             basefee: header.base_fee_per_gas.unwrap_or(0),
             difficulty: header.difficulty,
             prevrandao: Some(header.mix_hash),
-            blob_excess_gas_and_price:
-                crate::precondition::evm::expected_blob_excess_gas_and_price(
-                    parent_header,
-                    spec_id,
-                ),
+            blob_excess_gas_and_price: expected_blob_excess_gas_and_price(parent_header, spec_id),
         };
         let op_block_ctx = OpBlockExecutionCtx {
             parent_hash: header.parent_hash,
@@ -1088,12 +1089,9 @@ pub mod tests {
         chunks
     }
 
-    /// Multi-chunk round-trip for task 8.7. Splits each block into up to 2 chunks —
-    /// exercising `ChunkingEvm`'s cursor advance across chunks, hash-chain continuity
-    /// (`chunks[i].agreed_db == chunks[i-1].claimed_db`, and likewise for `agreed_evm`),
-    /// per-chunk `tx_hash` binding over tx slices, and incremental `evm_state` /
-    /// receipts-root construction where only the LAST chunk's state must match the
-    /// block totals.
+    /// Multi-chunk round-trip. Splits each block into up to 2 chunks — exercising
+    /// `CachedEvm`'s cursor advance across chunks and per-chunk `tx_hash` binding
+    /// over tx slices.
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491250_two_chunks_roundtrip() {
         let boot_info = BootInfo {
@@ -1258,8 +1256,8 @@ pub mod tests {
         };
 
         // 100 empty inner vecs — one per block in the 16491249..16491349 derivation
-        // window. All map lookups miss → `ChunkingEvm` delegates every call to inner
-        // `OpEvm`, identical to the monolithic path.
+        // window. All per-block slots are empty → `CachedEvm` delegates every call
+        // to inner `OpEvm`, identical to the monolithic path.
         let chunks = vec![Vec::<PartialExecution>::new(); 100];
 
         test_derivation_with_chunks(boot_info, None, None, Some(Default::default()), chunks)

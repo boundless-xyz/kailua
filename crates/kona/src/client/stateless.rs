@@ -158,9 +158,9 @@ pub mod tests {
     /// cached `testdata/` `TestOracle` fixture), then sets `l1_head = ZERO` for pass
     /// 2 to route through the EXECUTION-ONLY branch. No blob witness required
     /// because derivation isn't re-run — we replay each Execution from the cache
-    /// through `ChunkingEvmFactory` (seeded with the built chunks), and the CHUNK
-    /// VERIFY phase in EXECUTION-ONLY authenticates each chunk against its
-    /// Execution (same cross-checks as the DERIVATION branch).
+    /// through `CachedEvmFactory` (seeded with the built chunks); per-tx
+    /// authentication inside `CachedEvm::transact_raw` validates each served
+    /// result against the live DB.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_stateless_client_with_chunks() -> anyhow::Result<()> {
         use crate::client::core::tests::{
@@ -240,7 +240,7 @@ pub mod tests {
             executions.into_iter().map(|e| e.as_ref().clone()).collect();
 
         // ---- Pass 2 (stateless replay): l1_head = ZERO routes through the
-        // EXECUTION-ONLY branch, which now supports chunks via ChunkingEvmFactory.
+        // EXECUTION-ONLY branch, which supports chunks via CachedEvmFactory.
         // No blobs_witness required — derivation isn't re-run in this branch.
         boot_info.l1_head = B256::ZERO;
         let oracle_witness = TestOracle::new(boot_info.clone());

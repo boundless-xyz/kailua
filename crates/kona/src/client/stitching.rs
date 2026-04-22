@@ -1162,8 +1162,6 @@ pub mod tests {
 
     // -- stitch_chunks tests --
 
-    use alloy_primitives::keccak256;
-
     /// Minimal BootInfo for stitch_chunks tests — derivation+execution mode (`l1_head`
     /// non-zero). Values do not need to correspond to a real chain; `stitch_chunks`
     /// only inspects the BootInfo's `agreed_l2_output_root`, `claimed_l2_block_number`,
@@ -1184,12 +1182,7 @@ pub mod tests {
         }
     }
 
-    fn make_chunk(
-        _agreed_db: B256,
-        _claimed_db: B256,
-        _agreed_evm: B256,
-        _claimed_evm: B256,
-    ) -> PartialExecution {
+    fn make_chunk() -> PartialExecution {
         PartialExecution {
             tx_hashes: Vec::new(),
             results: Vec::new(),
@@ -1207,37 +1200,24 @@ pub mod tests {
         stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
     }
 
-    /// A single block with a single chunk — no continuity checks are required. The
-    /// chunk journal is constructed and (in non-zkvm builds) `verify_stitching_journal`
-    /// is a no-op, so the function returns cleanly.
+    /// A single block with a single chunk — the chunk journal is constructed and (in
+    /// non-zkvm builds) `verify_stitching_journal` is a no-op, so the function
+    /// returns cleanly.
     #[test]
     fn stitch_chunks_single_block_single_chunk() {
         let boot = chunks_boot_info();
-        let chunk = make_chunk(
-            keccak256("db0"),
-            keccak256("db1"),
-            keccak256("evm0"),
-            keccak256("evm1"),
-        );
-        let pe_boots = precompute_pe_boots(&[vec![chunk]]);
+        let pe_boots = precompute_pe_boots(&[vec![make_chunk()]]);
         stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
     }
 
-    /// Valid multi-chunk hash chain: each chunk's `agreed_db` matches the prior
-    /// chunk's `claimed_db`, same for `agreed_evm`/`claimed_evm`. Must not panic.
+    /// Multiple chunks in one block — each is stitched independently. No
+    /// continuity checks are run between them in the new design (per-tx
+    /// `original_info`/`original_value` authentication in `CachedEvm` replaces
+    /// the removed pre/post DB-hash chain).
     #[test]
-    fn stitch_chunks_valid_hash_chain() {
+    fn stitch_chunks_multiple_per_block() {
         let boot = chunks_boot_info();
-        let db0 = keccak256("db_0");
-        let db1 = keccak256("db_1");
-        let db2 = keccak256("db_2");
-        let evm0 = keccak256("evm_0");
-        let evm1 = keccak256("evm_1");
-        let evm2 = keccak256("evm_2");
-        let chunks = vec![vec![
-            make_chunk(db0, db1, evm0, evm1),
-            make_chunk(db1, db2, evm1, evm2),
-        ]];
+        let chunks = vec![vec![make_chunk(), make_chunk()]];
         let pe_boots = precompute_pe_boots(&chunks);
         stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
     }
@@ -1275,12 +1255,7 @@ pub mod tests {
             state: Default::default(),
         };
 
-        let mut chunk_a = make_chunk(
-            keccak256("db0"),
-            keccak256("db1"),
-            keccak256("evm0"),
-            keccak256("evm1"),
-        );
+        let mut chunk_a = make_chunk();
         chunk_a.tx_hashes = vec![B256::ZERO];
         chunk_a.results = vec![stub(21000)];
 
@@ -1314,26 +1289,14 @@ pub mod tests {
     fn stitch_chunks_multi_block_uses_per_chunk_context() {
         use alloy_primitives::U256;
         let boot = chunks_boot_info();
-        // Block A: block 11 (parent = 10), agreed output root X.
-        let mut chunk_a = make_chunk(
-            keccak256("db_a0"),
-            keccak256("db_a1"),
-            keccak256("evm_a0"),
-            keccak256("evm_a1"),
-        );
+        // Block A: block 11 (parent = 10).
+        let mut chunk_a = make_chunk();
         chunk_a.block_env.number = U256::from(11u64);
 
-        // Block B: block 12 (parent = 11), agreed output root Y (different from X, and
-        // different from boot.agreed_l2_output_root). If stitch_chunks incorrectly
-        // substituted the outer BootInfo values, the journal for this chunk would
-        // refer to boot.agreed_l2_output_root and boot.claimed_l2_block_number
-        // regardless of the per-chunk values we set here.
-        let mut chunk_b = make_chunk(
-            keccak256("db_b0"),
-            keccak256("db_b1"),
-            keccak256("evm_b0"),
-            keccak256("evm_b1"),
-        );
+        // Block B: block 12 (parent = 11). If stitch_chunks incorrectly substituted
+        // the outer BootInfo values, the journal for this chunk would refer to
+        // boot.claimed_l2_block_number regardless of the per-chunk value we set here.
+        let mut chunk_b = make_chunk();
         chunk_b.block_env.number = U256::from(12u64);
 
         let pe_boots = precompute_pe_boots(&[vec![chunk_a], vec![chunk_b]]);
@@ -1346,16 +1309,7 @@ pub mod tests {
     fn stitch_chunks_empty_block_is_skipped() {
         let boot = chunks_boot_info();
         // Block 0 empty, block 1 has a single chunk, block 2 empty.
-        let chunks = vec![
-            vec![],
-            vec![make_chunk(
-                keccak256("db0"),
-                keccak256("db1"),
-                keccak256("evm0"),
-                keccak256("evm1"),
-            )],
-            vec![],
-        ];
+        let chunks = vec![vec![], vec![make_chunk()], vec![]];
         let pe_boots = precompute_pe_boots(&chunks);
         stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
     }

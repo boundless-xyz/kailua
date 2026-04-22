@@ -12,113 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use alloy::signers::k256::sha2::digest::Update;
 use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context_interface::result::{
     ExecutionResult, HaltReason, OutOfGasError, Output, ResultAndState, SuccessReason,
 };
 use alloy_evm::revm::database::in_memory_db::{AccountState, Cache, DbAccount};
-use alloy_evm::revm::primitives::KECCAK_EMPTY;
 use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmState};
 use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Address, B256, U256};
 use risc0_zkvm::sha::rust_crypto::{Digest, Sha256};
-
-/// Encodes an `AccountState` as a single canonical byte for hashing.
-pub fn account_state_byte(state: &AccountState) -> u8 {
-    match state {
-        AccountState::NotExisting => 0,
-        AccountState::None => 1,
-        AccountState::Touched => 2,
-        AccountState::StorageCleared => 3,
-    }
-}
-
-/// Maps the bitflags-based [`AccountStatus`] (from `EvmState` traces) to the enum-based
-/// [`AccountState`] (from `Cache`/`CacheDB`).
-///
-/// This is used by both host-side witness construction and guest-side chunk verification
-/// when applying merged state deltas to advance the cumulative cache.
-///
-/// EIP-161 state-clearing rule: any account that is `Touched` and has empty info
-/// (balance == 0, nonce == 0, no code) is removed from state, regardless of whether
-/// it previously existed or was loaded as not existing. This applies uniformly to
-/// both absent accounts (zero-value call to new address) and existing-but-empty
-/// accounts (e.g. drained all balance).
-pub fn account_state_from_evm_status(status: AccountStatus, info: &AccountInfo) -> AccountState {
-    if status.intersects(AccountStatus::SelfDestructed | AccountStatus::Created) {
-        AccountState::StorageCleared
-    } else if status.contains(AccountStatus::Touched) {
-        if info.is_empty() {
-            // EIP-161: touched empty accounts are removed from state.
-            AccountState::NotExisting
-        } else {
-            AccountState::Touched
-        }
-    } else if status.contains(AccountStatus::LoadedAsNotExisting) {
-        // Read-only access to absent account (no Touched flag).
-        AccountState::NotExisting
-    } else {
-        AccountState::None
-    }
-}
-
-/// Applies a single transaction's [`EvmState`] trace (or a merged state delta) to a
-/// cumulative [`Cache`], updating account info, storage, lifecycle state, and contract
-/// bytecodes.
-///
-/// This is used by both host-side witness construction (advancing the cumulative cache
-/// through each chunk's traces) and guest-side chunk verification (applying the merged
-/// state delta from a [`PartialExecution`] proof to advance state during aggregation).
-///
-/// # `KECCAK_EMPTY` edge case (review finding L-2)
-///
-/// Contract bytecode is inserted into `cache.contracts` only when `code_hash !=
-/// KECCAK_EMPTY` AND `account.info.code.is_some()`. If a witness-supplied trace has
-/// `code_hash != KECCAK_EMPTY` but `code.is_none()` (a legal but unusual combination
-/// in revm's state model), no bytecode is inserted. Subsequent reads against
-/// `CacheDB<PanicDB>` for that code_hash would panic in the chunk guest. In the
-/// aggregation path where the backing DB is `State<TrieDB>`, code is lazily fetched
-/// through the preimage oracle by code_hash, so the outcome is the same as honest
-/// execution. `validate_cached_contracts` (called at chunk entry) only checks pairs
-/// present in `cache.contracts` — it cannot flag a missing entry for a present
-/// `code_hash`. This is mitigated transitively by the chunk proof's `results_hash`
-/// binding: the chunk guest executed with whatever bytecode state was in its
-/// witness, and any divergence between aggregation's lazy-loaded bytecode and the
-/// chunk guest's bytecode would produce different state transitions, failing the
-/// final state-root check.
-pub fn apply_trace_to_cache(cache: &mut Cache, trace: &EvmState) {
-    for (addr, account) in trace {
-        let db_account = cache.accounts.entry(*addr).or_insert_with(|| DbAccount {
-            info: AccountInfo::default(),
-            account_state: AccountState::NotExisting,
-            storage: Default::default(),
-        });
-
-        db_account.info = account.info.clone();
-        db_account.account_state = account_state_from_evm_status(account.status, &account.info);
-
-        // For created/self-destructed accounts, clear inherited storage
-        if account
-            .status
-            .intersects(AccountStatus::SelfDestructed | AccountStatus::Created)
-        {
-            db_account.storage.clear();
-        }
-
-        // Overlay storage changes
-        for (slot, evm_slot) in &account.storage {
-            db_account.storage.insert(*slot, evm_slot.present_value);
-        }
-
-        // Update contracts if code is present
-        if let Some(code) = &account.info.code {
-            if account.info.code_hash != KECCAK_EMPTY {
-                cache.contracts.insert(account.info.code_hash, code.clone());
-            }
-        }
-    }
-}
 
 /// Compute the chunk_trace commitment from the two input hashes.
 ///
@@ -134,50 +38,20 @@ pub fn compute_chunk_trace(results_hash: B256, block_ctx_hash: B256) -> B256 {
 }
 
 /// Canonical SHA256 of the block execution context (`BlockEnv` + `OpBlockExecutionCtx`).
-///
-/// Committed into `chunk_trace` so the chunk proof authenticates the exact block
-/// context under which its transactions executed. Any env-sensitive opcode
-/// (BASEFEE, PREVRANDAO, NUMBER, COINBASE, TIMESTAMP, BLOBBASEFEE, BLOCKHASH, the
-/// EIP-4788 beacon-root system call, EIP-2935 parent-hash ring, Holocene/Jovian
-/// EIP-1559 params encoded in extra_data) reads from these fields; a forged context
-/// would produce different results, so the chunk proof must carry them.
-///
-/// Encoding (streamed into SHA256):
-///
-/// ```text
-/// BlockEnv:
-///     u256_be(number)
-///     address(beneficiary)                  20 bytes
-///     u256_be(timestamp)
-///     u64_be(gas_limit)
-///     u64_be(basefee)
-///     u256_be(difficulty)
-///     option(prevrandao) -> 1-byte tag + 32-byte B256 if Some
-///     option(blob_excess_gas_and_price) -> 1-byte tag + u64_be(excess_blob_gas) + u128_be(blob_gasprice)
-///
-/// OpBlockExecutionCtx:
-///     b256(parent_hash)                     32 bytes
-///     option(parent_beacon_block_root) -> 1-byte tag + 32-byte B256 if Some
-///     u64_be(len(extra_data)) || extra_data bytes
-/// ```
-///
-/// This encoding matches the `BlockEnvRkyv` / `OpBlockExecutionCtxRkyv` field set
-/// (see `rkyv/chunking.rs`) but uses a canonical byte stream instead of the rkyv
-/// archived layout, so hash equality is independent of archive representation.
 pub fn hash_block_ctx(block_env: &BlockEnv, op_block_ctx: &OpBlockExecutionCtx) -> B256 {
     let mut hasher = Sha256::new();
 
     // --- BlockEnv ---
-    write_u256(&mut hasher, &block_env.number);
-    write_address(&mut hasher, &block_env.beneficiary);
-    write_u256(&mut hasher, &block_env.timestamp);
+    hasher.update(block_env.number.to_be_bytes::<32>());
+    hasher.update(block_env.beneficiary.0 .0);
+    hasher.update(block_env.timestamp.to_be_bytes::<32>());
     write_u64(&mut hasher, block_env.gas_limit);
     write_u64(&mut hasher, block_env.basefee);
-    write_u256(&mut hasher, &block_env.difficulty);
+    hasher.update(block_env.difficulty.to_be_bytes::<32>());
     match &block_env.prevrandao {
         Some(r) => {
             hasher.update([1u8]);
-            write_b256(&mut hasher, r);
+            hasher.update(r.0);
         }
         None => hasher.update([0u8]),
     }
@@ -191,11 +65,11 @@ pub fn hash_block_ctx(block_env: &BlockEnv, op_block_ctx: &OpBlockExecutionCtx) 
     }
 
     // --- OpBlockExecutionCtx ---
-    write_b256(&mut hasher, &op_block_ctx.parent_hash);
+    hasher.update(op_block_ctx.parent_hash.0);
     match &op_block_ctx.parent_beacon_block_root {
         Some(r) => {
             hasher.update([1u8]);
-            write_b256(&mut hasher, r);
+            hasher.update(r.0);
         }
         None => hasher.update([0u8]),
     }
@@ -204,36 +78,6 @@ pub fn hash_block_ctx(block_env: &BlockEnv, op_block_ctx: &OpBlockExecutionCtx) 
     B256::from_slice(&hasher.finalize())
 }
 
-// ============================================================================
-//  hash_results — canonical SHA256 of `Vec<ResultAndState<OpHaltReason>>`
-// ============================================================================
-//
-// Canonical streaming SHA256 encoding of a per-transaction execution trace.
-//
-// This hash is committed into `chunk_trace` so that the chunk proof authenticates not
-// just the pre→post state hashes but the *exact sequence* of per-transaction
-// `ResultAndState` entries produced during execution. This prevents a class of
-// aggregation-side forgeries where an adversary could replay different `results` that
-// coincidentally take `pre_db_hash` to `post_db_hash`.
-//
-// Encoding (streamed into the SHA256 hasher in this exact order):
-//
-// ```text
-// u64_be(len(results))
-// for each result in order:
-//     encode_execution_result(result.result)
-//     encode_evm_state(result.state)
-// ```
-//
-// The encoding deliberately excludes transient revm fields (`transaction_id`, `is_cold`,
-// `Account.original_info`, `AccountInfo.code`) — these either vary by execution context
-// without affecting state correctness or are redundant with `code_hash`. This matches
-// the exclusion pattern in `AccountRkyv` (see `rkyv/chunking.rs`).
-//
-// All length prefixes use `u64` big-endian. All 256-bit values (U256, B256) are encoded
-// in 32 bytes big-endian. Addresses are 20 raw bytes. Enums use explicit discriminant
-// bytes starting at 0 (see variant tables below).
-
 fn write_u64(hasher: &mut Sha256, v: u64) {
     hasher.update(v.to_be_bytes());
 }
@@ -241,18 +85,6 @@ fn write_u64(hasher: &mut Sha256, v: u64) {
 fn write_bytes(hasher: &mut Sha256, data: &[u8]) {
     write_u64(hasher, data.len() as u64);
     hasher.update(data);
-}
-
-fn write_u256(hasher: &mut Sha256, v: &U256) {
-    hasher.update(v.to_be_bytes::<32>());
-}
-
-fn write_b256(hasher: &mut Sha256, v: &B256) {
-    hasher.update(v.0);
-}
-
-fn write_address(hasher: &mut Sha256, addr: &Address) {
-    hasher.update(addr.0 .0);
 }
 
 /// Discriminants for `SuccessReason`. Matches the ordering in `rkyv/chunking.rs`
@@ -323,11 +155,11 @@ fn write_op_halt_reason(hasher: &mut Sha256, r: &OpHaltReason) {
 fn write_logs(hasher: &mut Sha256, logs: &[alloy_primitives::Log]) {
     write_u64(hasher, logs.len() as u64);
     for log in logs {
-        write_address(hasher, &log.address);
+        hasher.update(log.address.0 .0);
         let topics = log.data.topics();
         write_u64(hasher, topics.len() as u64);
         for t in topics {
-            write_b256(hasher, t);
+            hasher.update(t.0);
         }
         write_bytes(hasher, &log.data.data);
     }
@@ -345,7 +177,7 @@ fn write_output(hasher: &mut Sha256, output: &Output) {
             match addr_opt {
                 Some(addr) => {
                     hasher.update([1u8]);
-                    write_address(hasher, addr);
+                    hasher.update(addr.0 .0);
                 }
                 None => hasher.update([0u8]),
             }
@@ -381,41 +213,19 @@ fn write_execution_result(hasher: &mut Sha256, r: &ExecutionResult<OpHaltReason>
     }
 }
 
-/// Encode a single `Account`. Skips transient fields (`original_info`,
-/// `transaction_id`) and the redundant `AccountInfo.code` (committed via `code_hash`).
-/// `EvmStorageSlot` encodes both `original_value` and `present_value` (the storage
-/// transition) but skips `transaction_id` and `is_cold`.
-///
-/// # Upgrade hazard (review finding M-6): `AccountStatus::bits()` width
-///
-/// `acct.status.bits()` returns `u8` — the current revm `AccountStatus` bitflag fits
-/// in 8 bits (Cold, LoadedAsNotExisting, Touched, Created, CreatedLocal,
-/// SelfDestructed, SelfDestructedLocal, plus one reserve). If a future revm release
-/// widens this to `u16`, `.bits()` returns `u16` and our `[byte]` call would fail to
-/// compile (good — forces an explicit upgrade decision). If instead revm swaps the
-/// underlying type silently (unlikely), the static assertion below traps the change.
-const _: () = {
-    // Compile-time assertion: AccountStatus.bits() must be u8.
-    let _check: u8 = 0u8.wrapping_add(0);
-    let _: fn() -> u8 = || {
-        let s = AccountStatus::empty();
-        s.bits()
-    };
-};
-
 fn write_account(hasher: &mut Sha256, acct: &Account) {
     // Pre-tx AccountInfo (original_info) — revm's first-load value for this address.
     // Authenticated so CachedEvm's serve-side `db.basic(addr)` check against
     // `account.original_info` is bound by the chunk proof.
     write_u64(hasher, acct.original_info.nonce);
-    write_u256(hasher, &acct.original_info.balance);
-    write_b256(hasher, &acct.original_info.code_hash);
+    hasher.update(acct.original_info.balance.to_be_bytes::<32>());
+    hasher.update(acct.original_info.code_hash.0);
 
     // Post-tx AccountInfo (info): nonce, balance, code_hash. Skip `account_id` and
     // `code` field (code_hash binds bytecode content via `validate_cached_contracts`).
     write_u64(hasher, acct.info.nonce);
-    write_u256(hasher, &acct.info.balance);
-    write_b256(hasher, &acct.info.code_hash);
+    hasher.update(acct.info.balance.to_be_bytes::<32>());
+    hasher.update(acct.info.code_hash.0);
 
     // Status bitflags (u8 — see M-6 assertion above).
     hasher.update([acct.status.bits()]);
@@ -425,9 +235,9 @@ fn write_account(hasher: &mut Sha256, acct: &Account) {
     entries.sort_by_key(|(k, _)| *k);
     write_u64(hasher, entries.len() as u64);
     for (slot, evm_slot) in entries {
-        write_u256(hasher, slot);
-        write_u256(hasher, &evm_slot.original_value);
-        write_u256(hasher, &evm_slot.present_value);
+        hasher.update(slot.to_be_bytes::<32>());
+        hasher.update(evm_slot.original_value.to_be_bytes::<32>());
+        hasher.update(evm_slot.present_value.to_be_bytes::<32>());
     }
 }
 
@@ -438,7 +248,7 @@ fn write_evm_state(hasher: &mut Sha256, state: &EvmState) {
     entries.sort_by_key(|(addr, _)| *addr);
     write_u64(hasher, entries.len() as u64);
     for (addr, account) in entries {
-        write_address(hasher, addr);
+        hasher.update(addr.0 .0);
         write_account(hasher, account);
     }
 }
@@ -458,42 +268,6 @@ pub fn hash_results(tx_hashes: &[B256], results: &[ResultAndState<OpHaltReason>]
         write_evm_state(&mut hasher, &ras.state);
     }
     B256::from_slice(&hasher.finalize())
-}
-
-use alloy_consensus::{BlockHeader, Header};
-use alloy_eips::eip7840::BlobParams;
-use alloy_evm::op_revm::OpSpecId;
-use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
-use alloy_evm::revm::primitives::eip4844::{
-    BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-};
-
-/// Compute the `BlobExcessGasAndPrice` that kona's `prepare_block_env` would assign
-/// to `BlockEnv.blob_excess_gas_and_price` for a block with the given parent header
-/// and spec_id. Mirrors `kona/proof/executor/src/builder/env.rs::prepare_block_env`
-/// exactly — if that implementation changes in upstream, this must too.
-pub fn expected_blob_excess_gas_and_price(
-    parent_header: &Header,
-    spec_id: OpSpecId,
-) -> Option<BlobExcessGasAndPrice> {
-    let (params, fraction) = if spec_id.is_enabled_in(OpSpecId::ISTHMUS) {
-        (
-            Some(BlobParams::prague()),
-            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-        )
-    } else if spec_id.is_enabled_in(OpSpecId::ECOTONE) {
-        (
-            Some(BlobParams::cancun()),
-            BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN,
-        )
-    } else {
-        (None, 0)
-    };
-
-    parent_header
-        .maybe_next_block_excess_blob_gas(params)
-        .or_else(|| spec_id.is_enabled_in(OpSpecId::ECOTONE).then_some(0))
-        .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
 }
 
 #[cfg(test)]
@@ -882,7 +656,9 @@ pub mod tests {
     #[test]
     fn apply_trace_preserves_not_existing_for_absent_account_read() {
         // Regression test: when a chunk reads a non-existent account, the cumulative
-        // cache must record it as NotExisting so the next chunk's pre_db_hash matches.
+        // cache must record it as NotExisting so later chunks' witness caches are
+        // populated with the authentic pre-state view.
+        use crate::evm::state::apply_trace_to_cache;
         use alloy_evm::revm::state::Account;
 
         let addr = address!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");

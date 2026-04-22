@@ -23,6 +23,7 @@ use alloy_op_evm::OpBlockExecutionCtx;
 use alloy_primitives::B256;
 
 pub mod cached;
+pub mod state;
 
 /// Represents a proven transaction subsequence within a block.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
@@ -46,15 +47,15 @@ pub struct PartialExecution {
 pub struct PartialExecutionWitness {
     /// List of transactions to execute
     pub transactions: Vec<Vec<u8>>,
+    /// Storage DB prior to execution
+    #[rkyv(with = CacheRkyv)]
+    pub cache: Cache,
     /// Block execution context
     #[rkyv(with = BlockEnvRkyv)]
     pub block_env: BlockEnv,
     /// OP Block context
     #[rkyv(with = OpBlockExecutionCtxRkyv)]
     pub op_block_ctx: OpBlockExecutionCtx,
-    /// Storage DB prior to execution
-    #[rkyv(with = CacheRkyv)]
-    pub cache: Cache,
 }
 
 #[cfg(test)]

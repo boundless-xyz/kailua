@@ -29,8 +29,6 @@ use rkyv::rancor::Fallible;
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Archived, Place, Resolver};
 
-use crate::precondition::evm::account_state_byte;
-
 fn account_state_from_byte(byte: u8) -> AccountState {
     match byte {
         0 => AccountState::NotExisting,
@@ -920,6 +918,16 @@ where
     ) -> Result<ResultAndState<OpHaltReason>, D::Error> {
         let rkyved: RkyvedResultAndState = rkyv::Deserialize::deserialize(field, deserializer)?;
         Ok(ResultAndStateRkyv::raw(rkyved))
+    }
+}
+
+/// Encodes an `AccountState` as a single canonical byte for hashing.
+pub fn account_state_byte(state: &AccountState) -> u8 {
+    match state {
+        AccountState::NotExisting => 0,
+        AccountState::None => 1,
+        AccountState::Touched => 2,
+        AccountState::StorageCleared => 3,
     }
 }
 
