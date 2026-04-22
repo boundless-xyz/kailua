@@ -21,7 +21,7 @@ use crate::evm::PartialExecutionWitness;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
-use crate::precondition::chunking::{compute_chunk_trace, hash_block_ctx, hash_results};
+use crate::precondition::evm::{compute_chunk_trace, hash_block_ctx, hash_results};
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
 use alloy_consensus::transaction::SignerRecoverable;
@@ -877,7 +877,7 @@ pub mod tests {
             difficulty: header.difficulty,
             prevrandao: Some(header.mix_hash),
             blob_excess_gas_and_price:
-                crate::precondition::chunking::expected_blob_excess_gas_and_price(
+                crate::precondition::evm::expected_blob_excess_gas_and_price(
                     parent_header,
                     spec_id,
                 ),
@@ -1051,7 +1051,7 @@ pub mod tests {
             difficulty: header.difficulty,
             prevrandao: Some(header.mix_hash),
             blob_excess_gas_and_price:
-                crate::precondition::chunking::expected_blob_excess_gas_and_price(
+                crate::precondition::evm::expected_blob_excess_gas_and_price(
                     parent_header,
                     spec_id,
                 ),
@@ -1500,7 +1500,7 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_chunk_mode_empty_transactions() {
-        use crate::precondition::chunking::{compute_chunk_trace, hash_results};
+        use crate::precondition::evm::{compute_chunk_trace, hash_results};
         use alloy_evm::revm::database::in_memory_db::Cache;
         use risc0_zkvm::sha::Digestible;
 
@@ -1514,7 +1514,7 @@ pub mod tests {
 
         // No txs ⇒ empty trace collector ⇒ hash_results over zero entries.
         let results_hash = hash_results(&[], &[]);
-        let block_ctx_hash = crate::precondition::chunking::hash_block_ctx(
+        let block_ctx_hash = crate::precondition::evm::hash_block_ctx(
             &alloy_evm::revm::context::BlockEnv::default(),
             &alloy_op_evm::OpBlockExecutionCtx::default(),
         );
@@ -1577,8 +1577,8 @@ pub mod tests {
 
     #[test]
     fn validate_cached_contracts_rejects_malformed_entry() {
-        let valid_code = crate::precondition::chunking::tests::make_bytecode(&[0x60, 0x00]);
-        let invalid_code = crate::precondition::chunking::tests::make_bytecode(&[0x60, 0x01]);
+        let valid_code = crate::precondition::evm::tests::make_bytecode(&[0x60, 0x00]);
+        let invalid_code = crate::precondition::evm::tests::make_bytecode(&[0x60, 0x01]);
         let code_hash = valid_code.hash_slow();
 
         let mut cache = Cache {

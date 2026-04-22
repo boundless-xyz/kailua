@@ -17,7 +17,7 @@ use alloy_primitives::B256;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Digest;
 
-pub mod chunking;
+pub mod evm;
 pub mod derivation;
 pub mod execution;
 pub mod proposal;

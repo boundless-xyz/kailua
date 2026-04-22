@@ -21,7 +21,7 @@ use crate::evm::PartialExecutionWitness;
 use crate::executor::Execution;
 use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
-use crate::precondition::chunking::{compute_chunk_trace, hash_block_ctx, hash_results};
+use crate::precondition::evm::{compute_chunk_trace, hash_block_ctx, hash_results};
 use crate::precondition::Precondition;
 use alloy_primitives::{Address, B256};
 use anyhow::Context;
@@ -67,7 +67,6 @@ pub trait StitchingClient<
     ///   to be stitched together.
     /// * `chunk_witness`: An optional witness for running a partial execution
     /// * `chunks`: A list of partial executions to reuse
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     fn run_stitching_client(
         self,
@@ -397,9 +396,6 @@ pub fn stitch_executions(
     }
 }
 
-/// Sentinel `l1_head` value identifying chunk-proof journals (see `core.rs` chunk branch).
-const CHUNK_SENTINEL_L1_HEAD: B256 = B256::new([0xFF; 32]);
-
 /// Precomputes precondition and stitched boot info data for partial executions
 pub fn precompute_pe_boots(
     partial_executions: &[Vec<PartialExecution>],
@@ -422,7 +418,7 @@ pub fn precompute_pe_boots(
 
             // Create required boot info
             let stitched_boot = StitchedBootInfo {
-                l1_head: CHUNK_SENTINEL_L1_HEAD,
+                l1_head: B256::repeat_byte(0xFF),
                 agreed_l2_output_root: partial.op_block_ctx.parent_hash,
                 claimed_l2_output_root: partial.op_block_ctx.parent_hash,
                 claimed_l2_block_number: partial.block_env.number.to::<u64>().saturating_sub(1),
@@ -1207,7 +1203,8 @@ pub mod tests {
     #[test]
     fn stitch_chunks_empty_is_noop() {
         let boot = chunks_boot_info();
-        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, &[]);
+        let pe_boots = precompute_pe_boots(&[]);
+        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
     }
 
     /// A single block with a single chunk — no continuity checks are required. The
@@ -1222,7 +1219,8 @@ pub mod tests {
             keccak256("evm0"),
             keccak256("evm1"),
         );
-        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, &[vec![chunk]]);
+        let pe_boots = precompute_pe_boots(&[vec![chunk]]);
+        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
     }
 
     /// Valid multi-chunk hash chain: each chunk's `agreed_db` matches the prior
@@ -1240,7 +1238,8 @@ pub mod tests {
             make_chunk(db0, db1, evm0, evm1),
             make_chunk(db1, db2, evm1, evm2),
         ]];
-        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, &chunks);
+        let pe_boots = precompute_pe_boots(&chunks);
+        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
     }
 
     /// Binding: altering `chunk.results` must change the reconstructed `chunk_trace`.
@@ -1258,7 +1257,7 @@ pub mod tests {
     /// on the zkvm side.
     #[test]
     fn stitch_chunks_results_tampering_changes_chunk_trace() {
-        use crate::precondition::chunking::{compute_chunk_trace, hash_block_ctx, hash_results};
+        use crate::precondition::evm::{compute_chunk_trace, hash_block_ctx, hash_results};
         use alloy_evm::op_revm::OpHaltReason;
         use alloy_evm::revm::context_interface::result::{
             ExecutionResult, Output, ResultAndState, SuccessReason,
@@ -1337,12 +1336,8 @@ pub mod tests {
         );
         chunk_b.block_env.number = U256::from(12u64);
 
-        stitch_partial_executions(
-            &boot,
-            B256::ZERO,
-            Address::ZERO,
-            &[vec![chunk_a], vec![chunk_b]],
-        );
+        let pe_boots = precompute_pe_boots(&[vec![chunk_a], vec![chunk_b]]);
+        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
     }
 
     /// Blocks with empty chunk vecs are skipped: a witness that mixes some chunked
@@ -1361,6 +1356,7 @@ pub mod tests {
             )],
             vec![],
         ];
-        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, &chunks);
+        let pe_boots = precompute_pe_boots(&chunks);
+        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
     }
 }

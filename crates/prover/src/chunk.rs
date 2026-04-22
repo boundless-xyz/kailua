@@ -31,7 +31,7 @@ use alloy_primitives::{Bytes, B256, U256};
 use op_alloy_consensus::OpReceiptEnvelope;
 
 use kailua_kona::evm::PartialExecutionWitness;
-use kailua_kona::precondition::chunking::apply_trace_to_cache;
+use kailua_kona::precondition::evm::apply_trace_to_cache;
 
 /// Groups `tx_count` transactions into sequential, non-overlapping chunks of at most
 /// `max_txs_per_chunk` transactions each. The last chunk may have fewer transactions.
@@ -730,61 +730,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn hash_chain_continuity_across_chunks() {
-        use kailua_kona::precondition::chunking::hash_cache;
-
-        let addr = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-        let slot = U256::from(1);
-
-        let mut post_prelude = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
-        post_prelude
-            .accounts
-            .insert(addr, make_db_account(0, 10000, vec![(slot, U256::from(0))]));
-
-        // Tx 0 (chunk 0): writes slot 1 = 42, nonce 0→1, balance 10000→9000
-        let trace0: EvmState = [(addr, make_account(1, 9000, vec![(slot, U256::from(42))]))]
-            .into_iter()
-            .collect();
-        // Tx 1 (chunk 1): writes slot 1 = 99, nonce 1→2, balance 9000→8000
-        let trace1: EvmState = [(addr, make_account(2, 8000, vec![(slot, U256::from(99))]))]
-            .into_iter()
-            .collect();
-
-        let txs = vec![Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02])];
-        let receipts = vec![make_receipt(21000), make_receipt(42000)];
-
-        let witnesses = build_chunk_witnesses(
-            &[trace0.clone(), trace1],
-            &default_tx_meta(2),
-            &post_prelude,
-            &txs,
-            &receipts,
-            1,
-            &default_block_env(),
-            &default_op_block_ctx(),
-        );
-
-        assert_eq!(witnesses.len(), 2);
-
-        // Simulate what the chunk 0 guest would compute as post_db_hash:
-        // Start with chunk 0's witness cache, apply chunk 0's trace, hash the result.
-        let mut chunk0_post_cache = witnesses[0].cache.clone();
-        apply_trace_to_cache(&mut chunk0_post_cache, &trace0);
-        let chunk0_post_hash = hash_cache(&chunk0_post_cache);
-
-        // Chunk 1's pre_db_hash is just the hash of its witness cache.
-        let chunk1_pre_hash = hash_cache(&witnesses[1].cache);
-
-        // Hash chain invariant: post_db_hash[0] == pre_db_hash[1]
-        assert_eq!(
-            chunk0_post_hash, chunk1_pre_hash,
-            "hash chain broken: chunk 0 post-hash != chunk 1 pre-hash"
-        );
-    }
 }

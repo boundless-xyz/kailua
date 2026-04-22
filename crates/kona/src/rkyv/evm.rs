@@ -29,7 +29,7 @@ use rkyv::rancor::Fallible;
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Archived, Place, Resolver};
 
-use crate::precondition::chunking::account_state_byte;
+use crate::precondition::evm::account_state_byte;
 
 fn account_state_from_byte(byte: u8) -> AccountState {
     match byte {
