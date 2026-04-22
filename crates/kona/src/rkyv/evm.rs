@@ -25,7 +25,6 @@ use alloy_evm::revm::database::in_memory_db::{AccountState, Cache, DbAccount};
 use alloy_evm::revm::state::{AccountInfo, Bytecode};
 use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Address, Bytes, B256, U256};
-use op_alloy_consensus::OpReceiptEnvelope;
 use rkyv::rancor::Fallible;
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Archived, Place, Resolver};
@@ -216,55 +215,6 @@ where
     ) -> Result<Cache, D::Error> {
         let rkyved: RkyvedCache = rkyv::Deserialize::deserialize(field, deserializer)?;
         Ok(CacheRkyv::raw(rkyved))
-    }
-}
-
-// -- OpReceiptRlpRkyv --
-
-/// rkyv wrapper for a single [`OpReceiptEnvelope`] using RLP encoding.
-///
-/// Compose with `rkyv::with::Map<OpReceiptRlpRkyv>` to serialize `Vec<OpReceiptEnvelope>`.
-pub struct OpReceiptRlpRkyv;
-
-impl ArchiveWith<OpReceiptEnvelope> for OpReceiptRlpRkyv {
-    type Archived = Archived<Vec<u8>>;
-    type Resolver = Resolver<Vec<u8>>;
-
-    fn resolve_with(
-        field: &OpReceiptEnvelope,
-        resolver: Self::Resolver,
-        out: Place<Self::Archived>,
-    ) {
-        let encoded = alloy_rlp::encode(field);
-        <Vec<u8> as Archive>::resolve(&encoded, resolver, out);
-    }
-}
-
-impl<S> SerializeWith<OpReceiptEnvelope, S> for OpReceiptRlpRkyv
-where
-    S: Fallible + rkyv::ser::Allocator + rkyv::ser::Writer + ?Sized,
-    <S as Fallible>::Error: rkyv::rancor::Source,
-{
-    fn serialize_with(
-        field: &OpReceiptEnvelope,
-        serializer: &mut S,
-    ) -> Result<Self::Resolver, S::Error> {
-        let encoded = alloy_rlp::encode(field);
-        <Vec<u8> as rkyv::Serialize<S>>::serialize(&encoded, serializer)
-    }
-}
-
-impl<D> DeserializeWith<Archived<Vec<u8>>, OpReceiptEnvelope, D> for OpReceiptRlpRkyv
-where
-    D: Fallible + ?Sized,
-    <D as Fallible>::Error: rkyv::rancor::Source,
-{
-    fn deserialize_with(
-        field: &Archived<Vec<u8>>,
-        deserializer: &mut D,
-    ) -> Result<OpReceiptEnvelope, D::Error> {
-        let bytes: Vec<u8> = rkyv::Deserialize::deserialize(field, deserializer)?;
-        Ok(alloy_rlp::decode_exact(bytes.as_slice()).unwrap())
     }
 }
 

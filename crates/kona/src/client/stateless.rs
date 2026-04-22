@@ -81,8 +81,8 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
         witness.trace_derivation,
         witness.stitched_preconditions,
         witness.stitched_boot_info,
-        witness.chunk_witness,
-        witness.chunks,
+        witness.pe_witness,
+        witness.partial_executions,
     );
 
     if oracle.preimage_count() > 0 {
@@ -139,8 +139,8 @@ pub mod tests {
             stitched_preconditions: vec![],
             stitched_boot_info: vec![],
             fpvm_image_id: Default::default(),
-            chunk_witness: None,
-            chunks: Vec::new(),
+            pe_witness: None,
+            partial_executions: Vec::new(),
         };
 
         run_stateless_client(witness, KonaStitchingClient(EthereumDataSourceProvider));
@@ -257,8 +257,8 @@ pub mod tests {
             stitched_preconditions: vec![],
             stitched_boot_info: vec![],
             fpvm_image_id: Default::default(),
-            chunk_witness: None,
-            chunks,
+            pe_witness: None,
+            partial_executions: chunks,
         };
 
         run_stateless_client(witness, KonaStitchingClient(EthereumDataSourceProvider));

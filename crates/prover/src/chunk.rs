@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn block_env_rkyv_round_trip() {
-        use kailua_kona::rkyv::chunking::BlockEnvRkyv;
+        use kailua_kona::rkyv::evm::BlockEnvRkyv;
         use kailua_kona::{from_bytes_with, to_bytes_with};
 
         let env = BlockEnv {
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn op_block_ctx_rkyv_round_trip() {
-        use kailua_kona::rkyv::chunking::OpBlockExecutionCtxRkyv;
+        use kailua_kona::rkyv::evm::OpBlockExecutionCtxRkyv;
         use kailua_kona::{from_bytes_with, to_bytes_with};
 
         let ctx = OpBlockExecutionCtx {

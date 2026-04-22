@@ -159,8 +159,8 @@ where
         stitched_preconditions,
         stitched_boot_info,
         fpvm_image_id,
-        chunk_witness: None,
-        chunks: chunks_for_witness,
+        pe_witness: None,
+        partial_executions: chunks_for_witness,
     };
     witness
         .oracle_witness

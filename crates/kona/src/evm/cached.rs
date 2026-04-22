@@ -65,7 +65,7 @@ impl<E: Evm> CachedEvm<E> {
 impl<E: Evm<HaltReason = OpHaltReason, Tx = OpTransaction<TxEnv>>> Evm for CachedEvm<E>
 where
     E::DB: alloy_evm::revm::Database,
-    BlockEnv: PartialEq<<E as Evm>::BlockEnv>
+    BlockEnv: PartialEq<<E as Evm>::BlockEnv>,
 {
     type DB = E::DB;
     type Tx = E::Tx;

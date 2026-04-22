@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::rkyv::chunking::CacheRkyv;
-use crate::rkyv::chunking::{BlockEnvRkyv, OpBlockExecutionCtxRkyv, ResultAndStateRkyv};
+use crate::rkyv::evm::CacheRkyv;
+use crate::rkyv::evm::{BlockEnvRkyv, OpBlockExecutionCtxRkyv, ResultAndStateRkyv};
 use crate::rkyv::primitives::B256Def;
 use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context::result::ResultAndState;
@@ -119,7 +119,7 @@ mod tests {
         }
     }
 
-    fn stub_chunk(_tag: u16, gas_used_markers: &[u64]) -> PartialExecution {
+    fn stub_chunk(block_number: u64, gas_used_markers: &[u64]) -> PartialExecution {
         // The tests construct incoming txs via `make_transfer(...)`, which is
         // `OpTransaction { base: TxEnv { .. }, ..Default::default() }`. The
         // default sets `enveloped_tx: Some(vec![0x00].into())`, so every
@@ -127,6 +127,14 @@ mod tests {
         // per-tx validation accept all test txs, populate each `tx_hashes[i]`
         // with that same value.
         let default_tx_hash = keccak256([0x00u8]);
+        // The chunk's `block_env.number` must match the EVM's `block_env.number`
+        // or `CachedEvm::transact_raw` rejects the serve with a BlockEnv mismatch.
+        // All other fields default — tests construct the EVM with the same
+        // `BlockEnv::default()` override-only-number shape via `test_env_for_block`.
+        let block_env = BlockEnv {
+            number: U256::from(block_number),
+            ..Default::default()
+        };
         PartialExecution {
             tx_hashes: vec![default_tx_hash; gas_used_markers.len()],
             results: gas_used_markers
@@ -134,7 +142,7 @@ mod tests {
                 .copied()
                 .map(stub_result_and_state)
                 .collect(),
-            block_env: alloy_evm::revm::context::BlockEnv::default(),
+            block_env,
             op_block_ctx: alloy_op_evm::block::OpBlockExecutionCtx::default(),
         }
     }
@@ -143,7 +151,7 @@ mod tests {
     /// bypassing inner-EVM execution. The marker gas_used proves it came from the chunk.
     #[test]
     fn precomputed_results_returned_in_order() {
-        let chunks = vec![vec![stub_chunk(0, &[100_001, 100_002, 100_003])]];
+        let chunks = vec![vec![stub_chunk(1, &[100_001, 100_002, 100_003])]];
         let factory = CachedEvmFactory::new(chunks);
 
         let sender = address!("0x1000000000000000000000000000000000000000");
@@ -209,7 +217,7 @@ mod tests {
     /// result index 0.
     #[test]
     fn system_calls_delegate_and_do_not_advance_tx_index() {
-        let chunks = vec![vec![stub_chunk(0, &[42])]];
+        let chunks = vec![vec![stub_chunk(1, &[42])]];
         let factory = CachedEvmFactory::new(chunks);
 
         let db = InMemoryDB::default();
@@ -236,7 +244,7 @@ mod tests {
     #[test]
     fn multi_chunk_within_block_crosses_boundary() {
         // Chunk 0: txs 0..2, markers [10, 20]. Chunk 1: txs 2..4, markers [30, 40].
-        let chunks = vec![vec![stub_chunk(0, &[10, 20]), stub_chunk(2, &[30, 40])]];
+        let chunks = vec![vec![stub_chunk(1, &[10, 20]), stub_chunk(1, &[30, 40])]];
         let factory = CachedEvmFactory::new(chunks);
 
         let db = InMemoryDB::default();
@@ -262,7 +270,9 @@ mod tests {
     fn factory_serves_chunks_in_creation_order() {
         // Slot 0: empty (first EVM created gets no pre-computed results).
         // Slot 1: one chunk with marker 777 (second EVM gets the pre-computed result).
-        let chunks = vec![vec![], vec![stub_chunk(0, &[777])]];
+        // Second EVM is built with `test_env_for_block(5)`, so the chunk's
+        // `block_env.number` must equal 5 to satisfy `CachedEvm::transact_raw`.
+        let chunks = vec![vec![], vec![stub_chunk(5, &[777])]];
         let factory = CachedEvmFactory::new(chunks);
 
         // First create_evm → empty chunks → delegate to inner (live execution).
@@ -312,7 +322,9 @@ mod tests {
     /// "graceful fall-through to inner EVM" behavior).
     #[test]
     fn take_next_chunks_pops_in_order() {
-        let chunks = vec![vec![stub_chunk(0, &[123])]];
+        // No EVM is built here — block_number is irrelevant, but pass a non-zero
+        // value for consistency with other tests.
+        let chunks = vec![vec![stub_chunk(1, &[123])]];
         let factory = CachedEvmFactory::new(chunks);
 
         // First call drains the single block's chunks.
@@ -328,7 +340,7 @@ mod tests {
     #[test]
     fn exhausted_chunks_delegate_to_inner() {
         // Chunk has only one result.
-        let chunks = vec![vec![stub_chunk(0, &[999])]];
+        let chunks = vec![vec![stub_chunk(1, &[999])]];
         let factory = CachedEvmFactory::new(chunks);
 
         let sender = address!("0x1000000000000000000000000000000000000000");

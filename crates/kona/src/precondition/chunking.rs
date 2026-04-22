@@ -1256,5 +1256,4 @@ pub mod tests {
         let p = crate::precondition::Precondition::default().chunk(trace);
         assert_eq!(p.digest(), risc0_zkvm::Digest::from_bytes(trace.0));
     }
-
 }

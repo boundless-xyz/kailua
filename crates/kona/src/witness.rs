@@ -61,15 +61,10 @@ pub struct Witness<O: WitnessOracle> {
     /// Represents the fault-proof virtual machine program image id.
     #[rkyv(with = B256Def)]
     pub fpvm_image_id: B256,
-    /// Optional chunk witness data for chunk execution-only mode.
-    /// When present and the boot sentinel triggers chunk mode, this provides
-    /// the pre-populated state, transactions, and metadata for chunk proving.
-    pub chunk_witness: Option<PartialExecutionWitness>,
-    /// Pre-computed per-block chunk aggregation data. Each outer `Vec<Chunk>` holds the
-    /// ordered chunks for a block produced during derivation+execution; the outer index
-    /// corresponds to block position from `safe_head_number + 1`. Empty inner vectors
-    /// (or blocks past the end of this outer vec) run through monolithic execution.
-    pub chunks: Vec<Vec<PartialExecution>>,
+    /// Optional witness data for partial execution.
+    pub pe_witness: Option<PartialExecutionWitness>,
+    /// Pre-computed per-block chunk aggregation data.
+    pub partial_executions: Vec<Vec<PartialExecution>>,
 }
 
 impl Witness<VecOracle> {
@@ -122,8 +117,8 @@ pub mod tests {
             ],
             stitched_boot_info: gen_boot_infos(32, 128),
             fpvm_image_id: keccak256(b"fpvm_image_id"),
-            chunk_witness: None,
-            chunks: Vec::new(),
+            pe_witness: None,
+            partial_executions: Vec::new(),
         };
 
         (witness, values)

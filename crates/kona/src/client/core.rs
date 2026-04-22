@@ -150,6 +150,9 @@ where
             // Calculate prestate hashes
             let block_ctx_hash = hash_block_ctx(&block_env, &op_block_ctx);
 
+            // Validate contract hashes in the witness cache before execution
+            validate_cached_contracts(&cache.contracts);
+
             // Build state
             let mut state = alloy_evm::revm::database::states::State::builder()
                 .with_database(CacheDB {
@@ -159,8 +162,6 @@ where
                 .build();
             // set the state-clear flag manually here because skip `apply_pre_execution_changes`
             state.set_state_clear_flag(true);
-            // validate contract hashes
-            validate_cached_contracts(&state.cache.contracts);
 
             // Set up EVM environment
             let cfg_env = alloy_evm::revm::context::CfgEnv::new()
@@ -250,7 +251,7 @@ where
                 rollup_config.as_ref(),
                 l2_provider.clone(),
                 l2_provider.clone(),
-                CachedEvmFactory::new_with_traces(chunks.clone(), chunk_trace_collector.clone()),
+                CachedEvmFactory::new_with_traces(chunks, chunk_trace_collector),
                 None,
             );
             kona_executor.update_safe_head(safe_head);
@@ -342,7 +343,7 @@ where
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider.clone(),
-            CachedEvmFactory::new_with_traces(chunks.clone(), chunk_trace_collector.clone()),
+            CachedEvmFactory::new_with_traces(chunks, chunk_trace_collector),
             execution_trace,
         );
 
