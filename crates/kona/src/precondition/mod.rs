@@ -46,9 +46,9 @@ pub struct Precondition {
     /// Derivation pipeline trace whose continuity is a precondition
     #[rkyv(with = B256Def)]
     pub derivation_trace: B256,
-    /// Chunk trace commitment for transaction chunk proving
+    /// Partial execution trace whose transition is a precondition
     #[rkyv(with = B256Def)]
-    pub chunk_trace: B256,
+    pub partial_executions: B256,
 }
 
 impl Precondition {
@@ -69,7 +69,7 @@ impl Precondition {
     }
 
     pub fn chunk(mut self, chunk_trace: B256) -> Self {
-        self.chunk_trace = chunk_trace;
+        self.partial_executions = chunk_trace;
         self
     }
 }
@@ -77,12 +77,12 @@ impl Precondition {
 impl Digestible for Precondition {
     fn digest(&self) -> Digest {
         // Chunk-only precondition
-        if !self.chunk_trace.is_zero() {
+        if !self.partial_executions.is_zero() {
             assert!(self.proposal_blobs.is_zero());
             assert!(self.execution_trace.is_zero());
             assert!(self.derivation_cache.is_zero());
             assert!(self.derivation_trace.is_zero());
-            return Digest::from_bytes(self.chunk_trace.0);
+            return Digest::from_bytes(self.partial_executions.0);
         }
         // Execution-only precondition
         if !self.execution_trace.is_zero() {
@@ -135,14 +135,14 @@ mod tests {
         assert!(p.execution_trace.is_zero());
         assert!(p.derivation_cache.is_zero());
         assert!(p.derivation_trace.is_zero());
-        assert!(p.chunk_trace.is_zero());
+        assert!(p.partial_executions.is_zero());
     }
 
     #[test]
     fn chunk_builder_sets_only_chunk_trace() {
         let h = non_zero_hash(0xAA);
         let p = Precondition::default().chunk(h);
-        assert_eq!(p.chunk_trace, h);
+        assert_eq!(p.partial_executions, h);
         assert!(p.proposal_blobs.is_zero());
         assert!(p.execution_trace.is_zero());
         assert!(p.derivation_cache.is_zero());
@@ -177,7 +177,7 @@ mod tests {
     #[should_panic]
     fn chunk_trace_with_execution_trace_panics() {
         let p = Precondition {
-            chunk_trace: non_zero_hash(0x01),
+            partial_executions: non_zero_hash(0x01),
             execution_trace: non_zero_hash(0x02),
             ..Default::default()
         };
@@ -188,7 +188,7 @@ mod tests {
     #[should_panic]
     fn chunk_trace_with_proposal_blobs_panics() {
         let p = Precondition {
-            chunk_trace: non_zero_hash(0x01),
+            partial_executions: non_zero_hash(0x01),
             proposal_blobs: non_zero_hash(0x02),
             ..Default::default()
         };
@@ -199,7 +199,7 @@ mod tests {
     #[should_panic]
     fn chunk_trace_with_derivation_cache_panics() {
         let p = Precondition {
-            chunk_trace: non_zero_hash(0x01),
+            partial_executions: non_zero_hash(0x01),
             derivation_cache: non_zero_hash(0x02),
             ..Default::default()
         };
@@ -210,7 +210,7 @@ mod tests {
     #[should_panic]
     fn chunk_trace_with_derivation_trace_panics() {
         let p = Precondition {
-            chunk_trace: non_zero_hash(0x01),
+            partial_executions: non_zero_hash(0x01),
             derivation_trace: non_zero_hash(0x02),
             ..Default::default()
         };

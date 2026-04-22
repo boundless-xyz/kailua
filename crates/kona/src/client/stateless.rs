@@ -188,8 +188,7 @@ pub mod tests {
         // ---- Pass 1 (capture): test_derivation_with_chunks_and_traces runs the full
         // derivation through `run_core_client`, captures per-tx `ResultAndState`,
         // returns the Executions.
-        let collector: crate::evm::cached::TransactionResultCollector =
-            Arc::new(Mutex::new(Vec::new()));
+        let collector: crate::evm::TransactionResultCollector = Arc::new(Mutex::new(Vec::new()));
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
             None,

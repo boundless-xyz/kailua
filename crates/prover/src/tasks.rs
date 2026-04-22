@@ -669,7 +669,7 @@ pub async fn compute_fpvm_proof(
                             .map(|c| B256::new(c.digest().into()))
                             .unwrap_or_default(),
                         derivation_trace,
-                        chunk_trace: B256::ZERO,
+                        partial_executions: B256::ZERO,
                     },
                     proposal_data_hash,
                     stitched_executions: vec![],

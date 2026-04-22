@@ -19,7 +19,9 @@
 //! under the prover's namespace for callers that previously depended on
 //! `kailua_prover::evm`.
 
-pub use kailua_kona::evm::cached::{CachedEvm, CachedEvmFactory, TransactionResultCollector};
+pub use kailua_kona::evm::CachedEvm;
+pub use kailua_kona::evm::CachedEvmFactory;
+pub use kailua_kona::evm::TransactionResultCollector;
 
 #[cfg(test)]
 mod tests {

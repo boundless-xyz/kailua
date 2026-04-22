@@ -14,10 +14,10 @@
 
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::evm::cached::CachedEvmFactory;
-use crate::evm::cached::TransactionResultCollector;
+use crate::evm::CachedEvmFactory;
 use crate::evm::PartialExecution;
 use crate::evm::PartialExecutionWitness;
+use crate::evm::TransactionResultCollector;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
@@ -593,7 +593,7 @@ pub mod tests {
         derivation_cache: Option<CachedDriver>,
         derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
         chunks: Vec<Vec<PartialExecution>>,
-        chunk_trace_collector: Option<crate::evm::cached::TransactionResultCollector>,
+        chunk_trace_collector: Option<crate::evm::TransactionResultCollector>,
     ) -> anyhow::Result<Vec<Arc<Execution>>> {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let (proposal_precondition_hash, proposal_data_hash) = if let Some(data) = proposal_data {
@@ -662,7 +662,7 @@ pub mod tests {
                         .unwrap_or_default()
                 })
                 .unwrap_or_default(),
-            chunk_trace: Default::default(),
+            partial_executions: Default::default(),
         };
         assert_eq!(precondition.digest(), expected_precondition.digest(),);
 
@@ -943,8 +943,7 @@ pub mod tests {
 
         // ---- Pass 1: capture ground-truth per-tx ResultAndState via CachedEvmFactory
         // in pass-through (empty chunks) mode with a trace collector attached.
-        let collector: crate::evm::cached::TransactionResultCollector =
-            Arc::new(Mutex::new(Vec::new()));
+        let collector: crate::evm::TransactionResultCollector = Arc::new(Mutex::new(Vec::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
@@ -1109,8 +1108,7 @@ pub mod tests {
         };
         let safe_head_number = 16491249u64;
 
-        let collector: crate::evm::cached::TransactionResultCollector =
-            Arc::new(Mutex::new(Vec::new()));
+        let collector: crate::evm::TransactionResultCollector = Arc::new(Mutex::new(Vec::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),
@@ -1177,8 +1175,7 @@ pub mod tests {
         };
         let safe_head_number = 16491249u64;
 
-        let collector: crate::evm::cached::TransactionResultCollector =
-            Arc::new(Mutex::new(Vec::new()));
+        let collector: crate::evm::TransactionResultCollector = Arc::new(Mutex::new(Vec::new()));
 
         let executions = test_derivation_with_chunks_and_traces(
             boot_info.clone(),

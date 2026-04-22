@@ -12,16 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy::signers::k256::sha2::digest::Update;
 use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context_interface::result::{
     ExecutionResult, HaltReason, OutOfGasError, Output, ResultAndState, SuccessReason,
 };
-use alloy_evm::revm::database::in_memory_db::{AccountState, Cache, DbAccount};
-use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmState};
+use alloy_evm::revm::state::{Account, EvmState};
 use alloy_op_evm::block::OpBlockExecutionCtx;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::B256;
 use risc0_zkvm::sha::rust_crypto::{Digest, Sha256};
 
 /// Compute the chunk_trace commitment from the two input hashes.
@@ -273,21 +271,10 @@ pub fn hash_results(tx_hashes: &[B256], results: &[ResultAndState<OpHaltReason>]
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use alloy_evm::revm::database::in_memory_db::AccountState;
     use alloy_evm::revm::primitives::HashMap;
-    use alloy_evm::revm::state::Bytecode;
-    use alloy_primitives::{address, U256};
+    use alloy_evm::revm::state::{AccountInfo, Bytecode};
+    use alloy_primitives::{Address, U256};
     use risc0_zkvm::sha::Digestible;
-
-    fn make_info(nonce: u64, balance: u64) -> AccountInfo {
-        AccountInfo {
-            nonce,
-            balance: U256::from(balance),
-            code_hash: B256::ZERO,
-            account_id: None,
-            code: None,
-        }
-    }
 
     pub fn make_bytecode(bytes: &'static [u8]) -> Bytecode {
         Bytecode::new_raw(alloy_primitives::Bytes::from_static(bytes))
@@ -549,140 +536,6 @@ pub mod tests {
             hash_results(&[B256::ZERO], std::slice::from_ref(&ras1)),
             hash_results(&[B256::ZERO], std::slice::from_ref(&ras2)),
             "transient fields must not affect the canonical hash"
-        );
-    }
-
-    // ========== account_state_from_evm_status / apply_trace_to_cache tests ==========
-
-    // The `account_state_from_evm_status` function takes the bitflag-based
-    // `AccountStatus` from `revm-state` (used by `EvmState` trace `Account`),
-    // NOT the enum-based `AccountStatus` from `revm-database::states`.
-    // We alias the bitflag version to avoid shadowing the test module's enum import.
-    use alloy_evm::revm::state::AccountStatus as EvmAccountStatus;
-
-    #[test]
-    fn loaded_as_not_existing_maps_to_not_existing() {
-        // A read-only access to a non-existent account produces LoadedAsNotExisting
-        // in EvmState traces. This must map to NotExisting.
-        let empty = AccountInfo::default();
-        assert_eq!(
-            account_state_from_evm_status(EvmAccountStatus::LoadedAsNotExisting, &empty),
-            AccountState::NotExisting,
-        );
-    }
-
-    #[test]
-    fn loaded_as_not_existing_touched_empty_maps_to_not_existing() {
-        // A touched absent account with empty info (e.g. zero-value call to
-        // non-existent address) is still NotExisting — EIP-161 cleanup.
-        let empty = AccountInfo::default();
-        assert_eq!(
-            account_state_from_evm_status(
-                EvmAccountStatus::LoadedAsNotExisting | EvmAccountStatus::Touched,
-                &empty,
-            ),
-            AccountState::NotExisting,
-        );
-    }
-
-    #[test]
-    fn loaded_as_not_existing_touched_nonempty_maps_to_touched() {
-        // A touched absent account that now has balance (e.g. received ETH)
-        // is Touched — the account was effectively created via value transfer.
-        let funded = make_info(0, 1000);
-        assert_eq!(
-            account_state_from_evm_status(
-                EvmAccountStatus::LoadedAsNotExisting | EvmAccountStatus::Touched,
-                &funded,
-            ),
-            AccountState::Touched,
-        );
-    }
-
-    #[test]
-    fn untouched_account_maps_to_none() {
-        // An empty status (loaded existing account, not touched) maps to None.
-        let empty = AccountInfo::default();
-        assert_eq!(
-            account_state_from_evm_status(EvmAccountStatus::empty(), &empty),
-            AccountState::None,
-        );
-    }
-
-    #[test]
-    fn touched_nonempty_account_maps_to_touched() {
-        let info = make_info(1, 100);
-        assert_eq!(
-            account_state_from_evm_status(EvmAccountStatus::Touched, &info),
-            AccountState::Touched,
-        );
-    }
-
-    #[test]
-    fn touched_empty_existing_account_maps_to_not_existing() {
-        // EIP-161: an existing account that is touched but ends up empty
-        // (e.g. drained all balance) is removed from state.
-        let empty = AccountInfo::default();
-        assert_eq!(
-            account_state_from_evm_status(EvmAccountStatus::Touched, &empty),
-            AccountState::NotExisting,
-        );
-    }
-
-    #[test]
-    fn created_account_maps_to_storage_cleared() {
-        let info = make_info(0, 0);
-        assert_eq!(
-            account_state_from_evm_status(
-                EvmAccountStatus::Created | EvmAccountStatus::Touched,
-                &info,
-            ),
-            AccountState::StorageCleared,
-        );
-    }
-
-    #[test]
-    fn selfdestructed_account_maps_to_storage_cleared() {
-        let info = make_info(0, 0);
-        assert_eq!(
-            account_state_from_evm_status(
-                EvmAccountStatus::SelfDestructed | EvmAccountStatus::Touched,
-                &info,
-            ),
-            AccountState::StorageCleared,
-        );
-    }
-
-    #[test]
-    fn apply_trace_preserves_not_existing_for_absent_account_read() {
-        // Regression test: when a chunk reads a non-existent account, the cumulative
-        // cache must record it as NotExisting so later chunks' witness caches are
-        // populated with the authentic pre-state view.
-        use crate::evm::state::apply_trace_to_cache;
-        use alloy_evm::revm::state::Account;
-
-        let addr = address!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
-        let mut cache = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
-        // Pre-populate the address as NotExisting (as witness construction does)
-        cache.accounts.insert(addr, DbAccount::new_not_existing());
-
-        // Simulate a trace where the account was read but doesn't exist
-        let account = Account::new_not_existing(0);
-        let mut trace: EvmState = Default::default();
-        trace.insert(addr, account);
-
-        apply_trace_to_cache(&mut cache, &trace);
-
-        // After applying the trace, the account must still be NotExisting
-        assert_eq!(
-            cache.accounts[&addr].account_state,
-            AccountState::NotExisting,
-            "absent account read must preserve NotExisting state for hash chain continuity"
         );
     }
 
