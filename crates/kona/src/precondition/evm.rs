@@ -12,15 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::precondition::derivation::flatten_bytes;
 use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context::BlockEnv;
+use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
 use alloy_evm::revm::context_interface::result::{
     ExecutionResult, HaltReason, OutOfGasError, Output, ResultAndState, SuccessReason,
 };
 use alloy_evm::revm::state::{Account, EvmState};
 use alloy_op_evm::block::OpBlockExecutionCtx;
-use alloy_primitives::B256;
-use risc0_zkvm::sha::rust_crypto::{Digest, Sha256};
+use alloy_primitives::{Address, Log, B256};
+use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 
 /// Compute the chunk_trace commitment from the two input hashes.
 ///
@@ -29,63 +31,103 @@ use risc0_zkvm::sha::rust_crypto::{Digest, Sha256};
 /// SHA256(results_hash || block_ctx_hash)
 /// ```
 pub fn compute_chunk_trace(results_hash: B256, block_ctx_hash: B256) -> B256 {
-    let mut hasher = Sha256::new();
-    hasher.update(results_hash.as_slice());
-    hasher.update(block_ctx_hash.as_slice());
-    B256::from_slice(&hasher.finalize())
+    let hashed_bytes = [results_hash.as_slice(), block_ctx_hash.as_slice()].concat();
+    let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
+        .as_bytes()
+        .try_into()
+        .unwrap();
+    digest.into()
 }
 
 /// Canonical SHA256 of the block execution context (`BlockEnv` + `OpBlockExecutionCtx`).
 pub fn hash_block_ctx(block_env: &BlockEnv, op_block_ctx: &OpBlockExecutionCtx) -> B256 {
-    let mut hasher = Sha256::new();
-
-    // --- BlockEnv ---
-    hasher.update(block_env.number.to_be_bytes::<32>());
-    hasher.update(block_env.beneficiary.0 .0);
-    hasher.update(block_env.timestamp.to_be_bytes::<32>());
-    write_u64(&mut hasher, block_env.gas_limit);
-    write_u64(&mut hasher, block_env.basefee);
-    hasher.update(block_env.difficulty.to_be_bytes::<32>());
-    match &block_env.prevrandao {
-        Some(r) => {
-            hasher.update([1u8]);
-            hasher.update(r.0);
-        }
-        None => hasher.update([0u8]),
-    }
-    match &block_env.blob_excess_gas_and_price {
-        Some(b) => {
-            hasher.update([1u8]);
-            write_u64(&mut hasher, b.excess_blob_gas);
-            hasher.update(b.blob_gasprice.to_be_bytes());
-        }
-        None => hasher.update([0u8]),
-    }
-
-    // --- OpBlockExecutionCtx ---
-    hasher.update(op_block_ctx.parent_hash.0);
-    match &op_block_ctx.parent_beacon_block_root {
-        Some(r) => {
-            hasher.update([1u8]);
-            hasher.update(r.0);
-        }
-        None => hasher.update([0u8]),
-    }
-    write_bytes(&mut hasher, &op_block_ctx.extra_data);
-
-    B256::from_slice(&hasher.finalize())
+    let hashed_bytes = [
+        flatten_block_env(block_env).as_slice(),
+        flatten_op_block_execution_ctx(op_block_ctx).as_slice(),
+    ]
+    .concat();
+    let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
+        .as_bytes()
+        .try_into()
+        .unwrap();
+    digest.into()
 }
 
-fn write_u64(hasher: &mut Sha256, v: u64) {
-    hasher.update(v.to_be_bytes());
+/// Canonical SHA256 of a list of txn hashes and their `Vec<ResultAndState<OpHaltReason>>`
+pub fn hash_results(tx_hashes: &[B256], results: &[ResultAndState<OpHaltReason>]) -> B256 {
+    assert_eq!(
+        tx_hashes.len(),
+        results.len(),
+        "hash_results: tx_hashes and results must have the same length",
+    );
+    let hashed_bytes = [
+        (results.len() as u64).to_be_bytes().as_slice(),
+        tx_hashes
+            .iter()
+            .zip(results)
+            .map(|(tx_hash, ras)| {
+                [
+                    tx_hash.as_slice(),
+                    flatten_bytes(flatten_execution_result(&ras.result)).as_slice(),
+                    flatten_bytes(flatten_evm_state(&ras.state)).as_slice(),
+                ]
+                .concat()
+            })
+            .collect::<Vec<_>>()
+            .concat()
+            .as_slice(),
+    ]
+    .concat();
+    let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
+        .as_bytes()
+        .try_into()
+        .unwrap();
+    digest.into()
 }
 
-fn write_bytes(hasher: &mut Sha256, data: &[u8]) {
-    write_u64(hasher, data.len() as u64);
-    hasher.update(data);
+pub fn flatten_block_env(block_env: &BlockEnv) -> Vec<u8> {
+    [
+        block_env.number.to_be_bytes::<32>().as_slice(),
+        block_env.beneficiary.as_slice(),
+        block_env.timestamp.to_be_bytes::<32>().as_slice(),
+        block_env.gas_limit.to_be_bytes().as_slice(),
+        block_env.basefee.to_be_bytes().as_slice(),
+        block_env.difficulty.to_be_bytes::<32>().as_slice(),
+        flatten_opt_prevrandao(block_env.prevrandao.as_ref()).as_slice(),
+        flatten_opt_blob_excess(block_env.blob_excess_gas_and_price.as_ref()).as_slice(),
+    ]
+    .concat()
 }
 
-/// Discriminants for `SuccessReason`. Matches the ordering in `rkyv/chunking.rs`
+pub fn flatten_op_block_execution_ctx(ctx: &OpBlockExecutionCtx) -> Vec<u8> {
+    [
+        ctx.parent_hash.as_slice(),
+        flatten_opt_prevrandao(ctx.parent_beacon_block_root.as_ref()).as_slice(),
+        flatten_bytes(&ctx.extra_data).as_slice(),
+    ]
+    .concat()
+}
+
+fn flatten_opt_prevrandao(opt: Option<&B256>) -> Vec<u8> {
+    match opt {
+        Some(r) => [&[1u8], r.as_slice()].concat(),
+        None => vec![0u8],
+    }
+}
+
+fn flatten_opt_blob_excess(opt: Option<&BlobExcessGasAndPrice>) -> Vec<u8> {
+    match opt {
+        Some(b) => [
+            [1u8].as_slice(),
+            b.excess_blob_gas.to_be_bytes().as_slice(),
+            b.blob_gasprice.to_be_bytes().as_slice(),
+        ]
+        .concat(),
+        None => vec![0u8],
+    }
+}
+
+/// Discriminants for `SuccessReason`. Matches the ordering in `rkyv/evm.rs`
 /// (`success_reason_byte`) so both encodings stay in sync.
 fn success_reason_disc(r: &SuccessReason) -> u8 {
     match r {
@@ -95,7 +137,7 @@ fn success_reason_disc(r: &SuccessReason) -> u8 {
     }
 }
 
-/// Discriminants for `OutOfGasError`. Matches `rkyv/chunking.rs::oog_byte`.
+/// Discriminants for `OutOfGasError`. Matches `rkyv/evm.rs::oog_byte`.
 fn oog_disc(e: &OutOfGasError) -> u8 {
     match e {
         OutOfGasError::Basic => 0,
@@ -107,83 +149,89 @@ fn oog_disc(e: &OutOfGasError) -> u8 {
     }
 }
 
-/// Discriminants for `HaltReason`. Matches `rkyv/chunking.rs::halt_reason_rkyv`.
-fn write_halt_reason(hasher: &mut Sha256, r: &HaltReason) {
+/// Discriminants for `HaltReason`. Matches `rkyv/evm.rs::halt_reason_rkyv`.
+fn flatten_halt_reason(r: &HaltReason) -> Vec<u8> {
     match r {
-        HaltReason::OutOfGas(e) => {
-            hasher.update([0, oog_disc(e)]);
-        }
-        HaltReason::OpcodeNotFound => hasher.update([1, 0]),
-        HaltReason::InvalidFEOpcode => hasher.update([2, 0]),
-        HaltReason::InvalidJump => hasher.update([3, 0]),
-        HaltReason::NotActivated => hasher.update([4, 0]),
-        HaltReason::StackUnderflow => hasher.update([5, 0]),
-        HaltReason::StackOverflow => hasher.update([6, 0]),
-        HaltReason::OutOfOffset => hasher.update([7, 0]),
-        HaltReason::CreateCollision => hasher.update([8, 0]),
-        HaltReason::PrecompileError => hasher.update([9, 0]),
+        HaltReason::OutOfGas(e) => vec![0, oog_disc(e)],
+        HaltReason::OpcodeNotFound => vec![1, 0],
+        HaltReason::InvalidFEOpcode => vec![2, 0],
+        HaltReason::InvalidJump => vec![3, 0],
+        HaltReason::NotActivated => vec![4, 0],
+        HaltReason::StackUnderflow => vec![5, 0],
+        HaltReason::StackOverflow => vec![6, 0],
+        HaltReason::OutOfOffset => vec![7, 0],
+        HaltReason::CreateCollision => vec![8, 0],
+        HaltReason::PrecompileError => vec![9, 0],
         HaltReason::PrecompileErrorWithContext(s) => {
-            hasher.update([10u8, 0]);
-            write_bytes(hasher, s.as_bytes());
+            [[10u8, 0].as_slice(), flatten_bytes(s.as_bytes()).as_slice()].concat()
         }
-        HaltReason::NonceOverflow => hasher.update([11, 0]),
-        HaltReason::CreateContractSizeLimit => hasher.update([12, 0]),
-        HaltReason::CreateContractStartingWithEF => hasher.update([13, 0]),
-        HaltReason::CreateInitCodeSizeLimit => hasher.update([14, 0]),
-        HaltReason::OverflowPayment => hasher.update([15, 0]),
-        HaltReason::StateChangeDuringStaticCall => hasher.update([16, 0]),
-        HaltReason::CallNotAllowedInsideStatic => hasher.update([17, 0]),
-        HaltReason::OutOfFunds => hasher.update([18, 0]),
-        HaltReason::CallTooDeep => hasher.update([19, 0]),
+        HaltReason::NonceOverflow => vec![11, 0],
+        HaltReason::CreateContractSizeLimit => vec![12, 0],
+        HaltReason::CreateContractStartingWithEF => vec![13, 0],
+        HaltReason::CreateInitCodeSizeLimit => vec![14, 0],
+        HaltReason::OverflowPayment => vec![15, 0],
+        HaltReason::StateChangeDuringStaticCall => vec![16, 0],
+        HaltReason::CallNotAllowedInsideStatic => vec![17, 0],
+        HaltReason::OutOfFunds => vec![18, 0],
+        HaltReason::CallTooDeep => vec![19, 0],
     }
 }
 
-fn write_op_halt_reason(hasher: &mut Sha256, r: &OpHaltReason) {
+fn flatten_op_halt_reason(r: &OpHaltReason) -> Vec<u8> {
     match r {
-        OpHaltReason::Base(h) => {
-            hasher.update([0u8]);
-            write_halt_reason(hasher, h);
-        }
-        OpHaltReason::FailedDeposit => {
-            hasher.update([1u8]);
-        }
+        OpHaltReason::Base(h) => [[0u8].as_slice(), flatten_halt_reason(h).as_slice()].concat(),
+        OpHaltReason::FailedDeposit => vec![1u8],
     }
 }
 
-fn write_logs(hasher: &mut Sha256, logs: &[alloy_primitives::Log]) {
-    write_u64(hasher, logs.len() as u64);
-    for log in logs {
-        hasher.update(log.address.0 .0);
-        let topics = log.data.topics();
-        write_u64(hasher, topics.len() as u64);
-        for t in topics {
-            hasher.update(t.0);
-        }
-        write_bytes(hasher, &log.data.data);
+fn flatten_log(log: &Log) -> Vec<u8> {
+    let topics = log.data.topics();
+    [
+        log.address.as_slice(),
+        (topics.len() as u64).to_be_bytes().as_slice(),
+        topics
+            .iter()
+            .map(|t| t.0)
+            .collect::<Vec<_>>()
+            .concat()
+            .as_slice(),
+        flatten_bytes(&log.data.data).as_slice(),
+    ]
+    .concat()
+}
+
+fn flatten_logs(logs: &[Log]) -> Vec<u8> {
+    [
+        (logs.len() as u64).to_be_bytes().as_slice(),
+        logs.iter()
+            .map(flatten_log)
+            .collect::<Vec<_>>()
+            .concat()
+            .as_slice(),
+    ]
+    .concat()
+}
+
+fn flatten_opt_address(opt: Option<&Address>) -> Vec<u8> {
+    match opt {
+        Some(addr) => [[1u8].as_slice(), addr.as_slice()].concat(),
+        None => vec![0u8],
     }
 }
 
-fn write_output(hasher: &mut Sha256, output: &Output) {
+fn flatten_output(output: &Output) -> Vec<u8> {
     match output {
-        Output::Call(data) => {
-            hasher.update([0u8]);
-            write_bytes(hasher, data);
-        }
-        Output::Create(data, addr_opt) => {
-            hasher.update([1u8]);
-            write_bytes(hasher, data);
-            match addr_opt {
-                Some(addr) => {
-                    hasher.update([1u8]);
-                    hasher.update(addr.0 .0);
-                }
-                None => hasher.update([0u8]),
-            }
-        }
+        Output::Call(data) => [[0u8].as_slice(), flatten_bytes(data).as_slice()].concat(),
+        Output::Create(data, addr_opt) => [
+            [1u8].as_slice(),
+            flatten_bytes(data).as_slice(),
+            flatten_opt_address(addr_opt.as_ref()).as_slice(),
+        ]
+        .concat(),
     }
 }
 
-fn write_execution_result(hasher: &mut Sha256, r: &ExecutionResult<OpHaltReason>) {
+fn flatten_execution_result(r: &ExecutionResult<OpHaltReason>) -> Vec<u8> {
     match r {
         ExecutionResult::Success {
             reason,
@@ -191,81 +239,86 @@ fn write_execution_result(hasher: &mut Sha256, r: &ExecutionResult<OpHaltReason>
             gas_refunded,
             logs,
             output,
-        } => {
-            hasher.update([0u8, success_reason_disc(reason)]);
-            write_u64(hasher, *gas_used);
-            write_u64(hasher, *gas_refunded);
-            write_logs(hasher, logs);
-            write_output(hasher, output);
-        }
-        ExecutionResult::Revert { gas_used, output } => {
-            hasher.update([1u8]);
-            write_u64(hasher, *gas_used);
-            write_bytes(hasher, output);
-        }
-        ExecutionResult::Halt { reason, gas_used } => {
-            hasher.update([2u8]);
-            write_op_halt_reason(hasher, reason);
-            write_u64(hasher, *gas_used);
-        }
+        } => [
+            [0u8, success_reason_disc(reason)].as_slice(),
+            gas_used.to_be_bytes().as_slice(),
+            gas_refunded.to_be_bytes().as_slice(),
+            flatten_logs(logs).as_slice(),
+            flatten_output(output).as_slice(),
+        ]
+        .concat(),
+        ExecutionResult::Revert { gas_used, output } => [
+            [1u8].as_slice(),
+            gas_used.to_be_bytes().as_slice(),
+            flatten_bytes(output).as_slice(),
+        ]
+        .concat(),
+        ExecutionResult::Halt { reason, gas_used } => [
+            [2u8].as_slice(),
+            flatten_op_halt_reason(reason).as_slice(),
+            gas_used.to_be_bytes().as_slice(),
+        ]
+        .concat(),
     }
 }
 
-fn write_account(hasher: &mut Sha256, acct: &Account) {
-    // Pre-tx AccountInfo (original_info) — revm's first-load value for this address.
-    // Authenticated so CachedEvm's serve-side `db.basic(addr)` check against
-    // `account.original_info` is bound by the chunk proof.
-    write_u64(hasher, acct.original_info.nonce);
-    hasher.update(acct.original_info.balance.to_be_bytes::<32>());
-    hasher.update(acct.original_info.code_hash.0);
-
-    // Post-tx AccountInfo (info): nonce, balance, code_hash. Skip `account_id` and
-    // `code` field (code_hash binds bytecode content via `validate_cached_contracts`).
-    write_u64(hasher, acct.info.nonce);
-    hasher.update(acct.info.balance.to_be_bytes::<32>());
-    hasher.update(acct.info.code_hash.0);
-
-    // Status bitflags (u8 — see M-6 assertion above).
-    hasher.update([acct.status.bits()]);
-
-    // Storage, sorted by slot key.
+fn flatten_account(acct: &Account) -> Vec<u8> {
     let mut entries: Vec<_> = acct.storage.iter().collect();
     entries.sort_by_key(|(k, _)| *k);
-    write_u64(hasher, entries.len() as u64);
-    for (slot, evm_slot) in entries {
-        hasher.update(slot.to_be_bytes::<32>());
-        hasher.update(evm_slot.original_value.to_be_bytes::<32>());
-        hasher.update(evm_slot.present_value.to_be_bytes::<32>());
-    }
+    [
+        // Pre-tx AccountInfo (original_info) — revm's first-load value for this address.
+        // Authenticated so CachedEvm's serve-side `db.basic(addr)` check against
+        // `account.original_info` is bound by the chunk proof.
+        acct.original_info.nonce.to_be_bytes().as_slice(),
+        acct.original_info.balance.to_be_bytes::<32>().as_slice(),
+        acct.original_info.code_hash.as_slice(),
+        // Post-tx AccountInfo (info): nonce, balance, code_hash. Skip `account_id` and
+        // `code` field (code_hash binds bytecode content via `validate_cached_contracts`).
+        acct.info.nonce.to_be_bytes().as_slice(),
+        acct.info.balance.to_be_bytes::<32>().as_slice(),
+        acct.info.code_hash.as_slice(),
+        // Status bitflags (u8).
+        [acct.status.bits()].as_slice(),
+        // Storage, sorted by slot key.
+        (entries.len() as u64).to_be_bytes().as_slice(),
+        entries
+            .iter()
+            .map(|(slot, evm_slot)| {
+                [
+                    slot.to_be_bytes::<32>().as_slice(),
+                    evm_slot.original_value.to_be_bytes::<32>().as_slice(),
+                    evm_slot.present_value.to_be_bytes::<32>().as_slice(),
+                ]
+                .concat()
+            })
+            .collect::<Vec<_>>()
+            .concat()
+            .as_slice(),
+    ]
+    .concat()
 }
 
 /// Encode an `EvmState` (the per-tx state diff). Entries are sorted by address so the
 /// encoding is invariant to the underlying `HashMap` iteration order.
-fn write_evm_state(hasher: &mut Sha256, state: &EvmState) {
+fn flatten_evm_state(state: &EvmState) -> Vec<u8> {
     let mut entries: Vec<_> = state.iter().collect();
     entries.sort_by_key(|(addr, _)| *addr);
-    write_u64(hasher, entries.len() as u64);
-    for (addr, account) in entries {
-        hasher.update(addr.0 .0);
-        write_account(hasher, account);
-    }
-}
-
-/// Canonical SHA256 of a list of txn hashes and their `Vec<ResultAndState<OpHaltReason>>`
-pub fn hash_results(tx_hashes: &[B256], results: &[ResultAndState<OpHaltReason>]) -> B256 {
-    assert_eq!(
-        tx_hashes.len(),
-        results.len(),
-        "hash_results: tx_hashes and results must have the same length",
-    );
-    let mut hasher = Sha256::new();
-    write_u64(&mut hasher, results.len() as u64);
-    for (tx_hash, ras) in tx_hashes.iter().zip(results) {
-        hasher.update(tx_hash.as_slice());
-        write_execution_result(&mut hasher, &ras.result);
-        write_evm_state(&mut hasher, &ras.state);
-    }
-    B256::from_slice(&hasher.finalize())
+    [
+        (entries.len() as u64).to_be_bytes().as_slice(),
+        entries
+            .iter()
+            .map(|(addr, account)| {
+                [
+                    addr.as_slice(),
+                    flatten_bytes(flatten_account(account)).as_slice(),
+                ]
+                .concat()
+            })
+            .collect::<Vec<_>>()
+            .concat()
+            .as_slice(),
+    ]
+    .concat()
 }
 
 #[cfg(test)]
@@ -273,7 +326,7 @@ pub mod tests {
     use super::*;
     use alloy_evm::revm::primitives::HashMap;
     use alloy_evm::revm::state::{AccountInfo, Bytecode};
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::U256;
     use risc0_zkvm::sha::Digestible;
 
     pub fn make_bytecode(bytes: &'static [u8]) -> Bytecode {
