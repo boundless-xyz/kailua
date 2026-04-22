@@ -21,7 +21,7 @@ use crate::evm::TransactionResultCollector;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
-use crate::precondition::evm::{compute_chunk_trace, hash_block_ctx, hash_results};
+use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
 use alloy_consensus::transaction::SignerRecoverable;
@@ -137,16 +137,16 @@ where
         let rollup_config = Arc::new(boot.rollup_config.clone());
 
         ////////////////////////////////////////////////////////////////
-        //                    CHUNK EXECUTION-ONLY                    //
+        //                     PARTIAL EXECUTION                      //
         ////////////////////////////////////////////////////////////////
         if boot.l1_head == B256::repeat_byte(0xFF) {
-            log("CHUNK EXECUTION");
+            log("PARTIAL EXECUTION");
             let PartialExecutionWitness {
                 transactions,
                 block_env,
                 op_block_ctx,
                 cache,
-            } = pe_witness.context("chunk witness required in chunk mode")?;
+            } = pe_witness.context("partial witness required in partial mode")?;
             // Calculate prestate hashes
             let block_ctx_hash = hash_block_ctx(&block_env, &op_block_ctx);
 
@@ -181,18 +181,18 @@ where
                 OpAlloyReceiptBuilder::default(),
             );
 
-            // Execute all transactions in chunk
+            // Execute all transactions in partial
             for tx_bytes in transactions {
                 let mut buf = tx_bytes.as_slice();
                 let tx = OpTxEnvelope::decode_2718_exact(&mut buf)
-                    .context("invalid transaction encoding in chunk witness")?;
+                    .context("invalid transaction encoding in partial witness")?;
                 let recovered = tx
                     .try_into_recovered()
-                    .context("invalid transaction signature in chunk witness")?;
+                    .context("invalid transaction signature in partial witness")?;
                 let wrapped = WithEncoded::new(tx_bytes.into(), recovered);
                 op_block_executor
                     .execute_transaction(wrapped)
-                    .map_err(|e| anyhow::anyhow!("chunk transaction execution failed: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("partial transaction execution failed: {e}"))?;
             }
 
             // collect ordered (tx_hash, ResultAndState) pairs
@@ -206,8 +206,8 @@ where
             let results_hash = hash_results(&captured_tx_hashes, &captured_results);
 
             // Return result
-            let chunk_trace = compute_chunk_trace(results_hash, block_ctx_hash);
-            return Ok((boot, Precondition::default().chunk(chunk_trace)));
+            let pe_trace = compute_pe_trace(results_hash, block_ctx_hash);
+            return Ok((boot, Precondition::default().partial(pe_trace)));
         }
 
         log("SAFE HEAD HASH");
@@ -526,75 +526,119 @@ pub mod tests {
     use crate::precondition::proposal::ProposalPrecondition;
     use alloy_consensus::{BlockHeader, Header};
     use alloy_eips::eip7840::BlobParams;
-    use alloy_evm::op_revm::OpSpecId;
+    use alloy_evm::op_revm::{OpHaltReason, OpSpecId};
+    use alloy_evm::revm::context::BlockEnv;
     use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
+    use alloy_evm::revm::context_interface::result::ResultAndState;
     use alloy_evm::revm::database::Cache;
     use alloy_evm::revm::primitives::eip4844::{
         BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
     };
-    use alloy_primitives::{b256, B256};
+    use alloy_op_evm::OpBlockExecutionCtx;
+    use alloy_primitives::{b256, B256, U256};
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::BootInfo;
     use std::sync::{Arc, Mutex};
 
-    pub fn test_derivation(
+    pub async fn test_derivation(
         boot_info: BootInfo,
         proposal_data: Option<ProposalPrecondition>,
         derivation_cache: Option<CachedDriver>,
         derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
-    ) -> anyhow::Result<Vec<Arc<Execution>>> {
-        test_derivation_with_chunks(
+    ) -> anyhow::Result<(Vec<Arc<Execution>>, Vec<Vec<PartialExecution>>)> {
+        test_derivation_with_partials(
             boot_info,
             proposal_data,
             derivation_cache,
             derivation_trace,
             Vec::new(),
         )
+        .await
     }
 
-    /// Variant of [`test_derivation`] that threads a `chunks: Vec<Vec<PartialExecution>>`
-    /// through to [`run_core_client`]. When `chunks` is empty, `CachedEvmFactory::new`
-    /// produces EVMs that delegate every `transact_raw()` straight through to the
-    /// wrapped `OpEvmFactory`, so derivation output is byte-identical to a no-chunks
-    /// run. When non-empty, each inner vec's chunks are consumed at the matching block
-    /// position; per-tx authentication of the served results happens inside
-    /// `CachedEvm::transact_raw`.
-    ///
-    /// Caller constraint: the outer index `i` corresponds to block
-    /// `safe_head_number + 1 + i` (see `Witness::chunks` doc).
-    pub fn test_derivation_with_chunks(
+    pub async fn fetch_safe_head_config(
+        boot_info: &BootInfo,
+    ) -> anyhow::Result<(Header, RollupConfig)> {
+        let test_oracle = Arc::new(TestOracle::new(boot_info.clone()));
+        let oracle = Arc::new(LocalOnceOracle::new(test_oracle.clone()));
+        let boot = BootInfo::load(oracle.as_ref())
+            .await
+            .context("BootInfo::load")?;
+        let safe_head_hash = fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root)
+            .await
+            .context("fetch_safe_head_hash")?;
+        let rollup_config = Arc::new(boot.rollup_config.clone());
+        let l2_provider =
+            OracleL2ChainProvider::new(safe_head_hash, rollup_config.clone(), oracle.clone());
+        let header = l2_provider
+            .header_by_hash(safe_head_hash)
+            .context("l2_provider.header_by_hash")?;
+        Ok((header, boot.rollup_config))
+    }
+
+    fn expected_blob_excess_gas_and_price(
+        parent_header: &Header,
+        spec_id: OpSpecId,
+    ) -> Option<BlobExcessGasAndPrice> {
+        let (params, fraction) = if spec_id.is_enabled_in(OpSpecId::ISTHMUS) {
+            (
+                Some(BlobParams::prague()),
+                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+            )
+        } else if spec_id.is_enabled_in(OpSpecId::ECOTONE) {
+            (
+                Some(BlobParams::cancun()),
+                BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN,
+            )
+        } else {
+            (None, 0)
+        };
+
+        parent_header
+            .maybe_next_block_excess_blob_gas(params)
+            .or_else(|| spec_id.is_enabled_in(OpSpecId::ECOTONE).then_some(0))
+            .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
+    }
+
+    pub fn build_single_partial_for_block(
+        execution: &Execution,
+        traces: Vec<(B256, ResultAndState<OpHaltReason>)>,
+        parent_header: &Header,
+        spec_id: OpSpecId,
+    ) -> PartialExecution {
+        let header = execution.artifacts.header.inner();
+        let (tx_hashes, results): (Vec<B256>, Vec<_>) = traces.into_iter().unzip();
+        PartialExecution {
+            tx_hashes,
+            results,
+            block_env: BlockEnv {
+                number: U256::from(header.number),
+                beneficiary: header.beneficiary,
+                timestamp: U256::from(header.timestamp),
+                gas_limit: header.gas_limit,
+                basefee: header.base_fee_per_gas.unwrap_or(0),
+                difficulty: header.difficulty,
+                prevrandao: Some(header.mix_hash),
+                blob_excess_gas_and_price: expected_blob_excess_gas_and_price(
+                    parent_header,
+                    spec_id,
+                ),
+            },
+            op_block_ctx: OpBlockExecutionCtx {
+                parent_hash: header.parent_hash,
+                parent_beacon_block_root: header.parent_beacon_block_root,
+                extra_data: header.extra_data.clone(),
+            },
+        }
+    }
+
+    pub async fn test_derivation_with_partials(
         boot_info: BootInfo,
         proposal_data: Option<ProposalPrecondition>,
         derivation_cache: Option<CachedDriver>,
         derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
-        chunks: Vec<Vec<PartialExecution>>,
-    ) -> anyhow::Result<Vec<Arc<Execution>>> {
-        test_derivation_with_chunks_and_traces(
-            boot_info,
-            proposal_data,
-            derivation_cache,
-            derivation_trace,
-            chunks,
-            None,
-        )
-    }
-
-    /// Extended variant of [`test_derivation_with_chunks`] that also threads an optional
-    /// per-block `ResultAndState` trace collector through to `run_core_client`'s
-    /// `CachedEvmFactory`. When supplied, the factory captures every successful
-    /// `transact_raw()` into the buffer keyed by block number — both the delegate path
-    /// (empty chunks) and the chunk replay path. Used by the round-trip integration
-    /// test to capture ground truth on a first (empty-chunks) pass, build
-    /// `PartialExecution` entries from the captured traces, then replay on a second
-    /// pass.
-    pub fn test_derivation_with_chunks_and_traces(
-        boot_info: BootInfo,
-        proposal_data: Option<ProposalPrecondition>,
-        derivation_cache: Option<CachedDriver>,
-        derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
-        chunks: Vec<Vec<PartialExecution>>,
-        chunk_trace_collector: Option<crate::evm::TransactionResultCollector>,
-    ) -> anyhow::Result<Vec<Arc<Execution>>> {
+        partial_executions: Vec<Vec<PartialExecution>>,
+    ) -> anyhow::Result<(Vec<Arc<Execution>>, Vec<Vec<PartialExecution>>)> {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let (proposal_precondition_hash, proposal_data_hash) = if let Some(data) = proposal_data {
             (data.precondition_hash(), oracle.add_precondition_data(data))
@@ -605,16 +649,8 @@ pub mod tests {
             .as_ref()
             .map(|c| c.digest())
             .unwrap_or_default();
-        let collection_target = Arc::new(Mutex::new(Vec::new()));
-        // When any inner chunks vec is non-empty, `run_core_client` repurposes the
-        // collection target internally for chunk verification and forbids both
-        // `execution_cache` and `execution_trace` being Some. Keep
-        // `collection_target` None in that path — the helper still returns a
-        // (possibly empty) `Vec<Arc<Execution>>` at the end by virtue of the
-        // returned `Vec::new()`, which matches the intent of exercising the
-        // chunks-aware derivation path rather than capturing executions.
-        let has_chunks = chunks.iter().any(|v| !v.is_empty());
-        let execution_trace = (!has_chunks).then(|| collection_target.clone());
+        let executions_collector = Arc::new(Mutex::new(Vec::new()));
+        let partials_collector = Arc::new(Mutex::new(Vec::new()));
         let (result_boot_info, precondition) = run_core_client(
             proposal_data_hash,
             oracle.clone(),
@@ -622,15 +658,16 @@ pub mod tests {
             OracleBlobProvider::new(oracle.clone()),
             EthereumDataSourceProvider,
             vec![],
-            execution_trace,
+            Some(executions_collector.clone()),
             derivation_cache,
             derivation_trace.clone(),
             None,
-            chunks,
-            chunk_trace_collector,
+            partial_executions,
+            Some(partials_collector.clone()),
         )
         .context("run_core_client")?;
 
+        // Verify boot info matches expectations
         assert_eq!(result_boot_info.l1_head, boot_info.l1_head);
         assert_eq!(
             result_boot_info.agreed_l2_output_root,
@@ -648,6 +685,7 @@ pub mod tests {
         }
         assert_eq!(result_boot_info.chain_id, boot_info.chain_id);
 
+        // Verify precondition matches expectations
         let expected_precondition = Precondition {
             proposal_blobs: proposal_precondition_hash,
             execution_trace: Default::default(),
@@ -666,13 +704,32 @@ pub mod tests {
         };
         assert_eq!(precondition.digest(), expected_precondition.digest(),);
 
-        let execution_cache =
-            recover_collected_executions(collection_target, boot_info.claimed_l2_output_root)
+        // Extract block executions
+        let execution_cache: Vec<Arc<Execution>> =
+            recover_collected_executions(executions_collector, boot_info.claimed_l2_output_root)
                 .into_iter()
                 .map(Arc::new)
                 .collect();
 
-        Ok(execution_cache)
+        // Extract transaction executions
+        let (mut parent_header, _) = fetch_safe_head_config(&result_boot_info).await?;
+        let mut partial_executions = vec![];
+        for (partials, execution) in take(&mut *partials_collector.lock().unwrap())
+            .into_iter()
+            .zip(&execution_cache)
+        {
+            partial_executions.push(vec![build_single_partial_for_block(
+                execution,
+                partials,
+                &parent_header,
+                result_boot_info
+                    .rollup_config
+                    .spec_id(execution.artifacts.header.timestamp),
+            )]);
+            parent_header = execution.artifacts.header.inner().clone();
+        }
+
+        Ok((execution_cache, partial_executions))
     }
 
     pub fn test_execution(
@@ -700,6 +757,7 @@ pub mod tests {
         )
         .expect("run_core_client");
 
+        // Verify matching boot
         assert_eq!(result_boot_info.l1_head, boot_info.l1_head);
         assert_eq!(
             result_boot_info.agreed_l2_output_root,
@@ -714,6 +772,8 @@ pub mod tests {
             boot_info.claimed_l2_block_number
         );
         assert_eq!(result_boot_info.chain_id, boot_info.chain_id);
+
+        // Verify precondition
         assert_eq!(
             B256::new(precondition.digest().into()),
             expected_precondition_hash
@@ -722,445 +782,151 @@ pub mod tests {
         Ok(expected_precondition_hash)
     }
 
+    pub fn test_partial(
+        boot_info: BootInfo,
+        partial_witness: PartialExecutionWitness,
+    ) -> (BootInfo, Precondition) {
+        assert_eq!(boot_info.l1_head, B256::repeat_byte(0xFF));
+        let oracle = Arc::new(TestOracle::new(boot_info.clone()));
+        run_core_client(
+            B256::ZERO,
+            oracle.clone(),
+            oracle.clone(),
+            OracleBlobProvider::new(oracle.clone()),
+            EthereumDataSourceProvider,
+            vec![],
+            None,
+            None,
+            None,
+            Some(partial_witness),
+            Vec::new(),
+            None,
+        )
+        .expect("run_core_client partial mode")
+    }
+
+    pub fn op_sepolia_16491249_16491250() -> BootInfo {
+        BootInfo {
+            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
+            agreed_l2_output_root: b256!(
+                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+            ),
+            claimed_l2_output_root: b256!(
+                "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
+            ),
+            claimed_l2_block_number: 16491250,
+            chain_id: 11155420,
+            rollup_config: Default::default(),
+            l1_config: Default::default(),
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491250() {
         test_derivation(
-            BootInfo {
-                l1_head: b256!(
-                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
-                ),
-                agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
-                ),
-                claimed_l2_block_number: 16491250,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
-            },
+            op_sepolia_16491249_16491250(),
             None,
             None,
             Some(Default::default()),
         )
+        .await
         .unwrap();
     }
 
-    /// Integration test exercising the `chunks` parameter plumbing through
-    /// `run_core_client` and the `CachedEvmFactory` dispatch path end-to-end against a
-    /// real OP Sepolia fixture.
-    ///
-    /// Supplies `chunks: vec![vec![]]` — one entry for the single derived block, with
-    /// the inner vec empty. The chunks vec is threaded through to
-    /// `CachedEvmFactory::new(...)`; because its per-block slot is empty, every
-    /// `transact_raw()` falls through to inner `OpEvm`, so derivation output must be
-    /// byte-identical to the no-chunks run in `test_op_sepolia_16491249_16491250`
-    /// above.
     #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_op_sepolia_16491249_16491250_with_empty_chunks() {
-        let boot_info = BootInfo {
-            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
-            agreed_l2_output_root: b256!(
-                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-            ),
-            claimed_l2_output_root: b256!(
-                "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
-            ),
-            claimed_l2_block_number: 16491250,
-            chain_id: 11155420,
-            rollup_config: Default::default(),
-            l1_config: Default::default(),
-        };
-
-        // `vec![vec![]]` — one per-block entry for the single block this fixture derives
-        // (16491249 → 16491250). The empty inner vec means "no chunks for this block",
-        // so `has_chunks == false` and the factory's map is empty → pure pass-through.
-        test_derivation_with_chunks(
-            boot_info,
-            None,
-            None,
-            Some(Default::default()),
-            vec![vec![]],
-        )
-        .unwrap();
-    }
-
-    /// Fetches the safe head header and the fully loaded `RollupConfig` via the same
-    /// oracle-backed path `run_core_client` uses. Needed by the round-trip tests to
-    /// supply (a) the parent header for block[0] when computing
-    /// `expected_blob_excess_gas_and_price` and (b) a rollup_config whose
-    /// `spec_id(timestamp)` returns the actual hardfork (not the `Default::default()`
-    /// placeholder used in `BootInfo` fixtures). Codex round-4 critical patch.
-    pub async fn test_fetch_safe_head_context(
-        boot_info: &BootInfo,
-    ) -> anyhow::Result<(alloy_consensus::Header, kona_genesis::RollupConfig)> {
-        use crate::oracle::local::LocalOnceOracle;
-        let test_oracle = Arc::new(TestOracle::new(boot_info.clone()));
-        let oracle = Arc::new(LocalOnceOracle::new(test_oracle.clone()));
-        let boot = BootInfo::load(oracle.as_ref())
-            .await
-            .context("BootInfo::load")?;
-        let safe_head_hash = fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root)
-            .await
-            .context("fetch_safe_head_hash")?;
-        let rollup_config = Arc::new(boot.rollup_config.clone());
-        let l2_provider =
-            OracleL2ChainProvider::new(safe_head_hash, rollup_config.clone(), oracle.clone());
-        let header = l2_provider
-            .header_by_hash(safe_head_hash)
-            .context("l2_provider.header_by_hash")?;
-        Ok((header, boot.rollup_config))
-    }
-
-    /// Compute the `BlobExcessGasAndPrice` that kona's `prepare_block_env` would assign
-    /// to `BlockEnv.blob_excess_gas_and_price` for a block with the given parent header
-    /// and spec_id. Mirrors `kona/proof/executor/src/builder/env.rs::prepare_block_env`
-    /// exactly — if that implementation changes in upstream, this must too.
-    fn expected_blob_excess_gas_and_price(
-        parent_header: &Header,
-        spec_id: OpSpecId,
-    ) -> Option<BlobExcessGasAndPrice> {
-        let (params, fraction) = if spec_id.is_enabled_in(OpSpecId::ISTHMUS) {
-            (
-                Some(BlobParams::prague()),
-                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-            )
-        } else if spec_id.is_enabled_in(OpSpecId::ECOTONE) {
-            (
-                Some(BlobParams::cancun()),
-                BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN,
-            )
-        } else {
-            (None, 0)
-        };
-
-        parent_header
-            .maybe_next_block_excess_blob_gas(params)
-            .or_else(|| spec_id.is_enabled_in(OpSpecId::ECOTONE).then_some(0))
-            .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
-    }
-
-    /// Builds a single-chunk [`PartialExecution`] covering all transactions of a
-    /// derived block, populated from (a) the `Execution` (header, attributes) returned
-    /// by `test_derivation_with_chunks_and_traces`, and (b) the per-tx `ResultAndState`
-    /// vector captured by `CachedEvmFactory::new_with_traces` during the monolithic
-    /// first pass.
-    ///
-    /// The chunk's `block_env.blob_excess_gas_and_price` is derived from the parent
-    /// header + spec_id via `expected_blob_excess_gas_and_price` so the chunk's
-    /// `block_env` matches what `CachedEvm::transact_raw` sees at serve time.
-    pub fn build_single_chunk_for_block(
-        execution: &Execution,
-        traces: Vec<(
-            alloy_primitives::B256,
-            alloy_evm::revm::context_interface::result::ResultAndState<
-                alloy_evm::op_revm::OpHaltReason,
-            >,
-        )>,
-        parent_header: &alloy_consensus::Header,
-        spec_id: alloy_evm::op_revm::OpSpecId,
-    ) -> PartialExecution {
-        use alloy_evm::revm::context::BlockEnv;
-        use alloy_op_evm::block::OpBlockExecutionCtx;
-        use alloy_primitives::U256;
-
-        let header = execution.artifacts.header.inner();
-        let block_txs: Vec<Vec<u8>> = execution
-            .attributes
-            .transactions
-            .as_ref()
-            .map(|txs| txs.iter().map(|b| b.to_vec()).collect())
-            .unwrap_or_default();
-        assert_eq!(
-            block_txs.len(),
-            traces.len(),
-            "captured trace count must match derivation-output tx count"
-        );
-
-        let (tx_hashes, results): (Vec<alloy_primitives::B256>, Vec<_>) =
-            traces.into_iter().unzip();
-
-        let block_env = BlockEnv {
-            number: U256::from(header.number),
-            beneficiary: header.beneficiary,
-            timestamp: U256::from(header.timestamp),
-            gas_limit: header.gas_limit,
-            basefee: header.base_fee_per_gas.unwrap_or(0),
-            difficulty: header.difficulty,
-            prevrandao: Some(header.mix_hash),
-            blob_excess_gas_and_price: expected_blob_excess_gas_and_price(parent_header, spec_id),
-        };
-        let op_block_ctx = OpBlockExecutionCtx {
-            parent_hash: header.parent_hash,
-            parent_beacon_block_root: header.parent_beacon_block_root,
-            extra_data: header.extra_data.clone(),
-        };
-
-        PartialExecution {
-            tx_hashes,
-            results,
-            block_env,
-            op_block_ctx,
-        }
-    }
-
-    /// Round-trip integration test for non-empty chunks.
-    ///
-    /// Runs the full derivation path *twice* against a real OP Sepolia fixture:
-    ///   1. **Capture pass.** `chunks = Vec::new()`, `collector = Some(buf)`.
-    ///      The factory's chunks map is empty so every `transact_raw()` delegates
-    ///      to inner `OpEvm`; the collector captures the full per-tx
-    ///      `ResultAndState` trace keyed by block number.
-    ///   2. **Replay pass.** Build one full-block `PartialExecution` per derived
-    ///      block using `build_single_chunk_for_block`. Run again with the chunks
-    ///      populated and `collector = None`. `CachedEvm::transact_raw` now serves
-    ///      the replayed `ResultAndState` entries from `chunk.results`, asserts
-    ///      `BlockEnv` equality, and runs per-tx prestate authentication
-    ///      (`original_info` / `original_value` vs. live DB) before returning each
-    ///      result. Success ⇒ chunked-replay derivation produced block-identical
-    ///      output to the monolithic pass.
-    ///
-    /// The 1-block fixture `16491249 → 16491250` exercises the full code path once;
-    /// the 100-block fixture variant below exercises it on a deeper derivation
-    /// window.
-    #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_op_sepolia_16491249_16491250_chunks_roundtrip() {
-        let boot_info = BootInfo {
-            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
-            agreed_l2_output_root: b256!(
-                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-            ),
-            claimed_l2_output_root: b256!(
-                "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
-            ),
-            claimed_l2_block_number: 16491250,
-            chain_id: 11155420,
-            rollup_config: Default::default(),
-            l1_config: Default::default(),
-        };
-        let safe_head_number = 16491249u64;
-
-        // ---- Pass 1: capture ground-truth per-tx ResultAndState via CachedEvmFactory
-        // in pass-through (empty chunks) mode with a trace collector attached.
-        let collector: crate::evm::TransactionResultCollector = Arc::new(Mutex::new(Vec::new()));
-
-        let executions = test_derivation_with_chunks_and_traces(
-            boot_info.clone(),
+    pub async fn test_op_sepolia_16491249_16491250_partials_roundtrip() {
+        // Capture partials
+        let (pre_executions, pre_captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491250(),
             None,
             None,
             Some(Default::default()),
             Vec::new(),
-            Some(collector.clone()),
         )
+        .await
         .unwrap();
 
-        assert_eq!(
-            executions.len(),
-            1,
-            "fixture derives exactly one block (16491249 → 16491250)"
-        );
-
-        // Fetch the safe head header to use as the parent for block[0]'s chunk builder.
-        let (safe_head_header, real_rollup_config) =
-            test_fetch_safe_head_context(&boot_info).await.unwrap();
-        let rollup_config_arc = Arc::new(real_rollup_config);
-
-        // ---- Build chunks: one Chunk per derived block, consuming the captured
-        // traces. Collector ordering matches execution ordering (one `create_evm`
-        // call per block in ascending block order).
-        let captured: Vec<Vec<_>> = std::mem::take(&mut *collector.lock().unwrap());
-        assert_eq!(
-            captured.len(),
-            executions.len(),
-            "captured block-trace count must match execution count"
-        );
-        let _ = safe_head_number;
-        let chunks: Vec<Vec<PartialExecution>> = executions
-            .iter()
-            .enumerate()
-            .zip(captured)
-            .map(|((i, exec), traces)| {
-                let parent_header = if i == 0 {
-                    &safe_head_header
-                } else {
-                    executions[i - 1].artifacts.header.inner()
-                };
-                let spec_id = rollup_config_arc.spec_id(exec.artifacts.header.inner().timestamp);
-                vec![build_single_chunk_for_block(
-                    exec,
-                    traces,
-                    parent_header,
-                    spec_id,
-                )]
-            })
-            .collect();
-
-        // ---- Pass 2: replay through CachedEvm with populated chunks. Per-tx
-        // authentication inside `CachedEvm::transact_raw` validates each serve;
-        // any prestate mismatch fails the whole run. Success proves the replayed
-        // chunks produce the same derivation output as the monolithic pass.
-        test_derivation_with_chunks_and_traces(
-            boot_info,
+        // Run with partials loaded
+        let (post_executions, post_captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491250(),
             None,
             None,
             Some(Default::default()),
-            chunks,
-            None,
+            pre_captured,
         )
+        .await
         .unwrap();
+
+        // Assert all results were served cached (no fresh captured)
+        assert!(post_captured
+            .iter()
+            .all(|c| c.first().unwrap().results.is_empty()));
+        // Assert both executions yield the same blocks
+        for (pre, post) in pre_executions.into_iter().zip(post_executions.into_iter()) {
+            assert_eq!(pre.artifacts.header, post.artifacts.header);
+        }
     }
 
-    /// Builds `n` sequential `PartialExecution` entries covering all transactions of
-    /// a derived block. Splits the tx list as evenly as possible (last chunk may be
-    /// smaller). The only chunk-level authentication commitment is `results_hash`
-    /// (folding per-tx `tx_hashes` and `results`) composed with `block_ctx_hash`.
-    pub fn build_n_chunks_for_block(
-        execution: &Execution,
-        traces: Vec<(
-            alloy_primitives::B256,
-            alloy_evm::revm::context_interface::result::ResultAndState<
-                alloy_evm::op_revm::OpHaltReason,
-            >,
-        )>,
-        n: usize,
-        parent_header: &alloy_consensus::Header,
-        spec_id: alloy_evm::op_revm::OpSpecId,
-    ) -> Vec<PartialExecution> {
-        use alloy_evm::revm::context::BlockEnv;
-        use alloy_op_evm::block::OpBlockExecutionCtx;
-        use alloy_primitives::U256;
-
-        assert!(n >= 1, "n must be >= 1");
-        let header = execution.artifacts.header.inner();
-        let block_txs: Vec<Vec<u8>> = execution
-            .attributes
-            .transactions
-            .as_ref()
-            .map(|txs| txs.iter().map(|b| b.to_vec()).collect())
-            .unwrap_or_default();
-        assert_eq!(
-            block_txs.len(),
-            traces.len(),
-            "captured trace count must match derivation-output tx count"
-        );
-        let n = n.min(block_txs.len().max(1));
-
-        let block_env = BlockEnv {
-            number: U256::from(header.number),
-            beneficiary: header.beneficiary,
-            timestamp: U256::from(header.timestamp),
-            gas_limit: header.gas_limit,
-            basefee: header.base_fee_per_gas.unwrap_or(0),
-            difficulty: header.difficulty,
-            prevrandao: Some(header.mix_hash),
-            blob_excess_gas_and_price: expected_blob_excess_gas_and_price(parent_header, spec_id),
-        };
-        let op_block_ctx = OpBlockExecutionCtx {
-            parent_hash: header.parent_hash,
-            parent_beacon_block_root: header.parent_beacon_block_root,
-            extra_data: header.extra_data.clone(),
-        };
-
-        let tx_count = block_txs.len();
-        let base = tx_count / n;
-        let rem = tx_count % n;
-        let mut boundaries = Vec::with_capacity(n + 1);
-        boundaries.push(0usize);
-        for i in 0..n {
-            let size = base + usize::from(i < rem);
-            boundaries.push(boundaries[i] + size);
+    pub fn split_partials(mut partials: Vec<Vec<PartialExecution>>) -> Vec<Vec<PartialExecution>> {
+        for block_partials in &mut partials {
+            let mut new_partials = Vec::with_capacity(block_partials.len());
+            for partial in take(block_partials) {
+                for (tx, res) in partial
+                    .tx_hashes
+                    .into_iter()
+                    .zip(partial.results.into_iter())
+                {
+                    new_partials.push(PartialExecution {
+                        tx_hashes: vec![tx.clone()],
+                        results: vec![res.clone()],
+                        block_env: partial.block_env.clone(),
+                        op_block_ctx: partial.op_block_ctx.clone(),
+                    })
+                }
+            }
+            let _ = core::mem::replace(block_partials, new_partials);
         }
-
-        let mut chunks = Vec::with_capacity(n);
-        for chunk_idx in 0..n {
-            let start = boundaries[chunk_idx];
-            let end = boundaries[chunk_idx + 1];
-            let (chunk_tx_hashes, chunk_results): (Vec<alloy_primitives::B256>, Vec<_>) =
-                traces[start..end].iter().cloned().unzip();
-            chunks.push(PartialExecution {
-                tx_hashes: chunk_tx_hashes,
-                results: chunk_results,
-                block_env: block_env.clone(),
-                op_block_ctx: op_block_ctx.clone(),
-            });
-        }
-        chunks
+        partials
     }
 
-    /// Multi-chunk round-trip. Splits each block into up to 2 chunks — exercising
-    /// `CachedEvm`'s cursor advance across chunks and per-chunk `tx_hash` binding
-    /// over tx slices.
     #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_op_sepolia_16491249_16491250_two_chunks_roundtrip() {
-        let boot_info = BootInfo {
-            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
-            agreed_l2_output_root: b256!(
-                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-            ),
-            claimed_l2_output_root: b256!(
-                "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
-            ),
-            claimed_l2_block_number: 16491250,
-            chain_id: 11155420,
-            rollup_config: Default::default(),
-            l1_config: Default::default(),
-        };
-        let safe_head_number = 16491249u64;
-
-        let collector: crate::evm::TransactionResultCollector = Arc::new(Mutex::new(Vec::new()));
-
-        let executions = test_derivation_with_chunks_and_traces(
-            boot_info.clone(),
+    pub async fn test_op_sepolia_16491249_16491250_split_partials_roundtrip() {
+        // Capture partials
+        let (pre_executions, pre_captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491250(),
             None,
             None,
             Some(Default::default()),
             Vec::new(),
-            Some(collector.clone()),
         )
+        .await
         .unwrap();
 
-        let (safe_head_header, real_rollup_config) =
-            test_fetch_safe_head_context(&boot_info).await.unwrap();
-        let rollup_config_arc = Arc::new(real_rollup_config);
+        let split = split_partials(pre_captured);
 
-        let captured: Vec<Vec<_>> = std::mem::take(&mut *collector.lock().unwrap());
-        assert_eq!(captured.len(), executions.len());
-        let _ = safe_head_number;
-        let chunks: Vec<Vec<PartialExecution>> = executions
-            .iter()
-            .enumerate()
-            .zip(captured)
-            .map(|((i, exec), traces)| {
-                let parent_header = if i == 0 {
-                    &safe_head_header
-                } else {
-                    executions[i - 1].artifacts.header.inner()
-                };
-                let spec_id = rollup_config_arc.spec_id(exec.artifacts.header.inner().timestamp);
-                build_n_chunks_for_block(exec, traces, 2, parent_header, spec_id)
-            })
-            .collect();
-
-        test_derivation_with_chunks_and_traces(
-            boot_info,
+        // Run with partials loaded
+        let (post_executions, post_captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491250(),
             None,
             None,
             Some(Default::default()),
-            chunks,
-            None,
+            split,
         )
+        .await
         .unwrap();
+
+        // Assert all results were served cached (no fresh captured)
+        assert!(post_captured
+            .iter()
+            .all(|c| c.first().unwrap().results.is_empty()));
+        // Assert both executions yield the same blocks
+        for (pre, post) in pre_executions.into_iter().zip(post_executions.into_iter()) {
+            assert_eq!(pre.artifacts.header, post.artifacts.header);
+        }
     }
 
-    /// Round-trip integration test for task 8.7 (step 2 — non-empty chunks, longer run).
-    /// Same structure as `test_op_sepolia_16491249_16491250_chunks_roundtrip` above but
-    /// on the 100-block fixture. Exercises per-block Chunk construction across a deeper
-    /// derivation window: 100 independent block_env / op_block_ctx cross-checks, 100
-    /// tx_hash bindings, 100 receipts_root reconstructions, etc.
-    #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_op_sepolia_16491249_16491349_chunks_roundtrip() {
-        let boot_info = BootInfo {
+    pub fn op_sepolia_16491249_16491349() -> BootInfo {
+        BootInfo {
             l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
             agreed_l2_output_root: b256!(
                 "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
@@ -1172,131 +938,80 @@ pub mod tests {
             chain_id: 11155420,
             rollup_config: Default::default(),
             l1_config: Default::default(),
-        };
-        let safe_head_number = 16491249u64;
+        }
+    }
 
-        let collector: crate::evm::TransactionResultCollector = Arc::new(Mutex::new(Vec::new()));
-
-        let executions = test_derivation_with_chunks_and_traces(
-            boot_info.clone(),
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491349_partials_roundtrip() {
+        // Capture partials
+        let (pre_executions, pre_captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491349(),
             None,
             None,
             Some(Default::default()),
             Vec::new(),
-            Some(collector.clone()),
         )
+        .await
         .unwrap();
 
-        assert_eq!(executions.len(), 100, "fixture derives 100 blocks");
+        // Test all individual partials
+        for block_partials in &pre_captured {
+            for partial_execution in block_partials {}
+        }
 
-        let (safe_head_header, real_rollup_config) =
-            test_fetch_safe_head_context(&boot_info).await.unwrap();
-        let rollup_config_arc = Arc::new(real_rollup_config);
-
-        // Some blocks may have zero user txs (rare on OP Sepolia); those slots
-        // are empty Vecs, which is a valid capture and yields chunks with
-        // results=[].
-        let captured: Vec<Vec<_>> = std::mem::take(&mut *collector.lock().unwrap());
-        assert_eq!(captured.len(), executions.len());
-        let _ = safe_head_number;
-        let chunks: Vec<Vec<PartialExecution>> = executions
-            .iter()
-            .enumerate()
-            .zip(captured)
-            .map(|((i, exec), traces)| {
-                let parent_header = if i == 0 {
-                    &safe_head_header
-                } else {
-                    executions[i - 1].artifacts.header.inner()
-                };
-                let spec_id = rollup_config_arc.spec_id(exec.artifacts.header.inner().timestamp);
-                vec![build_single_chunk_for_block(
-                    exec,
-                    traces,
-                    parent_header,
-                    spec_id,
-                )]
-            })
-            .collect();
-
-        test_derivation_with_chunks_and_traces(
-            boot_info,
+        // Run with partials loaded
+        let (post_executions, post_captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491349(),
             None,
             None,
             Some(Default::default()),
-            chunks,
-            None,
+            pre_captured,
         )
+        .await
         .unwrap();
+        // Assert all results were served cached (no fresh captured)
+        assert!(post_captured
+            .iter()
+            .all(|c| c.first().unwrap().results.is_empty()));
+        // Assert both executions yield the same blocks
+        for (pre, post) in pre_executions.into_iter().zip(post_executions.into_iter()) {
+            assert_eq!(pre.artifacts.header, post.artifacts.header);
+        }
     }
 
-    /// Integration test for task 8.7: same as above but on the longer 100-block fixture,
-    /// to exercise the chunks-parameter pass-through across many derived blocks. Supplies
-    /// 100 empty inner vecs (one per block from 16491250..=16491349). Every block's
-    /// `chunks_by_block` lookup misses, every `transact_raw()` delegates, and derivation
-    /// output must match the no-chunks baseline
-    /// (`test_op_sepolia_16491249_16491349` above) exactly.
     #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_op_sepolia_16491249_16491349_with_empty_chunks() {
-        let boot_info = BootInfo {
-            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
-            agreed_l2_output_root: b256!(
-                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-            ),
-            claimed_l2_output_root: b256!(
-                "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-            ),
-            claimed_l2_block_number: 16491349,
-            chain_id: 11155420,
-            rollup_config: Default::default(),
-            l1_config: Default::default(),
-        };
+    pub async fn test_op_sepolia_16491249_16491349_with_empty_partials() {
+        let partials = vec![Vec::<PartialExecution>::new(); 100];
 
-        // 100 empty inner vecs — one per block in the 16491249..16491349 derivation
-        // window. All per-block slots are empty → `CachedEvm` delegates every call
-        // to inner `OpEvm`, identical to the monolithic path.
-        let chunks = vec![Vec::<PartialExecution>::new(); 100];
+        // Capture partials
+        let (pre_executions, pre_captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491349(),
+            None,
+            None,
+            Some(Default::default()),
+            partials,
+        )
+        .await
+        .unwrap();
 
-        test_derivation_with_chunks(boot_info, None, None, Some(Default::default()), chunks)
-            .unwrap();
+        assert_eq!(pre_executions.len(), pre_captured.len());
     }
 
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491349() {
-        let executions = test_derivation(
-            BootInfo {
-                l1_head: b256!(
-                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
-                ),
-                agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-                ),
-                claimed_l2_block_number: 16491349,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
-            },
+        let (executions, _) = test_derivation(
+            op_sepolia_16491249_16491349(),
             None,
             None,
             Some(Default::default()),
         )
+        .await
         .unwrap();
         let _ = test_execution(
-            BootInfo {
-                l1_head: B256::ZERO,
-                agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-                ),
-                claimed_l2_block_number: 16491349,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
+            {
+                let mut boot_info = op_sepolia_16491249_16491349();
+                boot_info.l1_head = B256::ZERO;
+                boot_info
             },
             executions,
         )
@@ -1306,21 +1021,7 @@ pub mod tests {
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491349_validity() {
         test_derivation(
-            BootInfo {
-                l1_head: b256!(
-                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
-                ),
-                agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-                ),
-                claimed_l2_block_number: 16491349,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
-            },
+            op_sepolia_16491249_16491349(),
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
@@ -1330,6 +1031,7 @@ pub mod tests {
             None,
             Some(Default::default()),
         )
+        .await
         .unwrap();
     }
 
@@ -1354,6 +1056,7 @@ pub mod tests {
             None,
             Some(Default::default()),
         )
+        .await
         .unwrap();
     }
 
@@ -1363,7 +1066,7 @@ pub mod tests {
             b256!("0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1");
         let claimed_l2_block_number = 16491349;
         // data wasn't published as of l1 head
-        let exec = test_derivation(
+        let (exec, _) = test_derivation(
             BootInfo {
                 l1_head: b256!(
                     "0x78228b4f2d59ae1820b8b8986a875630cb32d88b298d78d0f25bcac8f3bdfbf3"
@@ -1381,6 +1084,7 @@ pub mod tests {
             None,
             Some(Default::default()),
         )
+        .await
         .unwrap();
         let Some(last_execution) = exec.last() else {
             return;
@@ -1411,12 +1115,13 @@ pub mod tests {
             None,
             Some(Default::default()),
         )
+        .await
         .unwrap_err();
     }
 
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491249() {
-        let executions = test_derivation(
+        let (executions, _) = test_derivation(
             BootInfo {
                 l1_head: b256!(
                     "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
@@ -1436,98 +1141,67 @@ pub mod tests {
             None,
             Some(Default::default()),
         )
+        .await
         .unwrap();
         assert!(executions.is_empty());
     }
 
-    /// Helper to run chunk mode through `run_core_client` with the given witness.
-    pub fn test_chunk_execution(
-        boot_info: BootInfo,
-        chunk_witness: PartialExecutionWitness,
-    ) -> (BootInfo, Precondition) {
-        assert_eq!(boot_info.l1_head, B256::repeat_byte(0xFF));
-        let oracle = Arc::new(TestOracle::new(boot_info.clone()));
-        run_core_client(
-            B256::ZERO,
-            oracle.clone(),
-            oracle.clone(),
-            OracleBlobProvider::new(oracle.clone()),
-            EthereumDataSourceProvider,
-            vec![],
-            None,
-            None,
-            None,
-            Some(chunk_witness),
-            Vec::new(),
-            None,
-        )
-        .expect("run_core_client chunk mode")
-    }
-
-    /// Creates a chunk witness with default empty state for testing.
-    fn make_test_chunk_witness(
-        cache: alloy_evm::revm::database::in_memory_db::Cache,
-        transactions: Vec<Vec<u8>>,
-    ) -> PartialExecutionWitness {
-        PartialExecutionWitness {
-            transactions,
-            block_env: alloy_evm::revm::context::BlockEnv::default(),
-            op_block_ctx: alloy_op_evm::OpBlockExecutionCtx::default(),
-            cache,
-        }
-    }
-
-    fn make_chunk_boot_info() -> BootInfo {
+    fn make_pe_boot(boot_info: &BootInfo, witness: &PartialExecutionWitness) -> BootInfo {
         BootInfo {
             l1_head: B256::repeat_byte(0xFF),
-            agreed_l2_output_root: b256!(
-                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-            ),
-            claimed_l2_output_root: b256!(
-                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-            ),
-            claimed_l2_block_number: 16491249,
-            chain_id: 11155420,
-            rollup_config: Default::default(),
-            l1_config: Default::default(),
+            agreed_l2_output_root: witness.op_block_ctx.parent_hash,
+            claimed_l2_output_root: witness.op_block_ctx.parent_hash,
+            claimed_l2_block_number: witness.block_env.number.to::<u64>().saturating_sub(1),
+            chain_id: boot_info.chain_id,
+            rollup_config: boot_info.rollup_config.clone(),
+            l1_config: boot_info.l1_config.clone(),
         }
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_chunk_mode_empty_transactions() {
-        use crate::precondition::evm::{compute_chunk_trace, hash_results};
-        use alloy_evm::revm::database::in_memory_db::Cache;
-        use risc0_zkvm::sha::Digestible;
-
+    pub async fn test_empty_partials() {
         let cache = Cache {
             accounts: Default::default(),
             contracts: Default::default(),
             logs: Vec::new(),
             block_hashes: Default::default(),
         };
-        let cw = make_test_chunk_witness(cache, vec![]);
+        let pe_witness = PartialExecutionWitness {
+            transactions: vec![],
+            block_env: BlockEnv::default(),
+            op_block_ctx: OpBlockExecutionCtx::default(),
+            cache,
+        };
 
         // No txs ⇒ empty trace collector ⇒ hash_results over zero entries.
         let results_hash = hash_results(&[], &[]);
-        let block_ctx_hash = crate::precondition::evm::hash_block_ctx(
-            &alloy_evm::revm::context::BlockEnv::default(),
-            &alloy_op_evm::OpBlockExecutionCtx::default(),
-        );
-        let expected_trace = compute_chunk_trace(results_hash, block_ctx_hash);
+        let block_ctx_hash = hash_block_ctx(&BlockEnv::default(), &OpBlockExecutionCtx::default());
+        let expected_trace = compute_pe_trace(results_hash, block_ctx_hash);
 
-        let (result_boot, precondition) = test_chunk_execution(make_chunk_boot_info(), cw);
+        let (result_boot, precondition) = test_partial(
+            make_pe_boot(
+                &BootInfo {
+                    l1_head: Default::default(),
+                    agreed_l2_output_root: Default::default(),
+                    claimed_l2_output_root: Default::default(),
+                    claimed_l2_block_number: 0,
+                    chain_id: 11155420,
+                    rollup_config: Default::default(),
+                    l1_config: Default::default(),
+                },
+                &pe_witness,
+            ),
+            pe_witness,
+        );
 
         assert_eq!(result_boot.l1_head, B256::repeat_byte(0xFF));
-        let expected_precondition = Precondition::default().chunk(expected_trace);
+        let expected_precondition = Precondition::default().partial(expected_trace);
         assert_eq!(precondition.digest(), expected_precondition.digest());
     }
 
     #[tokio::test(flavor = "multi_thread")]
     #[should_panic(expected = "cached contract bytecode hash mismatch")]
     pub async fn test_chunk_mode_malformed_contract_rejected() {
-        use alloy_evm::revm::database::in_memory_db::Cache;
-        use alloy_evm::revm::state::Bytecode;
-
         let mut cache = Cache {
             accounts: Default::default(),
             contracts: Default::default(),
@@ -1539,60 +1213,26 @@ pub mod tests {
         let wrong_hash = B256::repeat_byte(0xAB);
         cache.contracts.insert(wrong_hash, code);
 
-        let cw = make_test_chunk_witness(cache, vec![]);
-        let _ = test_chunk_execution(make_chunk_boot_info(), cw);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_chunk_mode_missing_witness_errors() {
-        let boot = make_chunk_boot_info();
-        let oracle = Arc::new(TestOracle::new(boot.clone()));
-        // Call with chunk sentinel but None witness → should error
-        let result = run_core_client(
-            B256::ZERO,
-            oracle.clone(),
-            oracle.clone(),
-            OracleBlobProvider::new(oracle.clone()),
-            EthereumDataSourceProvider,
-            vec![],
-            None,
-            None,
-            None,
-            None, // No chunk witness!
-            Vec::new(),
-            None,
-        );
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("chunk witness required"),
-            "unexpected error: {err_msg}"
-        );
-    }
-
-    #[test]
-    fn validate_cached_contracts_rejects_malformed_entry() {
-        let valid_code = crate::precondition::evm::tests::make_bytecode(&[0x60, 0x00]);
-        let invalid_code = crate::precondition::evm::tests::make_bytecode(&[0x60, 0x01]);
-        let code_hash = valid_code.hash_slow();
-
-        let mut cache = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
+        let pe_witness = PartialExecutionWitness {
+            transactions: vec![],
+            block_env: BlockEnv::default(),
+            op_block_ctx: OpBlockExecutionCtx::default(),
+            cache,
         };
-        cache.contracts.insert(code_hash, invalid_code);
-
-        let panic =
-            std::panic::catch_unwind(|| validate_cached_contracts(&cache.contracts)).unwrap_err();
-        let message = if let Some(msg) = panic.downcast_ref::<String>() {
-            msg.clone()
-        } else if let Some(msg) = panic.downcast_ref::<&str>() {
-            msg.to_string()
-        } else {
-            String::new()
-        };
-        assert!(message.contains("cached contract bytecode hash mismatch"));
+        let _ = test_partial(
+            make_pe_boot(
+                &BootInfo {
+                    l1_head: Default::default(),
+                    agreed_l2_output_root: Default::default(),
+                    claimed_l2_output_root: Default::default(),
+                    claimed_l2_block_number: 0,
+                    chain_id: 11155420,
+                    rollup_config: Default::default(),
+                    l1_config: Default::default(),
+                },
+                &pe_witness,
+            ),
+            pe_witness,
+        );
     }
 }

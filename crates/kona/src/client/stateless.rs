@@ -100,12 +100,13 @@ pub mod tests {
     use crate::client::core::EthereumDataSourceProvider;
     use crate::client::stitching::KonaStitchingClient;
     use crate::client::tests::TestOracle;
+    use crate::executor::Execution;
     use alloy_primitives::{b256, B256};
     use anyhow::Context;
     use kona_proof::BootInfo;
 
-    #[test]
-    fn test_stateless_client() -> anyhow::Result<()> {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_stateless_client() -> anyhow::Result<()> {
         let mut boot_info = BootInfo {
             l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
             agreed_l2_output_root: b256!(
@@ -120,7 +121,9 @@ pub mod tests {
             l1_config: Default::default(),
         };
         let stitched_executions = test_derivation(boot_info.clone(), None, None, None)
+            .await
             .context("test_derivation")?
+            .0
             .into_iter()
             .map(|e| e.as_ref().clone())
             .collect::<Vec<_>>();
@@ -163,12 +166,7 @@ pub mod tests {
     /// result against the live DB.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_stateless_client_with_chunks() -> anyhow::Result<()> {
-        use crate::client::core::tests::{
-            build_single_chunk_for_block, test_derivation_with_chunks_and_traces,
-            test_fetch_safe_head_context,
-        };
-        use crate::evm::PartialExecution;
-        use std::sync::{Arc, Mutex};
+        use crate::client::core::tests::test_derivation_with_partials;
 
         let mut boot_info = BootInfo {
             l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
@@ -183,59 +181,23 @@ pub mod tests {
             rollup_config: Default::default(),
             l1_config: Default::default(),
         };
-        let safe_head_number = 16491249u64;
 
         // ---- Pass 1 (capture): test_derivation_with_chunks_and_traces runs the full
         // derivation through `run_core_client`, captures per-tx `ResultAndState`,
         // returns the Executions.
-        let collector: crate::evm::TransactionResultCollector = Arc::new(Mutex::new(Vec::new()));
-        let executions = test_derivation_with_chunks_and_traces(
+        let (executions, partial_executions) = test_derivation_with_partials(
             boot_info.clone(),
             None,
             None,
             Some(Default::default()),
             Vec::new(),
-            Some(collector.clone()),
         )
+        .await
         .context("capture pass")?;
         assert!(!executions.is_empty());
+        assert_eq!(executions.len(), partial_executions.len());
 
-        let (safe_head_header, real_rollup_config) =
-            test_fetch_safe_head_context(&boot_info).await?;
-        let rollup_config = Arc::new(real_rollup_config);
-
-        // ---- Build Chunks (one single-chunk per block). Collector ordering
-        // matches execution ordering: `CachedEvmFactory::create_evm` is called
-        // exactly once per block during derivation, in ascending block order, so
-        // the outer-vec index `i` corresponds to `executions[i]`.
-        let captured: Vec<Vec<_>> = std::mem::take(&mut *collector.lock().unwrap());
-        assert_eq!(
-            captured.len(),
-            executions.len(),
-            "captured block-trace count must match execution count"
-        );
-        let _ = safe_head_number;
-        let chunks: Vec<Vec<PartialExecution>> = executions
-            .iter()
-            .enumerate()
-            .zip(captured)
-            .map(|((i, exec), traces)| {
-                let parent_header = if i == 0 {
-                    &safe_head_header
-                } else {
-                    executions[i - 1].artifacts.header.inner()
-                };
-                let spec_id = rollup_config.spec_id(exec.artifacts.header.inner().timestamp);
-                vec![build_single_chunk_for_block(
-                    exec,
-                    traces,
-                    parent_header,
-                    spec_id,
-                )]
-            })
-            .collect();
-
-        let stitched_executions: Vec<crate::executor::Execution> =
+        let stitched_executions: Vec<Execution> =
             executions.into_iter().map(|e| e.as_ref().clone()).collect();
 
         // ---- Pass 2 (stateless replay): l1_head = ZERO routes through the
@@ -257,7 +219,7 @@ pub mod tests {
             stitched_boot_info: vec![],
             fpvm_image_id: Default::default(),
             pe_witness: None,
-            partial_executions: chunks,
+            partial_executions,
         };
 
         run_stateless_client(witness, KonaStitchingClient(EthereumDataSourceProvider));

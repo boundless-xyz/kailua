@@ -21,7 +21,7 @@ use crate::evm::PartialExecutionWitness;
 use crate::executor::Execution;
 use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
-use crate::precondition::evm::{compute_chunk_trace, hash_block_ctx, hash_results};
+use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
 use crate::precondition::Precondition;
 use alloy_primitives::{Address, B256};
 use anyhow::Context;
@@ -412,9 +412,9 @@ pub fn precompute_pe_boots(
             // Compute precondition hash
             let results_hash = hash_results(&partial.tx_hashes, &partial.results);
             let block_ctx_hash = hash_block_ctx(&partial.block_env, &partial.op_block_ctx);
-            let chunk_trace = compute_chunk_trace(results_hash, block_ctx_hash);
+            let chunk_trace = compute_pe_trace(results_hash, block_ctx_hash);
             let precondition_hash =
-                B256::new(Precondition::default().chunk(chunk_trace).digest().into());
+                B256::new(Precondition::default().partial(chunk_trace).digest().into());
 
             // Create required boot info
             let stitched_boot = StitchedBootInfo {
@@ -742,7 +742,7 @@ pub mod tests {
             .1
     }
 
-    pub fn test_stitching_boots(
+    pub async fn test_stitching_boots(
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
     ) -> anyhow::Result<()> {
@@ -752,7 +752,9 @@ pub mod tests {
             None,
             None,
         )
+        .await
         .context("test_derivation")?
+        .0
         .into_iter()
         .map(|e| e.as_ref().clone())
         .collect::<Vec<_>>();
@@ -830,7 +832,7 @@ pub mod tests {
         Ok(())
     }
 
-    pub fn test_stitching_executions(
+    pub async fn test_stitching_executions(
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
     ) -> anyhow::Result<()> {
@@ -840,7 +842,9 @@ pub mod tests {
             None,
             None,
         )
+        .await
         .context("test_derivation")?
+        .0
         .into_iter()
         .map(|e| e.as_ref().clone())
         .collect::<Vec<_>>();
@@ -883,7 +887,7 @@ pub mod tests {
         Ok(())
     }
 
-    pub fn test_stitching_execution_only(
+    pub async fn test_stitching_execution_only(
         mut boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
         stitched_preconditions: Vec<Precondition>,
@@ -895,7 +899,9 @@ pub mod tests {
             None,
             None,
         )
+        .await
         .context("test_derivation")?
+        .0
         .into_iter()
         .map(|e| e.as_ref().clone())
         .collect::<Vec<_>>();
@@ -966,6 +972,7 @@ pub mod tests {
             },
             None,
         )
+        .await
         .unwrap();
 
         teardown();
@@ -1034,6 +1041,7 @@ pub mod tests {
                 blob_hashes: vec![],
             }),
         )
+        .await
         .unwrap();
 
         teardown();
@@ -1063,6 +1071,7 @@ pub mod tests {
             vec![],
             vec![],
         )
+        .await
         .unwrap();
 
         teardown();
@@ -1095,6 +1104,7 @@ pub mod tests {
                 blob_hashes: vec![],
             }),
         )
+        .await
         .unwrap();
 
         teardown();
@@ -1237,7 +1247,7 @@ pub mod tests {
     /// on the zkvm side.
     #[test]
     fn stitch_chunks_results_tampering_changes_chunk_trace() {
-        use crate::precondition::evm::{compute_chunk_trace, hash_block_ctx, hash_results};
+        use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
         use alloy_evm::op_revm::OpHaltReason;
         use alloy_evm::revm::context_interface::result::{
             ExecutionResult, Output, ResultAndState, SuccessReason,
@@ -1262,11 +1272,11 @@ pub mod tests {
         let mut chunk_b = chunk_a.clone();
         chunk_b.results = vec![stub(21001)]; // tampered!
 
-        let trace_a = compute_chunk_trace(
+        let trace_a = compute_pe_trace(
             hash_results(&chunk_a.tx_hashes, &chunk_a.results),
             hash_block_ctx(&chunk_a.block_env, &chunk_a.op_block_ctx),
         );
-        let trace_b = compute_chunk_trace(
+        let trace_b = compute_pe_trace(
             hash_results(&chunk_b.tx_hashes, &chunk_b.results),
             hash_block_ctx(&chunk_b.block_env, &chunk_b.op_block_ctx),
         );

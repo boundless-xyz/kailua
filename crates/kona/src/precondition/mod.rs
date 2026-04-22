@@ -68,8 +68,8 @@ impl Precondition {
         self
     }
 
-    pub fn chunk(mut self, chunk_trace: B256) -> Self {
-        self.partial_executions = chunk_trace;
+    pub fn partial(mut self, partial_execution: B256) -> Self {
+        self.partial_executions = partial_execution;
         self
     }
 }
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn chunk_builder_sets_only_chunk_trace() {
         let h = non_zero_hash(0xAA);
-        let p = Precondition::default().chunk(h);
+        let p = Precondition::default().partial(h);
         assert_eq!(p.partial_executions, h);
         assert!(p.proposal_blobs.is_zero());
         assert!(p.execution_trace.is_zero());
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn chunk_only_digest() {
         let h = non_zero_hash(0xBB);
-        let p = Precondition::default().chunk(h);
+        let p = Precondition::default().partial(h);
         assert_eq!(p.digest(), Digest::from_bytes(h.0));
     }
 

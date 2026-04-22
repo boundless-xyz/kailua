@@ -1036,7 +1036,8 @@ pub mod tests {
                 None,
                 cached_bail_driver.clone(),
                 Some(bail_derivation_trace.clone()),
-            );
+            )
+            .await;
 
             // Verify derivation trace
             let Some(traced_bail_driver) = bail_derivation_trace.lock().unwrap().take() else {
@@ -1089,6 +1090,7 @@ pub mod tests {
                 cached_safe_driver.clone(),
                 Some(safe_derivation_trace.clone()),
             )
+            .await
             .unwrap();
             let traced_safe_driver = safe_derivation_trace.lock().unwrap().take().unwrap();
             assert_eq!(traced_safe_driver.digest(), traced_bail_driver.digest(),);

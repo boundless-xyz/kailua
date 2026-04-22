@@ -30,7 +30,7 @@ use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 /// ```text
 /// SHA256(results_hash || block_ctx_hash)
 /// ```
-pub fn compute_chunk_trace(results_hash: B256, block_ctx_hash: B256) -> B256 {
+pub fn compute_pe_trace(results_hash: B256, block_ctx_hash: B256) -> B256 {
     let hashed_bytes = [results_hash.as_slice(), block_ctx_hash.as_slice()].concat();
     let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
         .as_bytes()
@@ -339,8 +339,8 @@ pub mod tests {
     fn chunk_trace_deterministic() {
         let a = B256::repeat_byte(0x01);
         let b = B256::repeat_byte(0x02);
-        let t1 = compute_chunk_trace(a, b);
-        let t2 = compute_chunk_trace(a, b);
+        let t1 = compute_pe_trace(a, b);
+        let t2 = compute_pe_trace(a, b);
         assert_eq!(t1, t2);
         assert!(!t1.is_zero());
     }
@@ -348,11 +348,11 @@ pub mod tests {
     #[test]
     fn chunk_trace_any_input_change_different() {
         let base = [B256::repeat_byte(0x01), B256::repeat_byte(0x02)];
-        let baseline = compute_chunk_trace(base[0], base[1]);
+        let baseline = compute_pe_trace(base[0], base[1]);
         for i in 0..2 {
             let mut modified = base;
             modified[i] = B256::repeat_byte(0xFF);
-            let h = compute_chunk_trace(modified[0], modified[1]);
+            let h = compute_pe_trace(modified[0], modified[1]);
             assert_ne!(
                 baseline, h,
                 "changing input {i} should produce different trace"
@@ -594,8 +594,8 @@ pub mod tests {
 
     #[test]
     fn chunk_trace_integration_with_precondition() {
-        let trace = compute_chunk_trace(B256::repeat_byte(0x01), B256::repeat_byte(0x02));
-        let p = crate::precondition::Precondition::default().chunk(trace);
+        let trace = compute_pe_trace(B256::repeat_byte(0x01), B256::repeat_byte(0x02));
+        let p = crate::precondition::Precondition::default().partial(trace);
         assert_eq!(p.digest(), risc0_zkvm::Digest::from_bytes(trace.0));
     }
 }
