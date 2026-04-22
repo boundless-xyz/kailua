@@ -977,7 +977,7 @@ where
 mod tests {
     use super::*;
     use crate::{from_bytes_with, to_bytes_with};
-    use alloy_primitives::{address, Bloom};
+    use alloy_primitives::address;
 
     fn make_info(nonce: u64, balance: u64) -> AccountInfo {
         AccountInfo {

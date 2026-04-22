@@ -1526,31 +1526,6 @@ pub mod tests {
         assert_eq!(precondition.digest(), expected_precondition.digest());
     }
 
-    /// Helper: run `run_core_client` in chunk mode, returning the raw `Result`
-    /// (unlike `test_chunk_execution` which `.expect()`s success). Used by
-    /// the rejection tests below.
-    fn try_chunk_execution(
-        boot_info: BootInfo,
-        chunk_witness: PartialExecutionWitness,
-    ) -> anyhow::Result<(BootInfo, Precondition)> {
-        assert_eq!(boot_info.l1_head, B256::repeat_byte(0xFF));
-        let oracle = Arc::new(TestOracle::new(boot_info.clone()));
-        run_core_client(
-            B256::ZERO,
-            oracle.clone(),
-            oracle.clone(),
-            OracleBlobProvider::new(oracle.clone()),
-            EthereumDataSourceProvider,
-            vec![],
-            None,
-            None,
-            None,
-            Some(chunk_witness),
-            Vec::new(),
-            None,
-        )
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     #[should_panic(expected = "cached contract bytecode hash mismatch")]
     pub async fn test_chunk_mode_malformed_contract_rejected() {

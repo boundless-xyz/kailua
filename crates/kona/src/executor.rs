@@ -314,9 +314,7 @@ pub mod tests {
     use crate::rkyv::execution::tests::gen_execution_outcomes;
     use alloy_eips::eip4895::Withdrawal;
     use alloy_evm::revm::context::BlockEnv;
-    use alloy_evm::revm::DatabaseRef;
     use alloy_op_evm::block::OpBlockExecutionCtx;
-    use alloy_primitives::U256;
     use alloy_primitives::{keccak256, Address, Sealable, B64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use kona_mpt::TrieNode;
