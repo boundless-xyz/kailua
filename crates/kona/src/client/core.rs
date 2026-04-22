@@ -110,9 +110,9 @@ pub fn run_core_client<
     execution_trace: Option<Arc<Mutex<Vec<Execution>>>>,
     derivation_cache: Option<CachedDriver>,
     derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
-    chunk_witness: Option<PartialExecutionWitness>,
-    chunks: Vec<Vec<PartialExecution>>,
-    chunk_trace_collector: Option<TransactionResultCollector>,
+    pe_witness: Option<PartialExecutionWitness>,
+    partial_executions: Vec<Vec<PartialExecution>>,
+    partials_collector: Option<TransactionResultCollector>,
 ) -> anyhow::Result<(BootInfo, Precondition)>
 where
     <B as BlobProvider>::Error: Debug,
@@ -146,7 +146,7 @@ where
                 block_env,
                 op_block_ctx,
                 cache,
-            } = chunk_witness.context("chunk witness required in chunk mode")?;
+            } = pe_witness.context("chunk witness required in chunk mode")?;
             // Calculate prestate hashes
             let block_ctx_hash = hash_block_ctx(&block_env, &op_block_ctx);
 
@@ -251,7 +251,7 @@ where
                 rollup_config.as_ref(),
                 l2_provider.clone(),
                 l2_provider.clone(),
-                CachedEvmFactory::new_with_traces(chunks, chunk_trace_collector),
+                CachedEvmFactory::new_with_traces(partial_executions, partials_collector),
                 None,
             );
             kona_executor.update_safe_head(safe_head);
@@ -343,7 +343,7 @@ where
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider.clone(),
-            CachedEvmFactory::new_with_traces(chunks, chunk_trace_collector),
+            CachedEvmFactory::new_with_traces(partial_executions, partials_collector),
             execution_trace,
         );
 
