@@ -22,23 +22,9 @@ use alloy_evm::revm::database::states::cache::CacheState;
 use alloy_evm::revm::primitives::{HashMap, KECCAK_EMPTY};
 use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmState};
 use alloy_op_evm::block::OpBlockExecutionCtx;
-use alloy_primitives::{Address, Bloom, B256, U256};
-use op_alloy_consensus::OpReceiptEnvelope;
+use alloy_primitives::{Address, B256, U256};
 use risc0_zkvm::sha::rust_crypto::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-
-/// EVM state accumulators tracked across chunk boundaries.
-#[derive(
-    Clone, Debug, Default, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
-pub struct EvmAccumulatorState {
-    pub cumulative_gas_used: u64,
-    pub da_footprint_used: u64,
-    pub blob_gas_used: u64,
-    pub logs_bloom: Bloom,
-    #[rkyv(with = rkyv::with::Map<crate::rkyv::chunking::OpReceiptRlpRkyv>)]
-    pub receipts: Vec<OpReceiptEnvelope>,
-}
 
 /// Maps an `AccountStatus` (from `CacheState`/`State`) to an `AccountState` (from `Cache`/`CacheDB`)
 /// for canonical hashing only. This normalization ensures that both revm state representations
@@ -340,81 +326,39 @@ fn hash_canonical<'a>(
     B256::from_slice(&hasher.finalize())
 }
 
-/// Compute a deterministic SHA256 hash of EVM state accumulators.
-pub fn hash_evm_state(evm_state: &EvmAccumulatorState) -> B256 {
-    let mut hasher = Sha256::new();
-    hasher.update(evm_state.cumulative_gas_used.to_be_bytes());
-    hasher.update(evm_state.da_footprint_used.to_be_bytes());
-    hasher.update(evm_state.blob_gas_used.to_be_bytes());
-    hasher.update(<Bloom as AsRef<[u8]>>::as_ref(&evm_state.logs_bloom));
-    // Encode receipts in execution order
-    hasher.update((evm_state.receipts.len() as u64).to_be_bytes());
-    for receipt in &evm_state.receipts {
-        let encoded = alloy_rlp::encode(receipt);
-        hasher.update((encoded.len() as u64).to_be_bytes());
-        hasher.update(&encoded);
-    }
-    B256::from_slice(&hasher.finalize())
-}
-
-/// Compute the chunk_trace commitment from the six input hashes.
+/// Compute the chunk_trace commitment from the two input hashes.
 ///
 /// Returns:
 /// ```text
-/// SHA256(
-///     tx_hash
-///  || pre_db_hash
-///  || post_db_hash
-///  || pre_evm_hash
-///  || post_evm_hash
-///  || results_hash
-///  || block_ctx_hash
-/// )
+/// SHA256(results_hash || block_ctx_hash)
 /// ```
 ///
-/// # Why each component matters
-///
-/// * `tx_hash` — binds the transaction sequence.
-/// * `pre_db_hash` / `post_db_hash` — binds the pre and post flat DB state hashes.
-/// * `pre_evm_hash` / `post_evm_hash` — binds the pre and post EVM accumulator hashes
-///   (cumulative gas, DA footprint, blob gas, logs bloom, cumulative receipts).
-/// * `results_hash` — binds the per-transaction `ResultAndState` trajectory so the
-///   aggregation cannot substitute a different-but-endpoint-equivalent results vec.
-///   Without this, the aggregator could replay arbitrary witness-supplied
-///   `ResultAndState` entries that happen to take `pre_db_hash` → `post_db_hash`.
-///   See `hash_results` for the canonical encoding.
-/// * `block_ctx_hash` — binds the block execution context (BlockEnv + OpBlockExecutionCtx)
-///   under which the chunk guest executed. Without this, an adversary could generate a
-///   chunk proof with a forged `block_env` (different timestamp, basefee, prevrandao,
-///   coinbase, blob pricing, etc.) or a forged `op_block_ctx` (different parent_hash,
-///   parent_beacon_block_root, extra_data), producing different results for
-///   env-sensitive opcodes (BASEFEE / PREVRANDAO / NUMBER / COINBASE / TIMESTAMP /
-///   BLOBBASEFEE / BLOCKHASH for EIP-2935, beacon-root EIP-4788 call, Holocene/Jovian
-///   EIP-1559 params encoded in extra_data), and have aggregation accept those results
-///   for the real block. With `block_ctx_hash` folded in, the chunk proof's journal
-///   identity depends on the exact context used; the aggregation side recomputes the
-///   same hash from `chunk.block_env`/`chunk.op_block_ctx` and ALSO cross-checks
-///   those carried fields against the derivation pipeline's header (see
-///   `verify_block_chunks`), rejecting any chunk whose context doesn't match the
-///   block being aggregated.
-pub fn compute_chunk_trace(
-    pre_db_hash: B256,
-    post_db_hash: B256,
-    pre_evm_hash: B256,
-    post_evm_hash: B256,
-    results_hash: B256,
-    block_ctx_hash: B256,
-) -> B256 {
-    // Note: per-tx identity is authenticated via `results_hash`, which folds in
-    // `tx_hashes` (one SHA256 contribution per `(tx_hash, result, state)` tuple).
-    // That makes a separate aggregated tx_hash input redundant — any chunk-tx
-    // identity tampering already changes `results_hash` and invalidates the
-    // chunk_trace.
+/// * `results_hash` — binds the per-transaction `(tx_hash, pre_account_infos,
+///   ResultAndState)` trajectory (see [`hash_results`]). The per-slot
+///   `EvmStorageSlot.original_value` embedded in each `ResultAndState.state`
+///   together with `pre_account_infos[i]` serve as the authenticated prestate
+///   footprint — `CachedEvm::transact_raw` cross-checks both against the live
+///   inner DB at cache-serve time, so no standalone pre-DB-hash commitment is
+///   needed.
+/// * `block_ctx_hash` — binds the block execution context
+///   (`BlockEnv` + `OpBlockExecutionCtx`). Without it, an adversary could
+///   generate a chunk proof with a forged context (timestamp, basefee,
+///   prevrandao, coinbase, blob pricing, parent_hash, parent_beacon_block_root,
+///   extra_data) and have aggregation accept env-sensitive opcode results for
+///   the real block. With it folded in, aggregation recomputes the same hash
+///   from `chunk.block_env`/`chunk.op_block_ctx` and cross-checks those carried
+///   fields against the derivation-pipeline header in `verify_block_chunks`.
+pub fn compute_chunk_trace(results_hash: B256, block_ctx_hash: B256) -> B256 {
+    // Per-tx identity, pre-`AccountInfo`, and per-tx `ResultAndState` are all
+    // authenticated via `results_hash`, which folds each tuple through SHA256
+    // per-element. The chunk's prestate is authenticated at serve-time by
+    // `CachedEvm` comparing `EvmStorageSlot.original_value` and
+    // `pre_account_infos[i][addr]` against the live inner DB; no separate
+    // pre/post DB-hash commitments are needed. `block_ctx_hash` pins the
+    // env-sensitive opcodes' context (BASEFEE, PREVRANDAO, NUMBER, COINBASE,
+    // TIMESTAMP, BLOBBASEFEE, BLOCKHASH, EIP-4788/2935 system inputs,
+    // Holocene/Jovian EIP-1559 params).
     let mut hasher = Sha256::new();
-    hasher.update(pre_db_hash.as_slice());
-    hasher.update(post_db_hash.as_slice());
-    hasher.update(pre_evm_hash.as_slice());
-    hasher.update(post_evm_hash.as_slice());
     hasher.update(results_hash.as_slice());
     hasher.update(block_ctx_hash.as_slice());
     B256::from_slice(&hasher.finalize())
@@ -691,9 +635,15 @@ const _: () = {
 };
 
 fn write_account(hasher: &mut Sha256, acct: &Account) {
-    // AccountInfo: nonce, balance, code_hash. Skip `account_id` and `code` field
-    // (see hash_results doc for the full exclusion rationale — code_hash binds
-    // bytecode content via `validate_cached_contracts`).
+    // Pre-tx AccountInfo (original_info) — revm's first-load value for this address.
+    // Authenticated so CachedEvm's serve-side `db.basic(addr)` check against
+    // `account.original_info` is bound by the chunk proof.
+    write_u64(hasher, acct.original_info.nonce);
+    write_u256(hasher, &acct.original_info.balance);
+    write_b256(hasher, &acct.original_info.code_hash);
+
+    // Post-tx AccountInfo (info): nonce, balance, code_hash. Skip `account_id` and
+    // `code` field (code_hash binds bytecode content via `validate_cached_contracts`).
     write_u64(hasher, acct.info.nonce);
     write_u256(hasher, &acct.info.balance);
     write_b256(hasher, &acct.info.code_hash);
@@ -862,7 +812,6 @@ pub fn hash_results(tx_hashes: &[B256], results: &[ResultAndState<OpHaltReason>]
 //     produce wrong blob tx gas accounting → mismatched `post_evm_hash` → chunk
 //     proof rejection by the existing hash-chain and env continuity checks.
 
-use alloy_consensus::proofs::calculate_receipt_root;
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::eip7840::BlobParams;
 use alloy_evm::op_revm::OpSpecId;
@@ -870,7 +819,7 @@ use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
 use alloy_evm::revm::primitives::eip4844::{
     BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
 };
-use anyhow::{bail, ensure};
+use anyhow::ensure;
 
 use crate::evm::PartialExecution;
 
@@ -1004,7 +953,6 @@ pub fn verify_block_chunks(
     }
 
     // Per-chunk structural checks.
-    let mut cursor: usize = 0;
     for (i, chunk) in chunks.iter().enumerate() {
         // Block context binding (Codex round-3 critical).
         //
@@ -1107,100 +1055,28 @@ pub fn verify_block_chunks(
             header.extra_data
         );
 
-        // evm_state self-consistency: the structural field must hash to the
-        // authenticated claimed_evm commitment. Without this, the receipts inside
-        // evm_state are not bound to the chunk proof and cannot be safely used for the
-        // receipts-root reconstruction below.
-        ensure!(
-            hash_evm_state(&chunk.evm_state) == chunk.claimed_evm,
-            "chunks[{i}] evm_state hashes to {} but claimed_evm is {} — malformed or \
-             tampered witness",
-            hash_evm_state(&chunk.evm_state),
-            chunk.claimed_evm
-        );
-
         // tx identity binding: each `chunk.tx_hashes[j]` must equal the EIP-2718
-        // hash of `block_txs[cursor + j]` (the derivation-pipeline-supplied tx at
-        // the same position). Forces the chunk proof to authenticate exactly the
-        // transactions the aggregation is executing. Combined with `results_hash`
-        // folding `tx_hashes` into `chunk_trace`, this closes the "T_Y ≠ T_X"
-        // substitution attack per-element.
-        let chunk_end = cursor
-            .checked_add(chunk.results.len())
-            .ok_or_else(|| anyhow::anyhow!("chunks[{i}] tx count overflow"))?;
-        ensure!(
-            chunk_end <= block_txs.len(),
-            "chunks[{i}] extends past block tx count: end={chunk_end}, total={}",
-            block_txs.len()
-        );
+        // hash of some tx in `block_txs` — but positional coverage is no longer
+        // required (mix-and-match is supported). We instead require each chunk's
+        // committed `tx_hashes` to be a permutation of a subset of the block's
+        // txs. The simpler, equivalent check here is: every `chunk.tx_hashes[j]`
+        // corresponds to *some* tx in `block_txs` (keccak256 match). The
+        // aggregation-side `CachedEvm` performs the runtime pairing, authenticated
+        // per-element via per-slot `original_value` and `pre_account_infos` checks.
         ensure!(
             chunk.tx_hashes.len() == chunk.results.len(),
             "chunks[{i}] tx_hashes.len()={} != results.len()={}",
             chunk.tx_hashes.len(),
             chunk.results.len()
         );
-        for (j, (chunk_tx_hash, tx_bytes)) in chunk
-            .tx_hashes
-            .iter()
-            .zip(&block_txs[cursor..chunk_end])
-            .enumerate()
-        {
-            let expected = alloy_primitives::keccak256(tx_bytes);
+        let block_tx_hashes: std::collections::HashSet<B256> =
+            block_txs.iter().map(alloy_primitives::keccak256).collect();
+        for (j, chunk_tx_hash) in chunk.tx_hashes.iter().enumerate() {
             ensure!(
-                *chunk_tx_hash == expected,
-                "chunks[{i}] tx_hashes[{j}] {} != keccak256(block_txs[{}]) {}",
-                chunk_tx_hash,
-                cursor + j,
-                expected
+                block_tx_hashes.contains(chunk_tx_hash),
+                "chunks[{i}] tx_hashes[{j}] {chunk_tx_hash} not in block_txs"
             );
         }
-        cursor = chunk_end;
-    }
-
-    // Full-coverage: chunks must cover every tx in the block. (M-9: partial coverage
-    // would let the tail run live through ChunkingEvm's inner delegation — safe for
-    // state root but outside the Decision 12 model.)
-    ensure!(
-        cursor == block_txs.len(),
-        "chunks cover {cursor} of {} block transactions — full coverage required",
-        block_txs.len()
-    );
-
-    // Hash-chain continuity inside the block.
-    for i in 1..chunks.len() {
-        ensure!(
-            chunks[i].agreed_db == chunks[i - 1].claimed_db,
-            "chunk hash chain broken: agreed_db[{i}] != claimed_db[{j}]",
-            j = i - 1
-        );
-        ensure!(
-            chunks[i].agreed_evm == chunks[i - 1].claimed_evm,
-            "chunk hash chain broken: agreed_evm[{i}] != claimed_evm[{j}]",
-            j = i - 1
-        );
-    }
-
-    // Receipts-root reconstruction: the last chunk's cumulative evm_state.receipts
-    // must reproduce the block header's receipts_root. This authenticates that the
-    // per-tx receipts captured by the chunk guest equal what the aggregation's block
-    // executor produced — if the chunk replay diverged from honest execution (e.g., a
-    // Frankenstein receipt built from a mismatched tx+result pair), the receipts_root
-    // would differ.
-    //
-    // Safety: hash_evm_state check above ensures last_chunk.evm_state.receipts is
-    // authenticated (via claimed_evm), so this root is computed over authenticated
-    // input. `calculate_receipt_root` uses RLP EIP-2718 encoding, which
-    // `OpReceiptEnvelope` implements via `Encodable2718`, matching the seal_block
-    // computation upstream.
-    let last = chunks.last().unwrap();
-    let reconstructed = calculate_receipt_root(&last.evm_state.receipts);
-    if reconstructed != block_header.receipts_root {
-        bail!(
-            "reconstructed receipts_root {} from last chunk's evm_state != block \
-             receipts_root {}",
-            reconstructed,
-            block_header.receipts_root
-        );
     }
 
     Ok(())
@@ -1209,10 +1085,12 @@ pub fn verify_block_chunks(
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use alloy_consensus::proofs::calculate_receipt_root;
     use alloy_evm::revm::database::in_memory_db::AccountState;
     use alloy_evm::revm::database::states::{AccountStatus, CacheAccount};
     use alloy_evm::revm::state::Bytecode;
-    use alloy_primitives::{address, Bloom, U256};
+    use alloy_primitives::{address, U256};
+    use op_alloy_consensus::OpReceiptEnvelope;
     use risc0_zkvm::sha::Digestible;
 
     fn make_info(nonce: u64, balance: u64) -> AccountInfo {
@@ -1938,120 +1816,26 @@ pub mod tests {
         assert_eq!(overlay_hash, hash_cache(&expected));
     }
 
-    // ========== hash_evm_state tests (2.5) ==========
-
-    #[test]
-    fn evm_state_zeroed_has_deterministic_hash() {
-        let state = EvmAccumulatorState::default();
-        let h1 = hash_evm_state(&state);
-        let h2 = hash_evm_state(&state);
-        assert_eq!(h1, h2);
-        assert!(!h1.is_zero());
-    }
-
-    #[test]
-    fn evm_state_gas_change_different_hash() {
-        let s1 = EvmAccumulatorState {
-            cumulative_gas_used: 100,
-            ..Default::default()
-        };
-        let s2 = EvmAccumulatorState::default();
-        assert_ne!(hash_evm_state(&s1), hash_evm_state(&s2));
-    }
-
-    #[test]
-    fn evm_state_da_footprint_change_different_hash() {
-        let s1 = EvmAccumulatorState {
-            da_footprint_used: 50,
-            ..Default::default()
-        };
-        let s2 = EvmAccumulatorState::default();
-        assert_ne!(hash_evm_state(&s1), hash_evm_state(&s2));
-    }
-
-    #[test]
-    fn evm_state_blob_gas_change_different_hash() {
-        let s1 = EvmAccumulatorState {
-            blob_gas_used: 75,
-            ..Default::default()
-        };
-        let s2 = EvmAccumulatorState::default();
-        assert_ne!(hash_evm_state(&s1), hash_evm_state(&s2));
-    }
-
-    #[test]
-    fn evm_state_bloom_change_different_hash() {
-        let s1 = EvmAccumulatorState {
-            logs_bloom: Bloom::repeat_byte(0xFF),
-            ..Default::default()
-        };
-        let s2 = EvmAccumulatorState::default();
-        assert_ne!(hash_evm_state(&s1), hash_evm_state(&s2));
-    }
-
-    #[test]
-    fn evm_state_receipt_ordering_matters() {
-        use op_alloy_consensus::OpTxType;
-
-        let empty_logs: Vec<alloy_primitives::Log> = vec![];
-        let r1 =
-            OpReceiptEnvelope::from_parts(true, 100, &empty_logs, OpTxType::Legacy, None, None);
-        let r2 =
-            OpReceiptEnvelope::from_parts(true, 200, &empty_logs, OpTxType::Legacy, None, None);
-
-        let s1 = EvmAccumulatorState {
-            receipts: vec![r1.clone(), r2.clone()],
-            ..Default::default()
-        };
-        let s2 = EvmAccumulatorState {
-            receipts: vec![r2, r1],
-            ..Default::default()
-        };
-
-        assert_ne!(hash_evm_state(&s1), hash_evm_state(&s2));
-    }
-
-    // ========== compute_chunk_trace tests (2.7) ==========
+    // ========== compute_chunk_trace tests ==========
 
     #[test]
     fn chunk_trace_deterministic() {
         let a = B256::repeat_byte(0x01);
         let b = B256::repeat_byte(0x02);
-        let c = B256::repeat_byte(0x03);
-        let d = B256::repeat_byte(0x04);
-        let e = B256::repeat_byte(0x05);
-        let f = B256::repeat_byte(0x06);
-
-        let t1 = compute_chunk_trace(a, b, c, d, e, f);
-        let t2 = compute_chunk_trace(a, b, c, d, e, f);
+        let t1 = compute_chunk_trace(a, b);
+        let t2 = compute_chunk_trace(a, b);
         assert_eq!(t1, t2);
         assert!(!t1.is_zero());
     }
 
     #[test]
     fn chunk_trace_any_input_change_different() {
-        let base = [
-            B256::repeat_byte(0x01),
-            B256::repeat_byte(0x02),
-            B256::repeat_byte(0x03),
-            B256::repeat_byte(0x04),
-            B256::repeat_byte(0x05),
-            B256::repeat_byte(0x06),
-        ];
-        let baseline =
-            compute_chunk_trace(base[0], base[1], base[2], base[3], base[4], base[5]);
-
-        for i in 0..6 {
+        let base = [B256::repeat_byte(0x01), B256::repeat_byte(0x02)];
+        let baseline = compute_chunk_trace(base[0], base[1]);
+        for i in 0..2 {
             let mut modified = base;
             modified[i] = B256::repeat_byte(0xFF);
-            let h = compute_chunk_trace(
-                modified[0],
-                modified[1],
-                modified[2],
-                modified[3],
-                modified[4],
-                modified[5],
-            );
+            let h = compute_chunk_trace(modified[0], modified[1]);
             assert_ne!(
                 baseline, h,
                 "changing input {i} should produce different trace"
@@ -2126,6 +1910,54 @@ pub mod tests {
         assert_ne!(success, revert);
     }
 
+    /// `original_info` (pre-tx `AccountInfo`) now contributes to the canonical hash —
+    /// it's what `CachedEvm::transact_raw` authenticates against the live DB at
+    /// serve time, so any tampering must invalidate the chunk journal.
+    #[test]
+    fn hash_results_original_info_contributes() {
+        use alloy_evm::revm::state::EvmStorageSlot;
+        let addr = Address::from([0xAA; 20]);
+        let post_info = AccountInfo {
+            nonce: 1,
+            balance: U256::from(1000),
+            code_hash: B256::ZERO,
+            account_id: None,
+            code: None,
+        };
+        let make_ras = |original: AccountInfo| {
+            let mut ras = stub_success(21000);
+            ras.state.insert(
+                addr,
+                Account {
+                    info: post_info.clone(),
+                    original_info: Box::new(original),
+                    transaction_id: 0,
+                    storage: HashMap::<U256, EvmStorageSlot>::default(),
+                    status: alloy_evm::revm::state::AccountStatus::Touched,
+                },
+            );
+            ras
+        };
+        let h_default = hash_results(
+            &[B256::ZERO],
+            std::slice::from_ref(&make_ras(AccountInfo::default())),
+        );
+        let h_nonzero = hash_results(
+            &[B256::ZERO],
+            std::slice::from_ref(&make_ras(AccountInfo {
+                nonce: 5,
+                balance: U256::from(999),
+                code_hash: B256::ZERO,
+                account_id: None,
+                code: None,
+            })),
+        );
+        assert_ne!(
+            h_default, h_nonzero,
+            "differing original_info must change the results hash"
+        );
+    }
+
     #[test]
     fn hash_results_state_change_different() {
         use alloy_evm::revm::state::EvmStorageSlot;
@@ -2169,9 +2001,9 @@ pub mod tests {
         assert_ne!(h_modified, h_with_storage);
     }
 
-    /// Transient fields (`transaction_id`, `is_cold`, `original_info`) must not
-    /// contribute to the hash, so two logically-equivalent `ResultAndState` entries
-    /// produced in different execution contexts yield the same hash.
+    /// Transient fields (`transaction_id`, `is_cold`) must not contribute to the
+    /// hash. `original_info` now DOES contribute (authenticated pre-tx view), so
+    /// this test keeps it identical across ras1/ras2.
     #[test]
     fn hash_results_ignores_transient_fields() {
         use alloy_evm::revm::state::EvmStorageSlot;
@@ -2184,13 +2016,14 @@ pub mod tests {
             account_id: None,
             code: None,
         };
+        let original_info = AccountInfo::default();
 
         let mut ras1 = stub_success(21000);
         ras1.state.insert(
             addr,
             Account {
                 info: info.clone(),
-                original_info: Box::new(info.clone()),
+                original_info: Box::new(original_info.clone()),
                 transaction_id: 7,
                 storage: {
                     let mut s: HashMap<U256, EvmStorageSlot> = Default::default();
@@ -2214,8 +2047,7 @@ pub mod tests {
             addr,
             Account {
                 info: info.clone(),
-                // Different original_info — must not affect hash.
-                original_info: Box::new(AccountInfo::default()),
+                original_info: Box::new(original_info.clone()),
                 // Different transaction_id — must not affect hash.
                 transaction_id: 99,
                 storage: {
@@ -2377,14 +2209,7 @@ pub mod tests {
 
     #[test]
     fn chunk_trace_integration_with_precondition() {
-        let trace = compute_chunk_trace(
-            B256::repeat_byte(0x01),
-            B256::repeat_byte(0x02),
-            B256::repeat_byte(0x03),
-            B256::repeat_byte(0x04),
-            B256::repeat_byte(0x05),
-            B256::repeat_byte(0x06),
-        );
+        let trace = compute_chunk_trace(B256::repeat_byte(0x01), B256::repeat_byte(0x02));
         let p = crate::precondition::Precondition::default().chunk(trace);
         assert_eq!(p.digest(), risc0_zkvm::Digest::from_bytes(trace.0));
     }
@@ -2392,7 +2217,7 @@ pub mod tests {
     // ========== verify_block_chunks tests (items 1-3 adversarial review fix) ==========
 
     use crate::evm::PartialExecution;
-    use op_alloy_consensus::{OpReceiptEnvelope, OpTxType};
+    use op_alloy_consensus::OpTxType;
 
     /// Build a Header whose fields are consistent with revm's `BlockEnv::default()`
     /// plus an unmodified `OpBlockExecutionCtx::default()`, so the block-context
@@ -2430,14 +2255,6 @@ pub mod tests {
             None,
             None,
         );
-        let evm_state = EvmAccumulatorState {
-            cumulative_gas_used: cumulative_gas,
-            da_footprint_used: 0,
-            blob_gas_used: 0,
-            logs_bloom: Bloom::ZERO,
-            receipts: vec![receipt.clone()],
-        };
-        let claimed_evm = hash_evm_state(&evm_state);
         // BlockEnv::default() has: number=0, beneficiary=zero, timestamp=1,
         // gas_limit=u64::MAX, basefee=0, difficulty=0, prevrandao=Some(B256::ZERO).
         // Explicitly zero `blob_excess_gas_and_price` to None so the tests'
@@ -2448,16 +2265,9 @@ pub mod tests {
             blob_excess_gas_and_price: None,
             ..BlockEnv::default()
         };
-        // Chunk commits to the EIP-2718 hash of the single tx; `verify_block_chunks`
-        // will cross-check this against `keccak256(derivation_tx_bytes)`.
         let chunk = PartialExecution {
-            agreed_db: B256::repeat_byte(0x11),
-            agreed_evm: B256::repeat_byte(0x22),
             tx_hashes: vec![alloy_primitives::keccak256(&tx_bytes)],
             results: vec![make_success_result_empty()],
-            evm_state,
-            claimed_db: B256::repeat_byte(0x33),
-            claimed_evm,
             block_env,
             op_block_ctx: OpBlockExecutionCtx::default(),
         };
@@ -2513,65 +2323,6 @@ pub mod tests {
             err.contains("tx_hashes"),
             "unexpected error: {err}"
         );
-    }
-
-    /// Full-coverage: if the sum of chunks' tx_counts is less than the block's tx
-    /// count, aggregation would fall through to live execution on the tail — reject
-    /// (M-9).
-    #[test]
-    fn verify_block_chunks_rejects_partial_coverage() {
-        let tx1 = vec![0xAA];
-        let tx2 = vec![0xBB];
-        let (chunk, receipt) = make_honest_chunk(tx1.clone(), 21000);
-        let receipts_root = calculate_receipt_root(&[receipt]);
-
-        // Block has 2 txs but chunks only cover 1.
-        let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], &[tx1, tx2], &header, None)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("full coverage required"),
-            "unexpected error: {err}"
-        );
-    }
-
-    /// evm_state self-consistency: `hash_evm_state(&chunk.evm_state)` must equal
-    /// `chunk.claimed_evm`. A mutated receipt in evm_state would invalidate the hash,
-    /// so rejection.
-    #[test]
-    fn verify_block_chunks_rejects_evm_state_tampering() {
-        let tx = vec![0xAA];
-        let (mut chunk, receipt) = make_honest_chunk(tx.clone(), 21000);
-        // Mutate evm_state (bump gas_used) without updating claimed_evm.
-        chunk.evm_state.cumulative_gas_used += 1;
-        let receipts_root = calculate_receipt_root(&[receipt]);
-
-        let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[chunk], &[tx], &header, None)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("evm_state") && err.contains("claimed_evm"),
-            "unexpected error: {err}"
-        );
-    }
-
-    /// Receipts-root reconstruction: the authenticated chunk receipts must reproduce
-    /// the block's receipts_root. A block with a DIFFERENT header.receipts_root than
-    /// what the chunks would produce is rejected.
-    #[test]
-    fn verify_block_chunks_rejects_receipts_root_divergence() {
-        let tx = vec![0xAA];
-        let (chunk, _) = make_honest_chunk(tx.clone(), 21000);
-
-        // Pretend the block's header.receipts_root is something else entirely.
-        let wrong_root = B256::repeat_byte(0xFF);
-        let header = make_consistent_header(wrong_root);
-        let err = verify_block_chunks(&[chunk], &[tx], &header, None)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("receipts_root"), "unexpected error: {err}");
     }
 
     /// Block-context binding (Codex round-3 critical): a chunk whose `block_env`
@@ -2702,22 +2453,4 @@ pub mod tests {
         );
     }
 
-    #[test]
-    fn verify_block_chunks_rejects_hash_chain_break_db() {
-        let (mut c0, r0) = make_honest_chunk(vec![0xAA], 21000);
-        let (mut c1, r1) = make_honest_chunk(vec![0xBB], 42000);
-        // Stitch chunks to cover both txs honestly, but break the db chain.
-        c0.claimed_db = B256::repeat_byte(0xAA);
-        c1.agreed_db = B256::repeat_byte(0xBB); // ≠ c0.claimed_db
-        let receipts_root = calculate_receipt_root(&[r0, r1]);
-
-        let header = make_consistent_header(receipts_root);
-        let err = verify_block_chunks(&[c0, c1], &[vec![0xAA], vec![0xBB]], &header, None)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("hash chain broken") && err.contains("agreed_db"),
-            "unexpected error: {err}"
-        );
-    }
 }

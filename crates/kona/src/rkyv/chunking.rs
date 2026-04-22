@@ -556,17 +556,38 @@ fn op_halt_reason_raw(r: RkyvedOpHaltReason) -> OpHaltReason {
 /// `transaction_id` and `is_cold` are transient and dropped during serialization.
 type RkyvedEvmStorageSlot = ([u8; 32], [u8; 32]);
 
-/// `(nonce, balance_be32, code_hash, code_bytes_opt, status_bits, sorted_storage)`.
-/// `original_info` and `transaction_id` are transient; on deserialization `original_info`
-/// is set equal to `info` and `transaction_id` defaults to 0.
+/// Per-`AccountInfo` wire shape (used twice per Account — once for post-tx `info`,
+/// once for pre-tx `original_info`).
+/// `code` is NOT included (redundant with `code_hash` under `validate_cached_contracts`).
+type RkyvedAccountInfo = (u64, [u8; 32], [u8; 32]);
+
+/// `(post_info, pre_info, status_bits, sorted_storage)`.
+///
+/// Both post-tx `info` and pre-tx `original_info` are serialized — `original_info` is
+/// the authoritative "first-load DB value" that `CachedEvm`'s serve-side prestate
+/// authentication checks against `db.basic(addr)`. `transaction_id` is transient and
+/// defaults to 0 on deserialization.
 type RkyvedEvmAccount = (
-    u64,
-    [u8; 32],
-    [u8; 32],
-    Option<Vec<u8>>,
+    RkyvedAccountInfo,
+    RkyvedAccountInfo,
     u8,
     Vec<([u8; 32], RkyvedEvmStorageSlot)>,
 );
+
+fn account_info_to_rkyv(info: &AccountInfo) -> RkyvedAccountInfo {
+    (info.nonce, info.balance.to_be_bytes::<32>(), info.code_hash.0)
+}
+
+fn account_info_from_rkyv(r: RkyvedAccountInfo) -> AccountInfo {
+    let (nonce, balance, code_hash) = r;
+    AccountInfo {
+        nonce,
+        balance: U256::from_be_bytes(balance),
+        code_hash: B256::new(code_hash),
+        account_id: None,
+        code: None,
+    }
+}
 
 /// rkyv wrapper for revm's [`Account`] (from `EvmState` traces).
 pub struct AccountRkyv;
@@ -588,27 +609,18 @@ impl AccountRkyv {
             })
             .collect();
         (
-            acct.info.nonce,
-            acct.info.balance.to_be_bytes::<32>(),
-            acct.info.code_hash.0,
-            acct.info.code.as_ref().map(|c| c.original_bytes().to_vec()),
+            account_info_to_rkyv(&acct.info),
+            account_info_to_rkyv(acct.original_info.as_ref()),
             acct.status.bits(),
             storage,
         )
     }
 
     pub fn raw(r: RkyvedEvmAccount) -> Account {
-        let (nonce, balance, code_hash, code, status_bits, storage) = r;
-        let info = AccountInfo {
-            nonce,
-            balance: U256::from_be_bytes(balance),
-            code_hash: B256::new(code_hash),
-            account_id: None,
-            code: code.map(|raw| Bytecode::new_raw(Bytes::from(raw))),
-        };
+        let (info, original_info, status_bits, storage) = r;
         Account {
-            info: info.clone(),
-            original_info: Box::new(info),
+            info: account_info_from_rkyv(info),
+            original_info: Box::new(account_info_from_rkyv(original_info)),
             transaction_id: 0,
             storage: storage
                 .into_iter()
@@ -1140,43 +1152,6 @@ mod tests {
         assert!(deser.accounts.get(&addr).unwrap().info.code.is_none());
     }
 
-    #[test]
-    fn empty_evm_accumulator_round_trip() {
-        use crate::precondition::chunking::EvmAccumulatorState;
-        let state = EvmAccumulatorState::default();
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&state)
-            .unwrap()
-            .to_vec();
-        let deser = rkyv::from_bytes::<EvmAccumulatorState, rkyv::rancor::Error>(&bytes).unwrap();
-        assert_eq!(deser, state);
-    }
-
-    #[test]
-    fn evm_accumulator_with_receipts_round_trip() {
-        use crate::precondition::chunking::EvmAccumulatorState;
-        use op_alloy_consensus::OpTxType;
-
-        let state = EvmAccumulatorState {
-            cumulative_gas_used: 21000,
-            da_footprint_used: 500,
-            blob_gas_used: 131072,
-            logs_bloom: Bloom::repeat_byte(0x42),
-            receipts: vec![
-                OpReceiptEnvelope::from_parts(true, 21000, vec![], OpTxType::Legacy, None, None),
-                OpReceiptEnvelope::from_parts(false, 42000, vec![], OpTxType::Eip1559, None, None),
-            ],
-        };
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&state)
-            .unwrap()
-            .to_vec();
-        let deser = rkyv::from_bytes::<EvmAccumulatorState, rkyv::rancor::Error>(&bytes).unwrap();
-        assert_eq!(deser.cumulative_gas_used, 21000);
-        assert_eq!(deser.da_footprint_used, 500);
-        assert_eq!(deser.blob_gas_used, 131072);
-        assert_eq!(deser.logs_bloom, Bloom::repeat_byte(0x42));
-        assert_eq!(deser.receipts.len(), 2);
-        assert_eq!(deser.receipts, state.receipts);
-    }
 
     #[test]
     fn all_account_states_round_trip() {
@@ -1375,7 +1350,9 @@ mod tests {
             .unwrap();
         assert_eq!(acct.info.nonce, 5);
         assert_eq!(acct.info.balance, U256::from(1000));
-        assert!(acct.info.code.is_some());
+        // code is not serialized (redundant with code_hash under
+        // validate_cached_contracts) — only code_hash round-trips.
+        assert!(acct.info.code.is_none());
         assert!(acct.status.contains(AccountStatus::Touched));
         assert!(acct.status.contains(AccountStatus::Created));
         let slot = acct.storage.get(&U256::from(1)).unwrap();

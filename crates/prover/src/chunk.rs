@@ -30,7 +30,7 @@ use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Bytes, B256, U256};
 use op_alloy_consensus::OpReceiptEnvelope;
 
-use kailua_kona::precondition::chunking::{apply_trace_to_cache, EvmAccumulatorState};
+use kailua_kona::precondition::chunking::apply_trace_to_cache;
 use kailua_kona::witness::ChunkWitnessData;
 
 /// Groups `tx_count` transactions into sequential, non-overlapping chunks of at most
@@ -108,41 +108,16 @@ fn prepare_cumulative_cache(
     cache
 }
 
-/// Accumulates a receipt into the EVM accumulator state at a chunk boundary.
-fn accumulate_receipt(
-    state: &mut EvmAccumulatorState,
-    receipt: &OpReceiptEnvelope,
-    tx_meta: &ChunkTxMeta,
-) {
-    state.cumulative_gas_used = receipt.cumulative_gas_used();
-    state.da_footprint_used = state
-        .da_footprint_used
-        .saturating_add(tx_meta.da_footprint_delta);
-    state.blob_gas_used = state
-        .blob_gas_used
-        .saturating_add(tx_meta.blob_gas_used_delta);
-    // Accrue log bloom from receipt logs
-    if let Some(inner) = receipt.as_receipt() {
-        for log in &inner.logs {
-            state.logs_bloom.accrue_log(log);
-        }
-    }
-    state.receipts.push(receipt.clone());
-}
-
 /// Builds [`ChunkWitnessData`] instances for each transaction chunk in a block.
 ///
 /// For each chunk, this function:
 /// 1. Clones the full cumulative cache state as the chunk's pre-state snapshot
-/// 2. Records the EVM accumulator state at the chunk boundary
-/// 3. Advances the cumulative state through the chunk's traces for the next chunk
+/// 2. Advances the cumulative state through the chunk's traces for the next chunk
 ///
-/// Each chunk receives the **full** cumulative cache (not a filtered subset) so that
-/// `hash(chunk_i post-state) == hash(chunk_{i+1} pre-state)` — the hash chain invariant.
-///
-/// # Panics
-///
-/// Panics if `traces.len() != block_txs.len()` or `traces.len() != receipts.len()`.
+/// Each chunk receives the **full** cumulative cache (not a filtered subset) so later
+/// chunks see all account touches from prior chunks. `ChunkWitnessData` no longer
+/// carries any executor accumulator state — receipts and cumulative gas are rederived
+/// on the aggregation side from the authenticated `results` stream.
 #[allow(clippy::too_many_arguments)]
 pub fn build_chunk_witnesses(
     traces: &[EvmState],
@@ -153,7 +128,6 @@ pub fn build_chunk_witnesses(
     max_txs_per_chunk: usize,
     block_env: &BlockEnv,
     op_block_ctx: &OpBlockExecutionCtx,
-    evm_state_after_prelude: EvmAccumulatorState,
 ) -> Vec<ChunkWitnessData> {
     assert_eq!(traces.len(), block_txs.len());
     assert_eq!(tx_meta.len(), block_txs.len());
@@ -162,7 +136,6 @@ pub fn build_chunk_witnesses(
     let chunks = group_transactions_into_chunks(block_txs.len(), max_txs_per_chunk);
 
     let mut cumulative_cache = prepare_cumulative_cache(post_prelude_cache, traces, tx_meta);
-    let mut cumulative_evm_state = evm_state_after_prelude;
     let mut witnesses = Vec::with_capacity(chunks.len());
 
     for chunk_range in chunks.iter() {
@@ -176,7 +149,6 @@ pub fn build_chunk_witnesses(
             block_env: block_env.clone(),
             op_block_ctx: op_block_ctx.clone(),
             cache: chunk_cache,
-            evm_state: cumulative_evm_state.clone(),
         });
 
         // Advance cumulative state through this chunk's transactions
@@ -185,11 +157,6 @@ pub fn build_chunk_witnesses(
             for (num, hash) in &tx_meta[tx_idx].block_hashes {
                 cumulative_cache.block_hashes.insert(*num, *hash);
             }
-            accumulate_receipt(
-                &mut cumulative_evm_state,
-                &receipts[tx_idx],
-                &tx_meta[tx_idx],
-            );
         }
     }
 
@@ -412,7 +379,6 @@ mod tests {
             100, // all in one chunk
             &default_block_env(),
             &default_op_block_ctx(),
-            EvmAccumulatorState::default(),
         );
 
         assert_eq!(witnesses.len(), 1);
@@ -458,7 +424,6 @@ mod tests {
             1,
             &default_block_env(),
             &default_op_block_ctx(),
-            EvmAccumulatorState::default(),
         );
 
         assert_eq!(witnesses.len(), 2);
@@ -505,7 +470,6 @@ mod tests {
             1,
             &default_block_env(),
             &default_op_block_ctx(),
-            EvmAccumulatorState::default(),
         );
 
         let w0_acct = witnesses[0].cache.accounts.get(&sender).unwrap();
@@ -567,7 +531,6 @@ mod tests {
             1,
             &default_block_env(),
             &default_op_block_ctx(),
-            EvmAccumulatorState::default(),
         );
 
         assert_eq!(
@@ -628,7 +591,6 @@ mod tests {
             1,
             &default_block_env(),
             &default_op_block_ctx(),
-            EvmAccumulatorState::default(),
         );
 
         assert!(witnesses[0].cache.accounts.contains_key(&addr));
@@ -677,74 +639,12 @@ mod tests {
             100,
             &default_block_env(),
             &default_op_block_ctx(),
-            EvmAccumulatorState::default(),
         );
 
         assert_eq!(
             witnesses[0].cache.block_hashes.get(&U256::from(99)),
             Some(&B256::repeat_byte(0xFF))
         );
-    }
-
-    #[test]
-    fn evm_accumulator_continuity() {
-        let addr = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-
-        let mut post_prelude = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
-        post_prelude
-            .accounts
-            .insert(addr, make_db_account(0, 10000, vec![]));
-
-        let trace0: EvmState = [(addr, make_account(1, 9000, vec![]))]
-            .into_iter()
-            .collect();
-        let trace1: EvmState = [(addr, make_account(2, 8000, vec![]))]
-            .into_iter()
-            .collect();
-
-        let txs = vec![Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02])];
-        let receipts = vec![make_receipt(21000), make_receipt(42000)];
-
-        let base_evm = EvmAccumulatorState {
-            cumulative_gas_used: 10000,
-            ..Default::default()
-        };
-
-        let witnesses = build_chunk_witnesses(
-            &[trace0, trace1],
-            &[
-                ChunkTxMeta {
-                    da_footprint_delta: 500,
-                    blob_gas_used_delta: 131072,
-                    ..Default::default()
-                },
-                ChunkTxMeta {
-                    da_footprint_delta: 250,
-                    blob_gas_used_delta: 0,
-                    ..Default::default()
-                },
-            ],
-            &post_prelude,
-            &txs,
-            &receipts,
-            1,
-            &default_block_env(),
-            &default_op_block_ctx(),
-            base_evm,
-        );
-
-        assert_eq!(witnesses[0].evm_state.cumulative_gas_used, 10000);
-        assert!(witnesses[0].evm_state.receipts.is_empty());
-
-        assert_eq!(witnesses[1].evm_state.cumulative_gas_used, 21000);
-        assert_eq!(witnesses[1].evm_state.da_footprint_used, 500);
-        assert_eq!(witnesses[1].evm_state.blob_gas_used, 131072);
-        assert_eq!(witnesses[1].evm_state.receipts.len(), 1);
     }
 
     #[test]
@@ -768,7 +668,6 @@ mod tests {
             1,
             &default_block_env(),
             &default_op_block_ctx(),
-            EvmAccumulatorState::default(),
         );
 
         let account = witnesses[0].cache.accounts.get(&absent).unwrap();
@@ -818,7 +717,6 @@ mod tests {
             1,
             &default_block_env(),
             &default_op_block_ctx(),
-            EvmAccumulatorState::default(),
         );
 
         assert_eq!(
@@ -870,7 +768,6 @@ mod tests {
             1,
             &default_block_env(),
             &default_op_block_ctx(),
-            EvmAccumulatorState::default(),
         );
 
         assert_eq!(witnesses.len(), 2);

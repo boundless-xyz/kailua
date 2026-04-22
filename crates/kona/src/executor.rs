@@ -651,19 +651,8 @@ pub mod tests {
         };
 
         PartialExecution {
-            agreed_db: keccak256("agreed_db"),
-            agreed_evm: keccak256("agreed_evm"),
             tx_hashes: vec![keccak256([0x00u8])],
             results: vec![ras],
-            evm_state: crate::precondition::chunking::EvmAccumulatorState {
-                cumulative_gas_used: 21000,
-                da_footprint_used: 100,
-                blob_gas_used: 0,
-                logs_bloom: alloy_primitives::Bloom::ZERO,
-                receipts: vec![],
-            },
-            claimed_db: keccak256("claimed_db"),
-            claimed_evm: keccak256("claimed_evm"),
             block_env: BlockEnv::default(),
             op_block_ctx: OpBlockExecutionCtx::default(),
         }
@@ -675,13 +664,8 @@ pub mod tests {
         let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
         let deser = rkyv::from_bytes::<PartialExecution, Error>(&bytes).unwrap();
 
-        assert_eq!(deser.agreed_db, chunk.agreed_db);
-        assert_eq!(deser.agreed_evm, chunk.agreed_evm);
+        assert_eq!(deser.tx_hashes, chunk.tx_hashes);
         assert_eq!(deser.results.len(), 1);
-        assert_eq!(deser.evm_state.cumulative_gas_used, 21000);
-        assert_eq!(deser.evm_state.da_footprint_used, 100);
-        assert_eq!(deser.claimed_db, chunk.claimed_db);
-        assert_eq!(deser.claimed_evm, chunk.claimed_evm);
 
         // Verify the ResultAndState content survived
         match &deser.results[0].result {
@@ -736,13 +720,8 @@ pub mod tests {
     #[test]
     fn chunk_empty_results_round_trip() {
         let chunk = PartialExecution {
-            agreed_db: keccak256("agreed_db"),
-            agreed_evm: keccak256("agreed_evm"),
             tx_hashes: vec![],
             results: vec![],
-            evm_state: crate::precondition::chunking::EvmAccumulatorState::default(),
-            claimed_db: keccak256("claimed_db"),
-            claimed_evm: keccak256("claimed_evm"),
             block_env: BlockEnv::default(),
             op_block_ctx: OpBlockExecutionCtx::default(),
         };
@@ -750,8 +729,7 @@ pub mod tests {
         let deser = rkyv::from_bytes::<PartialExecution, Error>(&bytes).unwrap();
 
         assert!(deser.results.is_empty());
-        assert_eq!(deser.agreed_db, chunk.agreed_db);
-        assert_eq!(deser.claimed_evm, chunk.claimed_evm);
+        assert!(deser.tx_hashes.is_empty());
     }
 
     #[test]

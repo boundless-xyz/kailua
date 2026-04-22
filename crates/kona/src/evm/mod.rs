@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::precondition::chunking::EvmAccumulatorState;
 use crate::rkyv::chunking::{BlockEnvRkyv, OpBlockExecutionCtxRkyv, ResultAndStateRkyv};
 use crate::rkyv::primitives::B256Def;
 use alloy_evm::op_revm::OpHaltReason;
@@ -25,14 +24,14 @@ pub mod cached;
 pub mod db;
 
 /// Represents a proven transaction subsequence within a block.
+///
+/// The chunk's ZK proof authenticates `results` via `results_hash`, which now
+/// covers each per-tx `ResultAndState.state` account's `original_info` as well as
+/// per-slot `EvmStorageSlot.original_value`. `CachedEvm` uses those authenticated
+/// pre-state views to verify, at cache-serve time, that the aggregator's live DB
+/// actually held the values the chunk was proven against.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PartialExecution {
-    /// Hash of the DB state before this chunk's transactions.
-    #[rkyv(with = B256Def)]
-    pub agreed_db: B256,
-    /// Hash of the EVM accumulator state before this chunk's transactions.
-    #[rkyv(with = B256Def)]
-    pub agreed_evm: B256,
     /// The EIP-2718 tx hash for each entry in `results`. Authenticates which
     /// transactions this chunk covers (per-element via fold into `results_hash`).
     #[rkyv(with = rkyv::with::Map<B256Def>)]
@@ -40,14 +39,6 @@ pub struct PartialExecution {
     /// Full per-tx execution results (ExecutionResult + EvmState), in order.
     #[rkyv(with = rkyv::with::Map<ResultAndStateRkyv>)]
     pub results: Vec<ResultAndState<OpHaltReason>>,
-    /// EVM accumulator state at the chunk boundary (post-execution).
-    pub evm_state: EvmAccumulatorState,
-    /// Hash of the DB state after this chunk's transactions.
-    #[rkyv(with = B256Def)]
-    pub claimed_db: B256,
-    /// Hash of the EVM accumulator state after this chunk's transactions.
-    #[rkyv(with = B256Def)]
-    pub claimed_evm: B256,
     /// Block execution `BlockEnv` under which this chunk's transactions executed
     /// (timestamp, basefee, prevrandao, coinbase, blob pricing, etc.).
     #[rkyv(with = BlockEnvRkyv)]
@@ -64,7 +55,6 @@ pub struct PartialExecution {
 mod tests {
     use super::cached::CachedEvmFactory;
     use crate::evm::PartialExecution;
-    use crate::precondition::chunking::EvmAccumulatorState;
     use alloy_evm::op_revm::{OpHaltReason, OpSpecId, OpTransaction};
     use alloy_evm::revm::context::CfgEnv;
     use alloy_evm::revm::context::{BlockEnv, TxEnv};
@@ -74,7 +64,7 @@ mod tests {
     use alloy_evm::revm::state::AccountInfo;
     use alloy_evm::{Evm, EvmEnv, EvmFactory};
     use alloy_primitives::Address;
-    use alloy_primitives::{address, keccak256, TxKind, B256, U256};
+    use alloy_primitives::{address, keccak256, TxKind, U256};
 
     fn test_env_for_block(block_number: u64) -> EvmEnv<OpSpecId> {
         let block_env = BlockEnv {
@@ -122,7 +112,7 @@ mod tests {
         }
     }
 
-    fn stub_chunk(tag: u16, gas_used_markers: &[u64]) -> PartialExecution {
+    fn stub_chunk(_tag: u16, gas_used_markers: &[u64]) -> PartialExecution {
         // The tests construct incoming txs via `make_transfer(...)`, which is
         // `OpTransaction { base: TxEnv { .. }, ..Default::default() }`. The
         // default sets `enveloped_tx: Some(vec![0x00].into())`, so every
@@ -131,17 +121,12 @@ mod tests {
         // with that same value.
         let default_tx_hash = keccak256([0x00u8]);
         PartialExecution {
-            agreed_db: keccak256(format!("agreed_db_{tag}")),
-            agreed_evm: keccak256(format!("agreed_evm_{tag}")),
             tx_hashes: vec![default_tx_hash; gas_used_markers.len()],
             results: gas_used_markers
                 .iter()
                 .copied()
                 .map(stub_result_and_state)
                 .collect(),
-            evm_state: EvmAccumulatorState::default(),
-            claimed_db: keccak256(format!("claimed_db_{tag}")),
-            claimed_evm: keccak256(format!("claimed_evm_{tag}")),
             block_env: alloy_evm::revm::context::BlockEnv::default(),
             op_block_ctx: alloy_op_evm::block::OpBlockExecutionCtx::default(),
         }
@@ -366,8 +351,5 @@ mod tests {
             .transact_raw(make_transfer(sender, Address::ZERO, U256::from(1), 0))
             .unwrap();
         assert!(!r1.state.is_empty(), "delegated tx should have state diff");
-
-        // Silence unused warnings from helper imports.
-        let _ = B256::ZERO;
     }
 }

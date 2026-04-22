@@ -21,15 +21,11 @@ use crate::evm::PartialExecution;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
-use crate::precondition::chunking::{
-    compute_chunk_trace, hash_block_ctx, hash_cache, hash_evm_state, hash_overlay_state,
-    hash_results, EvmAccumulatorState,
-};
+use crate::precondition::chunking::{compute_chunk_trace, hash_block_ctx, hash_results};
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
 use crate::witness::ChunkWitnessData;
 use alloy_consensus::transaction::SignerRecoverable;
-use alloy_consensus::TxReceipt;
 use alloy_eips::eip2718::{Decodable2718, WithEncoded};
 use alloy_evm::block::BlockExecutor;
 use alloy_evm::revm::bytecode::Bytecode;
@@ -150,16 +146,12 @@ where
                 block_env,
                 op_block_ctx,
                 cache,
-                evm_state,
             } = chunk_witness.context("chunk witness required in chunk mode")?;
 
             // Validate cached contract bytecodes against their code_hash keys.
             validate_cached_contracts(&cache.contracts);
 
-            // Compute pre-hashes from the witness state.
             let block_ctx_hash = hash_block_ctx(&block_env, &op_block_ctx);
-            let pre_db_hash = hash_cache(&cache);
-            let pre_evm_hash = hash_evm_state(&evm_state);
 
             // Build CacheDB<PanicDB> from witness cache.
             let mut cache_db = CacheDB::new(PanicDB);
@@ -179,7 +171,12 @@ where
                 .with_spec_and_mainnet_gas_params(rollup_config.spec_id(block_env.timestamp.to()));
             let evm_env = alloy_evm::EvmEnv::new(cfg_env, block_env);
 
-            // Construct upstream `OpBlockExecutor` and seed its accumulators from the witness.
+            // Chunk-guest EVM: no cache, trace collector attached so every
+            // delegated tx's (tx_hash, pre_account_infos, ResultAndState) lands
+            // in the collector. Accumulator state (gas_used, receipts, etc.) is
+            // left at default — `chunk_trace` no longer commits to it, and the
+            // aggregator's own OpBlockExecutor rebuilds block-level receipts
+            // from the authenticated `results` stream.
             let chunk_trace_collector: TransactionResultCollector =
                 Arc::new(Mutex::new(Vec::new()));
             let cached_evm_factory =
@@ -190,14 +187,7 @@ where
                 rollup_config.clone(),
                 OpAlloyReceiptBuilder::default(),
             );
-            // Seed the executor's running accumulators
-            op_block_executor.gas_used = evm_state.cumulative_gas_used;
-            op_block_executor.da_footprint_used = evm_state.da_footprint_used;
-            op_block_executor.receipts = evm_state.receipts.clone();
-            // Execute transactions
-            let mut logs_bloom = evm_state.logs_bloom;
             for tx_bytes in transactions {
-                // Decode the signed transaction envelope
                 let mut buf = tx_bytes.as_slice();
                 let tx = OpTxEnvelope::decode_2718_exact(&mut buf)
                     .context("invalid transaction encoding in chunk witness")?;
@@ -205,38 +195,17 @@ where
                     .try_into_recovered()
                     .context("invalid transaction signature in chunk witness")?;
                 let wrapped = WithEncoded::new(tx_bytes.into(), recovered);
-
-                // Delegates to `execute_transaction_without_commit`
                 op_block_executor
                     .execute_transaction(wrapped)
                     .map_err(|e| anyhow::anyhow!("chunk transaction execution failed: {e}"))?;
-
-                // Accrue logs from the newly-added receipt into the running bloom.
-                if let Some(receipt) = op_block_executor.receipts.last() {
-                    for log in TxReceipt::logs(receipt) {
-                        logs_bloom.accrue_log(log);
-                    }
-                }
             }
-
-            // Reconstruct the chunk's final accumulator state for hashing.
-            let evm_accum = EvmAccumulatorState {
-                cumulative_gas_used: op_block_executor.gas_used,
-                da_footprint_used: op_block_executor.da_footprint_used,
-                blob_gas_used: op_block_executor.da_footprint_used,
-                logs_bloom,
-                receipts: take(&mut op_block_executor.receipts),
-            };
 
             // Drop the executor to release the borrow on `state` (it owns
             // the EVM, which borrows `state` mutably).
             drop(op_block_executor);
 
-            // Compute post-hashes.
-            let post_db_hash = hash_overlay_state(&cache, &state.cache, &state.block_hashes);
-            let post_evm_hash = hash_evm_state(&evm_accum);
             // Chunk guest creates exactly one EVM, so the collector holds
-            // exactly one inner Vec of ordered `(tx_hash, ResultAndState)` pairs.
+            // exactly one inner Vec of ordered (tx_hash, ResultAndState) pairs.
             let traces = cached_evm_factory
                 .take_all_block_traces()
                 .into_iter()
@@ -246,17 +215,7 @@ where
                 traces.into_iter().unzip();
             let results_hash = hash_results(&captured_tx_hashes, &captured_results);
 
-            // Compute chunk_trace
-            let chunk_trace = compute_chunk_trace(
-                pre_db_hash,
-                post_db_hash,
-                pre_evm_hash,
-                post_evm_hash,
-                results_hash,
-                block_ctx_hash,
-            );
-
-            // Return
+            let chunk_trace = compute_chunk_trace(results_hash, block_ctx_hash);
             return Ok((boot, Precondition::default().chunk(chunk_trace)));
         }
 
@@ -1029,11 +988,9 @@ pub mod tests {
         parent_header: &alloy_consensus::Header,
         spec_id: alloy_evm::op_revm::OpSpecId,
     ) -> PartialExecution {
-        use crate::precondition::chunking::{hash_evm_state, EvmAccumulatorState};
-        use alloy_consensus::TxReceipt;
         use alloy_evm::revm::context::BlockEnv;
         use alloy_op_evm::block::OpBlockExecutionCtx;
-        use alloy_primitives::{Bloom, U256};
+        use alloy_primitives::U256;
 
         let header = execution.artifacts.header.inner();
         let block_txs: Vec<Vec<u8>> = execution
@@ -1048,16 +1005,9 @@ pub mod tests {
             "captured trace count must match derivation-output tx count"
         );
 
-        // Split the collector pairs into the parallel `tx_hashes` and `results`
-        // fields that `PartialExecution` stores separately.
         let (tx_hashes, results): (Vec<alloy_primitives::B256>, Vec<_>) =
             traces.into_iter().unzip();
 
-        // Rebuild block_env from the sealed header. These fields are cross-checked in
-        // verify_block_chunks — any mismatch would reject the chunk. The blob pricing
-        // is derived from the parent header via the EIP-4844 formula, mirroring what
-        // kona's block builder does (see
-        // `crate::precondition::chunking::expected_blob_excess_gas_and_price`).
         let block_env = BlockEnv {
             number: U256::from(header.number),
             beneficiary: header.beneficiary,
@@ -1078,37 +1028,9 @@ pub mod tests {
             extra_data: header.extra_data.clone(),
         };
 
-        // Reconstruct the cumulative logs_bloom from the block's receipts — matches
-        // what the chunk guest would have computed running through `OpBlockExecutor`.
-        let receipts = execution.artifacts.execution_result.receipts.clone();
-        let mut logs_bloom = Bloom::default();
-        for receipt in &receipts {
-            for log in TxReceipt::logs(receipt) {
-                logs_bloom.accrue_log(log);
-            }
-        }
-
-        // OP Jovian invariant: blob_gas_used == da_footprint_used — see run_core_client
-        // chunk branch for the rationale. execution.artifacts.execution_result.blob_gas_used
-        // is the upstream-set `self.da_footprint_used` on OP.
-        let block_blob_gas_used = execution.artifacts.execution_result.blob_gas_used;
-        let evm_state = EvmAccumulatorState {
-            cumulative_gas_used: execution.artifacts.execution_result.gas_used,
-            da_footprint_used: block_blob_gas_used,
-            blob_gas_used: block_blob_gas_used,
-            logs_bloom,
-            receipts,
-        };
-        let claimed_evm = hash_evm_state(&evm_state);
-
         PartialExecution {
-            agreed_db: B256::ZERO,
-            agreed_evm: B256::ZERO,
             tx_hashes,
             results,
-            evm_state,
-            claimed_db: B256::ZERO,
-            claimed_evm,
             block_env,
             op_block_ctx,
         }
@@ -1224,15 +1146,11 @@ pub mod tests {
         .unwrap();
     }
 
-    /// Builds `n` sequential `Chunk` entries covering all transactions of a derived
-    /// block. Splits the tx list as evenly as possible (last chunk may be smaller).
-    /// Each chunk's `evm_state` carries the cumulative `EvmAccumulatorState` up to and
-    /// including the chunk's last tx, reconstructed per tx from the captured receipts;
-    /// `hash_chain_continuity` between chunks is trivially satisfied because `agreed_db`
-    /// / `agreed_evm` are set to `ZERO` uniformly (verify_block_chunks checks
-    /// `chunks[i].agreed_db == chunks[i-1].claimed_db`, which holds with all-zero).
-    /// The last chunk's `evm_state` matches the full-block accumulator, so the
-    /// receipts-root reconstruction check passes.
+    /// Builds `n` sequential `PartialExecution` entries covering all transactions of
+    /// a derived block. Splits the tx list as evenly as possible (last chunk may be
+    /// smaller). No per-chunk accumulator state is carried — `results_hash` (folding
+    /// per-tx `tx_hashes`, `pre_account_infos`, and `results`) is the only chunk-
+    /// level authentication commitment in the new scheme.
     pub fn build_n_chunks_for_block(
         execution: &Execution,
         traces: Vec<(
@@ -1245,11 +1163,9 @@ pub mod tests {
         parent_header: &alloy_consensus::Header,
         spec_id: alloy_evm::op_revm::OpSpecId,
     ) -> Vec<PartialExecution> {
-        use crate::precondition::chunking::{hash_evm_state, EvmAccumulatorState};
-        use alloy_consensus::TxReceipt;
         use alloy_evm::revm::context::BlockEnv;
         use alloy_op_evm::block::OpBlockExecutionCtx;
-        use alloy_primitives::{Bloom, U256};
+        use alloy_primitives::U256;
 
         assert!(n >= 1, "n must be >= 1");
         let header = execution.artifacts.header.inner();
@@ -1264,9 +1180,6 @@ pub mod tests {
             traces.len(),
             "captured trace count must match derivation-output tx count"
         );
-        // With n > tx_count, later chunks would be empty and the M-10 empty-tx guard
-        // in ChunkingEvm applies. For the integration test, collapse n down to
-        // max(1, tx_count).
         let n = n.min(block_txs.len().max(1));
 
         let block_env = BlockEnv {
@@ -1289,7 +1202,6 @@ pub mod tests {
             extra_data: header.extra_data.clone(),
         };
 
-        // Compute chunk boundaries — [tx_start..tx_end) per chunk, covering all txs.
         let tx_count = block_txs.len();
         let base = tx_count / n;
         let rem = tx_count % n;
@@ -1300,68 +1212,18 @@ pub mod tests {
             boundaries.push(boundaries[i] + size);
         }
 
-        // Accumulate cumulative receipts / logs_bloom tx-by-tx so each chunk carries
-        // its post-chunk state, and the last chunk matches the block total.
-        let receipts = &execution.artifacts.execution_result.receipts;
-        let block_blob_gas_used = execution.artifacts.execution_result.blob_gas_used;
-
         let mut chunks = Vec::with_capacity(n);
-        // Track the previous chunk's claimed_evm so each new chunk's agreed_evm
-        // matches — verify_block_chunks enforces hash-chain continuity between
-        // consecutive chunks.
-        let mut prev_claimed_evm = B256::ZERO;
         for chunk_idx in 0..n {
             let start = boundaries[chunk_idx];
             let end = boundaries[chunk_idx + 1];
-            let chunk_receipts: Vec<_> = receipts[..end].to_vec();
-            let mut logs_bloom = Bloom::default();
-            for r in &chunk_receipts {
-                for log in TxReceipt::logs(r) {
-                    logs_bloom.accrue_log(log);
-                }
-            }
-            // cumulative_gas_used comes directly from the last receipt in the chunk's
-            // cumulative prefix (OpReceiptEnvelope.cumulative_gas_used is block-
-            // cumulative by EIP-658). On the last chunk this equals the block total,
-            // so the `hash_evm_state` + receipts-root checks pass.
-            let cumulative_gas_used = chunk_receipts
-                .last()
-                .map(|r| r.cumulative_gas_used())
-                .unwrap_or(0);
-            // On OP Jovian, blob_gas_used == da_footprint_used, scaled proportionally
-            // across the block. For the test, just split linearly by tx index — the
-            // LAST chunk must match the block total, which it does because
-            // `end == tx_count` for the last iteration.
-            let (chunk_da_used, chunk_blob_used) = if chunk_idx == n - 1 {
-                (block_blob_gas_used, block_blob_gas_used)
-            } else if tx_count == 0 {
-                (0, 0)
-            } else {
-                let v = block_blob_gas_used * (end as u64) / (tx_count as u64);
-                (v, v)
-            };
-            let evm_state = EvmAccumulatorState {
-                cumulative_gas_used,
-                da_footprint_used: chunk_da_used,
-                blob_gas_used: chunk_blob_used,
-                logs_bloom,
-                receipts: chunk_receipts,
-            };
-            let claimed_evm = hash_evm_state(&evm_state);
             let (chunk_tx_hashes, chunk_results): (Vec<alloy_primitives::B256>, Vec<_>) =
                 traces[start..end].iter().cloned().unzip();
             chunks.push(PartialExecution {
-                agreed_db: B256::ZERO,
-                agreed_evm: prev_claimed_evm,
                 tx_hashes: chunk_tx_hashes,
                 results: chunk_results,
-                evm_state,
-                claimed_db: B256::ZERO,
-                claimed_evm,
                 block_env: block_env.clone(),
                 op_block_ctx: op_block_ctx.clone(),
             });
-            prev_claimed_evm = claimed_evm;
         }
         chunks
     }
@@ -1750,7 +1612,6 @@ pub mod tests {
     /// Creates a chunk witness with default empty state for testing.
     fn make_test_chunk_witness(
         cache: alloy_evm::revm::database::in_memory_db::Cache,
-        evm_state: crate::precondition::chunking::EvmAccumulatorState,
         transactions: Vec<Vec<u8>>,
     ) -> ChunkWitnessData {
         ChunkWitnessData {
@@ -1758,7 +1619,6 @@ pub mod tests {
             block_env: alloy_evm::revm::context::BlockEnv::default(),
             op_block_ctx: alloy_op_evm::OpBlockExecutionCtx::default(),
             cache,
-            evm_state,
         }
     }
 
@@ -1780,9 +1640,7 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_chunk_mode_empty_transactions() {
-        use crate::precondition::chunking::{
-            compute_chunk_trace, hash_cache, hash_evm_state, hash_results, EvmAccumulatorState,
-        };
+        use crate::precondition::chunking::{compute_chunk_trace, hash_results};
         use alloy_evm::revm::database::in_memory_db::Cache;
         use risc0_zkvm::sha::Digestible;
 
@@ -1792,61 +1650,21 @@ pub mod tests {
             logs: Vec::new(),
             block_hashes: Default::default(),
         };
-        let evm_state = EvmAccumulatorState::default();
-        let cw = make_test_chunk_witness(cache.clone(), evm_state.clone(), vec![]);
+        let cw = make_test_chunk_witness(cache, vec![]);
 
-        // Compute expected chunk trace (no txs → post == pre; empty results_hash).
-        let pre_db_hash = hash_cache(&cache);
-        let pre_evm_hash = hash_evm_state(&evm_state);
+        // No txs ⇒ empty trace collector ⇒ hash_results over zero entries.
         let results_hash = hash_results(&[], &[]);
         let block_ctx_hash = crate::precondition::chunking::hash_block_ctx(
             &alloy_evm::revm::context::BlockEnv::default(),
             &alloy_op_evm::OpBlockExecutionCtx::default(),
         );
-        let expected_trace = compute_chunk_trace(
-            pre_db_hash,
-            pre_db_hash,
-            pre_evm_hash,
-            pre_evm_hash,
-            results_hash,
-            block_ctx_hash,
-        );
+        let expected_trace = compute_chunk_trace(results_hash, block_ctx_hash);
 
         let (result_boot, precondition) = test_chunk_execution(make_chunk_boot_info(), cw);
 
         assert_eq!(result_boot.l1_head, B256::repeat_byte(0xFF));
         let expected_precondition = Precondition::default().chunk(expected_trace);
         assert_eq!(precondition.digest(), expected_precondition.digest());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_chunk_mode_multi_chunk_hash_continuity() {
-        use crate::precondition::chunking::{hash_cache, EvmAccumulatorState};
-        use alloy_evm::revm::database::in_memory_db::Cache;
-
-        // Two empty chunks from the same state — chunk_0's post_db_hash must equal
-        // chunk_1's pre_db_hash (both are the same cache with no mutations).
-        let cache = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
-        let evm_state = EvmAccumulatorState::default();
-
-        let cw0 = make_test_chunk_witness(cache.clone(), evm_state.clone(), vec![]);
-        let cw1 = make_test_chunk_witness(cache.clone(), evm_state.clone(), vec![]);
-
-        let pre_db_hash_0 = hash_cache(&cw0.cache);
-        let pre_db_hash_1 = hash_cache(&cw1.cache);
-
-        // With no transactions, the chunk execution doesn't modify state,
-        // so post_db_hash_0 == pre_db_hash_0 == pre_db_hash_1
-        assert_eq!(pre_db_hash_0, pre_db_hash_1);
-
-        // Run both chunks and verify they produce valid results
-        let (_boot0, _prec0) = test_chunk_execution(make_chunk_boot_info(), cw0);
-        let (_boot1, _prec1) = test_chunk_execution(make_chunk_boot_info(), cw1);
     }
 
     /// Helper: run `run_core_client` in chunk mode, returning the raw `Result`
@@ -1874,72 +1692,9 @@ pub mod tests {
         )
     }
 
-    /// Positive case: a non-zero synced seed (representing a later chunk
-    /// whose earlier chunks consumed some gas / DA) is accepted and
-    /// threaded through unchanged when the current chunk is empty. This
-    /// verifies that the invariant admits legitimate mid-block continuity
-    /// (the guest's output preserves `gas_used`, `da_footprint_used`, and
-    /// `blob_gas_used` verbatim when no txs execute, matching the next
-    /// chunk's pre-state seed in a multi-chunk block).
-    #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_chunk_mode_accepts_synced_nonzero_seeds() {
-        use crate::precondition::chunking::{
-            compute_chunk_trace, hash_cache, hash_evm_state, hash_results, EvmAccumulatorState,
-        };
-        use alloy_evm::revm::database::in_memory_db::Cache;
-        use risc0_zkvm::sha::Digestible;
-
-        let cache = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
-        // Seed representing a later chunk in a multi-chunk block: prior
-        // chunks consumed 1M gas and 500 DA; blob_gas tracks DA in lockstep
-        // (OP Jovian invariant).
-        let evm_state = EvmAccumulatorState {
-            cumulative_gas_used: 1_000_000,
-            da_footprint_used: 500,
-            blob_gas_used: 500,
-            logs_bloom: Default::default(),
-            receipts: Vec::new(),
-        };
-        let mut cw = make_test_chunk_witness(cache.clone(), evm_state.clone(), vec![]);
-        cw.block_env.gas_limit = 30_000_000;
-
-        // With no transactions, every accumulator field must be preserved
-        // unchanged: post_evm_hash == pre_evm_hash. The next chunk's seed
-        // (chunk index 2 in this hypothetical block) would hash to the same
-        // value, preserving continuity.
-        let pre_db_hash = hash_cache(&cache);
-        let pre_evm_hash = hash_evm_state(&evm_state);
-        let results_hash = hash_results(&[], &[]);
-        // Compute block_ctx_hash over the EXACT BlockEnv/OpBlockExecutionCtx the
-        // chunk guest will see (cw.block_env was mutated to gas_limit=30M above).
-        let block_ctx_hash =
-            crate::precondition::chunking::hash_block_ctx(&cw.block_env, &cw.op_block_ctx);
-        let expected_trace = compute_chunk_trace(
-            pre_db_hash,
-            pre_db_hash,
-            pre_evm_hash,
-            pre_evm_hash,
-            results_hash,
-            block_ctx_hash,
-        );
-
-        let (result_boot, precondition) =
-            try_chunk_execution(make_chunk_boot_info(), cw).expect("synced seeds must be accepted");
-
-        assert_eq!(result_boot.l1_head, B256::repeat_byte(0xFF));
-        let expected_precondition = Precondition::default().chunk(expected_trace);
-        assert_eq!(precondition.digest(), expected_precondition.digest());
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     #[should_panic(expected = "cached contract bytecode hash mismatch")]
     pub async fn test_chunk_mode_malformed_contract_rejected() {
-        use crate::precondition::chunking::EvmAccumulatorState;
         use alloy_evm::revm::database::in_memory_db::Cache;
         use alloy_evm::revm::state::Bytecode;
 
@@ -1951,12 +1706,10 @@ pub mod tests {
         };
         // Insert a contract with mismatched hash → should panic during validation
         let code = Bytecode::new_raw(alloy_primitives::Bytes::from_static(&[0x60, 0x00]));
-        let wrong_hash = B256::repeat_byte(0xAB); // Not the actual hash of the bytecode
+        let wrong_hash = B256::repeat_byte(0xAB);
         cache.contracts.insert(wrong_hash, code);
 
-        let cw = make_test_chunk_witness(cache, EvmAccumulatorState::default(), vec![]);
-
-        // This should panic before execution due to contract validation
+        let cw = make_test_chunk_witness(cache, vec![]);
         let _ = test_chunk_execution(make_chunk_boot_info(), cw);
     }
 

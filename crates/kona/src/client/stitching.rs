@@ -460,14 +460,7 @@ pub fn stitch_chunks(
         for chunk in block_chunks {
             let results_hash = hash_results(&chunk.tx_hashes, &chunk.results);
             let block_ctx_hash = hash_block_ctx(&chunk.block_env, &chunk.op_block_ctx);
-            let chunk_trace = compute_chunk_trace(
-                chunk.agreed_db,
-                chunk.claimed_db,
-                chunk.agreed_evm,
-                chunk.claimed_evm,
-                results_hash,
-                block_ctx_hash,
-            );
+            let chunk_trace = compute_chunk_trace(results_hash, block_ctx_hash);
             let precondition_hash =
                 B256::new(Precondition::default().chunk(chunk_trace).digest().into());
 
@@ -1224,19 +1217,14 @@ pub mod tests {
     }
 
     fn make_chunk(
-        agreed_db: B256,
-        claimed_db: B256,
-        agreed_evm: B256,
-        claimed_evm: B256,
+        _agreed_db: B256,
+        _claimed_db: B256,
+        _agreed_evm: B256,
+        _claimed_evm: B256,
     ) -> PartialExecution {
         PartialExecution {
-            agreed_db,
-            agreed_evm,
             tx_hashes: Vec::new(),
             results: Vec::new(),
-            evm_state: Default::default(),
-            claimed_db,
-            claimed_evm,
             block_env: alloy_evm::revm::context::BlockEnv::default(),
             op_block_ctx: alloy_op_evm::block::OpBlockExecutionCtx::default(),
         }
@@ -1328,21 +1316,11 @@ pub mod tests {
         let mut chunk_b = chunk_a.clone();
         chunk_b.results = vec![stub(21001)]; // tampered!
 
-        // The two reconstructed chunk_traces must differ — that's what breaks the
-        // journal's identity and makes env::verify fail on tampered witnesses.
         let trace_a = compute_chunk_trace(
-            chunk_a.agreed_db,
-            chunk_a.claimed_db,
-            chunk_a.agreed_evm,
-            chunk_a.claimed_evm,
             hash_results(&chunk_a.tx_hashes, &chunk_a.results),
             hash_block_ctx(&chunk_a.block_env, &chunk_a.op_block_ctx),
         );
         let trace_b = compute_chunk_trace(
-            chunk_b.agreed_db,
-            chunk_b.claimed_db,
-            chunk_b.agreed_evm,
-            chunk_b.claimed_evm,
             hash_results(&chunk_b.tx_hashes, &chunk_b.results),
             hash_block_ctx(&chunk_b.block_env, &chunk_b.op_block_ctx),
         );

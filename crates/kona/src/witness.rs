@@ -19,7 +19,6 @@ use crate::evm::PartialExecution;
 use crate::executor::Execution;
 use crate::oracle::vec::VecOracle;
 use crate::oracle::WitnessOracle;
-use crate::precondition::chunking::EvmAccumulatorState;
 use crate::precondition::Precondition;
 use crate::rkyv::chunking::{BlockEnvRkyv, CacheRkyv, OpBlockExecutionCtxRkyv};
 use crate::rkyv::primitives::{AddressDef, B256Def};
@@ -108,7 +107,6 @@ pub struct ChunkWitnessData {
     pub op_block_ctx: OpBlockExecutionCtx,
     #[rkyv(with = CacheRkyv)]
     pub cache: Cache,
-    pub evm_state: EvmAccumulatorState,
 }
 
 #[cfg(test)]
