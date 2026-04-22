@@ -12,42 +12,49 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::rkyv::chunking::CacheRkyv;
 use crate::rkyv::chunking::{BlockEnvRkyv, OpBlockExecutionCtxRkyv, ResultAndStateRkyv};
 use crate::rkyv::primitives::B256Def;
 use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context::result::ResultAndState;
 use alloy_evm::revm::context::BlockEnv;
+use alloy_evm::revm::database::Cache;
 use alloy_op_evm::OpBlockExecutionCtx;
 use alloy_primitives::B256;
 
 pub mod cached;
-pub mod db;
 
 /// Represents a proven transaction subsequence within a block.
-///
-/// The chunk's ZK proof authenticates `results` via `results_hash`, which now
-/// covers each per-tx `ResultAndState.state` account's `original_info` as well as
-/// per-slot `EvmStorageSlot.original_value`. `CachedEvm` uses those authenticated
-/// pre-state views to verify, at cache-serve time, that the aggregator's live DB
-/// actually held the values the chunk was proven against.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PartialExecution {
-    /// The EIP-2718 tx hash for each entry in `results`. Authenticates which
-    /// transactions this chunk covers (per-element via fold into `results_hash`).
+    /// The EIP-2718 tx hash for each entry in `results`.
     #[rkyv(with = rkyv::with::Map<B256Def>)]
     pub tx_hashes: Vec<B256>,
     /// Full per-tx execution results (ExecutionResult + EvmState), in order.
     #[rkyv(with = rkyv::with::Map<ResultAndStateRkyv>)]
     pub results: Vec<ResultAndState<OpHaltReason>>,
     /// Block execution `BlockEnv` under which this chunk's transactions executed
-    /// (timestamp, basefee, prevrandao, coinbase, blob pricing, etc.).
     #[rkyv(with = BlockEnvRkyv)]
     pub block_env: BlockEnv,
-    /// OP block execution context (parent_hash for BLOCKHASH / EIP-2935,
-    /// parent_beacon_block_root for EIP-4788, extra_data for Holocene/Jovian
-    /// EIP-1559 params).
+    /// OP block execution context
     #[rkyv(with = OpBlockExecutionCtxRkyv)]
     pub op_block_ctx: OpBlockExecutionCtx,
+}
+
+/// Witness data for proving a single transaction subsequence within a block.
+#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct PartialExecutionWitness {
+    /// List of transactions to execute
+    pub transactions: Vec<Vec<u8>>,
+    /// Block execution context
+    #[rkyv(with = BlockEnvRkyv)]
+    pub block_env: BlockEnv,
+    /// OP Block context
+    #[rkyv(with = OpBlockExecutionCtxRkyv)]
+    pub op_block_ctx: OpBlockExecutionCtx,
+    /// Storage DB prior to execution
+    #[rkyv(with = CacheRkyv)]
+    pub cache: Cache,
 }
 
 #[cfg(test)]

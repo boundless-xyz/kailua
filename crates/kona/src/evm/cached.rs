@@ -62,14 +62,10 @@ impl<E: Evm> CachedEvm<E> {
     }
 }
 
-// The `Tx = OpTransaction<TxEnv>` bound below lets us peek `enveloped_tx` to
-// compute the EIP-2718 tx hash without abstracting a new trait. All
-// `CachedEvm` instances produced by `CachedEvmFactory` wrap `OpEvm<...>` whose
-// `Tx` is exactly this type, so the constraint doesn't narrow what the factory
-// can construct — it just names the shape already in use.
 impl<E: Evm<HaltReason = OpHaltReason, Tx = OpTransaction<TxEnv>>> Evm for CachedEvm<E>
 where
     E::DB: alloy_evm::revm::Database,
+    BlockEnv: PartialEq<<E as Evm>::BlockEnv>
 {
     type DB = E::DB;
     type Tx = E::Tx;
@@ -91,32 +87,6 @@ where
     /// Returns the next pre-computed `ResultAndState` if the top of the cache has an
     /// entry whose `tx_hash` matches the incoming tx's EIP-2718 hash; otherwise
     /// delegates to the inner EVM without consuming a cache entry.
-    ///
-    /// # Per-tx prestate authentication (mix-and-match safety)
-    ///
-    /// The chunk's ZK proof certifies that its `results` were produced by an EVM
-    /// execution started from *some* prestate. The only remaining question at cache-
-    /// serve time is whether that prestate matches what the aggregation-side DB
-    /// actually holds at this moment. We close that gap per-tx, using information
-    /// already in (or alongside) the cached entry:
-    ///
-    /// * For every `(addr, account)` in the cached `res_state.state`, every
-    ///   `(slot, evm_slot)` in `account.storage` has an `original_value` — the
-    ///   chunk-side pre-tx storage value. We read `inner_db.storage(addr, slot)`
-    ///   (oracle-loading if needed) and assert equality. Mismatch ⇒ the chunk was
-    ///   proven under a different prestate for this slot.
-    /// * For every `addr` in the state map, the parallel `pre_account_infos[...]`
-    ///   entry carries the chunk's view of `AccountInfo` pre-tx (`None` means "did
-    ///   not exist"). We read `inner_db.basic(addr)` and assert equality.
-    ///
-    /// If any check fails, we panic: the chunk was proven under a different
-    /// prestate than aggregation holds, which means either witness tampering or a
-    /// protocol bug — either way this proof is unusable.
-    ///
-    /// If the incoming tx's hash doesn't match the next cached entry's committed
-    /// hash, we delegate to the inner EVM without consuming the cache. This is what
-    /// makes intra-block mix-and-match safe: each cache serve independently
-    /// authenticates prestate before replaying the diff.
     fn transact_raw(
         &mut self,
         tx: Self::Tx,
@@ -154,32 +124,51 @@ where
                 .pop()
                 .expect("serve_cached implies results is non-empty");
 
+            // Ensure this chunk aligns with the current block
+            assert_eq!(&chunk.block_env, self.evm.block(), "BlockEnv mismatch");
+
             // Prestate authentication. For every address the chunk's tx touched:
-            //   (a) per-slot: inner_db.storage(addr, slot) must equal
+            //   (a) per-slot: inner_db.storage_ref(addr, slot) must equal
             //       `EvmStorageSlot.original_value` (the value revm first read
             //       for that slot during the chunk's execution).
-            //   (b) per-account: inner_db.basic(addr) must equal
+            //   (b) per-account: inner_db.basic_ref(addr) must equal
             //       `*account.original_info` (the `AccountInfo` revm first loaded
             //       for that address during the chunk's execution). `original_info`
             //       is now preserved across the rkyv round-trip by `AccountRkyv`,
             //       and folded into `results_hash` by `write_account`, so the
             //       chunk proof authenticates it.
-            //
-            // The `db.basic` / `db.storage` calls run here — *before* any mutation
-            // for this tx (we're serving cached, so no revm execution has touched
-            // `State.cache` for this tx). Returns are the authoritative pre-this-tx
-            // values: oracle-backed for fresh addresses, or the committed
-            // post-prior-tx values for addresses earlier block txs touched.
             let db = self.evm.db_mut();
             for (addr, account) in res_state.state.iter() {
+                // Always call `db.basic(addr)` to warm State.cache for this address
+                let actual_info = RevmDatabase::basic(db, *addr).map_err(|_| ()).expect(
+                    "CachedEvm::transact_raw: inner DB basic read failed during \
+                     prestate authentication",
+                );
+                if let Some(stored_info) = actual_info.as_ref() {
+                    let expected_info = account.original_info.as_ref();
+                    assert_eq!(
+                        stored_info, expected_info,
+                        "CachedEvm::transact_raw: account prestate mismatch at addr={addr}: \
+                         chunk.original_info={expected_info:?} live_db={stored_info:?}"
+                    );
+                } else {
+                    assert!(
+                        account.status.contains(AccountStatus::Created)
+                            || account.status.contains(AccountStatus::LoadedAsNotExisting),
+                        "Unexpected AccountStatus for non-existing account"
+                    );
+                }
+
                 // Per-slot prestate authentication. The `db.storage` call also
                 // warms State.cache for this slot (needed for the subsequent
                 // `db.commit` by OpBlockExecutor to find the account).
                 for (slot, evm_slot) in account.storage.iter() {
-                    let actual = RevmDatabase::storage(db, *addr, *slot).map_err(|_| ()).expect(
-                        "CachedEvm::transact_raw: inner DB storage read failed during \
+                    let actual = RevmDatabase::storage(db, *addr, *slot)
+                        .map_err(|_| ())
+                        .expect(
+                            "CachedEvm::transact_raw: inner DB storage read failed during \
                          prestate authentication",
-                    );
+                        );
                     assert_eq!(
                         actual, evm_slot.original_value,
                         "CachedEvm::transact_raw: storage prestate mismatch at \
@@ -187,48 +176,15 @@ where
                         evm_slot.original_value, actual
                     );
                 }
-
-                // Always call `db.basic(addr)` to warm State.cache for this
-                // address — the subsequent `OpBlockExecutor::commit_transaction`
-                // will panic if it tries to commit a diff entry whose address
-                // isn't in cache. The per-account authentication check only
-                // asserts when the chunk's `original_info` is reliable (i.e.
-                // revm treated it as a normal DB load, not a synthesized value).
-                let actual_info = RevmDatabase::basic(db, *addr).map_err(|_| ()).expect(
-                    "CachedEvm::transact_raw: inner DB basic read failed during \
-                     prestate authentication",
-                );
-                // Skip per-account assertion for addresses where revm's
-                // original_info is a synthesized default (Created or
-                // LoadedAsNotExisting). For these, revm's execution path
-                // bypassed a real DB lookup, so `db.basic(addr)` on the
-                // aggregation side may return a different value than the chunk
-                // saw. Safety for these addresses falls back to the block-end
-                // `header.state_root` check in `KonaExecutor`.
-                let skip_account_check = account.status.contains(AccountStatus::Created)
-                    || account.status.contains(AccountStatus::LoadedAsNotExisting);
-                if !skip_account_check {
-                    let expected_info = account.original_info.as_ref().clone();
-                    assert_eq!(
-                        actual_info,
-                        Some(expected_info.clone()),
-                        "CachedEvm::transact_raw: account prestate mismatch at addr={addr}: \
-                         chunk.original_info={expected_info:?} live_db={actual_info:?}"
-                    );
-                }
             }
 
             Ok(res_state)
         } else {
+            // Execute transaction manually
             self.evm.transact_raw(tx)
         };
 
-        // Unified trace capture — every successful tx-body call lands in the
-        // collector (if attached). For serve-cached, the chunk's `ResultAndState`
-        // (with its `original_info`/`original_value` fields) is what we re-emit;
-        // for delegation, it's revm's freshly-computed diff. Both carry the
-        // pre-state information authenticated by `results_hash` — no separate
-        // pre_info field needed.
+        // Capture results
         if let (Ok(r), Some(traces)) = (&result, &self.collection_target) {
             let mut guard = traces.lock().unwrap();
             guard

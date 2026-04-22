@@ -307,7 +307,6 @@ where
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::evm::db::PanicDB;
     use crate::evm::PartialExecution;
     use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::oracle::WitnessOracle;
@@ -730,33 +729,5 @@ pub mod tests {
 
         assert!(deser.results.is_empty());
         assert!(deser.tx_hashes.is_empty());
-    }
-
-    #[test]
-    #[should_panic(expected = "PanicDB: missing account")]
-    fn panic_db_basic_ref() {
-        let db = PanicDB;
-        let _ = db.basic_ref(Address::ZERO);
-    }
-
-    #[test]
-    #[should_panic(expected = "PanicDB: missing code for hash")]
-    fn panic_db_code_by_hash_ref() {
-        let db = PanicDB;
-        let _ = db.code_by_hash_ref(B256::ZERO);
-    }
-
-    #[test]
-    #[should_panic(expected = "PanicDB: missing storage slot")]
-    fn panic_db_storage_ref() {
-        let db = PanicDB;
-        let _ = db.storage_ref(Address::ZERO, U256::from(42));
-    }
-
-    #[test]
-    #[should_panic(expected = "PanicDB: missing block hash for block")]
-    fn panic_db_block_hash_ref() {
-        let db = PanicDB;
-        let _ = db.block_hash_ref(100);
     }
 }

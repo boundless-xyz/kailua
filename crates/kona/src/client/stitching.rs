@@ -17,12 +17,12 @@ use crate::client::core::DASourceProvider;
 use crate::client::log;
 use crate::driver::CachedDriver;
 use crate::evm::PartialExecution;
+use crate::evm::PartialExecutionWitness;
 use crate::executor::Execution;
 use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
 use crate::precondition::chunking::{compute_chunk_trace, hash_block_ctx, hash_results};
 use crate::precondition::Precondition;
-use crate::witness::ChunkWitnessData;
 use alloy_primitives::{Address, B256};
 use anyhow::Context;
 use kona_derive::{BlobProvider, ChainProvider};
@@ -80,7 +80,7 @@ pub trait StitchingClient<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        chunk_witness: Option<ChunkWitnessData>,
+        chunk_witness: Option<PartialExecutionWitness>,
         chunks: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
@@ -109,7 +109,7 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        chunk_witness: Option<ChunkWitnessData>,
+        chunk_witness: Option<PartialExecutionWitness>,
         chunks: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where

@@ -15,16 +15,12 @@
 use crate::blobs::BlobWitnessData;
 use crate::boot::StitchedBootInfo;
 use crate::driver::CachedDriver;
-use crate::evm::PartialExecution;
+use crate::evm::{PartialExecution, PartialExecutionWitness};
 use crate::executor::Execution;
 use crate::oracle::vec::VecOracle;
 use crate::oracle::WitnessOracle;
 use crate::precondition::Precondition;
-use crate::rkyv::chunking::{BlockEnvRkyv, CacheRkyv, OpBlockExecutionCtxRkyv};
 use crate::rkyv::primitives::{AddressDef, B256Def};
-use alloy_evm::revm::context::BlockEnv;
-use alloy_evm::revm::database::Cache;
-use alloy_op_evm::OpBlockExecutionCtx;
 use alloy_primitives::{Address, B256};
 use std::fmt::Debug;
 
@@ -68,7 +64,7 @@ pub struct Witness<O: WitnessOracle> {
     /// Optional chunk witness data for chunk execution-only mode.
     /// When present and the boot sentinel triggers chunk mode, this provides
     /// the pre-populated state, transactions, and metadata for chunk proving.
-    pub chunk_witness: Option<ChunkWitnessData>,
+    pub chunk_witness: Option<PartialExecutionWitness>,
     /// Pre-computed per-block chunk aggregation data. Each outer `Vec<Chunk>` holds the
     /// ordered chunks for a block produced during derivation+execution; the outer index
     /// corresponds to block position from `safe_head_number + 1`. Empty inner vectors
@@ -92,21 +88,6 @@ impl Witness<VecOracle> {
         cloned_with_arc.stream_witness = cloned_with_arc.stream_witness.deep_clone();
         cloned_with_arc
     }
-}
-
-/// Witness data for proving a single transaction chunk within a block.
-///
-/// Contains the pre-chunk state snapshot, transaction data, and metadata
-/// required for the chunk prover to re-execute the chunk in isolation.
-#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub struct ChunkWitnessData {
-    pub transactions: Vec<Vec<u8>>,
-    #[rkyv(with = BlockEnvRkyv)]
-    pub block_env: BlockEnv,
-    #[rkyv(with = OpBlockExecutionCtxRkyv)]
-    pub op_block_ctx: OpBlockExecutionCtx,
-    #[rkyv(with = CacheRkyv)]
-    pub cache: Cache,
 }
 
 #[cfg(test)]

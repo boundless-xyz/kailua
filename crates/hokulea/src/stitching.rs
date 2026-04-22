@@ -23,11 +23,11 @@ use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::evm::PartialExecution;
+use kailua_kona::evm::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::precondition::Precondition;
-use kailua_kona::witness::ChunkWitnessData;
 use kona_derive::BlobProvider;
 use kona_preimage::CommsClient;
 use kona_proof::boot::BootInfo;
@@ -69,7 +69,7 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        chunk_witness: Option<ChunkWitnessData>,
+        chunk_witness: Option<PartialExecutionWitness>,
         chunks: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where

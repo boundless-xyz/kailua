@@ -15,8 +15,8 @@
 //! Host-side chunk witness construction.
 //!
 //! This module provides utilities for splitting block transactions into independently
-//! provable chunks and constructing the [`ChunkWitnessData`] instances needed for chunk
-//! proving. The [`ChunkWitnessData`] type itself lives in `kailua-kona` (shared with
+//! provable chunks and constructing the [`PartialExecutionWitness`] instances needed for chunk
+//! proving. The [`PartialExecutionWitness`] type itself lives in `kailua-kona` (shared with
 //! the guest); this module contains only the host-side construction logic.
 
 use std::collections::BTreeMap;
@@ -30,8 +30,8 @@ use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Bytes, B256, U256};
 use op_alloy_consensus::OpReceiptEnvelope;
 
+use kailua_kona::evm::PartialExecutionWitness;
 use kailua_kona::precondition::chunking::apply_trace_to_cache;
-use kailua_kona::witness::ChunkWitnessData;
 
 /// Groups `tx_count` transactions into sequential, non-overlapping chunks of at most
 /// `max_txs_per_chunk` transactions each. The last chunk may have fewer transactions.
@@ -108,7 +108,7 @@ fn prepare_cumulative_cache(
     cache
 }
 
-/// Builds [`ChunkWitnessData`] instances for each transaction chunk in a block.
+/// Builds [`PartialExecutionWitness`] instances for each transaction chunk in a block.
 ///
 /// For each chunk, this function:
 /// 1. Clones the full cumulative cache state as the chunk's pre-state snapshot
@@ -128,7 +128,7 @@ pub fn build_chunk_witnesses(
     max_txs_per_chunk: usize,
     block_env: &BlockEnv,
     op_block_ctx: &OpBlockExecutionCtx,
-) -> Vec<ChunkWitnessData> {
+) -> Vec<PartialExecutionWitness> {
     assert_eq!(traces.len(), block_txs.len());
     assert_eq!(tx_meta.len(), block_txs.len());
     assert_eq!(traces.len(), receipts.len());
@@ -141,7 +141,7 @@ pub fn build_chunk_witnesses(
     for chunk_range in chunks.iter() {
         let chunk_cache = cumulative_cache.clone();
 
-        witnesses.push(ChunkWitnessData {
+        witnesses.push(PartialExecutionWitness {
             transactions: block_txs[chunk_range.clone()]
                 .iter()
                 .map(|tx| tx.to_vec())

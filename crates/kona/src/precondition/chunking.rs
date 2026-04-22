@@ -332,32 +332,7 @@ fn hash_canonical<'a>(
 /// ```text
 /// SHA256(results_hash || block_ctx_hash)
 /// ```
-///
-/// * `results_hash` — binds the per-transaction `(tx_hash, pre_account_infos,
-///   ResultAndState)` trajectory (see [`hash_results`]). The per-slot
-///   `EvmStorageSlot.original_value` embedded in each `ResultAndState.state`
-///   together with `pre_account_infos[i]` serve as the authenticated prestate
-///   footprint — `CachedEvm::transact_raw` cross-checks both against the live
-///   inner DB at cache-serve time, so no standalone pre-DB-hash commitment is
-///   needed.
-/// * `block_ctx_hash` — binds the block execution context
-///   (`BlockEnv` + `OpBlockExecutionCtx`). Without it, an adversary could
-///   generate a chunk proof with a forged context (timestamp, basefee,
-///   prevrandao, coinbase, blob pricing, parent_hash, parent_beacon_block_root,
-///   extra_data) and have aggregation accept env-sensitive opcode results for
-///   the real block. With it folded in, aggregation recomputes the same hash
-///   from `chunk.block_env`/`chunk.op_block_ctx` and cross-checks those carried
-///   fields against the derivation-pipeline header in `verify_block_chunks`.
 pub fn compute_chunk_trace(results_hash: B256, block_ctx_hash: B256) -> B256 {
-    // Per-tx identity, pre-`AccountInfo`, and per-tx `ResultAndState` are all
-    // authenticated via `results_hash`, which folds each tuple through SHA256
-    // per-element. The chunk's prestate is authenticated at serve-time by
-    // `CachedEvm` comparing `EvmStorageSlot.original_value` and
-    // `pre_account_infos[i][addr]` against the live inner DB; no separate
-    // pre/post DB-hash commitments are needed. `block_ctx_hash` pins the
-    // env-sensitive opcodes' context (BASEFEE, PREVRANDAO, NUMBER, COINBASE,
-    // TIMESTAMP, BLOBBASEFEE, BLOCKHASH, EIP-4788/2935 system inputs,
-    // Holocene/Jovian EIP-1559 params).
     let mut hasher = Sha256::new();
     hasher.update(results_hash.as_slice());
     hasher.update(block_ctx_hash.as_slice());
@@ -674,58 +649,7 @@ fn write_evm_state(hasher: &mut Sha256, state: &EvmState) {
     }
 }
 
-/// Canonical SHA256 of a `Vec<ResultAndState<OpHaltReason>>`.
-///
-/// Committed into `chunk_trace` to authenticate the per-transaction execution trace.
-/// Both the chunk guest (which computes this over results captured by a tracing EVM
-/// wrapper during its own execution) and the aggregation guest (which computes it over
-/// `Chunk.results` supplied by the witness) must arrive at the same hash — otherwise
-/// the chunk's authenticated journal cannot be reconstructed and `env::verify()` fails.
-///
-/// # Upgrade hazard (review finding M-2, M-3): schema not versioned
-///
-/// This encoder is NOT versioned. The revm enum discriminants for `SuccessReason`,
-/// `OutOfGasError`, `HaltReason`, and `OpHaltReason` are hardcoded (see
-/// `halt_reason_byte`, `op_halt_reason_byte` etc. and the parallel mappings in
-/// `rkyv/chunking.rs`). If a future revm release:
-///   - adds a variant — Rust's exhaustive-match requirement will force a compile
-///     error, which is safe.
-///   - reorders variants for "documentation" purposes — the encoding silently shifts
-///     byte values. Host and guest shift in lockstep (no cross-version mismatch within
-///     a single build), but proofs from an older build become unverifiable.
-///   - grows `Output`, `ExecutionResult`, `Log`, or `Account` with a new field — we
-///     silently drop the new field from the hash. The aggregation still accepts the
-///     chunk proof, but the binding is weaker by exactly that field.
-///
-/// Mitigation when upgrading revm: pin the revm version in Cargo.toml, add golden-vector
-/// tests that pin specific `(variant, byte)` pairs (see `rkyv/chunking.rs` for the
-/// parallel encoding that must stay in sync), and bump a schema-version byte folded
-/// into `chunk_trace` when any field shape changes. None of these are implemented
-/// here — this function is currently a stable-until-broken contract on revm's AST.
-///
-/// # Why transient fields are excluded
-///
-/// `Account.original_info`, `Account.transaction_id`, `EvmStorageSlot.transaction_id`,
-/// `EvmStorageSlot.is_cold`, and `AccountInfo.code` (redundant with `code_hash`) are
-/// all skipped. The first four are execution-context-dependent (a slot loaded during
-/// tx 5 of a block has a different `transaction_id` than the same slot loaded in a
-/// chunk that starts at tx 5), so including them would cause the chunk guest and
-/// monolithic host to produce different hashes for functionally-identical traces.
-/// `AccountInfo.code` is redundant: `code_hash` already commits to bytecode content,
-/// so two `(code_hash, code_opt)` pairs with the same `code_hash` reduce to the same
-/// logical account. (Review finding M-5: this means a witness with
-/// `code_hash == KECCAK_EMPTY` and `code == Some(empty_bytes)` hashes the same as
-/// `code == None`. That is a schema-drift channel, not a soundness bug — `code_hash`
-/// still binds the authenticated bytecode via `validate_cached_contracts`.)
-///
-/// # Log topic count is not bounded here (M-4)
-///
-/// `write_logs` serializes `topics.len()` without asserting `len <= 4`. The EVM
-/// LOG0..LOG4 opcodes enforce the 4-topic limit, so an honest chunk guest cannot
-/// produce a log with more than 4 topics — any witness claiming such a log could
-/// not correspond to any honestly-generated chunk proof, so `env::verify` would
-/// reject it regardless. We rely on EVM semantics rather than a defensive assert
-/// here; a future hardening pass could add the bound as a cheap extra guard.
+/// Canonical SHA256 of a list of txn hashes and their `Vec<ResultAndState<OpHaltReason>>`
 pub fn hash_results(tx_hashes: &[B256], results: &[ResultAndState<OpHaltReason>]) -> B256 {
     assert_eq!(
         tx_hashes.len(),
@@ -822,79 +746,6 @@ use alloy_evm::revm::primitives::eip4844::{
 use anyhow::ensure;
 
 use crate::evm::PartialExecution;
-
-/// Iterate a block-indexed `chunks` vec and call [`verify_block_chunks`] for each
-/// non-empty entry, deriving the `parent_header`, `spec_id`, and expected
-/// `BlobExcessGasAndPrice` from derivation (or cached-execution) output.
-///
-/// Shared by both `run_core_client` CHUNK VERIFY phases (DERIVATION and
-/// EXECUTION-ONLY branches) so the per-block cross-check logic lives in one place.
-/// Without this helper the two callers duplicate ~25 lines of field-access and
-/// context plumbing — a drift hazard any time the verification rules evolve.
-///
-/// ## Arguments
-/// - `chunks_per_block` — outer index `i` corresponds to the block at
-///   `safe_head_number + 1 + i`. Empty inner vecs are skipped.
-/// - `executions` — derivation or cached-execution output, one entry per block in
-///   the same order. `executions[block_idx]` is the `Execution` for block
-///   `safe_head_number + 1 + block_idx`. Must be at least as long as the
-///   longest non-empty chunks-for-block position (caller's responsibility; this
-///   function returns a descriptive error if the bound is exceeded).
-/// - `safe_head_parent` — the parent header for `executions[0]` (i.e., the
-///   safe_head header itself). For later blocks the parent is taken from
-///   `executions[block_idx - 1].artifacts.header`.
-/// - `safe_head_number` — the block number of `safe_head_parent`.
-/// - `rollup_config` — used to select the `spec_id` for each block's timestamp
-///   (drives the hardfork-gated blob_gasprice update fraction).
-pub fn verify_chunks_against_blocks(
-    chunks_per_block: &[Vec<PartialExecution>],
-    executions: &[&crate::executor::Execution],
-    safe_head_parent: &Header,
-    safe_head_number: u64,
-    rollup_config: &kona_genesis::RollupConfig,
-) -> anyhow::Result<()> {
-    use anyhow::Context;
-    for (block_idx, chunks_for_block) in chunks_per_block.iter().enumerate() {
-        if chunks_for_block.is_empty() {
-            continue;
-        }
-        let exec = executions.get(block_idx).copied().ok_or_else(|| {
-            anyhow::anyhow!(
-                "chunks supplied for block position {block_idx} but only {} blocks \
-                 available for verification",
-                executions.len()
-            )
-        })?;
-        let block_txs: Vec<Vec<u8>> = exec
-            .attributes
-            .transactions
-            .as_ref()
-            .map(|txs| txs.iter().map(|b| b.to_vec()).collect())
-            .unwrap_or_default();
-        let parent_header: &Header = if block_idx == 0 {
-            safe_head_parent
-        } else {
-            executions[block_idx - 1].artifacts.header.inner()
-        };
-        let current_timestamp = exec.artifacts.header.inner().timestamp;
-        let spec_id = rollup_config.spec_id(current_timestamp);
-        let expected_blob = expected_blob_excess_gas_and_price(parent_header, spec_id);
-        verify_block_chunks(
-            chunks_for_block,
-            &block_txs,
-            exec.artifacts.header.inner(),
-            expected_blob,
-        )
-        .with_context(|| {
-            format!(
-                "chunk verification for block position {block_idx} \
-                 (expected block {})",
-                safe_head_number + 1 + block_idx as u64
-            )
-        })?;
-    }
-    Ok(())
-}
 
 /// Compute the `BlobExcessGasAndPrice` that kona's `prepare_block_env` would assign
 /// to `BlockEnv.blob_excess_gas_and_price` for a block with the given parent header
@@ -2319,10 +2170,7 @@ pub mod tests {
         let err = verify_block_chunks(&[chunk], &[derivation_tx], &header, None)
             .unwrap_err()
             .to_string();
-        assert!(
-            err.contains("tx_hashes"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("tx_hashes"), "unexpected error: {err}");
     }
 
     /// Block-context binding (Codex round-3 critical): a chunk whose `block_env`
@@ -2452,5 +2300,4 @@ pub mod tests {
             "unexpected error: {err}"
         );
     }
-
 }

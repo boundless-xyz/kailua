@@ -575,7 +575,11 @@ type RkyvedEvmAccount = (
 );
 
 fn account_info_to_rkyv(info: &AccountInfo) -> RkyvedAccountInfo {
-    (info.nonce, info.balance.to_be_bytes::<32>(), info.code_hash.0)
+    (
+        info.nonce,
+        info.balance.to_be_bytes::<32>(),
+        info.code_hash.0,
+    )
 }
 
 fn account_info_from_rkyv(r: RkyvedAccountInfo) -> AccountInfo {
@@ -1151,7 +1155,6 @@ mod tests {
         let deser = from_bytes_with!(CacheRkyv, Cache, &bytes);
         assert!(deser.accounts.get(&addr).unwrap().info.code.is_none());
     }
-
 
     #[test]
     fn all_account_states_round_trip() {
