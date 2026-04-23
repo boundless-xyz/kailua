@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::executor::Execution;
+use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
 use crate::rkyv::evm::CacheRkyv;
 use crate::rkyv::evm::{BlockEnvRkyv, OpBlockExecutionCtxRkyv, ResultAndStateRkyv};
 use crate::rkyv::primitives::B256Def;
@@ -19,6 +21,7 @@ use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_evm::revm::context::result::{EVMError, ResultAndState};
 use alloy_evm::revm::context::{BlockEnv, TxEnv};
+use alloy_evm::revm::database::in_memory_db::{AccountState, DbAccount};
 use alloy_evm::revm::database::Cache;
 use alloy_evm::revm::inspector::NoOpInspector;
 use alloy_evm::revm::state::AccountStatus;
@@ -26,6 +29,7 @@ use alloy_evm::revm::{Database as RevmDatabase, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::{OpBlockExecutionCtx, OpEvm, OpEvmFactory, OpTxError};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
+use risc0_zkvm::sha::Digestible;
 use std::sync::{Arc, Mutex};
 
 /// Represents a proven transaction subsequence within a block.
@@ -45,8 +49,32 @@ pub struct PartialExecution {
     pub op_block_ctx: OpBlockExecutionCtx,
 }
 
+impl PartialExecution {
+    pub fn precondition_hash(&self) -> B256 {
+        dbg!(&self.tx_hashes);
+        dbg!(self
+            .results
+            .iter()
+            .map(|r| r.result.clone())
+            .collect::<Vec<_>>());
+        dbg!(self
+            .results
+            .iter()
+            .map(|r| crate::precondition::derivation::flatten_bytes(
+                crate::precondition::evm::flatten_evm_state(&r.state)
+            )
+            .digest())
+            .collect::<Vec<_>>());
+
+        compute_pe_trace(
+            hash_results(&self.tx_hashes, &self.results),
+            hash_block_ctx(&self.block_env, &self.op_block_ctx),
+        )
+    }
+}
+
 /// Witness data for proving a single transaction subsequence within a block.
-#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Clone, Debug, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PartialExecutionWitness {
     /// List of transactions to execute
     pub transactions: Vec<Vec<u8>>,
@@ -59,6 +87,58 @@ pub struct PartialExecutionWitness {
     /// OP Block context
     #[rkyv(with = OpBlockExecutionCtxRkyv)]
     pub op_block_ctx: OpBlockExecutionCtx,
+}
+
+impl PartialExecutionWitness {
+    pub fn new(partial_execution: PartialExecution, transactions: Vec<Vec<u8>>) -> Self {
+        // Populate fresh cache instance with original values
+        let mut cache = Cache::default();
+        for result in partial_execution.results {
+            for (addr, account) in result.state.into_iter() {
+                // Copy account info
+                let db_account = cache.accounts.entry(addr).or_insert_with(|| {
+                    if account.status.contains(AccountStatus::LoadedAsNotExisting) {
+                        DbAccount::new_not_existing()
+                    } else {
+                        DbAccount {
+                            info: (*account.original_info).clone(),
+                            account_state: AccountState::None,
+                            storage: Default::default(),
+                        }
+                    }
+                });
+                // Copy storage
+                for (slot, evm_slot) in account.storage.iter() {
+                    db_account
+                        .storage
+                        .entry(*slot)
+                        .or_insert(evm_slot.original_value);
+                }
+                // Move bytecode to cache
+                if let Some(code) = db_account.info.code.take() {
+                    cache
+                        .contracts
+                        .entry(db_account.info.code_hash)
+                        .or_insert(code);
+                }
+            }
+        }
+        PartialExecutionWitness {
+            transactions,
+            cache,
+            block_env: partial_execution.block_env,
+            op_block_ctx: partial_execution.op_block_ctx,
+        }
+    }
+
+    pub fn from_preflight(partial: PartialExecution, execution: &Execution) -> Self {
+        let transactions = execution
+            .get_transactions(&partial.tx_hashes)
+            .into_iter()
+            .map(|tx| tx.to_vec())
+            .collect();
+        Self::new(partial, transactions)
+    }
 }
 
 /// Shared trace buffer, one inner `Vec` per EVM instance created by

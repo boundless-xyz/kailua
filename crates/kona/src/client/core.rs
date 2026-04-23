@@ -29,11 +29,10 @@ use alloy_eips::eip2718::{Decodable2718, WithEncoded};
 use alloy_evm::block::BlockExecutor;
 use alloy_evm::revm::bytecode::Bytecode;
 use alloy_evm::revm::database::in_memory_db::CacheDB;
-use alloy_evm::revm::database::EmptyDB;
+use alloy_evm::revm::database::{Cache, EmptyDB};
 use alloy_evm::EvmFactory;
 use alloy_op_evm::block::OpAlloyReceiptBuilder;
 use alloy_op_evm::OpBlockExecutor;
-use alloy_primitives::map::HashMap;
 use alloy_primitives::{Sealed, B256};
 use anyhow::{bail, Context};
 use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
@@ -150,8 +149,8 @@ where
             // Calculate prestate hashes
             let block_ctx_hash = hash_block_ctx(&block_env, &op_block_ctx);
 
-            // Validate contract hashes in the witness cache before execution
-            validate_cached_contracts(&cache.contracts);
+            // Validate witness cache before execution
+            validate_cache(&cache);
 
             // Build state
             let mut state = alloy_evm::revm::database::states::State::builder()
@@ -204,6 +203,19 @@ where
             let (captured_tx_hashes, captured_results): (Vec<B256>, Vec<_>) =
                 traces.into_iter().unzip();
             let results_hash = hash_results(&captured_tx_hashes, &captured_results);
+
+            dbg!(&captured_tx_hashes);
+            dbg!(captured_results
+                .iter()
+                .map(|r| r.result.clone())
+                .collect::<Vec<_>>());
+            dbg!(captured_results
+                .iter()
+                .map(|r| crate::precondition::derivation::flatten_bytes(
+                    crate::precondition::evm::flatten_evm_state(&r.state)
+                )
+                .digest())
+                .collect::<Vec<_>>());
 
             // Return result
             let pe_trace = compute_pe_trace(results_hash, block_ctx_hash);
@@ -501,20 +513,30 @@ pub fn recover_collected_executions(
     take::<Vec<Execution>>(executions.as_mut())
 }
 
-/// Validates that each cached contract bytecode hashes to its map key.
-///
-/// This is required because the canonical state hash encodes only the sorted set of contract
-/// code-hash keys. If a witness provided arbitrary bytecode under a valid key and we failed to
-/// check it first, the hash would authenticate the wrong executable code.
-pub fn validate_cached_contracts<S: std::hash::BuildHasher>(
-    contracts: &HashMap<B256, Bytecode, S>,
-) {
-    for (expected_hash, bytecode) in contracts {
+pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
+    if expected_hash.is_zero() {
+        // workaround
+        assert!(bytecode.is_empty());
+    } else {
+        // rehash
         let actual_hash = bytecode.hash_slow();
         assert_eq!(
             actual_hash, *expected_hash,
             "cached contract bytecode hash mismatch: expected {expected_hash:?}, got {actual_hash:?}"
         );
+    }
+}
+
+pub fn validate_cache(cache: &Cache) {
+    // Check contracts cache
+    for (expected_hash, bytecode) in &cache.contracts {
+        validate_contract_hash(expected_hash, bytecode);
+    }
+    // Check account code hashes
+    for db_account in cache.accounts.values() {
+        if let Some(bytecode) = &db_account.info.code {
+            validate_contract_hash(&db_account.info.code_hash, bytecode);
+        }
     }
 }
 
@@ -955,8 +977,25 @@ pub mod tests {
         .unwrap();
 
         // Test all individual partials
-        for block_partials in &pre_captured {
-            for partial_execution in block_partials {}
+        for (partials, execution) in pre_captured.iter().zip(pre_executions.iter()) {
+            for partial_execution in partials {
+                let witness =
+                    PartialExecutionWitness::from_preflight(partial_execution.clone(), &execution);
+                // all partials should be found
+                assert_eq!(
+                    partial_execution.tx_hashes.len(),
+                    witness.transactions.len()
+                );
+                // partial test should succeed
+                let (_, precondition) = test_partial(
+                    make_pe_boot(&op_sepolia_16491249_16491349(), &witness),
+                    witness,
+                );
+                assert_eq!(
+                    precondition,
+                    Precondition::default().partial(partial_execution.precondition_hash())
+                );
+            }
         }
 
         // Run with partials loaded
@@ -1159,39 +1198,23 @@ pub mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_empty_partials() {
-        let cache = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
-        let pe_witness = PartialExecutionWitness {
-            transactions: vec![],
-            block_env: BlockEnv::default(),
-            op_block_ctx: OpBlockExecutionCtx::default(),
-            cache,
-        };
-
+    pub async fn test_empty_partial() {
         // No txs ⇒ empty trace collector ⇒ hash_results over zero entries.
         let results_hash = hash_results(&[], &[]);
         let block_ctx_hash = hash_block_ctx(&BlockEnv::default(), &OpBlockExecutionCtx::default());
         let expected_trace = compute_pe_trace(results_hash, block_ctx_hash);
 
         let (result_boot, precondition) = test_partial(
-            make_pe_boot(
-                &BootInfo {
-                    l1_head: Default::default(),
-                    agreed_l2_output_root: Default::default(),
-                    claimed_l2_output_root: Default::default(),
-                    claimed_l2_block_number: 0,
-                    chain_id: 11155420,
-                    rollup_config: Default::default(),
-                    l1_config: Default::default(),
-                },
-                &pe_witness,
-            ),
-            pe_witness,
+            BootInfo {
+                l1_head: B256::repeat_byte(0xFF),
+                agreed_l2_output_root: Default::default(),
+                claimed_l2_output_root: Default::default(),
+                claimed_l2_block_number: 0,
+                chain_id: 11155420,
+                rollup_config: Default::default(),
+                l1_config: Default::default(),
+            },
+            PartialExecutionWitness::default(),
         );
 
         assert_eq!(result_boot.l1_head, B256::repeat_byte(0xFF));

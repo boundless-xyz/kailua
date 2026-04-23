@@ -231,7 +231,7 @@ fn flatten_output(output: &Output) -> Vec<u8> {
     }
 }
 
-fn flatten_execution_result(r: &ExecutionResult<OpHaltReason>) -> Vec<u8> {
+pub fn flatten_execution_result(r: &ExecutionResult<OpHaltReason>) -> Vec<u8> {
     match r {
         ExecutionResult::Success {
             reason,
@@ -300,7 +300,7 @@ fn flatten_account(acct: &Account) -> Vec<u8> {
 
 /// Encode an `EvmState` (the per-tx state diff). Entries are sorted by address so the
 /// encoding is invariant to the underlying `HashMap` iteration order.
-fn flatten_evm_state(state: &EvmState) -> Vec<u8> {
+pub fn flatten_evm_state(state: &EvmState) -> Vec<u8> {
     let mut entries: Vec<_> = state.iter().collect();
     entries.sort_by_key(|(addr, _)| *addr);
     [

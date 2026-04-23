@@ -18,7 +18,8 @@ use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
 use alloy_evm::EvmFactory;
-use alloy_primitives::{Sealed, B256};
+use alloy_primitives::Bytes;
+use alloy_primitives::{keccak256, Sealed, B256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
 use kona_executor::{BlockBuildingOutcome, TrieDBProvider};
@@ -54,6 +55,21 @@ pub struct Execution {
     /// Output root after execution
     #[rkyv(with = B256Def)]
     pub claimed_output: B256,
+}
+
+impl Execution {
+    pub fn get_transactions(&self, tx_hashes: &[B256]) -> Vec<Bytes> {
+        let transactions = self.attributes.transactions.as_deref().unwrap_or(&[]);
+        let by_hash: std::collections::HashMap<B256, Bytes> = transactions
+            .iter()
+            .map(|tx| (keccak256(tx.as_ref()), tx.clone()))
+            .collect();
+        tx_hashes
+            .iter()
+            .map(|h| by_hash.get(h).cloned())
+            .flatten()
+            .collect()
+    }
 }
 
 /// A structure that provides a caching layer for an `Executor` implementation.

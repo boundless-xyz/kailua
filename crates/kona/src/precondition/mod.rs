@@ -27,6 +27,8 @@ pub mod proposal;
     Clone,
     Debug,
     Default,
+    Eq,
+    PartialEq,
     serde::Serialize,
     serde::Deserialize,
     rkyv::Archive,
