@@ -96,30 +96,19 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::client::core::tests::test_derivation;
+    use crate::client::core::tests::{
+        op_sepolia_16491249_16491349, test_derivation, test_derivation_with_partials,
+    };
     use crate::client::core::EthereumDataSourceProvider;
     use crate::client::stitching::KonaStitchingClient;
     use crate::client::tests::TestOracle;
     use crate::executor::Execution;
-    use alloy_primitives::{b256, B256};
+    use alloy_primitives::B256;
     use anyhow::Context;
-    use kona_proof::BootInfo;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_stateless_client() -> anyhow::Result<()> {
-        let mut boot_info = BootInfo {
-            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
-            agreed_l2_output_root: b256!(
-                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-            ),
-            claimed_l2_output_root: b256!(
-                "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-            ),
-            claimed_l2_block_number: 16491349,
-            chain_id: 11155420,
-            rollup_config: Default::default(),
-            l1_config: Default::default(),
-        };
+        let mut boot_info = op_sepolia_16491249_16491349();
         let stitched_executions = test_derivation(boot_info.clone(), None, None, None)
             .await
             .context("test_derivation")?
@@ -151,40 +140,11 @@ pub mod tests {
         Ok(())
     }
 
-    /// End-to-end round-trip through `run_stateless_client` with a non-empty
-    /// `Witness.chunks`. Codex round-4 [high] finding regression test — proves the
-    /// transaction-chunk-proving code path is reachable in the standard stateless
-    /// replay, not just the `run_core_client` integration tests.
-    ///
-    /// Follows the existing `test_stateless_client` pattern exactly — captures real
-    /// derivation data via `test_derivation_with_chunks_and_traces` (using the
-    /// cached `testdata/` `TestOracle` fixture), then sets `l1_head = ZERO` for pass
-    /// 2 to route through the EXECUTION-ONLY branch. No blob witness required
-    /// because derivation isn't re-run — we replay each Execution from the cache
-    /// through `CachedEvmFactory` (seeded with the built chunks); per-tx
-    /// authentication inside `CachedEvm::transact_raw` validates each served
-    /// result against the live DB.
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_stateless_client_with_chunks() -> anyhow::Result<()> {
-        use crate::client::core::tests::test_derivation_with_partials;
+    async fn test_stateless_client_with_partials() -> anyhow::Result<()> {
+        let mut boot_info = op_sepolia_16491249_16491349();
 
-        let mut boot_info = BootInfo {
-            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
-            agreed_l2_output_root: b256!(
-                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-            ),
-            claimed_l2_output_root: b256!(
-                "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-            ),
-            claimed_l2_block_number: 16491349,
-            chain_id: 11155420,
-            rollup_config: Default::default(),
-            l1_config: Default::default(),
-        };
-
-        // ---- Pass 1 (capture): test_derivation_with_chunks_and_traces runs the full
-        // derivation through `run_core_client`, captures per-tx `ResultAndState`,
-        // returns the Executions.
+        // capture
         let (executions, partial_executions) = test_derivation_with_partials(
             boot_info.clone(),
             None,
@@ -200,9 +160,7 @@ pub mod tests {
         let stitched_executions: Vec<Execution> =
             executions.into_iter().map(|e| e.as_ref().clone()).collect();
 
-        // ---- Pass 2 (stateless replay): l1_head = ZERO routes through the
-        // EXECUTION-ONLY branch, which supports chunks via CachedEvmFactory.
-        // No blobs_witness required — derivation isn't re-run in this branch.
+        // replay
         boot_info.l1_head = B256::ZERO;
         let oracle_witness = TestOracle::new(boot_info.clone());
         let stream_witness = oracle_witness.clone();

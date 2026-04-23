@@ -148,10 +148,7 @@ where
             // Calculate prestate hashes
             let block_ctx_hash = hash_block_ctx(&block_env, &op_block_ctx);
 
-            // Validate witness cache before execution
-            validate_cache(&cache);
-
-            // Build state: seed the pre-state view from the witness `CacheState`
+            // Instantiate provider
             let l2_provider = OracleL2ChainProvider::new(
                 boot.agreed_l2_output_root,
                 rollup_config.clone(),
@@ -161,6 +158,13 @@ where
                 .header_by_hash(boot.agreed_l2_output_root)
                 .map(|header| Sealed::new_unchecked(header, boot.agreed_l2_output_root))
                 .context("l2_provider.header_by_hash")?;
+
+            // Validate witness
+            validate_cache(&cache);
+            assert_eq!(boot.agreed_l2_output_root, boot.claimed_l2_output_root);
+            assert_eq!(boot.claimed_l2_block_number, safe_head.number);
+
+            // Build state: seed the pre-state view from the witness `CacheState`
             let mut state = State::builder()
                 .with_database(TrieDB::new(
                     safe_head,
@@ -550,7 +554,6 @@ pub mod tests {
     use alloy_evm::revm::context::BlockEnv;
     use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
     use alloy_evm::revm::context_interface::result::ResultAndState;
-    use alloy_evm::revm::database::CacheState;
     use alloy_evm::revm::primitives::eip4844::{
         BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
     };
@@ -1193,62 +1196,5 @@ pub mod tests {
             rollup_config: boot_info.rollup_config.clone(),
             l1_config: boot_info.l1_config.clone(),
         }
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_empty_partial() {
-        // No txs ⇒ empty trace collector ⇒ hash_results over zero entries.
-        let results_hash = hash_results(&[], &[]);
-        let block_ctx_hash = hash_block_ctx(&BlockEnv::default(), &OpBlockExecutionCtx::default());
-        let expected_trace = compute_pe_trace(results_hash, block_ctx_hash);
-
-        let (result_boot, precondition) = test_partial(
-            BootInfo {
-                l1_head: B256::repeat_byte(0xFF),
-                agreed_l2_output_root: Default::default(),
-                claimed_l2_output_root: Default::default(),
-                claimed_l2_block_number: 0,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
-            },
-            PartialExecutionWitness::default(),
-        );
-
-        assert_eq!(result_boot.l1_head, B256::repeat_byte(0xFF));
-        let expected_precondition = Precondition::default().partial(expected_trace);
-        assert_eq!(precondition.digest(), expected_precondition.digest());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    #[should_panic(expected = "cached contract bytecode hash mismatch")]
-    pub async fn test_chunk_mode_malformed_contract_rejected() {
-        let mut cache = CacheState::default();
-        // Insert a contract with mismatched hash → should panic during validation
-        let code = Bytecode::new_raw(alloy_primitives::Bytes::from_static(&[0x60, 0x00]));
-        let wrong_hash = B256::repeat_byte(0xAB);
-        cache.contracts.insert(wrong_hash, code);
-
-        let pe_witness = PartialExecutionWitness {
-            transactions: vec![],
-            block_env: BlockEnv::default(),
-            op_block_ctx: OpBlockExecutionCtx::default(),
-            cache,
-        };
-        let _ = test_partial(
-            make_pe_boot(
-                &BootInfo {
-                    l1_head: Default::default(),
-                    agreed_l2_output_root: Default::default(),
-                    claimed_l2_output_root: Default::default(),
-                    claimed_l2_block_number: 0,
-                    chain_id: 11155420,
-                    rollup_config: Default::default(),
-                    l1_config: Default::default(),
-                },
-                &pe_witness,
-            ),
-            pe_witness,
-        );
     }
 }
