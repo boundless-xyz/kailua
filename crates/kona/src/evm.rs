@@ -14,28 +14,21 @@
 
 use crate::executor::Execution;
 use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
-use crate::rkyv::evm::CacheRkyv;
+use crate::rkyv::evm::CacheStateRkyv;
 use crate::rkyv::evm::{BlockEnvRkyv, OpBlockExecutionCtxRkyv, ResultAndStateRkyv};
 use crate::rkyv::primitives::B256Def;
 use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
 use alloy_evm::precompiles::PrecompilesMap;
-use alloy_evm::revm::bytecode::Bytecode;
 use alloy_evm::revm::context::result::{EVMError, ResultAndState};
 use alloy_evm::revm::context::{BlockEnv, TxEnv};
-use alloy_evm::revm::database::in_memory_db::{AccountState, DbAccount};
 use alloy_evm::revm::database::states::CacheAccount;
-use alloy_evm::revm::database::{Cache, CacheState};
+use alloy_evm::revm::database::CacheState;
 use alloy_evm::revm::inspector::NoOpInspector;
-use alloy_evm::revm::primitives::{StorageKey, StorageValue};
-use alloy_evm::revm::state::{AccountInfo, AccountStatus};
-use alloy_evm::revm::{Database as RevmDatabase, DatabaseRef, Inspector};
+use alloy_evm::revm::state::AccountStatus;
+use alloy_evm::revm::{Database as RevmDatabase, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::{OpBlockExecutionCtx, OpEvm, OpEvmFactory, OpTxError};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
-use kona_preimage::{CommsClient, PreimageKey};
-use kona_proof::FlushableCache;
-use risc0_zkvm::sha::Digestible;
-use std::convert::Infallible;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
@@ -58,62 +51,38 @@ pub struct PartialExecution {
 
 impl PartialExecution {
     pub fn precondition_hash(&self) -> B256 {
-        dbg!(&self.tx_hashes);
-        dbg!(self
-            .results
-            .iter()
-            // .map(|r| crate::precondition::derivation::flatten_bytes(
-            //     crate::precondition::evm::flatten_execution_result(&r.result)
-            // ).digest())
-            .map(|r| r.result.clone())
-            .collect::<Vec<_>>());
-        dbg!(self
-            .results
-            .iter()
-            .map(|r| crate::precondition::derivation::flatten_bytes(
-                crate::precondition::evm::flatten_evm_state(&r.state)
-            )
-            .digest())
-            .collect::<Vec<_>>());
-        // dbg!(hash_results(&self.tx_hashes, &self.results));
-
         compute_pe_trace(
             hash_results(&self.tx_hashes, &self.results),
             hash_block_ctx(&self.block_env, &self.op_block_ctx),
         )
     }
+}
 
-    pub fn to_cached_state(&self) -> CacheState {
-        let mut cache_state = CacheState::default();
-        for result in &self.results {
-            for (addr, account) in result.state.iter() {
-                let cache_account =
-                    cache_state.accounts.entry(*addr).or_insert_with(|| {
-                        if account.status.contains(AccountStatus::LoadedAsNotExisting) {
-                            CacheAccount::new_loaded_not_existing()
-                        } else {
-                            CacheAccount::new_loaded(
-                                (*account.original_info).clone(),
-                                Default::default(),
-                            )
-                        }
-                    });
-                if let Some(plain) = cache_account.account.as_mut() {
-                    for (slot, evm_slot) in account.storage.iter() {
-                        plain
-                            .storage
-                            .entry(*slot)
-                            .or_insert(evm_slot.original_value);
-                    }
-                    let code_hash = plain.info.code_hash;
-                    if let Some(code) = plain.info.code.take() {
-                        cache_state.contracts.entry(code_hash).or_insert(code);
-                    }
+pub fn cache_results(results: Vec<ResultAndState<OpHaltReason>>) -> CacheState {
+    let mut cache_state = CacheState::default();
+    for result in results {
+        for (addr, account) in result.state.into_iter() {
+            let cache_account = cache_state.accounts.entry(addr).or_insert_with(|| {
+                if account.status.contains(AccountStatus::LoadedAsNotExisting) {
+                    CacheAccount::new_loaded_not_existing()
+                } else {
+                    CacheAccount::new_loaded((*account.original_info).clone(), Default::default())
+                }
+            });
+            if let Some(plain) = cache_account.account.as_mut() {
+                for (slot, evm_slot) in account.storage.into_iter() {
+                    plain.storage.entry(slot).or_insert(evm_slot.original_value);
+                }
+                if let Some(code) = plain.info.code.take() {
+                    cache_state
+                        .contracts
+                        .entry(plain.info.code_hash)
+                        .or_insert(code);
                 }
             }
         }
-        cache_state
     }
+    cache_state
 }
 
 /// Witness data for proving a single transaction subsequence within a block.
@@ -121,9 +90,9 @@ impl PartialExecution {
 pub struct PartialExecutionWitness {
     /// List of transactions to execute
     pub transactions: Vec<Vec<u8>>,
-    /// Storage DB prior to execution
-    #[rkyv(with = CacheRkyv)]
-    pub cache: Cache,
+    /// Pre-state cache
+    #[rkyv(with = CacheStateRkyv)]
+    pub cache: CacheState,
     /// Block execution context
     #[rkyv(with = BlockEnvRkyv)]
     pub block_env: BlockEnv,
@@ -133,70 +102,29 @@ pub struct PartialExecutionWitness {
 }
 
 impl PartialExecutionWitness {
-    pub async fn new<O: CommsClient + FlushableCache + Send + Sync + Debug>(
-        partial_execution: PartialExecution,
-        transactions: Vec<Vec<u8>>,
-        oracle: Arc<O>,
-    ) -> Self {
-        // Populate fresh cache instance with original values
-        let mut cache = Cache::default();
-        for result in partial_execution.results {
-            for (addr, account) in result.state.into_iter() {
-                // Copy account info
-                let db_account = cache.accounts.entry(addr).or_insert_with(|| {
-                    if account.status.contains(AccountStatus::LoadedAsNotExisting) {
-                        DbAccount::new_not_existing()
-                    } else {
-                        DbAccount {
-                            info: (*account.original_info).clone(),
-                            account_state: AccountState::None,
-                            storage: Default::default(),
-                        }
-                    }
-                });
-                // Copy storage
-                for (slot, evm_slot) in account.storage.iter() {
-                    db_account
-                        .storage
-                        .entry(*slot)
-                        .or_insert(evm_slot.original_value);
-                }
-                // Move bytecode to cache
-                let code_hash = db_account.info.code_hash;
-                if let Some(code) = db_account.info.code.take() {
-                    cache.contracts.entry(code_hash).or_insert(code);
-                } else if !cache.contracts.contains_key(&code_hash) {
-                    cache.contracts.entry(code_hash).or_insert({
-                        Bytecode::new_raw(
-                            oracle
-                                .get(PreimageKey::new_keccak256(*code_hash))
-                                .await
-                                .expect(&format!("Missing contract bytecode for {code_hash}"))
-                                .into(),
-                        )
-                    });
-                }
-            }
-        }
+    pub fn new(partial_execution: PartialExecution, transactions: Vec<Vec<u8>>) -> Self {
+        let PartialExecution {
+            results,
+            block_env,
+            op_block_ctx,
+            ..
+        } = partial_execution;
+
         PartialExecutionWitness {
             transactions,
-            cache,
-            block_env: partial_execution.block_env,
-            op_block_ctx: partial_execution.op_block_ctx,
+            cache: cache_results(results),
+            block_env,
+            op_block_ctx,
         }
     }
 
-    pub async fn from_preflight<O: CommsClient + FlushableCache + Send + Sync + Debug>(
-        partial: PartialExecution,
-        execution: &Execution,
-        oracle: Arc<O>,
-    ) -> Self {
+    pub fn from_preflight(partial: PartialExecution, execution: &Execution) -> Self {
         let transactions = execution
             .get_transactions(&partial.tx_hashes)
             .into_iter()
             .map(|tx| tx.to_vec())
             .collect();
-        Self::new(partial, transactions, oracle).await
+        Self::new(partial, transactions)
     }
 }
 
@@ -525,42 +453,6 @@ impl EvmFactory for CachedEvmFactory {
             chunks,
             self.block_traces.clone(),
         )
-    }
-}
-
-#[derive(Clone, Debug, Copy)]
-pub struct PanicDB;
-
-impl DatabaseRef for PanicDB {
-    type Error = Infallible;
-
-    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        panic!("basic_ref {address}")
-    }
-
-    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        panic!("code_by_hash_ref {code_hash}")
-    }
-
-    fn storage_ref(
-        &self,
-        address: Address,
-        index: StorageKey,
-    ) -> Result<StorageValue, Self::Error> {
-        panic!("storage_ref {address} {index}")
-    }
-
-    fn storage_by_account_id_ref(
-        &self,
-        address: Address,
-        account_id: usize,
-        storage_key: StorageKey,
-    ) -> Result<StorageValue, Self::Error> {
-        panic!("storage_by_account_id_ref {address} {account_id} {storage_key}")
-    }
-
-    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
-        panic!("block_hash_ref {number}")
     }
 }
 

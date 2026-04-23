@@ -22,6 +22,8 @@
 use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
 use alloy_evm::revm::database::in_memory_db::{AccountState, Cache, DbAccount};
+use alloy_evm::revm::database::states::{CacheAccount, PlainAccount};
+use alloy_evm::revm::database::{AccountStatus as CacheAccountStatus, CacheState};
 use alloy_evm::revm::state::{AccountInfo, Bytecode};
 use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -213,6 +215,158 @@ where
     ) -> Result<Cache, D::Error> {
         let rkyved: RkyvedCache = rkyv::Deserialize::deserialize(field, deserializer)?;
         Ok(CacheRkyv::raw(rkyved))
+    }
+}
+
+// -- CacheStateRkyv --
+
+/// `(info, sorted_storage)`. `info` reuses [`RkyvedAccountInfo`]; bytecode is
+/// carried via the separate `contracts` map (bound to content by `code_hash`).
+type RkyvedPlainAccount = (RkyvedAccountInfo, Vec<([u8; 32], [u8; 32])>);
+
+/// `(address, Option<plain>, cache_account_status_byte)`. `None` plain marks a
+/// `CacheAccount` whose `account` field is `None` (e.g. `LoadedNotExisting`).
+type RkyvedCacheAccount = ([u8; 20], Option<RkyvedPlainAccount>, u8);
+
+/// `(sorted_accounts, sorted_contracts, has_state_clear)`.
+pub type RkyvedCacheState = (Vec<RkyvedCacheAccount>, Vec<([u8; 32], Vec<u8>)>, bool);
+
+/// Encodes [`CacheAccountStatus`] as a single canonical byte for rkyv.
+fn cache_account_status_byte(s: &CacheAccountStatus) -> u8 {
+    match s {
+        CacheAccountStatus::LoadedNotExisting => 0,
+        CacheAccountStatus::Loaded => 1,
+        CacheAccountStatus::LoadedEmptyEIP161 => 2,
+        CacheAccountStatus::InMemoryChange => 3,
+        CacheAccountStatus::Changed => 4,
+        CacheAccountStatus::Destroyed => 5,
+        CacheAccountStatus::DestroyedChanged => 6,
+        CacheAccountStatus::DestroyedAgain => 7,
+    }
+}
+
+fn cache_account_status_from_byte(b: u8) -> CacheAccountStatus {
+    match b {
+        0 => CacheAccountStatus::LoadedNotExisting,
+        1 => CacheAccountStatus::Loaded,
+        2 => CacheAccountStatus::LoadedEmptyEIP161,
+        3 => CacheAccountStatus::InMemoryChange,
+        4 => CacheAccountStatus::Changed,
+        5 => CacheAccountStatus::Destroyed,
+        6 => CacheAccountStatus::DestroyedChanged,
+        7 => CacheAccountStatus::DestroyedAgain,
+        _ => panic!("invalid CacheAccountStatus byte: {b}"),
+    }
+}
+
+/// rkyv wrapper for revm's [`CacheState`].
+///
+/// Archives `CacheState` as a tuple of rkyv-native types via [`RkyvedCacheState`].
+/// Unlike [`CacheRkyv`] (which wraps `Cache`), `CacheState` has no `logs` or
+/// `block_hashes` — those fields live on `State` itself, not on the cached
+/// pre-state view.
+pub struct CacheStateRkyv;
+
+impl CacheStateRkyv {
+    pub fn rkyv(cs: &CacheState) -> RkyvedCacheState {
+        // Accounts (sorted by address)
+        let mut accounts: Vec<_> = cs.accounts.iter().collect();
+        accounts.sort_by_key(|(addr, _)| *addr);
+        let accounts = accounts
+            .into_iter()
+            .map(|(addr, ca)| {
+                let plain = ca.account.as_ref().map(|p| {
+                    let mut storage: Vec<_> = p.storage.iter().collect();
+                    storage.sort_by_key(|(k, _)| *k);
+                    let storage = storage
+                        .into_iter()
+                        .map(|(k, v)| (k.to_be_bytes::<32>(), v.to_be_bytes::<32>()))
+                        .collect();
+                    (account_info_to_rkyv(&p.info), storage)
+                });
+                (*addr.0, plain, cache_account_status_byte(&ca.status))
+            })
+            .collect();
+
+        // Contracts (sorted by code_hash)
+        let mut contracts: Vec<_> = cs.contracts.iter().collect();
+        contracts.sort_by_key(|(hash, _)| *hash);
+        let contracts = contracts
+            .into_iter()
+            .map(|(hash, bytecode)| (hash.0, bytecode.original_bytes().to_vec()))
+            .collect();
+
+        (accounts, contracts, cs.has_state_clear)
+    }
+
+    pub fn raw(rkyved: RkyvedCacheState) -> CacheState {
+        let (accounts, contracts, has_state_clear) = rkyved;
+
+        let accounts = accounts
+            .into_iter()
+            .map(|(addr, plain, status_byte)| {
+                let account = plain.map(|(info, storage)| PlainAccount {
+                    info: account_info_from_rkyv(info),
+                    storage: storage
+                        .into_iter()
+                        .map(|(k, v)| (U256::from_be_bytes(k), U256::from_be_bytes(v)))
+                        .collect(),
+                });
+                (
+                    Address::from(addr),
+                    CacheAccount {
+                        account,
+                        status: cache_account_status_from_byte(status_byte),
+                    },
+                )
+            })
+            .collect();
+
+        let contracts = contracts
+            .into_iter()
+            .map(|(hash, raw)| (B256::new(hash), Bytecode::new_raw(Bytes::from(raw))))
+            .collect();
+
+        CacheState {
+            accounts,
+            contracts,
+            has_state_clear,
+        }
+    }
+}
+
+impl ArchiveWith<CacheState> for CacheStateRkyv {
+    type Archived = Archived<RkyvedCacheState>;
+    type Resolver = Resolver<RkyvedCacheState>;
+
+    fn resolve_with(field: &CacheState, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = CacheStateRkyv::rkyv(field);
+        <RkyvedCacheState as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<CacheState, S> for CacheStateRkyv
+where
+    S: Fallible + rkyv::ser::Allocator + rkyv::ser::Writer + ?Sized,
+    <S as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn serialize_with(field: &CacheState, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        let rkyved = CacheStateRkyv::rkyv(field);
+        <RkyvedCacheState as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedCacheState>, CacheState, D> for CacheStateRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedCacheState>,
+        deserializer: &mut D,
+    ) -> Result<CacheState, D::Error> {
+        let rkyved: RkyvedCacheState = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(CacheStateRkyv::raw(rkyved))
     }
 }
 

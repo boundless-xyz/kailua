@@ -14,10 +14,10 @@
 
 use crate::client::log;
 use crate::driver::CachedDriver;
+use crate::evm::CachedEvmFactory;
 use crate::evm::PartialExecution;
 use crate::evm::PartialExecutionWitness;
 use crate::evm::TransactionResultCollector;
-use crate::evm::{CachedEvmFactory, PanicDB};
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
@@ -25,16 +25,14 @@ use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
 use alloy_consensus::transaction::SignerRecoverable;
-use alloy_consensus::Header;
 use alloy_eips::eip2718::{Decodable2718, WithEncoded};
 use alloy_evm::block::BlockExecutor;
 use alloy_evm::revm::bytecode::Bytecode;
-use alloy_evm::revm::database::in_memory_db::CacheDB;
-use alloy_evm::revm::database::{Cache, State};
+use alloy_evm::revm::database::{CacheState, State};
 use alloy_evm::EvmFactory;
 use alloy_op_evm::block::OpAlloyReceiptBuilder;
 use alloy_op_evm::OpBlockExecutor;
-use alloy_primitives::{Sealed, B256, U256};
+use alloy_primitives::{Sealed, B256};
 use anyhow::{bail, Context};
 use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
 use kona_driver::{Driver, Executor};
@@ -151,22 +149,26 @@ where
             let block_ctx_hash = hash_block_ctx(&block_env, &op_block_ctx);
 
             // Validate witness cache before execution
-            validate_cache(
-                &cache,
-                OracleL2ChainProvider::new(
-                    boot.agreed_l2_output_root,
-                    rollup_config.clone(),
-                    oracle.clone(),
-                ),
-            )
-            .await;
+            validate_cache(&cache);
 
-            // Build state
+            // Build state: seed the pre-state view from the witness `CacheState`
+            let l2_provider = OracleL2ChainProvider::new(
+                boot.agreed_l2_output_root,
+                rollup_config.clone(),
+                oracle.clone(),
+            );
+            let safe_head = l2_provider
+                .header_by_hash(boot.agreed_l2_output_root)
+                .map(|header| Sealed::new_unchecked(header, boot.agreed_l2_output_root))
+                .context("l2_provider.header_by_hash")?;
             let mut state = State::builder()
-                .with_database(CacheDB { cache, db: PanicDB })
+                .with_database(TrieDB::new(
+                    safe_head,
+                    l2_provider.clone(),
+                    l2_provider.clone(),
+                ))
+                .with_cached_prestate(cache)
                 .build();
-            // set the state-clear flag manually here because skip `apply_pre_execution_changes`
-            state.set_state_clear_flag(true);
 
             // Set up EVM environment
             let cfg_env = alloy_evm::revm::context::CfgEnv::new()
@@ -209,23 +211,6 @@ where
             let (captured_tx_hashes, captured_results): (Vec<B256>, Vec<_>) =
                 traces.into_iter().unzip();
             let results_hash = hash_results(&captured_tx_hashes, &captured_results);
-
-            dbg!(&captured_tx_hashes);
-            dbg!(captured_results
-                .iter()
-                // .map(|r| crate::precondition::derivation::flatten_bytes(
-                //     crate::precondition::evm::flatten_execution_result(&r.result)
-                // ).digest())
-                .map(|r| r.result.clone())
-                .collect::<Vec<_>>());
-            dbg!(captured_results
-                .iter()
-                .map(|r| crate::precondition::derivation::flatten_bytes(
-                    crate::precondition::evm::flatten_evm_state(&r.state)
-                )
-                .digest())
-                .collect::<Vec<_>>());
-            // dbg!(results_hash);
 
             // Return result
             let pe_trace = compute_pe_trace(results_hash, block_ctx_hash);
@@ -537,41 +522,19 @@ pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
     }
 }
 
-pub async fn validate_cache<
-    O: CommsClient + FlushableCache + FlushableCache + Send + Sync + Debug,
->(
-    cache: &Cache,
-    l2_provider: OracleL2ChainProvider<O>,
-) {
-    // Assert logs are empty
-    assert!(cache.logs.is_empty());
-    // Check contracts cache
+/// Validates every [`Bytecode`] entry
+pub fn validate_cache(cache: &CacheState) {
+    // Top-level contracts map (bytecode served via `code_by_hash`).
     for (expected_hash, bytecode) in &cache.contracts {
         validate_contract_hash(expected_hash, bytecode);
     }
-    // Check account code hashes
-    for db_account in cache.accounts.values() {
-        if let Some(bytecode) = &db_account.info.code {
-            validate_contract_hash(&db_account.info.code_hash, bytecode);
+    // Inline bytecode attached to any pre-state account.
+    for cache_account in cache.accounts.values() {
+        if let Some(plain) = &cache_account.account {
+            if let Some(bytecode) = &plain.info.code {
+                validate_contract_hash(&plain.info.code_hash, bytecode);
+            }
         }
-    }
-    // Check all block hashes
-    let mut target_header_hash = l2_provider
-        .l2_safe_head()
-        .await
-        .expect("l2_provider.l2_safe_head");
-    for _ in 0..(cache.block_hashes.len() as u64) {
-        // Ascertain cache correctness
-        let target_header = l2_provider
-            .header_by_hash(target_header_hash)
-            .expect("l2_provider.header_by_hash");
-        let cached_hash = cache
-            .block_hashes
-            .get(&U256::from(target_header.number))
-            .expect("invalid cache.block_hashes");
-        assert_eq!(cached_hash, &target_header_hash);
-        // Move back on next iteration
-        target_header_hash = target_header.parent_hash;
     }
 }
 
@@ -587,7 +550,7 @@ pub mod tests {
     use alloy_evm::revm::context::BlockEnv;
     use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
     use alloy_evm::revm::context_interface::result::ResultAndState;
-    use alloy_evm::revm::database::Cache;
+    use alloy_evm::revm::database::CacheState;
     use alloy_evm::revm::primitives::eip4844::{
         BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
     };
@@ -1012,15 +975,10 @@ pub mod tests {
         .unwrap();
 
         // Test all individual partials
-        let test_oracle = Arc::new(TestOracle::new(op_sepolia_16491249_16491349()));
         for (partials, execution) in pre_captured.iter().zip(pre_executions.iter()) {
             for partial_execution in partials {
-                let witness = PartialExecutionWitness::from_preflight(
-                    partial_execution.clone(),
-                    &execution,
-                    test_oracle.clone(),
-                )
-                .await;
+                let witness =
+                    PartialExecutionWitness::from_preflight(partial_execution.clone(), &execution);
                 // all partials should be found
                 assert_eq!(
                     partial_execution.tx_hashes.len(),
@@ -1265,12 +1223,7 @@ pub mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[should_panic(expected = "cached contract bytecode hash mismatch")]
     pub async fn test_chunk_mode_malformed_contract_rejected() {
-        let mut cache = Cache {
-            accounts: Default::default(),
-            contracts: Default::default(),
-            logs: Vec::new(),
-            block_hashes: Default::default(),
-        };
+        let mut cache = CacheState::default();
         // Insert a contract with mismatched hash → should panic during validation
         let code = Bytecode::new_raw(alloy_primitives::Bytes::from_static(&[0x60, 0x00]));
         let wrong_hash = B256::repeat_byte(0xAB);
