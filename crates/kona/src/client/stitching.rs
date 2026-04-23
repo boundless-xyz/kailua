@@ -619,7 +619,10 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::client::core::tests::test_derivation;
+    use crate::client::core::tests::{
+        op_sepolia_16491249_16491349, split_partials, test_derivation,
+        test_derivation_with_partials,
+    };
     use crate::client::core::EthereumDataSourceProvider;
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
@@ -988,21 +991,7 @@ pub mod tests {
         setup();
 
         test_stitching(
-            BootInfo {
-                l1_head: b256!(
-                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
-                ),
-                agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-                ),
-                claimed_l2_block_number: 16491349,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
-            },
+            op_sepolia_16491249_16491349(),
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
@@ -1025,21 +1014,7 @@ pub mod tests {
         setup();
 
         test_stitching_executions(
-            BootInfo {
-                l1_head: b256!(
-                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
-                ),
-                agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-                ),
-                claimed_l2_block_number: 16491349,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
-            },
+            op_sepolia_16491249_16491349(),
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
@@ -1057,25 +1032,68 @@ pub mod tests {
     pub async fn test_op_sepolia_16491249_16491349_execution_only() {
         setup();
 
-        test_stitching_execution_only(
-            BootInfo {
-                l1_head: b256!(
-                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
-                ),
-                agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-                ),
-                claimed_l2_block_number: 16491349,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
-            },
+        test_stitching_execution_only(op_sepolia_16491249_16491349(), None, vec![], vec![], vec![])
+            .await
+            .unwrap();
+
+        teardown();
+    }
+
+    pub async fn test_stitching_partials(
+        boot_info: BootInfo,
+        precondition_validation_data: Option<ProposalPrecondition>,
+    ) -> anyhow::Result<()> {
+        // Capture monolithic per-block partials alongside the execution trace.
+        let (_executions, captured) = test_derivation_with_partials(
+            boot_info.clone(),
+            precondition_validation_data.clone(),
             None,
+            None,
+            Vec::new(),
+        )
+        .await
+        .context("test_derivation_with_partials")?;
+
+        // Monolithic pass: one partial per block.
+        test_stitching(
+            boot_info.clone(),
+            precondition_validation_data.clone(),
+            vec![],
+            None,
+            false,
             vec![],
             vec![],
+            captured.clone(),
+        );
+
+        // Fully fragmented pass: one partial per transaction.
+        let split = split_partials(captured);
+        test_stitching(
+            boot_info,
+            precondition_validation_data,
+            vec![],
+            None,
+            false,
+            vec![],
+            vec![],
+            split,
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491349_stitched_boots() {
+        setup();
+
+        test_stitching_boots(
+            op_sepolia_16491249_16491349(),
+            Some(ProposalPrecondition {
+                proposal_l2_head_number: 16491249,
+                proposal_output_count: 1,
+                output_block_span: 100,
+                blob_hashes: vec![],
+            }),
             vec![],
         )
         .await
@@ -1085,10 +1103,10 @@ pub mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    pub async fn test_op_sepolia_16491249_16491349_stitched_boots() {
+    pub async fn test_op_sepolia_16491249_16491250_stitched_partials() {
         setup();
 
-        test_stitching_boots(
+        test_stitching_partials(
             BootInfo {
                 l1_head: b256!(
                     "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
@@ -1097,20 +1115,33 @@ pub mod tests {
                     "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
                 ),
-                claimed_l2_block_number: 16491349,
+                claimed_l2_block_number: 16491250,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
                 l1_config: Default::default(),
             },
+            None,
+        )
+        .await
+        .unwrap();
+
+        teardown();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491349_stitched_partials() {
+        setup();
+
+        test_stitching_partials(
+            op_sepolia_16491249_16491349(),
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
                 output_block_span: 100,
                 blob_hashes: vec![],
             }),
-            vec![],
         )
         .await
         .unwrap();
