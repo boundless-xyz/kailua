@@ -207,6 +207,9 @@ where
             dbg!(&captured_tx_hashes);
             dbg!(captured_results
                 .iter()
+                // .map(|r| crate::precondition::derivation::flatten_bytes(
+                //     crate::precondition::evm::flatten_execution_result(&r.result)
+                // ).digest())
                 .map(|r| r.result.clone())
                 .collect::<Vec<_>>());
             dbg!(captured_results
@@ -216,6 +219,7 @@ where
                 )
                 .digest())
                 .collect::<Vec<_>>());
+            // dbg!(results_hash);
 
             // Return result
             let pe_trace = compute_pe_trace(results_hash, block_ctx_hash);
@@ -534,8 +538,12 @@ pub fn validate_cache(cache: &Cache) {
     }
     // Check account code hashes
     for db_account in cache.accounts.values() {
+        let code_hash = db_account.info.code_hash;
         if let Some(bytecode) = &db_account.info.code {
-            validate_contract_hash(&db_account.info.code_hash, bytecode);
+            validate_contract_hash(&code_hash, bytecode);
+        } else if !code_hash.is_zero() {
+            // Ensure all bytecode is cached
+            assert!(cache.contracts.contains_key(&code_hash));
         }
     }
 }
@@ -977,10 +985,14 @@ pub mod tests {
         .unwrap();
 
         // Test all individual partials
+        let test_oracle = Arc::new(TestOracle::new(op_sepolia_16491249_16491349()));
         for (partials, execution) in pre_captured.iter().zip(pre_executions.iter()) {
             for partial_execution in partials {
-                let witness =
-                    PartialExecutionWitness::from_preflight(partial_execution.clone(), &execution);
+                let witness = PartialExecutionWitness::from_preflight(
+                    partial_execution.clone(),
+                    &execution,
+                    test_oracle.clone(),
+                ).await;
                 // all partials should be found
                 assert_eq!(
                     partial_execution.tx_hashes.len(),

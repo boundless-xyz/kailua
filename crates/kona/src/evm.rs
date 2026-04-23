@@ -29,8 +29,12 @@ use alloy_evm::revm::{Database as RevmDatabase, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::{OpBlockExecutionCtx, OpEvm, OpEvmFactory, OpTxError};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
+use kona_preimage::{CommsClient, PreimageKey};
+use kona_proof::FlushableCache;
 use risc0_zkvm::sha::Digestible;
+use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
+use alloy_evm::revm::bytecode::Bytecode;
 
 /// Represents a proven transaction subsequence within a block.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
@@ -55,6 +59,9 @@ impl PartialExecution {
         dbg!(self
             .results
             .iter()
+            // .map(|r| crate::precondition::derivation::flatten_bytes(
+            //     crate::precondition::evm::flatten_execution_result(&r.result)
+            // ).digest())
             .map(|r| r.result.clone())
             .collect::<Vec<_>>());
         dbg!(self
@@ -65,6 +72,7 @@ impl PartialExecution {
             )
             .digest())
             .collect::<Vec<_>>());
+        // dbg!(hash_results(&self.tx_hashes, &self.results));
 
         compute_pe_trace(
             hash_results(&self.tx_hashes, &self.results),
@@ -90,7 +98,11 @@ pub struct PartialExecutionWitness {
 }
 
 impl PartialExecutionWitness {
-    pub fn new(partial_execution: PartialExecution, transactions: Vec<Vec<u8>>) -> Self {
+    pub async fn new<O: CommsClient + FlushableCache + Send + Sync + Debug>(
+        partial_execution: PartialExecution,
+        transactions: Vec<Vec<u8>>,
+        oracle: Arc<O>,
+    ) -> Self {
         // Populate fresh cache instance with original values
         let mut cache = Cache::default();
         for result in partial_execution.results {
@@ -115,11 +127,17 @@ impl PartialExecutionWitness {
                         .or_insert(evm_slot.original_value);
                 }
                 // Move bytecode to cache
+                let code_hash = db_account.info.code_hash;
                 if let Some(code) = db_account.info.code.take() {
-                    cache
-                        .contracts
-                        .entry(db_account.info.code_hash)
-                        .or_insert(code);
+                    cache.contracts.entry(code_hash).or_insert(code);
+                } else if !cache.contracts.contains_key(&code_hash) {
+                    cache.contracts.entry(code_hash).or_insert({
+                        Bytecode::new_raw(oracle
+                            .get(PreimageKey::new_keccak256(*code_hash))
+                            .await
+                            .expect(&format!("Missing contract bytecode for {code_hash}"))
+                            .into())
+                    });
                 }
             }
         }
@@ -131,13 +149,17 @@ impl PartialExecutionWitness {
         }
     }
 
-    pub fn from_preflight(partial: PartialExecution, execution: &Execution) -> Self {
+    pub async fn from_preflight<O: CommsClient + FlushableCache + Send + Sync + Debug>(
+        partial: PartialExecution,
+        execution: &Execution,
+        oracle: Arc<O>,
+    ) -> Self {
         let transactions = execution
             .get_transactions(&partial.tx_hashes)
             .into_iter()
             .map(|tx| tx.to_vec())
             .collect();
-        Self::new(partial, transactions)
+        Self::new(partial, transactions, oracle).await
     }
 }
 
