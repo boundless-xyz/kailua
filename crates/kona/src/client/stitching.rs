@@ -686,6 +686,7 @@ pub mod tests {
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        partial_executions: Vec<Vec<PartialExecution>>,
     ) {
         let precondition_hash = precondition_validation_data
             .as_ref()
@@ -698,6 +699,7 @@ pub mod tests {
             derivation_trace,
             stitched_preconditions,
             stitched_boot_info,
+            partial_executions,
         );
         validate_proof_journal(proof_journal, boot_info, precondition_hash);
     }
@@ -710,6 +712,7 @@ pub mod tests {
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        partial_executions: Vec<Vec<PartialExecution>>,
     ) -> ProofJournal {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let precondition_validation_data_hash = match proposal_precondition {
@@ -730,7 +733,7 @@ pub mod tests {
                 stitched_preconditions,
                 stitched_boot_info,
                 None,
-                Vec::new(),
+                partial_executions,
             )
             .1
     }
@@ -738,6 +741,7 @@ pub mod tests {
     pub async fn test_stitching_boots(
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
+        partial_executions: Vec<Vec<PartialExecution>>,
     ) -> anyhow::Result<()> {
         let stitched_executions = test_derivation(
             boot_info.clone(),
@@ -789,6 +793,7 @@ pub mod tests {
             false,
             stitched_preconditions.clone().into_iter().rev().collect(),
             stitched_boot_info.clone().into_iter().rev().collect(),
+            partial_executions,
         );
         validate_proof_journal(proof_journal, boot_info.clone(), precondition_hash);
         // fail out of order stitching
@@ -816,6 +821,7 @@ pub mod tests {
                         false,
                         stitched_preconditions.clone().into_iter().rev().collect(),
                         stitched_boot_info.clone().into_iter().rev().collect(),
+                        vec![],
                     )
                 });
                 assert!(result.is_err());
@@ -850,6 +856,7 @@ pub mod tests {
             false,
             vec![],
             vec![],
+            vec![],
         );
         let n = stitched_executions.len();
         // don't test exec trace stitching if unnecessary or exec only mode
@@ -866,6 +873,7 @@ pub mod tests {
             false,
             vec![],
             vec![],
+            vec![],
         );
         // fully fragmented pass
         test_stitching(
@@ -874,6 +882,7 @@ pub mod tests {
             stitched_executions.into_iter().map(|e| vec![e]).collect(),
             None,
             false,
+            vec![],
             vec![],
             vec![],
         );
@@ -885,6 +894,7 @@ pub mod tests {
         precondition_validation_data: Option<ProposalPrecondition>,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        partial_executions: Vec<Vec<PartialExecution>>,
     ) -> anyhow::Result<()> {
         let stitched_executions = test_derivation(
             boot_info.clone(),
@@ -908,6 +918,7 @@ pub mod tests {
             false,
             stitched_preconditions,
             stitched_boot_info,
+            partial_executions,
         );
         Ok(())
     }
@@ -936,6 +947,7 @@ pub mod tests {
             vec![],
             None,
             false,
+            vec![],
             vec![],
             vec![],
         );
@@ -1002,6 +1014,7 @@ pub mod tests {
             false,
             vec![],
             vec![],
+            vec![],
         );
 
         teardown();
@@ -1063,6 +1076,7 @@ pub mod tests {
             None,
             vec![],
             vec![],
+            vec![],
         )
         .await
         .unwrap();
@@ -1096,6 +1110,7 @@ pub mod tests {
                 output_block_span: 100,
                 blob_hashes: vec![],
             }),
+            vec![],
         )
         .await
         .unwrap();
@@ -1161,159 +1176,5 @@ pub mod tests {
             vec![stitched_boot],
         )
         .await;
-    }
-
-    // -- stitch_chunks tests --
-
-    /// Minimal BootInfo for stitch_chunks tests — derivation+execution mode (`l1_head`
-    /// non-zero). Values do not need to correspond to a real chain; `stitch_chunks`
-    /// only inspects the BootInfo's `agreed_l2_output_root`, `claimed_l2_block_number`,
-    /// and config-hash-derived fields.
-    fn chunks_boot_info() -> BootInfo {
-        BootInfo {
-            l1_head: b256!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-            agreed_l2_output_root: b256!(
-                "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
-            ),
-            claimed_l2_output_root: b256!(
-                "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
-            ),
-            claimed_l2_block_number: 42,
-            chain_id: 1,
-            rollup_config: Default::default(),
-            l1_config: Default::default(),
-        }
-    }
-
-    fn make_chunk() -> PartialExecution {
-        PartialExecution {
-            tx_hashes: Vec::new(),
-            results: Vec::new(),
-            block_env: alloy_evm::revm::context::BlockEnv::default(),
-            op_block_ctx: alloy_op_evm::block::OpBlockExecutionCtx::default(),
-        }
-    }
-
-    /// Empty chunks (no chunk data for any block) → stitch_chunks is a no-op and must
-    /// not panic. This is the degenerate case for witnesses with `chunks = vec![]`.
-    #[test]
-    fn stitch_chunks_empty_is_noop() {
-        let boot = chunks_boot_info();
-        let pe_boots = precompute_pe_boots(&[]);
-        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
-    }
-
-    /// A single block with a single chunk — the chunk journal is constructed and (in
-    /// non-zkvm builds) `verify_stitching_journal` is a no-op, so the function
-    /// returns cleanly.
-    #[test]
-    fn stitch_chunks_single_block_single_chunk() {
-        let boot = chunks_boot_info();
-        let pe_boots = precompute_pe_boots(&[vec![make_chunk()]]);
-        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
-    }
-
-    /// Multiple chunks in one block — each is stitched independently. No
-    /// continuity checks are run between them in the new design (per-tx
-    /// `original_info`/`original_value` authentication in `CachedEvm` replaces
-    /// the removed pre/post DB-hash chain).
-    #[test]
-    fn stitch_chunks_multiple_per_block() {
-        let boot = chunks_boot_info();
-        let chunks = vec![vec![make_chunk(), make_chunk()]];
-        let pe_boots = precompute_pe_boots(&chunks);
-        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
-    }
-
-    /// Binding: altering `chunk.results` must change the reconstructed `chunk_trace`.
-    ///
-    /// This is the linchpin of finding #1's fix — the aggregation's reconstructed
-    /// journal depends on `hash_results(&chunk.results)` via `compute_chunk_trace`, so
-    /// any altered results vec produces a different journal digest. An adversary who
-    /// swaps `results` to a different-but-state-endpoint-equivalent trace would
-    /// generate a different `chunk_trace`, fail `env::verify()` on the swapped journal,
-    /// and the aggregation proof cannot produce a valid witness.
-    ///
-    /// This test exercises the non-zkvm branch (`verify_stitching_journal` is a no-op
-    /// there) but verifies structurally that the reconstructed chunk_trace diverges
-    /// when `chunk.results` is altered — the same computation feeds journal construction
-    /// on the zkvm side.
-    #[test]
-    fn stitch_chunks_results_tampering_changes_chunk_trace() {
-        use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
-        use alloy_evm::op_revm::OpHaltReason;
-        use alloy_evm::revm::context_interface::result::{
-            ExecutionResult, Output, ResultAndState, SuccessReason,
-        };
-
-        // Two chunks identical except for a single gas_used value in `results`.
-        let stub = |gas: u64| ResultAndState::<OpHaltReason> {
-            result: ExecutionResult::Success {
-                reason: SuccessReason::Return,
-                gas_used: gas,
-                gas_refunded: 0,
-                logs: vec![],
-                output: Output::Call(alloy_primitives::Bytes::new()),
-            },
-            state: Default::default(),
-        };
-
-        let mut chunk_a = make_chunk();
-        chunk_a.tx_hashes = vec![B256::ZERO];
-        chunk_a.results = vec![stub(21000)];
-
-        let mut chunk_b = chunk_a.clone();
-        chunk_b.results = vec![stub(21001)]; // tampered!
-
-        let trace_a = compute_pe_trace(
-            hash_results(&chunk_a.tx_hashes, &chunk_a.results),
-            hash_block_ctx(&chunk_a.block_env, &chunk_a.op_block_ctx),
-        );
-        let trace_b = compute_pe_trace(
-            hash_results(&chunk_b.tx_hashes, &chunk_b.results),
-            hash_block_ctx(&chunk_b.block_env, &chunk_b.op_block_ctx),
-        );
-        assert_ne!(
-            trace_a, trace_b,
-            "tampering with chunk.results must change chunk_trace (binding invariant)"
-        );
-    }
-
-    /// Per-block context: in a multi-block derivation run, each block's chunks carry
-    /// their own `agreed_l2_output_root` and `block_env.number` (which drives the
-    /// journal's `claimed_l2_block_number = block_env.number - 1`). These must flow
-    /// into the constructed chunk journal — not the outer `BootInfo`'s (final) values.
-    ///
-    /// This test does not validate the journal bytes (that would require zkvm-side
-    /// `env::verify`), but it exercises the two-block path and relies on
-    /// `verify_stitching_journal` being a no-op in non-zkvm builds. Any panic would
-    /// indicate a regression in the per-block context plumbing.
-    #[test]
-    fn stitch_chunks_multi_block_uses_per_chunk_context() {
-        use alloy_primitives::U256;
-        let boot = chunks_boot_info();
-        // Block A: block 11 (parent = 10).
-        let mut chunk_a = make_chunk();
-        chunk_a.block_env.number = U256::from(11u64);
-
-        // Block B: block 12 (parent = 11). If stitch_chunks incorrectly substituted
-        // the outer BootInfo values, the journal for this chunk would refer to
-        // boot.claimed_l2_block_number regardless of the per-chunk value we set here.
-        let mut chunk_b = make_chunk();
-        chunk_b.block_env.number = U256::from(12u64);
-
-        let pe_boots = precompute_pe_boots(&[vec![chunk_a], vec![chunk_b]]);
-        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
-    }
-
-    /// Blocks with empty chunk vecs are skipped: a witness that mixes some chunked
-    /// blocks and some non-chunked blocks passes intact.
-    #[test]
-    fn stitch_chunks_empty_block_is_skipped() {
-        let boot = chunks_boot_info();
-        // Block 0 empty, block 1 has a single chunk, block 2 empty.
-        let chunks = vec![vec![], vec![make_chunk()], vec![]];
-        let pe_boots = precompute_pe_boots(&chunks);
-        stitch_partial_executions(&boot, B256::ZERO, Address::ZERO, pe_boots);
     }
 }

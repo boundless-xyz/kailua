@@ -1147,6 +1147,7 @@ pub mod tests {
             false,
             stitched_preconditions,
             stitched_boot_info,
+            vec![],
         );
         assert_eq!(
             proof_journal.claimed_l2_output_root,
