@@ -18,6 +18,7 @@ use crate::evm::CachedEvmFactory;
 use crate::evm::PartialExecution;
 use crate::evm::PartialExecutionWitness;
 use crate::evm::TransactionResultCollector;
+use crate::executor::build_single_partial_for_block;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
@@ -25,6 +26,7 @@ use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
 use alloy_consensus::transaction::SignerRecoverable;
+use alloy_consensus::Header;
 use alloy_eips::eip2718::{Decodable2718, WithEncoded};
 use alloy_evm::block::BlockExecutor;
 use alloy_evm::revm::bytecode::Bytecode;
@@ -512,6 +514,30 @@ pub fn recover_collected_executions(
     take::<Vec<Execution>>(executions.as_mut())
 }
 
+pub fn recover_collected_partials(
+    boot_info: &BootInfo,
+    partials_collector: TransactionResultCollector,
+    execution_cache: &[Execution],
+    mut parent_header: Header,
+) -> Vec<Vec<PartialExecution>> {
+    let mut partial_executions = vec![];
+    for (partials, execution) in take(&mut *partials_collector.lock().unwrap())
+        .into_iter()
+        .zip(execution_cache)
+    {
+        partial_executions.push(vec![build_single_partial_for_block(
+            execution,
+            partials,
+            &parent_header,
+            boot_info
+                .rollup_config
+                .spec_id(execution.artifacts.header.timestamp),
+        )]);
+        parent_header = execution.artifacts.header.inner().clone();
+    }
+    partial_executions
+}
+
 pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
     if expected_hash.is_zero() {
         // workaround
@@ -549,16 +575,7 @@ pub mod tests {
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
     use alloy_consensus::{BlockHeader, Header};
-    use alloy_eips::eip7840::BlobParams;
-    use alloy_evm::op_revm::{OpHaltReason, OpSpecId};
-    use alloy_evm::revm::context::BlockEnv;
-    use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
-    use alloy_evm::revm::context_interface::result::ResultAndState;
-    use alloy_evm::revm::primitives::eip4844::{
-        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-    };
-    use alloy_op_evm::OpBlockExecutionCtx;
-    use alloy_primitives::{b256, B256, U256};
+    use alloy_primitives::{b256, B256};
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::BootInfo;
     use std::sync::{Arc, Mutex};
@@ -597,62 +614,6 @@ pub mod tests {
             .header_by_hash(safe_head_hash)
             .context("l2_provider.header_by_hash")?;
         Ok((header, boot.rollup_config))
-    }
-
-    fn expected_blob_excess_gas_and_price(
-        parent_header: &Header,
-        spec_id: OpSpecId,
-    ) -> Option<BlobExcessGasAndPrice> {
-        let (params, fraction) = if spec_id.is_enabled_in(OpSpecId::ISTHMUS) {
-            (
-                Some(BlobParams::prague()),
-                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-            )
-        } else if spec_id.is_enabled_in(OpSpecId::ECOTONE) {
-            (
-                Some(BlobParams::cancun()),
-                BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN,
-            )
-        } else {
-            (None, 0)
-        };
-
-        parent_header
-            .maybe_next_block_excess_blob_gas(params)
-            .or_else(|| spec_id.is_enabled_in(OpSpecId::ECOTONE).then_some(0))
-            .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
-    }
-
-    pub fn build_single_partial_for_block(
-        execution: &Execution,
-        traces: Vec<(B256, ResultAndState<OpHaltReason>)>,
-        parent_header: &Header,
-        spec_id: OpSpecId,
-    ) -> PartialExecution {
-        let header = execution.artifacts.header.inner();
-        let (tx_hashes, results): (Vec<B256>, Vec<_>) = traces.into_iter().unzip();
-        PartialExecution {
-            tx_hashes,
-            results,
-            block_env: BlockEnv {
-                number: U256::from(header.number),
-                beneficiary: header.beneficiary,
-                timestamp: U256::from(header.timestamp),
-                gas_limit: header.gas_limit,
-                basefee: header.base_fee_per_gas.unwrap_or(0),
-                difficulty: header.difficulty,
-                prevrandao: Some(header.mix_hash),
-                blob_excess_gas_and_price: expected_blob_excess_gas_and_price(
-                    parent_header,
-                    spec_id,
-                ),
-            },
-            op_block_ctx: OpBlockExecutionCtx {
-                parent_hash: header.parent_hash,
-                parent_beacon_block_root: header.parent_beacon_block_root,
-                extra_data: header.extra_data.clone(),
-            },
-        }
     }
 
     pub async fn test_derivation_with_partials(
@@ -728,29 +689,17 @@ pub mod tests {
         assert_eq!(precondition.digest(), expected_precondition.digest(),);
 
         // Extract block executions
-        let execution_cache: Vec<Arc<Execution>> =
-            recover_collected_executions(executions_collector, boot_info.claimed_l2_output_root)
-                .into_iter()
-                .map(Arc::new)
-                .collect();
+        let execution_cache =
+            recover_collected_executions(executions_collector, boot_info.claimed_l2_output_root);
 
         // Extract transaction executions
-        let (mut parent_header, _) = fetch_safe_head_config(&result_boot_info).await?;
-        let mut partial_executions = vec![];
-        for (partials, execution) in take(&mut *partials_collector.lock().unwrap())
-            .into_iter()
-            .zip(&execution_cache)
-        {
-            partial_executions.push(vec![build_single_partial_for_block(
-                execution,
-                partials,
-                &parent_header,
-                result_boot_info
-                    .rollup_config
-                    .spec_id(execution.artifacts.header.timestamp),
-            )]);
-            parent_header = execution.artifacts.header.inner().clone();
-        }
+        let (parent_header, _) = fetch_safe_head_config(&result_boot_info).await?;
+        let partial_executions = recover_collected_partials(
+            &result_boot_info,
+            partials_collector,
+            &execution_cache,
+            parent_header,
+        );
 
         Ok((execution_cache, partial_executions))
     }

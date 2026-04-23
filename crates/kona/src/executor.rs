@@ -13,13 +13,23 @@
 // limitations under the License.
 
 use crate::client::log;
+use crate::evm::PartialExecution;
 use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
-use alloy_consensus::Header;
+use alloy_consensus::{BlockHeader, Header};
+use alloy_eips::eip7840::BlobParams;
+use alloy_evm::op_revm::{OpHaltReason, OpSpecId};
+use alloy_evm::revm::context::result::ResultAndState;
+use alloy_evm::revm::context::BlockEnv;
+use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
+use alloy_evm::revm::primitives::eip4844::{
+    BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+};
 use alloy_evm::EvmFactory;
-use alloy_primitives::Bytes;
+use alloy_op_evm::OpBlockExecutionCtx;
 use alloy_primitives::{keccak256, Sealed, B256};
+use alloy_primitives::{Bytes, U256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
 use kona_executor::{BlockBuildingOutcome, TrieDBProvider};
@@ -319,18 +329,68 @@ where
     Ok(Arc::new(RwLock::new(cursor)))
 }
 
+fn expected_blob_excess_gas_and_price(
+    parent_header: &Header,
+    spec_id: OpSpecId,
+) -> Option<BlobExcessGasAndPrice> {
+    let (params, fraction) = if spec_id.is_enabled_in(OpSpecId::ISTHMUS) {
+        (
+            Some(BlobParams::prague()),
+            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        )
+    } else if spec_id.is_enabled_in(OpSpecId::ECOTONE) {
+        (
+            Some(BlobParams::cancun()),
+            BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN,
+        )
+    } else {
+        (None, 0)
+    };
+
+    parent_header
+        .maybe_next_block_excess_blob_gas(params)
+        .or_else(|| spec_id.is_enabled_in(OpSpecId::ECOTONE).then_some(0))
+        .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
+}
+
+pub fn build_single_partial_for_block(
+    execution: &Execution,
+    traces: Vec<(B256, ResultAndState<OpHaltReason>)>,
+    parent_header: &Header,
+    spec_id: OpSpecId,
+) -> PartialExecution {
+    let header = execution.artifacts.header.inner();
+    let (tx_hashes, results): (Vec<B256>, Vec<_>) = traces.into_iter().unzip();
+    PartialExecution {
+        tx_hashes,
+        results,
+        block_env: BlockEnv {
+            number: U256::from(header.number),
+            beneficiary: header.beneficiary,
+            timestamp: U256::from(header.timestamp),
+            gas_limit: header.gas_limit,
+            basefee: header.base_fee_per_gas.unwrap_or(0),
+            difficulty: header.difficulty,
+            prevrandao: Some(header.mix_hash),
+            blob_excess_gas_and_price: expected_blob_excess_gas_and_price(parent_header, spec_id),
+        },
+        op_block_ctx: OpBlockExecutionCtx {
+            parent_hash: header.parent_hash,
+            parent_beacon_block_root: header.parent_beacon_block_root,
+            extra_data: header.extra_data.clone(),
+        },
+    }
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::evm::PartialExecution;
     use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::oracle::WitnessOracle;
     use crate::precondition::execution::{attributes_hash, exec_precondition_hash};
     use crate::rkyv::execution::tests::gen_execution_outcomes;
     use alloy_eips::eip4895::Withdrawal;
-    use alloy_evm::revm::context::BlockEnv;
-    use alloy_op_evm::block::OpBlockExecutionCtx;
     use alloy_primitives::{keccak256, Address, Sealable, B64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use kona_mpt::TrieNode;
@@ -616,20 +676,5 @@ pub mod tests {
         new_execution_cursor(rollup_config.as_ref(), safe_head.seal_slow(), &mut provider)
             .await
             .unwrap();
-    }
-
-    #[test]
-    fn chunk_empty_results_round_trip() {
-        let chunk = PartialExecution {
-            tx_hashes: vec![],
-            results: vec![],
-            block_env: BlockEnv::default(),
-            op_block_ctx: OpBlockExecutionCtx::default(),
-        };
-        let bytes = rkyv::to_bytes::<Error>(&chunk).unwrap().to_vec();
-        let deser = rkyv::from_bytes::<PartialExecution, Error>(&bytes).unwrap();
-
-        assert!(deser.results.is_empty());
-        assert!(deser.tx_hashes.is_empty());
     }
 }

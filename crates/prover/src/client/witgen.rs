@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024 - 2026 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,15 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy::consensus::Blob;
+use alloy::consensus::{Blob, Header};
 use alloy_primitives::{Address, B256};
+use alloy_rlp::Decodable;
 use anyhow::Context;
 use async_trait::async_trait;
 use kailua_kona::blobs::BlobWitnessData;
 use kailua_kona::boot::StitchedBootInfo;
-use kailua_kona::client::core::{recover_collected_executions, DASourceProvider};
+use kailua_kona::client::core::{
+    recover_collected_executions, recover_collected_partials, DASourceProvider,
+};
 use kailua_kona::client::stitching::stitch_boot_info;
 use kailua_kona::driver::CachedDriver;
+use kailua_kona::evm::PartialExecution;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::kona::OracleL1ChainProvider;
@@ -30,6 +34,7 @@ use kailua_kona::witness::Witness;
 use kona_derive::BlobProvider;
 use kona_preimage::errors::PreimageOracleResult;
 use kona_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};
+use kona_proof::errors::OracleProviderError;
 use kona_proof::{BootInfo, FlushableCache};
 use kona_protocol::BlockInfo;
 use std::fmt::Debug;
@@ -52,12 +57,7 @@ pub async fn run_witgen_client<P, B, O, D>(
     trace_derivation: bool,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    // Per-block `Chunk` entries (one inner vec per block, index i → block
-    // safe_head_number + 1 + i). Passed through to `run_core_client` for CHUNK
-    // VERIFY phase AND serialized into the returned `Witness.chunks` so the
-    // downstream stateless client can consume them. Default `Vec::new()` = no
-    // chunks = monolithic execution (same as before the chunk-proving feature).
-    chunks: Vec<Vec<kailua_kona::evm::PartialExecution>>,
+    partial_executions: Vec<Vec<PartialExecution>>,
 ) -> anyhow::Result<(
     BootInfo,
     ProofJournal,
@@ -91,24 +91,8 @@ where
 
     // Run client
     let execution_trace = Arc::new(Mutex::new(Vec::new()));
+    let partials_collector = Arc::new(Mutex::new(Vec::new()));
     let derivation_trace = Arc::new(Mutex::new(None));
-    // `run_core_client` enforces that when any inner `chunks` vec is non-empty,
-    // `execution_trace` must be `None` (the collection target slot is repurposed
-    // internally for chunk verification capture). We honor that here: drop our
-    // own `Some(execution_trace)` when chunk data is present. The caller-facing
-    // `stitched_executions` output is still produced, just as an empty vec in
-    // that case (chunks and stitched executions aren't combined today — see
-    // Witness.chunks doc in kailua-kona).
-    let has_chunks = chunks.iter().any(|v| !v.is_empty());
-    let effective_execution_trace = if has_chunks {
-        None
-    } else {
-        Some(execution_trace.clone())
-    };
-    // Clone chunks once up front — `run_core_client` consumes its copy when
-    // populating `CachedEvmFactory`, and we need to serialize the ORIGINAL
-    // (pre-consume) layout into `Witness.chunks` for the stateless replay.
-    let chunks_for_witness = chunks.clone();
     let (boot, precondition) = kailua_kona::client::core::run_core_client(
         proposal_data_hash,
         oracle,
@@ -116,12 +100,12 @@ where
         beacon,
         da_source_provider,
         execution_cache,
-        effective_execution_trace,
+        Some(execution_trace.clone()),
         derivation_cache.clone(),
         trace_derivation.then(|| derivation_trace.clone()),
         None,
-        chunks,
-        None,
+        partial_executions,
+        Some(partials_collector.clone()),
     )?;
     // Fix claimed output of captured executions
     let stitched_executions =
@@ -134,6 +118,26 @@ where
             None
         }
     };
+    // Capture partials
+    let partial_executions = match stitched_executions.first() {
+        None => vec![],
+        Some(execution) => {
+            let header_bytes = preimage_oracle
+                .get(PreimageKey::new_keccak256(
+                    *execution.artifacts.header.parent_hash,
+                ))
+                .await?;
+            recover_collected_partials(
+                &boot,
+                partials_collector,
+                &stitched_executions,
+                Header::decode(&mut header_bytes.as_slice())
+                    .map_err(OracleProviderError::Rlp)
+                    .context("Header::decode")?,
+            )
+        }
+    };
+
     // Stitch boot infos
     let (boot, journal_output, precondition) = stitch_boot_info(
         Some(stream),
@@ -160,7 +164,7 @@ where
         stitched_boot_info,
         fpvm_image_id,
         pe_witness: None,
-        partial_executions: chunks_for_witness,
+        partial_executions,
     };
     witness
         .oracle_witness
