@@ -14,10 +14,10 @@
 
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::evm::CachedEvmFactory;
 use crate::evm::PartialExecution;
 use crate::evm::PartialExecutionWitness;
 use crate::evm::TransactionResultCollector;
+use crate::evm::{CachedEvmFactory, PanicDB};
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
@@ -25,19 +25,20 @@ use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
 use alloy_consensus::transaction::SignerRecoverable;
+use alloy_consensus::Header;
 use alloy_eips::eip2718::{Decodable2718, WithEncoded};
 use alloy_evm::block::BlockExecutor;
 use alloy_evm::revm::bytecode::Bytecode;
 use alloy_evm::revm::database::in_memory_db::CacheDB;
-use alloy_evm::revm::database::{Cache, EmptyDB};
+use alloy_evm::revm::database::{Cache, State};
 use alloy_evm::EvmFactory;
 use alloy_op_evm::block::OpAlloyReceiptBuilder;
 use alloy_op_evm::OpBlockExecutor;
-use alloy_primitives::{Sealed, B256};
+use alloy_primitives::{Sealed, B256, U256};
 use anyhow::{bail, Context};
 use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
 use kona_driver::{Driver, Executor};
-use kona_executor::TrieDBProvider;
+use kona_executor::{TrieDB, TrieDBProvider};
 use kona_genesis::RollupConfig;
 use kona_preimage::{CommsClient, PreimageKey};
 use kona_proof::errors::OracleProviderError;
@@ -150,14 +151,19 @@ where
             let block_ctx_hash = hash_block_ctx(&block_env, &op_block_ctx);
 
             // Validate witness cache before execution
-            validate_cache(&cache);
+            validate_cache(
+                &cache,
+                OracleL2ChainProvider::new(
+                    boot.agreed_l2_output_root,
+                    rollup_config.clone(),
+                    oracle.clone(),
+                ),
+            )
+            .await;
 
             // Build state
-            let mut state = alloy_evm::revm::database::states::State::builder()
-                .with_database(CacheDB {
-                    cache,
-                    db: EmptyDB::default(),
-                })
+            let mut state = State::builder()
+                .with_database(CacheDB { cache, db: PanicDB })
                 .build();
             // set the state-clear flag manually here because skip `apply_pre_execution_changes`
             state.set_state_clear_flag(true);
@@ -531,20 +537,41 @@ pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
     }
 }
 
-pub fn validate_cache(cache: &Cache) {
+pub async fn validate_cache<
+    O: CommsClient + FlushableCache + FlushableCache + Send + Sync + Debug,
+>(
+    cache: &Cache,
+    l2_provider: OracleL2ChainProvider<O>,
+) {
+    // Assert logs are empty
+    assert!(cache.logs.is_empty());
     // Check contracts cache
     for (expected_hash, bytecode) in &cache.contracts {
         validate_contract_hash(expected_hash, bytecode);
     }
     // Check account code hashes
     for db_account in cache.accounts.values() {
-        let code_hash = db_account.info.code_hash;
         if let Some(bytecode) = &db_account.info.code {
-            validate_contract_hash(&code_hash, bytecode);
-        } else if !code_hash.is_zero() {
-            // Ensure all bytecode is cached
-            assert!(cache.contracts.contains_key(&code_hash));
+            validate_contract_hash(&db_account.info.code_hash, bytecode);
         }
+    }
+    // Check all block hashes
+    let mut target_header_hash = l2_provider
+        .l2_safe_head()
+        .await
+        .expect("l2_provider.l2_safe_head");
+    for _ in 0..(cache.block_hashes.len() as u64) {
+        // Ascertain cache correctness
+        let target_header = l2_provider
+            .header_by_hash(target_header_hash)
+            .expect("l2_provider.header_by_hash");
+        let cached_hash = cache
+            .block_hashes
+            .get(&U256::from(target_header.number))
+            .expect("invalid cache.block_hashes");
+        assert_eq!(cached_hash, &target_header_hash);
+        // Move back on next iteration
+        target_header_hash = target_header.parent_hash;
     }
 }
 
@@ -992,7 +1019,8 @@ pub mod tests {
                     partial_execution.clone(),
                     &execution,
                     test_oracle.clone(),
-                ).await;
+                )
+                .await;
                 // all partials should be found
                 assert_eq!(
                     partial_execution.tx_hashes.len(),

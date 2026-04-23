@@ -19,22 +19,25 @@ use crate::rkyv::evm::{BlockEnvRkyv, OpBlockExecutionCtxRkyv, ResultAndStateRkyv
 use crate::rkyv::primitives::B256Def;
 use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
 use alloy_evm::precompiles::PrecompilesMap;
+use alloy_evm::revm::bytecode::Bytecode;
 use alloy_evm::revm::context::result::{EVMError, ResultAndState};
 use alloy_evm::revm::context::{BlockEnv, TxEnv};
 use alloy_evm::revm::database::in_memory_db::{AccountState, DbAccount};
-use alloy_evm::revm::database::Cache;
+use alloy_evm::revm::database::states::CacheAccount;
+use alloy_evm::revm::database::{Cache, CacheState};
 use alloy_evm::revm::inspector::NoOpInspector;
-use alloy_evm::revm::state::AccountStatus;
-use alloy_evm::revm::{Database as RevmDatabase, Inspector};
+use alloy_evm::revm::primitives::{StorageKey, StorageValue};
+use alloy_evm::revm::state::{AccountInfo, AccountStatus};
+use alloy_evm::revm::{Database as RevmDatabase, DatabaseRef, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::{OpBlockExecutionCtx, OpEvm, OpEvmFactory, OpTxError};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use kona_preimage::{CommsClient, PreimageKey};
 use kona_proof::FlushableCache;
 use risc0_zkvm::sha::Digestible;
+use std::convert::Infallible;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
-use alloy_evm::revm::bytecode::Bytecode;
 
 /// Represents a proven transaction subsequence within a block.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
@@ -78,6 +81,38 @@ impl PartialExecution {
             hash_results(&self.tx_hashes, &self.results),
             hash_block_ctx(&self.block_env, &self.op_block_ctx),
         )
+    }
+
+    pub fn to_cached_state(&self) -> CacheState {
+        let mut cache_state = CacheState::default();
+        for result in &self.results {
+            for (addr, account) in result.state.iter() {
+                let cache_account =
+                    cache_state.accounts.entry(*addr).or_insert_with(|| {
+                        if account.status.contains(AccountStatus::LoadedAsNotExisting) {
+                            CacheAccount::new_loaded_not_existing()
+                        } else {
+                            CacheAccount::new_loaded(
+                                (*account.original_info).clone(),
+                                Default::default(),
+                            )
+                        }
+                    });
+                if let Some(plain) = cache_account.account.as_mut() {
+                    for (slot, evm_slot) in account.storage.iter() {
+                        plain
+                            .storage
+                            .entry(*slot)
+                            .or_insert(evm_slot.original_value);
+                    }
+                    let code_hash = plain.info.code_hash;
+                    if let Some(code) = plain.info.code.take() {
+                        cache_state.contracts.entry(code_hash).or_insert(code);
+                    }
+                }
+            }
+        }
+        cache_state
     }
 }
 
@@ -132,11 +167,13 @@ impl PartialExecutionWitness {
                     cache.contracts.entry(code_hash).or_insert(code);
                 } else if !cache.contracts.contains_key(&code_hash) {
                     cache.contracts.entry(code_hash).or_insert({
-                        Bytecode::new_raw(oracle
-                            .get(PreimageKey::new_keccak256(*code_hash))
-                            .await
-                            .expect(&format!("Missing contract bytecode for {code_hash}"))
-                            .into())
+                        Bytecode::new_raw(
+                            oracle
+                                .get(PreimageKey::new_keccak256(*code_hash))
+                                .await
+                                .expect(&format!("Missing contract bytecode for {code_hash}"))
+                                .into(),
+                        )
                     });
                 }
             }
@@ -488,6 +525,42 @@ impl EvmFactory for CachedEvmFactory {
             chunks,
             self.block_traces.clone(),
         )
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct PanicDB;
+
+impl DatabaseRef for PanicDB {
+    type Error = Infallible;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        panic!("basic_ref {address}")
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        panic!("code_by_hash_ref {code_hash}")
+    }
+
+    fn storage_ref(
+        &self,
+        address: Address,
+        index: StorageKey,
+    ) -> Result<StorageValue, Self::Error> {
+        panic!("storage_ref {address} {index}")
+    }
+
+    fn storage_by_account_id_ref(
+        &self,
+        address: Address,
+        account_id: usize,
+        storage_key: StorageKey,
+    ) -> Result<StorageValue, Self::Error> {
+        panic!("storage_by_account_id_ref {address} {account_id} {storage_key}")
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        panic!("block_hash_ref {number}")
     }
 }
 
