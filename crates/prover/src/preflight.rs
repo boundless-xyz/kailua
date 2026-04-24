@@ -465,6 +465,7 @@ pub async fn concurrent_preflight(
         }
     }
 
+    // Schedule preflight tasks
     let blocks_per_thread = num_l2_blocks / args.proving.num_concurrent_preflights;
     let mut extra_blocks = num_l2_blocks % args.proving.num_concurrent_preflights;
     let mut jobs = vec![];
@@ -520,6 +521,7 @@ pub async fn concurrent_preflight(
             vec![],
             None,
             None,
+            vec![],
             vec![],
             vec![],
             vec![],

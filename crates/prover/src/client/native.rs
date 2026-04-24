@@ -21,6 +21,7 @@ use anyhow::anyhow;
 use async_channel::Sender;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::driver::CachedDriver;
+use kailua_kona::evm::PartialExecution;
 use kailua_kona::executor::Execution;
 use kailua_kona::precondition::Precondition;
 use kailua_sync::retry_res_ctx_timeout;
@@ -64,6 +65,7 @@ pub async fn run_native_client(
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
+    partial_executions: Vec<Vec<PartialExecution>>,
 ) -> Result<(), ProvingError> {
     // Instantiate data channels
     let hint = BidirectionalChannel::new().map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
@@ -163,6 +165,7 @@ pub async fn run_native_client(
         force_attempt,
         seek_proof,
         args.kona.data_dir.clone(),
+        partial_executions,
     ));
     // Wait for both tasks to complete.
     info!("Starting preimage server and client program.");

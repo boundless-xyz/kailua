@@ -26,6 +26,7 @@ use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{split_executions, stitch_boot_info};
 use kailua_kona::driver::CachedDriver;
+use kailua_kona::evm::PartialExecution;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::vec::VecOracle;
@@ -58,6 +59,7 @@ pub struct CachedTask {
     pub derivation_trace_sender: Option<Sender<CachedDriver>>,
     pub stitched_preconditions: Vec<Precondition>,
     pub stitched_boot_info: Vec<StitchedBootInfo>,
+    pub partial_executions: Vec<Vec<PartialExecution>>,
     pub stitched_proofs: Vec<ProfiledReceipt>,
     pub prove_snark: bool,
     pub force_attempt: bool,
@@ -144,6 +146,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
                     cached_task.derivation_trace_sender,
                     cached_task.stitched_preconditions,
                     cached_task.stitched_boot_info,
+                    cached_task.partial_executions,
                     cached_task.stitched_proofs,
                     cached_task.prove_snark,
                     cached_task.force_attempt,
@@ -172,6 +175,7 @@ pub async fn compute_oneshot_task(
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
+    partial_executions: Vec<Vec<PartialExecution>>,
     stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
@@ -191,6 +195,7 @@ pub async fn compute_oneshot_task(
         derivation_trace_sender: derivation_trace,
         stitched_preconditions,
         stitched_boot_info,
+        partial_executions,
         stitched_proofs,
         prove_snark,
         force_attempt,
@@ -232,7 +237,7 @@ pub async fn compute_fpvm_proof(
     prove_snark: bool,
     task_sender: Sender<Oneshot>,
 ) -> Result<Option<OneshotResultResponse>, ProvingError> {
-    // report transaction count
+    // report sub-proof count
     if !stitched_boot_info.is_empty() {
         info!("Stitching {} sub-proofs", stitched_boot_info.len());
     }
@@ -297,6 +302,7 @@ pub async fn compute_fpvm_proof(
         derivation_trace, // note: the task sends its driver trace if it starts proving
         stitched_preconditions.clone(),
         stitched_boot_info.clone(),
+        vec![], // we don't use this flow for partial execution proving
         stitched_proofs.clone(),
         // pass through snark requirement
         prove_snark,
@@ -466,6 +472,7 @@ pub async fn compute_fpvm_proof(
                     Some(derivation_trace), // note: the task sends its driver trace if witness size is fine
                     vec![],
                     vec![],
+                    vec![], // we don't use this flow for partial execution proving
                     vec![],
                     false,
                     false,
@@ -581,6 +588,7 @@ pub async fn compute_fpvm_proof(
             derivation_trace, // note: the task sends its driver trace if it succeeds
             stitched_preconditions.clone(),
             stitched_boot_info.clone(),
+            vec![], // we don't use this flow for partial execution proving
             stitched_proofs.clone(),
             false,
             false,
@@ -677,6 +685,7 @@ pub async fn compute_fpvm_proof(
                     derivation_trace_sender: None, // we don't need to send the trace anywhere
                     stitched_preconditions: vec![],
                     stitched_boot_info: vec![],
+                    partial_executions: vec![], // we don't use this flow for partial execution proving
                     stitched_proofs: vec![],
                     prove_snark: false,
                     force_attempt: false,
@@ -885,6 +894,7 @@ pub async fn compute_fpvm_proof(
             None, // driver trace precondition hash enforced by precondition arg having it
             [tail_preconditions, stitched_preconditions].concat(),
             [tail_boot_infos, stitched_boot_info].concat(),
+            vec![], // we don't use this flow for partial execution proving
             [tail_proofs, stitched_proofs, execution_proofs].concat(),
             prove_snark,
             true,
@@ -949,6 +959,7 @@ pub fn create_cached_execution_task(
         derivation_trace_sender: None,
         stitched_preconditions: vec![],
         stitched_boot_info: vec![],
+        partial_executions: vec![], // we don't use this flow for partial execution proving
         stitched_proofs: vec![],
         prove_snark: false,
         force_attempt,
@@ -970,6 +981,7 @@ pub async fn compute_cached_proof(
     mut derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
+    partial_executions: Vec<Vec<PartialExecution>>,
     stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
@@ -1133,6 +1145,7 @@ pub async fn compute_cached_proof(
             prove_snark,
             force_attempt,
             seek_proof,
+            partial_executions,
         )
         .await?;
     }

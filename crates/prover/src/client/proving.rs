@@ -27,6 +27,7 @@ use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::core::EthereumDataSourceProvider;
 use kailua_kona::client::stitching::split_executions;
 use kailua_kona::driver::CachedDriver;
+use kailua_kona::evm::PartialExecution;
 use kailua_kona::executor::Execution;
 use kailua_kona::oracle::vec::{PreimageVecEntry, VecOracle};
 use kailua_kona::precondition::Precondition;
@@ -74,6 +75,7 @@ pub async fn run_proving_client<P, H>(
     force_attempt: bool,
     seek_proof: bool,
     data_dir: Option<PathBuf>,
+    partial_executions: Vec<Vec<PartialExecution>>,
 ) -> Result<(), ProvingError>
 where
     P: PreimageOracleClient + Send + Sync + Debug + Clone + 'static,
@@ -121,6 +123,7 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
+                    partial_executions,
                 )
                 .await
                 .context("Failed to run hokulea vec witgen client.")
@@ -178,6 +181,7 @@ where
                         trace_derivation,
                         stitched_preconditions.clone(),
                         stitched_boot_info.clone(),
+                        partial_executions,
                     )
                     .await
                     .context("Failed to run hana vec witgen client.")
@@ -212,8 +216,7 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
-                    // todo
-                    Vec::new(),
+                    partial_executions,
                 )
                 .await
                 .context("Failed to run kona vec witgen client.")

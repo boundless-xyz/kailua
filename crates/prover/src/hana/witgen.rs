@@ -19,6 +19,7 @@ use kailua_hana::da::CelestiaDataSourceProvider;
 use kailua_hana::provider::HanaProvider;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::driver::CachedDriver;
+use kailua_kona::evm::PartialExecution;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
@@ -44,6 +45,7 @@ pub async fn run_hana_witgen_client<P, B, O>(
     trace_derivation: bool,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
+    partial_executions: Vec<Vec<PartialExecution>>,
 ) -> anyhow::Result<(
     BootInfo,
     ProofJournal,
@@ -83,7 +85,7 @@ where
         trace_derivation,
         stitched_preconditions,
         stitched_boot_info,
-        Vec::new(),
+        partial_executions,
     )
     .await?;
     // Finalize witness

@@ -127,29 +127,25 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     // create concurrent db
     let disk_kv_store = create_disk_kv_store(&args.kona);
     // perform preflight
-    let do_preflight = args.proving.num_concurrent_preflights > 0
-        || args.kona.enable_experimental_witness_endpoint;
     if args.proving.num_concurrent_preflights == 0 {
         args.proving.num_concurrent_preflights = 1;
     }
     // run parallelized preflight instances to populate kv store
-    if do_preflight {
-        info!(
-            "Running Kailua preflights with {} threads",
-            args.proving.num_concurrent_preflights
-        );
-        if !concurrent_preflight(
-            &args,
-            rollup_config.clone(),
-            l1_config.clone(),
-            op_node_provider.as_ref().expect("Missing op_node_provider"),
-            disk_kv_store.clone(),
-        )
-        .await
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-        {
-            return Ok(None);
-        }
+    info!(
+        "Running Kailua preflights with {} threads",
+        args.proving.num_concurrent_preflights
+    );
+    if !concurrent_preflight(
+        &args,
+        rollup_config.clone(),
+        l1_config.clone(),
+        op_node_provider.as_ref().expect("Missing op_node_provider"),
+        disk_kv_store.clone(),
+    )
+    .await
+    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+    {
+        return Ok(None);
     }
     // We only use executionWitness/executePayload during preflight.
     args.kona.enable_experimental_witness_endpoint = false;
@@ -160,10 +156,11 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     for _ in 0..args.proving.num_concurrent_proofs {
         proving_handlers.push(tokio::spawn(handle_oneshot_tasks(task_channel.1.clone())));
     }
-    let mut result_pq = BinaryHeap::new();
-
     // create channel for receiving proving results from handlers
     let result_channel = async_channel::unbounded();
+
+    // todo: prove partial executions
+
     // create channel for receiving proof requests to process and dispatch to handlers
     let prover_channel = async_channel::unbounded();
     // create channel for receiving the last derivation trace in case of stitching
@@ -271,6 +268,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     }
 
     // wait for required proofs to arrive
+    let mut result_pq = BinaryHeap::new();
     while result_pq.len() < num_proofs {
         // dispatch all pending proofs
         while !prover_channel.1.is_empty() {
@@ -372,6 +370,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                     derivation_trace_sender: None,
                     stitched_preconditions: vec![],
                     stitched_boot_info: vec![],
+                    partial_executions: vec![],
                     stitched_proofs: vec![],
                     prove_snark: false,
                     force_attempt,
@@ -669,6 +668,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                         derivation_trace_sender: None,
                         stitched_preconditions: vec![],
                         stitched_boot_info: vec![],
+                        partial_executions: vec![],
                         stitched_proofs: vec![],
                         prove_snark: false,
                         force_attempt: false,
