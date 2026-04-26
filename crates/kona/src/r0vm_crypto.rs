@@ -19,6 +19,15 @@
 //! [`risc0_crypto_evm`]. All other `Crypto` methods fall through to
 //! `DefaultCrypto`.
 //!
+//! ## Experimental, opt-in
+//!
+//! Until `risc0-crypto` has been fully audited this provider is treated as
+//! experimental. Installation is gated at runtime by
+//! [`Witness::enable_experimental_r0vm_crypto`](crate::witness::Witness),
+//! defaulting to `false`. Soundness depends on this provider being
+//! functionally equivalent to revm's `DefaultCrypto` on every input — flipping
+//! the witness flag must not change the proof journal, only its proving cost.
+//!
 //! [`install_r0vm_crypto`] is only defined on the zkVM target — calling it
 //! from host code is a compile error, not a silent no-op. Callers gate the
 //! install point with the same `cfg` attribute. Revm types are pulled in via

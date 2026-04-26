@@ -133,6 +133,8 @@ where
         stitched_preconditions,
         stitched_boot_info,
         fpvm_image_id,
+        // Filled in by the host caller after witgen returns.
+        enable_experimental_r0vm_crypto: false,
     };
     witness
         .oracle_witness

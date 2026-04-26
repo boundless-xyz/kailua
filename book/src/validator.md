@@ -72,6 +72,7 @@ The validator proving behavior can be customized through the following arguments
 * `max-block-executions`: Maximum number of blocks to execute per single proof.
 * `num-tail-blocks`: Rate of growth of tail proofs in L1 blocks (Default 10).
 * `enable-experimental-witness-endpoint`: Enables the use of `debug_executePayload` to collect the execution witness from the execution layer.
+* `enable-experimental-r0vm-crypto`: Opts in to the R0VM-accelerated revm `Crypto` provider for EVM precompiles. Off by default until `risc0-crypto` has been fully audited.
 * `max-fault-proving-delay`: The maximum amount of seconds to wait before starting to compute a fault proof (Default 900).
 * `max-validity-proving-delay`: The maximum amount of seconds to wait before starting to compute a validity proof (Default 0).
 * `clear-cache-data`: Whether to clear cache data after successful completion (Default false).
