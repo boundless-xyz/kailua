@@ -24,8 +24,6 @@ pub mod boot;
 pub mod client;
 /// Procedures for generating secure cryptographic commitments to rollup configuration settings.
 pub mod config;
-/// R0VM-accelerated revm `Crypto` provider for EVM precompiles.
-pub mod r0vm_crypto;
 /// Implementation for caching support in derivation.
 pub mod driver;
 /// Implementation for an execution engine with caching support.
@@ -38,6 +36,8 @@ pub mod kona;
 pub mod oracle;
 /// Structures and logic for defining preconditions for Kailua proofs.
 pub mod precondition;
+/// R0VM-accelerated revm `Crypto` provider for EVM precompiles.
+pub mod r0vm_crypto;
 /// Utility methods for zero-copy (de)serialization using the `rkyv` crate.
 pub mod rkyv;
 /// A module for representing oracle-backed stateless client witness data.
