@@ -629,6 +629,7 @@ fn base_proving_args(max_witness_size: usize) -> ProvingArgs {
         #[cfg(feature = "celestia")]
         hana: Default::default(),
         export_profile_csv: false,
+        enable_experimental_r0vm_crypto: false,
     }
 }
 
