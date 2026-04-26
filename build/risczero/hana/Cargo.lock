@@ -3276,13 +3276,13 @@ dependencies = [
  "op-alloy-consensus 0.23.1",
  "op-alloy-rpc-types-engine",
  "pot",
+ "risc0-crypto-evm",
  "risc0-zkvm",
  "rkyv",
  "serde",
  "serde_json",
  "spin 0.10.0",
  "tracing",
- "zeth-r0vm-precompile",
 ]
 
 [[package]]
@@ -5561,13 +5561,23 @@ dependencies = [
 [[package]]
 name = "risc0-crypto"
 version = "0.1.0"
-source = "git+https://github.com/Wollac/risc0-crypto?rev=320a9dfe61fe0ffc1ff2f732d894dfa9647a188c#320a9dfe61fe0ffc1ff2f732d894dfa9647a188c"
+source = "git+https://github.com/boundless-xyz/risc0-crypto?rev=92de69e3732b0a59cc1f843d72d7ef2c8ccc7e64#92de69e3732b0a59cc1f843d72d7ef2c8ccc7e64"
 dependencies = [
  "bytemuck",
  "cargo_metadata 0.23.1",
  "educe",
  "include_bytes_aligned 0.2.0",
  "risc0-bigint2",
+]
+
+[[package]]
+name = "risc0-crypto-evm"
+version = "0.1.0"
+source = "git+https://github.com/boundless-xyz/risc0-crypto?rev=92de69e3732b0a59cc1f843d72d7ef2c8ccc7e64#92de69e3732b0a59cc1f843d72d7ef2c8ccc7e64"
+dependencies = [
+ "alloy-primitives",
+ "risc0-crypto",
+ "risc0-zkp",
 ]
 
 [[package]]
@@ -7692,16 +7702,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "zeth-r0vm-precompile"
-version = "0.3.0"
-source = "git+https://github.com/boundless-xyz/zeth?rev=d40b4f1f57e656cce7853224563f94c1f6994db3#d40b4f1f57e656cce7853224563f94c1f6994db3"
-dependencies = [
- "alloy-primitives",
- "risc0-crypto",
- "risc0-zkp",
 ]
 
 [[package]]

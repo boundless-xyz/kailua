@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! revm `Crypto` adapter over the primitives in `zeth-r0vm-precompile`.
+//! revm `Crypto` adapter over the primitives in `risc0-crypto-evm`.
 //!
 //! The adapter routes `sha256`, `modexp`, `bn254_g1_{add,mul}`,
 //! `secp256r1_verify_signature`, and `secp256k1_ecrecover` through
-//! [`zeth_r0vm_precompile`]. All other `Crypto` methods fall through to
+//! [`risc0_crypto_evm`]. All other `Crypto` methods fall through to
 //! `DefaultCrypto`.
 //!
 //! [`install_r0vm_crypto`] is only defined on the zkVM target — calling it
@@ -42,7 +42,7 @@ struct R0vmCrypto;
 impl alloy_evm::revm::precompile::Crypto for R0vmCrypto {
     #[inline]
     fn sha256(&self, input: &[u8]) -> [u8; 32] {
-        zeth_r0vm_precompile::sha256(input)
+        risc0_crypto_evm::sha256(input)
     }
 
     #[inline]
@@ -53,7 +53,7 @@ impl alloy_evm::revm::precompile::Crypto for R0vmCrypto {
         modulus: &[u8],
     ) -> Result<Vec<u8>, alloy_evm::revm::precompile::PrecompileError> {
         use alloy_evm::revm::precompile::{Crypto, DefaultCrypto};
-        match zeth_r0vm_precompile::modexp(base, exp, modulus) {
+        match risc0_crypto_evm::modexp(base, exp, modulus) {
             Some(out) => Ok(out),
             None => DefaultCrypto.modexp(base, exp, modulus),
         }
@@ -65,7 +65,7 @@ impl alloy_evm::revm::precompile::Crypto for R0vmCrypto {
         p1: &[u8],
         p2: &[u8],
     ) -> Result<[u8; 64], alloy_evm::revm::precompile::PrecompileError> {
-        zeth_r0vm_precompile::bn254_g1_add(p1, p2)
+        risc0_crypto_evm::bn254_g1_add(p1, p2)
             .ok_or(alloy_evm::revm::precompile::PrecompileError::Bn254AffineGFailedToCreate)
     }
 
@@ -75,13 +75,13 @@ impl alloy_evm::revm::precompile::Crypto for R0vmCrypto {
         point: &[u8],
         scalar: &[u8],
     ) -> Result<[u8; 64], alloy_evm::revm::precompile::PrecompileError> {
-        zeth_r0vm_precompile::bn254_g1_mul(point, scalar)
+        risc0_crypto_evm::bn254_g1_mul(point, scalar)
             .ok_or(alloy_evm::revm::precompile::PrecompileError::Bn254AffineGFailedToCreate)
     }
 
     #[inline]
     fn secp256r1_verify_signature(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
-        zeth_r0vm_precompile::secp256r1_verify(msg, sig, pk)
+        risc0_crypto_evm::secp256r1_verify(msg, sig, pk)
     }
 
     #[inline]
@@ -91,7 +91,7 @@ impl alloy_evm::revm::precompile::Crypto for R0vmCrypto {
         recid: u8,
         msg: &[u8; 32],
     ) -> Result<[u8; 32], alloy_evm::revm::precompile::PrecompileError> {
-        zeth_r0vm_precompile::secp256k1_ecrecover(sig, recid, msg)
+        risc0_crypto_evm::secp256k1_ecrecover(sig, recid, msg)
             .map(|addr| addr.into_word().0)
             .ok_or(alloy_evm::revm::precompile::PrecompileError::Secp256k1RecoverFailed)
     }

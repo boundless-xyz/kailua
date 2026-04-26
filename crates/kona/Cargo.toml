@@ -47,10 +47,7 @@ kona-protocol.workspace = true
 risc0-zkvm.workspace = true
 
 [target.'cfg(all(target_os = "zkvm", target_vendor = "risc0"))'.dependencies]
-# R0VM-accelerated EVM precompile primitives. The `zeth-r0vm-precompile` crate
-# wraps `risc0-crypto` in plain functions (no revm dep), keeping this adapter
-# independent of which revm version zeth's consumers happen to be on.
-zeth-r0vm-precompile = { git = "https://github.com/boundless-xyz/zeth", rev = "d40b4f1f57e656cce7853224563f94c1f6994db3" }
+risc0-crypto-evm = { git = "https://github.com/boundless-xyz/risc0-crypto", rev = "92de69e3732b0a59cc1f843d72d7ef2c8ccc7e64" }
 
 [dev-dependencies]
 alloy = { workspace = true, features = ["genesis"] }

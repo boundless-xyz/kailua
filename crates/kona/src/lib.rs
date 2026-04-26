@@ -25,7 +25,7 @@ pub mod client;
 /// Procedures for generating secure cryptographic commitments to rollup configuration settings.
 pub mod config;
 /// R0VM-accelerated revm `Crypto` provider for EVM precompiles.
-pub mod crypto;
+pub mod r0vm_crypto;
 /// Implementation for caching support in derivation.
 pub mod driver;
 /// Implementation for an execution engine with caching support.
