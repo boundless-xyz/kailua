@@ -50,6 +50,10 @@ pub struct Witness<O: WitnessOracle> {
     /// # Notes:
     /// - Ensure all `Execution` objects within the groups are properly sorted.
     pub stitched_executions: Vec<Vec<Execution>>,
+    /// Optional witness data for partial execution.
+    pub pe_witness: Option<PartialExecutionWitness>,
+    /// Pre-computed per-block chunk aggregation data.
+    pub partial_executions: Vec<Vec<PartialExecution>>,
     /// An initial state for the derivation pipeline
     pub derivation_cache: Option<CachedDriver>,
     /// Whether to record a derivation trace precondition in the output journal
@@ -61,10 +65,6 @@ pub struct Witness<O: WitnessOracle> {
     /// Represents the fault-proof virtual machine program image id.
     #[rkyv(with = B256Def)]
     pub fpvm_image_id: B256,
-    /// Optional witness data for partial execution.
-    pub pe_witness: Option<PartialExecutionWitness>,
-    /// Pre-computed per-block chunk aggregation data.
-    pub partial_executions: Vec<Vec<PartialExecution>>,
 }
 
 impl Witness<VecOracle> {

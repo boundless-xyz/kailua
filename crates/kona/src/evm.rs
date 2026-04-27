@@ -461,16 +461,22 @@ impl EvmFactory for CachedEvmFactory {
 mod tests {
     use crate::evm::CachedEvmFactory;
     use crate::evm::PartialExecution;
+    use crate::evm::PartialExecutionWitness;
     use alloy_evm::op_revm::{OpHaltReason, OpSpecId, OpTransaction};
     use alloy_evm::revm::context::CfgEnv;
     use alloy_evm::revm::context::{BlockEnv, TxEnv};
     use alloy_evm::revm::context_interface::result::ResultAndState;
     use alloy_evm::revm::context_interface::result::{ExecutionResult, Output, SuccessReason};
     use alloy_evm::revm::database::in_memory_db::InMemoryDB;
+    use alloy_evm::revm::database::states::CacheAccount;
+    use alloy_evm::revm::database::CacheState;
     use alloy_evm::revm::state::AccountInfo;
+    use alloy_evm::revm::state::Bytecode;
     use alloy_evm::{Evm, EvmEnv, EvmFactory};
+    use alloy_op_evm::block::OpBlockExecutionCtx;
     use alloy_primitives::Address;
     use alloy_primitives::{address, keccak256, TxKind, U256};
+    use alloy_primitives::{Bytes, B256};
 
     fn test_env_for_block(block_number: u64) -> EvmEnv<OpSpecId> {
         let block_env = BlockEnv {
@@ -769,5 +775,81 @@ mod tests {
             .transact_raw(make_transfer(sender, Address::ZERO, U256::from(1), 0))
             .unwrap();
         assert!(!r1.state.is_empty(), "delegated tx should have state diff");
+    }
+
+    #[test]
+    fn partial_execution_witness_rkyv_round_trip() {
+        let addr = address!("0x1111111111111111111111111111111111111111");
+        let code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00, 0x60, 0x00]));
+        let code_hash = code.hash_slow();
+        let mut cache = CacheState::default();
+        cache
+            .accounts
+            .insert(addr, CacheAccount::new_loaded_not_existing());
+        cache.contracts.insert(code_hash, code.clone());
+
+        let block_env = BlockEnv {
+            number: U256::from(123),
+            beneficiary: address!("0x2222222222222222222222222222222222222222"),
+            timestamp: U256::from(1_700_000_000u64),
+            gas_limit: 30_000_000,
+            basefee: 7,
+            difficulty: U256::ZERO,
+            prevrandao: Some(B256::repeat_byte(0xAA)),
+            ..Default::default()
+        };
+
+        let op_block_ctx = OpBlockExecutionCtx {
+            parent_hash: B256::repeat_byte(0xBB),
+            parent_beacon_block_root: Some(B256::repeat_byte(0xCC)),
+            extra_data: Bytes::from_static(&[0xDE, 0xAD, 0xBE, 0xEF]),
+        };
+
+        let witness = PartialExecutionWitness {
+            transactions: vec![vec![0x01, 0x02, 0x03], Vec::new(), vec![0xff; 32]],
+            cache,
+            block_env,
+            op_block_ctx,
+        };
+
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&witness).unwrap();
+        let recoded =
+            rkyv::from_bytes::<PartialExecutionWitness, rkyv::rancor::Error>(&bytes).unwrap();
+
+        // transactions: Vec<Vec<u8>> — direct equality.
+        assert_eq!(witness.transactions, recoded.transactions);
+
+        // BlockEnv derives PartialEq.
+        assert_eq!(witness.block_env, recoded.block_env);
+
+        // OpBlockExecutionCtx does not derive PartialEq — compare its three fields,
+        // matching the pattern used by `op_block_execution_ctx_round_trip` in
+        // `rkyv/evm.rs`.
+        assert_eq!(
+            witness.op_block_ctx.parent_hash,
+            recoded.op_block_ctx.parent_hash
+        );
+        assert_eq!(
+            witness.op_block_ctx.parent_beacon_block_root,
+            recoded.op_block_ctx.parent_beacon_block_root
+        );
+        assert_eq!(
+            witness.op_block_ctx.extra_data,
+            recoded.op_block_ctx.extra_data
+        );
+
+        // Cache: verify the inserted entries survived and shape-level fields match.
+        assert_eq!(recoded.cache.accounts.len(), 1);
+        assert!(recoded.cache.accounts.contains_key(&addr));
+        assert_eq!(recoded.cache.contracts.len(), 1);
+        assert_eq!(
+            recoded
+                .cache
+                .contracts
+                .get(&code_hash)
+                .map(|b| b.original_bytes()),
+            Some(code.original_bytes())
+        );
+        assert_eq!(witness.cache.has_state_clear, recoded.cache.has_state_clear);
     }
 }

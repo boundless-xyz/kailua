@@ -635,7 +635,7 @@ pub mod tests {
     use crate::client::core::tests::{
         op_sepolia_16491249_16491349, test_derivation, test_derivation_with_partials,
     };
-    use crate::client::core::EthereumDataSourceProvider;
+    use crate::client::core::{split_collected_partials, EthereumDataSourceProvider};
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
     use alloy_primitives::b256;

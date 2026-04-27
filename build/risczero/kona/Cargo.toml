@@ -25,7 +25,7 @@ opt-level = 3
 alloy-primitives = { version = "1.5.7", features = ["map-hashbrown", "tiny-keccak"] }
 blst = { version = "=0.3.15", features = ["no-threads"] }
 c-kzg = { version = "2.1.5", features = ["eip-7594"] }
-rkyv = "0.8.9"
+rkyv = "0.8.16"
 substrate-bn = "=0.6.0"
 
 kailua-kona = { path = "../../../crates/kona" }

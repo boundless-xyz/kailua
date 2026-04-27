@@ -21,7 +21,7 @@ use kailua_kona::driver::CachedDriver;
 use kailua_kona::precondition::Precondition;
 use kona_proof::BootInfo;
 use risc0_zkvm::sha::Digestible;
-use rkyv::rancor::Error;
+use rkyv::rancor::BoxedError;
 use std::convert::identity;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
@@ -61,7 +61,7 @@ pub async fn try_read_driver(data_dir: Option<&PathBuf>, file_name: &str) -> Opt
     }
     match read_bincoded_file::<Vec<u8>>(data_dir, file_name).await {
         Ok(derivation_trace_rkyv) => {
-            match rkyv::from_bytes::<CachedDriver, Error>(&derivation_trace_rkyv) {
+            match rkyv::from_bytes::<CachedDriver, BoxedError>(&derivation_trace_rkyv) {
                 Ok(derivation_trace) => {
                     info!(
                         "Read CachedDriver {} from {file_path:?}.",

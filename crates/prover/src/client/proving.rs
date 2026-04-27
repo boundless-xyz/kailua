@@ -38,7 +38,7 @@ use kona_proof::{BootInfo, CachingOracle};
 use lazy_static::lazy_static;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Journal;
-use rkyv::rancor::Error;
+use rkyv::rancor::BoxedError;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -152,10 +152,10 @@ where
                 .expect("Failed to create EigenDAWitness");
                 // encode witness
                 // todo: sharding into separate frames
-                let eigen_da_frame = rkyv::to_bytes::<Error>(&da_witness)
+                let eigen_da_frame = rkyv::to_bytes::<BoxedError>(&da_witness)
                     .expect("Failed to serialize EigenDAWitness")
                     .to_vec();
-                let aux_frame = rkyv::to_bytes::<Error>(&aux)
+                let aux_frame = rkyv::to_bytes::<BoxedError>(&aux)
                     .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
                     .to_vec();
 
@@ -189,7 +189,7 @@ where
                     .context("Failed to run hana vec witgen client.")
                     .map_err(ProvingError::OtherError)?;
                 // serialize celestia frame (todo: sharding)
-                let celestia_da_frame = rkyv::to_bytes::<Error>(&da_witness)
+                let celestia_da_frame = rkyv::to_bytes::<BoxedError>(&da_witness)
                     .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
                     .to_vec();
 
@@ -243,7 +243,7 @@ where
                 updated_precondition.derivation_trace
             );
         }
-        match rkyv::to_bytes::<Error>(traced_driver) {
+        match rkyv::to_bytes::<BoxedError>(traced_driver) {
             Ok(rkyved_driver) => {
                 if let Err(err) =
                     save_to_bincoded_file(&rkyved_driver.to_vec(), data_dir.as_ref(), &driver_file)
@@ -469,7 +469,7 @@ pub fn encode_witness_frames(
     streamed_data.clear();
     drop(streamed_data);
     // serialize main witness object
-    let main_frame = rkyv::to_bytes::<Error>(&witness_vec)
+    let main_frame = rkyv::to_bytes::<BoxedError>(&witness_vec)
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
         .to_vec();
     let preloaded_data = [vec![main_frame], shards].concat();
@@ -482,7 +482,7 @@ pub fn shard_witness_data(data: &mut [PreimageVecEntry]) -> anyhow::Result<Vec<V
     for entry in data {
         let shard = core::mem::take(entry);
         shards.push(
-            rkyv::to_bytes::<Error>(&shard)
+            rkyv::to_bytes::<BoxedError>(&shard)
                 .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
                 .to_vec(),
         )

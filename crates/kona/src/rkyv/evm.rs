@@ -372,6 +372,17 @@ where
 
 // -- BlockEnvRkyv --
 
+/// rkyv-friendly mirror of [`BlobExcessGasAndPrice`]. The upstream type lacks
+/// rkyv support, so we project it through this named struct to keep the
+/// archived wire shape self-documenting (vs. an opaque `(u64, u128)` tuple).
+/// Field order/types match the tuple it replaces, so the archived layout is
+/// unchanged — existing serialized data stays readable.
+#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct RkyvedBlobGasAndPrice {
+    pub excess_blob_gas: u64,
+    pub blob_gasprice: [u8; 16],
+}
+
 /// (number, beneficiary, timestamp, gas_limit, basefee, difficulty, prevrandao, blob_excess_gas_and_price)
 type RkyvedBlockEnv = (
     U256,
@@ -381,13 +392,14 @@ type RkyvedBlockEnv = (
     u64,
     U256,
     Option<B256>,
-    Option<(u64, u128)>,
+    Option<RkyvedBlobGasAndPrice>,
 );
 
 /// rkyv wrapper for revm's [`BlockEnv`].
 ///
 /// Archives as a tuple of rkyv-native types via [`RkyvedBlockEnv`].
-/// `BlobExcessGasAndPrice` is decomposed to `(u64, u128)` since it lacks rkyv support.
+/// `BlobExcessGasAndPrice` is projected through [`RkyvedBlobGasAndPrice`] since
+/// the upstream type lacks rkyv support.
 pub struct BlockEnvRkyv;
 
 impl BlockEnvRkyv {
@@ -402,7 +414,10 @@ impl BlockEnvRkyv {
             env.prevrandao,
             env.blob_excess_gas_and_price
                 .as_ref()
-                .map(|b| (b.excess_blob_gas, b.blob_gasprice)),
+                .map(|b| RkyvedBlobGasAndPrice {
+                    excess_blob_gas: b.excess_blob_gas,
+                    blob_gasprice: b.blob_gasprice.to_be_bytes(),
+                }),
         )
     }
 
@@ -415,9 +430,9 @@ impl BlockEnvRkyv {
             basefee: r.4,
             difficulty: r.5,
             prevrandao: r.6,
-            blob_excess_gas_and_price: r.7.map(|(excess, price)| BlobExcessGasAndPrice {
-                excess_blob_gas: excess,
-                blob_gasprice: price,
+            blob_excess_gas_and_price: r.7.map(|b| BlobExcessGasAndPrice {
+                excess_blob_gas: b.excess_blob_gas,
+                blob_gasprice: u128::from_be_bytes(b.blob_gasprice),
             }),
         }
     }

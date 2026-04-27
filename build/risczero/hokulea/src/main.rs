@@ -18,7 +18,7 @@ use kailua_kona::oracle::vec::VecOracle;
 use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::{client::log, witness::Witness};
 use risc0_zkvm::guest::env;
-use rkyv::rancor::Error;
+use rkyv::rancor::BoxedError;
 use std::sync::Arc;
 
 fn main() {
@@ -26,7 +26,7 @@ fn main() {
     let eigen_da = {
         let data = env::read_frame();
         log("DESERIALIZE EIGENDA CERTS");
-        rkyv::from_bytes::<hokulea_proof::eigenda_witness::EigenDAWitness, Error>(&data)
+        rkyv::from_bytes::<hokulea_proof::eigenda_witness::EigenDAWitness, BoxedError>(&data)
             .expect("Failed to deserialize EigenDABlobWitnessData")
     };
 
@@ -35,7 +35,7 @@ fn main() {
         // Read serialized witness data
         let witness_data = env::read_frame();
         log("DESERIALIZE EIGENDA ORACLE");
-        rkyv::from_bytes::<VecOracle, Error>(&witness_data)
+        rkyv::from_bytes::<VecOracle, BoxedError>(&witness_data)
             .expect("Failed to deserialize eigen oracle witness")
     };
     eigen_da_aux
@@ -47,7 +47,7 @@ fn main() {
         // Read serialized witness data
         let witness_data = env::read_frame();
         log("DESERIALIZE WITNESS");
-        rkyv::from_bytes::<Witness<VecOracle>, Error>(&witness_data)
+        rkyv::from_bytes::<Witness<VecOracle>, BoxedError>(&witness_data)
             .expect("Failed to deserialize witness")
     };
 
