@@ -135,7 +135,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         "Running Kailua preflights with {} threads",
         args.proving.num_concurrent_preflights
     );
-    if !concurrent_preflight(
+    let (is_l1_head_sufficient, block_executions, partial_executions) = concurrent_preflight(
         &args,
         rollup_config.clone(),
         l1_config.clone(),
@@ -143,8 +143,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         disk_kv_store.clone(),
     )
     .await
-    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-    {
+    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+    // early abort if we can't create proof
+    if !is_l1_head_sufficient {
         return Ok(None);
     }
     // We only use executionWitness/executePayload during preflight.
@@ -160,6 +161,17 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     let result_channel = async_channel::unbounded();
 
     // todo: prove partial executions
+    for (exec, partials) in block_executions.iter().zip(partial_executions.iter()) {
+        let partial = partials.first().expect(&format!(
+            "Missing partial result for {}",
+            exec.artifacts.header.number
+        ));
+        assert_eq!(
+            exec.artifacts.header.parent_hash, partial.op_block_ctx.parent_hash,
+            "Preflight returned execution result for {} but partial result on top of {}",
+            exec.artifacts.header.number, partial.block_env.number
+        );
+    }
 
     // create channel for receiving proof requests to process and dispatch to handlers
     let prover_channel = async_channel::unbounded();
@@ -396,7 +408,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
             Err(err) => {
                 // Handle error case
                 let (derivation_cache, derivation_trace) = match err {
-                    ProvingError::WitnessSizeError(preloaded, streamed, limit, _, d, s) => {
+                    ProvingError::WitnessSizeError(preloaded, streamed, limit, _, _, d, s) => {
                         if force_attempt {
                             bail!(
                                 "Received WitnessSizeError({preloaded},{streamed},{limit}) for a forced proving attempt."

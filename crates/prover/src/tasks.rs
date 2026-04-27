@@ -55,11 +55,11 @@ pub struct CachedTask {
     pub precondition: Precondition,
     pub proposal_data_hash: B256,
     pub stitched_executions: Vec<Vec<Execution>>,
+    pub partial_executions: Vec<Vec<PartialExecution>>,
     pub derivation_cache: Option<CachedDriver>,
     pub derivation_trace_sender: Option<Sender<CachedDriver>>,
     pub stitched_preconditions: Vec<Precondition>,
     pub stitched_boot_info: Vec<StitchedBootInfo>,
-    pub partial_executions: Vec<Vec<PartialExecution>>,
     pub stitched_proofs: Vec<ProfiledReceipt>,
     pub prove_snark: bool,
     pub force_attempt: bool,
@@ -322,12 +322,13 @@ pub async fn compute_fpvm_proof(
             _,
             executed_blocks,
             _,
+            _,
             derivation_trace,
         )) => (executed_blocks, derivation_trace, streamed_witness_size),
-        Err(ProvingError::BlockCountError(_, _, executed_blocks, _, derivation_trace)) => {
+        Err(ProvingError::BlockCountError(_, _, executed_blocks, _, _, derivation_trace)) => {
             (executed_blocks, derivation_trace, 0)
         }
-        Err(ProvingError::NotSeekingProof(_, _, executed_blocks, _, derivation_trace, _)) => {
+        Err(ProvingError::NotSeekingProof(_, _, executed_blocks, _, _, derivation_trace, _)) => {
             (executed_blocks, derivation_trace, 0)
         }
         other_result => return Ok(Some(other_result?)),
@@ -724,7 +725,7 @@ pub async fn compute_fpvm_proof(
         let forced_attempt = num_blocks == 1;
         // divide or bail out on error
         match err {
-            ProvingError::WitnessSizeError(preloaded, streamed, limit, e, ..) => {
+            ProvingError::WitnessSizeError(preloaded, streamed, limit, e, p, ..) => {
                 if forced_attempt {
                     error!(
                         "Execution-only proof witness size {} + {} above safety threshold {}.",
@@ -737,6 +738,7 @@ pub async fn compute_fpvm_proof(
                         streamed,
                         limit,
                         e,
+                        p,
                         Box::new(None),
                         None,
                     ));

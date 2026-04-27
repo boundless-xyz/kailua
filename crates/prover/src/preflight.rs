@@ -26,6 +26,8 @@ use alloy_rlp::Decodable;
 use anyhow::{anyhow, bail, Context};
 use ark_ff::{BigInteger, PrimeField};
 use kailua_kona::blobs::BlobFetchRequest;
+use kailua_kona::evm::PartialExecution;
+use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::proposal::ProposalPrecondition;
 use kailua_kona::precondition::Precondition;
@@ -178,7 +180,7 @@ pub async fn concurrent_preflight(
     l1_config: L1ChainConfig,
     op_node_provider: &OpNodeProvider,
     disk_kv_store: Option<RWLKeyValueStore>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<(bool, Vec<Execution>, Vec<Vec<PartialExecution>>)> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("concurrent_preflight"));
 
@@ -218,7 +220,7 @@ pub async fn concurrent_preflight(
     .header;
     let mut num_l2_blocks = args.kona.claimed_l2_block_number - starting_l2_block.number;
     if num_l2_blocks == 0 {
-        return Ok(true);
+        return Ok((true, vec![], vec![]));
     }
 
     let rollup_config_arc = Arc::new(rollup_config.clone());
@@ -560,11 +562,13 @@ pub async fn concurrent_preflight(
 
     // Await L2 preflight tasks
     let mut l1_head_sufficient = true;
+    let mut block_executions = vec![];
+    let mut partial_executions = vec![];
     for (target_l2_height, job) in jobs {
         let result = job.await?;
         let claimed_l2_block_number = match result {
             Err(e) => {
-                let ProvingError::NotSeekingProof(_, _, executions, ..) = e else {
+                let ProvingError::NotSeekingProof(_, _, mut executions, partials, ..) = e else {
                     error!("Error during preflight execution: {e:?}");
                     continue;
                 };
@@ -573,12 +577,14 @@ pub async fn concurrent_preflight(
                     l1_head_sufficient = false;
                     continue;
                 };
-                let Some(claimed_l2_block) = trace.last() else {
+                let Some(claimed_l2_block) = trace.last().map(|e| e.artifacts.header.number) else {
                     error!("L1 Head insufficient to derive L2 block beyond {target_l2_height}.");
                     l1_head_sufficient = false;
                     continue;
                 };
-                claimed_l2_block.artifacts.header.number
+                block_executions.extend(executions.pop().unwrap());
+                partial_executions.extend(partials);
+                claimed_l2_block
             }
             Ok((receipt, _)) => ProofJournal::from(&receipt.0).claimed_l2_block_number,
         };
@@ -591,5 +597,5 @@ pub async fn concurrent_preflight(
         };
     }
 
-    Ok(l1_head_sufficient)
+    Ok((l1_head_sufficient, block_executions, partial_executions))
 }

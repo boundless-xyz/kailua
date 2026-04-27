@@ -17,6 +17,7 @@
 use alloy_primitives::B256;
 use async_channel::Sender;
 use kailua_kona::driver::CachedDriver;
+use kailua_kona::evm::PartialExecution;
 use kailua_kona::executor::Execution;
 use std::time::SystemTime;
 
@@ -48,6 +49,7 @@ pub enum ProvingError {
         usize,
         usize,
         Vec<Vec<Execution>>,
+        Vec<Vec<PartialExecution>>,
         Box<Option<CachedDriver>>,
         Option<Sender<CachedDriver>>,
         B256,
@@ -61,6 +63,7 @@ pub enum ProvingError {
         usize,
         usize,
         Vec<Vec<Execution>>,
+        Vec<Vec<PartialExecution>>,
         Box<Option<CachedDriver>>,
         Option<Sender<CachedDriver>>,
     ),
@@ -71,6 +74,7 @@ pub enum ProvingError {
         usize,
         usize,
         Vec<Vec<Execution>>,
+        Vec<Vec<PartialExecution>>,
         Box<Option<CachedDriver>>,
         Option<Sender<CachedDriver>>,
     ),
@@ -89,6 +93,7 @@ impl ProvingError {
                 preloaded,
                 streamed,
                 executions,
+                partials,
                 _,
                 driver_trace,
                 derivation_trace_hash,
@@ -96,15 +101,17 @@ impl ProvingError {
                 preloaded,
                 streamed,
                 executions,
+                partials,
                 Box::new(driver_cache),
                 driver_trace,
                 derivation_trace_hash,
             ),
-            ProvingError::BlockCountError(count, limit, executions, _, driver_trace) => {
+            ProvingError::BlockCountError(count, limit, executions, partials, _, driver_trace) => {
                 ProvingError::BlockCountError(
                     count,
                     limit,
                     executions,
+                    partials,
                     Box::new(driver_cache),
                     driver_trace,
                 )
@@ -114,6 +121,7 @@ impl ProvingError {
                 streamed,
                 limit,
                 executions,
+                partials,
                 _,
                 driver_trace,
             ) => ProvingError::WitnessSizeError(
@@ -121,6 +129,7 @@ impl ProvingError {
                 streamed,
                 limit,
                 executions,
+                partials,
                 Box::new(driver_cache),
                 driver_trace,
             ),

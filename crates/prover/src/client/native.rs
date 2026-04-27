@@ -155,6 +155,7 @@ pub async fn run_native_client(
         precondition,
         proposal_data_hash,
         stitched_executions,
+        partial_executions,
         derivation_cache,
         trace_derivation,
         derivation_trace,
@@ -165,7 +166,6 @@ pub async fn run_native_client(
         force_attempt,
         seek_proof,
         args.kona.data_dir.clone(),
-        partial_executions,
     ));
     // Wait for both tasks to complete.
     info!("Starting preimage server and client program.");

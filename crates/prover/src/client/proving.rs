@@ -65,6 +65,7 @@ pub async fn run_proving_client<P, H>(
     precondition: Precondition,
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
+    partial_executions: Vec<Vec<PartialExecution>>,
     derivation_cache: Option<CachedDriver>,
     trace_derivation: bool,
     derivation_trace: Option<Sender<CachedDriver>>,
@@ -75,7 +76,6 @@ pub async fn run_proving_client<P, H>(
     force_attempt: bool,
     seek_proof: bool,
     data_dir: Option<PathBuf>,
-    partial_executions: Vec<Vec<PartialExecution>>,
 ) -> Result<(), ProvingError>
 where
     P: PreimageOracleClient + Send + Sync + Debug + Clone + 'static,
@@ -123,7 +123,7 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
-                    partial_executions,
+                    partial_executions.clone(),
                 )
                 .await
                 .context("Failed to run hokulea vec witgen client.")
@@ -181,7 +181,7 @@ where
                         trace_derivation,
                         stitched_preconditions.clone(),
                         stitched_boot_info.clone(),
-                        partial_executions,
+                        partial_executions.clone(),
                     )
                     .await
                     .context("Failed to run hana vec witgen client.")
@@ -216,7 +216,7 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
-                    partial_executions,
+                    partial_executions.clone(),
                 )
                 .await
                 .context("Failed to run kona vec witgen client.")
@@ -291,6 +291,7 @@ where
         &proving,
         witness,
         stitched_executions,
+        partial_executions,
         extra_frames,
         seek_proof,
         force_attempt,
@@ -361,6 +362,7 @@ pub fn process_witness(
     proving: &ProvingArgs,
     mut witness: Witness<VecOracle>,
     stitched_executions: Vec<Vec<Execution>>,
+    partial_executions: Vec<Vec<PartialExecution>>,
     extra_frames: Vec<Vec<u8>>,
     seek_proof: bool,
     force_attempt: bool,
@@ -368,7 +370,10 @@ pub fn process_witness(
     derivation_trace: Option<Sender<CachedDriver>>,
     derivation_trace_hash: B256,
 ) -> Result<Vec<Vec<u8>>, ProvingError> {
+    // Replace outputs with inputs
     let execution_trace = core::mem::replace(&mut witness.stitched_executions, stitched_executions);
+    let partial_executions =
+        core::mem::replace(&mut witness.partial_executions, partial_executions);
 
     // Sanity check kzg proofs
     let _ = kailua_kona::blobs::PreloadedBlobProvider::from(witness.blobs_witness.clone());
@@ -398,6 +403,7 @@ pub fn process_witness(
                 streamed_wit_size,
                 proving.max_witness_size,
                 execution_trace,
+                partial_executions,
                 Box::new(derivation_cache),
                 derivation_trace,
             ));
@@ -417,6 +423,7 @@ pub fn process_witness(
                 num_executions,
                 proving.max_block_executions,
                 execution_trace,
+                partial_executions,
                 Box::new(derivation_cache),
                 derivation_trace,
             ));
@@ -429,6 +436,7 @@ pub fn process_witness(
             preloaded_wit_size,
             streamed_wit_size,
             execution_trace,
+            partial_executions,
             Box::new(derivation_cache),
             derivation_trace,
             derivation_trace_hash,
