@@ -60,7 +60,8 @@ impl Profile {
     pub fn new(boot_info: &BootInfo) -> Self {
         Self {
             chain_id: boot_info.chain_id,
-            derivation: !boot_info.l1_head.is_zero(),
+            derivation: !boot_info.l1_head.is_zero()
+                && boot_info.l1_head != B256::repeat_byte(0xFF),
             block_start: boot_info.claimed_l2_block_number,
             block_end: boot_info.claimed_l2_block_number,
             ..Default::default()

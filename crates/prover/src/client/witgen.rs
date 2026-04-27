@@ -24,7 +24,7 @@ use kailua_kona::client::core::{
 };
 use kailua_kona::client::stitching::stitch_boot_info;
 use kailua_kona::driver::CachedDriver;
-use kailua_kona::evm::PartialExecution;
+use kailua_kona::evm::{PartialExecution, PartialExecutionWitness};
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::kona::OracleL1ChainProvider;
@@ -57,6 +57,7 @@ pub async fn run_witgen_client<P, B, O, D>(
     trace_derivation: bool,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
+    pe_witness: Option<PartialExecutionWitness>,
     partial_executions: Vec<Vec<PartialExecution>>,
 ) -> anyhow::Result<(
     BootInfo,
@@ -103,7 +104,7 @@ where
         Some(execution_trace.clone()),
         derivation_cache.clone(),
         trace_derivation.then(|| derivation_trace.clone()),
-        None,
+        pe_witness.clone(),
         partial_executions,
         Some(partials_collector.clone()),
     )?;
@@ -163,7 +164,7 @@ where
         stitched_preconditions,
         stitched_boot_info,
         fpvm_image_id,
-        pe_witness: None,
+        pe_witness,
         partial_executions,
     };
     witness

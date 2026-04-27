@@ -41,7 +41,7 @@ pub struct OracleL1ChainProvider<T: CommsClient> {
 impl<T: CommsClient> OracleL1ChainProvider<T> {
     /// Creates a new [OracleL1ChainProvider] with the given boot information and oracle client.
     pub async fn new(l1_head: B256, oracle: Arc<T>) -> Result<Self, OracleProviderError> {
-        let (headers, headers_map) = if l1_head.is_zero() {
+        let (headers, headers_map) = if l1_head.is_zero() || l1_head == B256::repeat_byte(0xFF) {
             Default::default()
         } else {
             // Fetch the header RLP from the oracle.

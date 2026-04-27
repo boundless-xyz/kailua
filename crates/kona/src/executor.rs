@@ -274,34 +274,6 @@ impl<E: Executor + Send + Sync + Debug> Executor for CachedExecutor<E> {
 }
 
 /// Initializes and constructs a new `PipelineCursor` for a given L2 chain.
-///
-/// This function sets up the execution cursor required for processing rollup blocks. It
-/// adjusts the starting L1 block position based on the `channel_timeout` to ensure
-/// that the entire channel data is included for processing.
-///
-/// # Arguments
-/// * `rollup_config` - A reference to the rollup configuration containing chain-specific settings.
-/// * `safe_header` - A sealed header representing the latest safe L2 block.
-/// * `l2_chain_provider` - A mutable reference to an L2 chain provider for fetching L2 block data.
-///
-/// # Type Parameters
-/// * `O` - A generic parameter representing the Oracle client implementation.
-///   It must implement the traits `CommsClient`, `FlushableCache`, `Send`, `Sync`, and `Debug`.
-///
-/// # Returns
-/// A shared reference to a thread-safe `PipelineCursor` wrapped in an `Arc` and `RwLock`,
-/// or an error of type `OracleProviderError` if the cursor initialization fails.
-///
-/// # Errors
-/// This function will return an error if:
-/// - The L2 chain provider fails to fetch the block information for the given `safe_header`.
-///
-/// # Details
-/// - Retrieves the L2 block information associated with the provided `safe_header`.
-/// - Computes the `channel_timeout` based on the rollup configuration and L2 block timestamp.
-/// - Creates a new `PipelineCursor` using the computed `channel_timeout`.
-/// - Advances the cursor to the proper state based on default `BlockInfo` and the L2 tip.
-/// - Returns the cursor wrapped in an `Arc<RwLock<PipelineCursor>>` for safe concurrent access.
 pub async fn new_execution_cursor<O>(
     rollup_config: &RollupConfig,
     safe_header: Sealed<Header>,

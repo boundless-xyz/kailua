@@ -21,7 +21,7 @@ use anyhow::anyhow;
 use async_channel::Sender;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::driver::CachedDriver;
-use kailua_kona::evm::PartialExecution;
+use kailua_kona::evm::{PartialExecution, PartialExecutionWitness};
 use kailua_kona::executor::Execution;
 use kailua_kona::precondition::Precondition;
 use kailua_sync::retry_res_ctx_timeout;
@@ -55,7 +55,7 @@ pub async fn run_native_client(
     disk_kv_store: Option<RWLKeyValueStore>,
     precondition: Precondition,
     proposal_data_hash: B256,
-    stitched_executions: Vec<Vec<Execution>>,
+    mut stitched_executions: Vec<Vec<Execution>>,
     derivation_cache: Option<CachedDriver>,
     trace_derivation: bool,
     derivation_trace: Option<Sender<CachedDriver>>,
@@ -65,7 +65,7 @@ pub async fn run_native_client(
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
-    partial_executions: Vec<Vec<PartialExecution>>,
+    mut partial_executions: Vec<Vec<PartialExecution>>,
 ) -> Result<(), ProvingError> {
     // Instantiate data channels
     let hint = BidirectionalChannel::new().map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
@@ -145,6 +145,23 @@ pub async fn run_native_client(
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
     };
 
+    // Precompute partial execution witness
+    let pe_witness = if args.kona.l1_head == B256::repeat_byte(0xFF) {
+        let Some(partial) = partial_executions.pop().map(|mut p| p.pop()).flatten() else {
+            return Err(ProvingError::OtherError(anyhow!(
+                "No partial execution to prove"
+            )));
+        };
+        let Some(exec) = stitched_executions.pop().map(|mut e| e.pop()).flatten() else {
+            return Err(ProvingError::OtherError(anyhow!(
+                "No corresponding execution for partial"
+            )));
+        };
+        Some(PartialExecutionWitness::from_preflight(partial, &exec))
+    } else {
+        None
+    };
+
     // Start the client program in a separate thread
     let client_task = tokio::spawn(crate::client::proving::run_proving_client(
         use_hokulea.then_some(args.kona.l1_node_address).flatten(),
@@ -155,6 +172,7 @@ pub async fn run_native_client(
         precondition,
         proposal_data_hash,
         stitched_executions,
+        pe_witness,
         partial_executions,
         derivation_cache,
         trace_derivation,

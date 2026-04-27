@@ -27,7 +27,7 @@ use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::core::EthereumDataSourceProvider;
 use kailua_kona::client::stitching::split_executions;
 use kailua_kona::driver::CachedDriver;
-use kailua_kona::evm::PartialExecution;
+use kailua_kona::evm::{PartialExecution, PartialExecutionWitness};
 use kailua_kona::executor::Execution;
 use kailua_kona::oracle::vec::{PreimageVecEntry, VecOracle};
 use kailua_kona::precondition::Precondition;
@@ -65,6 +65,7 @@ pub async fn run_proving_client<P, H>(
     precondition: Precondition,
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
+    pe_witness: Option<PartialExecutionWitness>,
     partial_executions: Vec<Vec<PartialExecution>>,
     derivation_cache: Option<CachedDriver>,
     trace_derivation: bool,
@@ -95,11 +96,10 @@ where
     ));
     // Instantiate oracles
     let blob_provider = OracleBlobProvider::new(preimage_oracle.clone());
-    // Run witness generation with oracles
+    // Run full witgen client to get correct BootInfo and Precondition with oracles
     let witgen_permit = acquire_owned_permit(SEMAPHORE_WITGEN.clone())
         .await
         .map_err(ProvingError::OtherError)?;
-    // Run witgen client to get correct BootInfo and Precondition
     let (boot_info, proof_journal, updated_precondition, traced_driver, witness, extra_frames) =
         match (proving.use_hokulea(), proving.use_hana()) {
             #[cfg(feature = "eigen")]
@@ -123,6 +123,7 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
+                    pe_witness,
                     partial_executions.clone(),
                 )
                 .await
@@ -181,6 +182,7 @@ where
                         trace_derivation,
                         stitched_preconditions.clone(),
                         stitched_boot_info.clone(),
+                        pe_witness,
                         partial_executions.clone(),
                     )
                     .await
@@ -216,6 +218,7 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
+                    pe_witness,
                     partial_executions.clone(),
                 )
                 .await

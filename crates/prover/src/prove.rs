@@ -162,6 +162,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     let result_channel = async_channel::unbounded();
 
     // Prove partial executions
+    info!("Dispatching partial execution proving tasks.");
     let mut expected_partials = 0;
     for (exec, partials) in block_executions
         .into_iter()
@@ -258,6 +259,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         received_partials += 1;
         if let Err(e) = result {
             error!("Failed to prove partial execution for block {starting_block}: {e:?}");
+        } else {
+            info!("Proved partial for block {starting_block}");
         }
     }
 

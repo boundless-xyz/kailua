@@ -140,6 +140,17 @@ impl<
         )
         .expect("Failed to compute output hash.");
 
+        // Short-circuit all stitching logic when partial proving
+        if boot.l1_head == B256::repeat_byte(0xFF) {
+            let proof_journal = ProofJournal::new(
+                fpvm_image_id,
+                payout_recipient_address,
+                B256::new(precondition.digest().into()),
+                &boot,
+            );
+            return (boot, proof_journal, precondition);
+        }
+
         // Verify proofs recursively for boundless composition
         #[cfg(target_os = "zkvm")]
         let proven_fpvm_journals = load_stitching_journals(fpvm_image_id);
@@ -536,13 +547,15 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
 
     // Stitch boot info instances
     let mut l1_head_number = match l1_provider.as_mut() {
-        Some(provider) if !boot.l1_head.is_zero() => Some(
-            provider
-                .header_by_hash(boot.l1_head)
-                .await
-                .context("boot header_by_hash")?
-                .number,
-        ),
+        Some(provider) if !boot.l1_head.is_zero() && boot.l1_head != B256::repeat_byte(0xFF) => {
+            Some(
+                provider
+                    .header_by_hash(boot.l1_head)
+                    .await
+                    .context("boot header_by_hash")?
+                    .number,
+            )
+        }
         _ => None,
     };
     for (stitched_boot, stitched_precondition) in zip(stitched_boot_infos, stitched_preconditions) {
