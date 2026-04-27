@@ -538,6 +538,57 @@ pub fn recover_collected_partials(
     partial_executions
 }
 
+pub fn split_collected_partials(
+    partials: Vec<Vec<PartialExecution>>,
+    partials_per_block: usize,
+) -> Vec<Vec<PartialExecution>> {
+    partials
+        .into_iter()
+        .map(|block_partials| split_block_partials(block_partials, partials_per_block))
+        .collect()
+}
+
+pub fn split_block_partials(
+    partials: Vec<PartialExecution>,
+    partials_per_block: usize,
+) -> Vec<PartialExecution> {
+    // return nothing if we don't want any partials per block
+    if partials_per_block == 0 {
+        return vec![];
+    }
+    // process split
+    partials
+        .first()
+        .cloned()
+        .map(
+            |PartialExecution {
+                 block_env,
+                 op_block_ctx,
+                 ..
+             }| {
+                // Flatten all executions
+                let (tx_hashes, results): (Vec<_>, Vec<_>) = partials
+                    .into_iter()
+                    .flat_map(|p| p.tx_hashes.into_iter().zip(p.results.into_iter()))
+                    .unzip();
+                // Split into specified partial count
+                let partial_size = tx_hashes.len().div_ceil(partials_per_block).max(1);
+                tx_hashes
+                    .chunks(partial_size)
+                    .into_iter()
+                    .zip(results.chunks(partial_size).into_iter())
+                    .map(|(tx_hashes, results)| PartialExecution {
+                        tx_hashes: tx_hashes.to_vec(),
+                        results: results.to_vec(),
+                        block_env: block_env.clone(),
+                        op_block_ctx: op_block_ctx.clone(),
+                    })
+                    .collect()
+            },
+        )
+        .unwrap_or_default()
+}
+
 pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
     if expected_hash.is_zero() {
         // workaround
@@ -574,7 +625,7 @@ pub mod tests {
     use super::*;
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
-    use alloy_consensus::{BlockHeader, Header};
+    use alloy_consensus::Header;
     use alloy_primitives::{b256, B256};
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::BootInfo;
@@ -585,7 +636,7 @@ pub mod tests {
         proposal_data: Option<ProposalPrecondition>,
         derivation_cache: Option<CachedDriver>,
         derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
-    ) -> anyhow::Result<(Vec<Arc<Execution>>, Vec<Vec<PartialExecution>>)> {
+    ) -> anyhow::Result<(Vec<Execution>, Vec<Vec<PartialExecution>>)> {
         test_derivation_with_partials(
             boot_info,
             proposal_data,
@@ -622,7 +673,7 @@ pub mod tests {
         derivation_cache: Option<CachedDriver>,
         derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
         partial_executions: Vec<Vec<PartialExecution>>,
-    ) -> anyhow::Result<(Vec<Arc<Execution>>, Vec<Vec<PartialExecution>>)> {
+    ) -> anyhow::Result<(Vec<Execution>, Vec<Vec<PartialExecution>>)> {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let (proposal_precondition_hash, proposal_data_hash) = if let Some(data) = proposal_data {
             (data.precondition_hash(), oracle.add_precondition_data(data))
@@ -706,10 +757,11 @@ pub mod tests {
 
     pub fn test_execution(
         boot_info: BootInfo,
-        execution_cache: Vec<Arc<Execution>>,
+        execution_cache: Vec<Execution>,
     ) -> anyhow::Result<B256> {
         // Ensure boot info triggers execution only
         assert!(boot_info.l1_head.is_zero());
+        let execution_cache: Vec<_> = execution_cache.into_iter().map(|e| Arc::new(e)).collect();
         let expected_precondition_hash = exec_precondition_hash(execution_cache.as_slice());
 
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
@@ -839,28 +891,6 @@ pub mod tests {
         }
     }
 
-    pub fn split_partials(mut partials: Vec<Vec<PartialExecution>>) -> Vec<Vec<PartialExecution>> {
-        for block_partials in &mut partials {
-            let mut new_partials = Vec::with_capacity(block_partials.len());
-            for partial in take(block_partials) {
-                for (tx, res) in partial
-                    .tx_hashes
-                    .into_iter()
-                    .zip(partial.results.into_iter())
-                {
-                    new_partials.push(PartialExecution {
-                        tx_hashes: vec![tx.clone()],
-                        results: vec![res.clone()],
-                        block_env: partial.block_env.clone(),
-                        op_block_ctx: partial.op_block_ctx.clone(),
-                    })
-                }
-            }
-            let _ = core::mem::replace(block_partials, new_partials);
-        }
-        partials
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491250_split_partials_roundtrip() {
         // Capture partials
@@ -874,7 +904,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let split = split_partials(pre_captured);
+        let split = split_collected_partials(pre_captured, usize::MAX);
 
         // Run with partials loaded
         let (post_executions, post_captured) = test_derivation_with_partials(

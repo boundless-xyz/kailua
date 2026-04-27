@@ -102,20 +102,15 @@ pub mod tests {
     use crate::client::core::EthereumDataSourceProvider;
     use crate::client::stitching::KonaStitchingClient;
     use crate::client::tests::TestOracle;
-    use crate::executor::Execution;
     use alloy_primitives::B256;
     use anyhow::Context;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_stateless_client() -> anyhow::Result<()> {
         let mut boot_info = op_sepolia_16491249_16491349();
-        let stitched_executions = test_derivation(boot_info.clone(), None, None, None)
+        let (stitched_executions, _) = test_derivation(boot_info.clone(), None, None, None)
             .await
-            .context("test_derivation")?
-            .0
-            .into_iter()
-            .map(|e| e.as_ref().clone())
-            .collect::<Vec<_>>();
+            .context("test_derivation")?;
         boot_info.l1_head = B256::ZERO;
         let oracle_witness = TestOracle::new(boot_info.clone());
         let stream_witness = oracle_witness.clone();
@@ -145,7 +140,7 @@ pub mod tests {
         let mut boot_info = op_sepolia_16491249_16491349();
 
         // capture
-        let (executions, partial_executions) = test_derivation_with_partials(
+        let (stitched_executions, partial_executions) = test_derivation_with_partials(
             boot_info.clone(),
             None,
             None,
@@ -154,11 +149,8 @@ pub mod tests {
         )
         .await
         .context("capture pass")?;
-        assert!(!executions.is_empty());
-        assert_eq!(executions.len(), partial_executions.len());
-
-        let stitched_executions: Vec<Execution> =
-            executions.into_iter().map(|e| e.as_ref().clone()).collect();
+        assert!(!stitched_executions.is_empty());
+        assert_eq!(stitched_executions.len(), partial_executions.len());
 
         // replay
         boot_info.l1_head = B256::ZERO;

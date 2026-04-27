@@ -620,8 +620,7 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
 pub mod tests {
     use super::*;
     use crate::client::core::tests::{
-        op_sepolia_16491249_16491349, split_partials, test_derivation,
-        test_derivation_with_partials,
+        op_sepolia_16491249_16491349, test_derivation, test_derivation_with_partials,
     };
     use crate::client::core::EthereumDataSourceProvider;
     use crate::client::tests::TestOracle;
@@ -746,18 +745,14 @@ pub mod tests {
         precondition_validation_data: Option<ProposalPrecondition>,
         partial_executions: Vec<Vec<PartialExecution>>,
     ) -> anyhow::Result<()> {
-        let stitched_executions = test_derivation(
+        let (stitched_executions, _) = test_derivation(
             boot_info.clone(),
             precondition_validation_data.clone(),
             None,
             None,
         )
         .await
-        .context("test_derivation")?
-        .0
-        .into_iter()
-        .map(|e| e.as_ref().clone())
-        .collect::<Vec<_>>();
+        .context("test_derivation")?;
         let stitched_boot_info = stitched_executions
             .iter()
             .map(|e| StitchedBootInfo {
@@ -838,18 +833,14 @@ pub mod tests {
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
     ) -> anyhow::Result<()> {
-        let stitched_executions = test_derivation(
+        let (stitched_executions, _) = test_derivation(
             boot_info.clone(),
             precondition_validation_data.clone(),
             None,
             None,
         )
         .await
-        .context("test_derivation")?
-        .0
-        .into_iter()
-        .map(|e| e.as_ref().clone())
-        .collect::<Vec<_>>();
+        .context("test_derivation")?;
         // flat pass
         test_stitching(
             boot_info.clone(),
@@ -899,18 +890,14 @@ pub mod tests {
         stitched_boot_info: Vec<StitchedBootInfo>,
         partial_executions: Vec<Vec<PartialExecution>>,
     ) -> anyhow::Result<()> {
-        let stitched_executions = test_derivation(
+        let (stitched_executions, _) = test_derivation(
             boot_info.clone(),
             precondition_validation_data.clone(),
             None,
             None,
         )
         .await
-        .context("test_derivation")?
-        .0
-        .into_iter()
-        .map(|e| e.as_ref().clone())
-        .collect::<Vec<_>>();
+        .context("test_derivation")?;
         // flat pass
         boot_info.l1_head = B256::ZERO;
         test_stitching(
@@ -1067,7 +1054,7 @@ pub mod tests {
         );
 
         // Fully fragmented pass: one partial per transaction.
-        let split = split_partials(captured);
+        let split = split_collected_partials(captured, usize::MAX);
         test_stitching(
             boot_info,
             precondition_validation_data,

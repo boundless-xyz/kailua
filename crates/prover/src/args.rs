@@ -47,6 +47,9 @@ pub struct ProvingArgs {
     /// Maximum input data size per proof
     #[clap(long, env, required = false, default_value_t = 2_684_354_560)]
     pub max_witness_size: usize,
+    /// Number of partial executions to prove per block
+    #[clap(long, env, required = false, default_value_t = 0)]
+    pub num_block_partials: usize,
     /// Maximum rate of growth of tail proofs in L1 blocks
     #[clap(long, env, required = false, default_value_t = 10)]
     pub num_tail_blocks: u64,

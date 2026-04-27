@@ -28,6 +28,7 @@ use anyhow::{anyhow, bail, Context};
 use human_bytes::human_bytes;
 use itertools::Itertools;
 use kailua_kona::boot::StitchedBootInfo;
+use kailua_kona::client::core::split_block_partials;
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::Precondition;
@@ -160,17 +161,104 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     // create channel for receiving proving results from handlers
     let result_channel = async_channel::unbounded();
 
-    // todo: prove partial executions
-    for (exec, partials) in block_executions.iter().zip(partial_executions.iter()) {
-        let partial = partials.first().expect(&format!(
-            "Missing partial result for {}",
-            exec.artifacts.header.number
-        ));
-        assert_eq!(
-            exec.artifacts.header.parent_hash, partial.op_block_ctx.parent_hash,
-            "Preflight returned execution result for {} but partial result on top of {}",
-            exec.artifacts.header.number, partial.block_env.number
-        );
+    // Prove partial executions
+    let mut expected_partials = 0;
+    for (exec, partials) in block_executions
+        .into_iter()
+        .zip(partial_executions.into_iter())
+    {
+        // Skip system-tx-only blocks
+        if exec
+            .attributes
+            .transactions
+            .as_ref()
+            .map(|txs| txs.is_empty())
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        // Ascertain we have partials for non-empty blocks
+        let Some(partial) = partials.first() else {
+            error!(
+                "Missing partial result for {}",
+                exec.artifacts.header.number
+            );
+            continue;
+        };
+        // Sanity check that execution and partials are for the same block
+        if exec.artifacts.header.parent_hash != partial.op_block_ctx.parent_hash {
+            error!(
+                "Preflight returned execution result for {} but partial result on top of {}",
+                exec.artifacts.header.number, partial.block_env.number
+            );
+            continue;
+        }
+        // Dispatch partial proving tasks
+        let parent_hash = exec.artifacts.header.parent_hash;
+        let starting_block = exec.artifacts.header.number.saturating_sub(1);
+        for partial in split_block_partials(partials, args.proving.num_block_partials) {
+            let job_args = ProveArgs {
+                kona: SingleChainHost {
+                    l1_head: B256::repeat_byte(0xFF),
+                    agreed_l2_head_hash: parent_hash,
+                    agreed_l2_output_root: parent_hash,
+                    claimed_l2_output_root: parent_hash,
+                    claimed_l2_block_number: starting_block,
+                    ..args.kona.clone()
+                },
+                ..args.clone()
+            };
+            // spawn an async task that computes the proof using one of the instantiated handlers and sends back the result to result_channel
+            expected_partials += 1;
+            let rollup_config = rollup_config.clone();
+            let l1_config = l1_config.clone();
+            let disk_kv_store = disk_kv_store.clone();
+            let task_sender = task_channel.0.clone();
+            let result_sender = result_channel.0.clone();
+            let execution = exec.clone();
+            tokio::spawn(async move {
+                let result = crate::tasks::compute_oneshot_task(
+                    job_args.clone(),
+                    rollup_config,
+                    l1_config,
+                    disk_kv_store,
+                    Precondition::default(),
+                    B256::ZERO,
+                    vec![vec![execution]],
+                    None,
+                    None,
+                    vec![],
+                    vec![],
+                    vec![vec![partial]],
+                    vec![],
+                    false,
+                    true,
+                    true,
+                    task_sender,
+                )
+                .await;
+
+                result_sender
+                    .send((starting_block, job_args, true, result.map(Some)))
+                    .await
+                    .expect("Failed to send fpvm proof result");
+            });
+        }
+    }
+
+    // Await partial proofs
+    let mut received_partials = 0;
+    while received_partials < expected_partials {
+        // receive and process new results
+        let (starting_block, _, _, result) = result_channel
+            .1
+            .recv()
+            .await
+            .expect("Failed to recv prover task");
+        received_partials += 1;
+        if let Err(e) = result {
+            error!("Failed to prove partial execution for block {starting_block}: {e:?}");
+        }
     }
 
     // create channel for receiving proof requests to process and dispatch to handlers
