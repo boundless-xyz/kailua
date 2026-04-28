@@ -1048,7 +1048,7 @@ pub async fn compute_cached_proof(
     }
 
     // Construct expected journal
-    let (boot, proof_journal, mut updated_precondition) = stitch_boot_info::<VecOracle>(
+    let (boot, mut proof_journal, mut updated_precondition) = stitch_boot_info::<VecOracle>(
         None, // assume l1 head chain continuity on host side
         boot,
         bytemuck::cast::<[u32; 8], [u8; 32]>(image_id).into(),
@@ -1060,6 +1060,15 @@ pub async fn compute_cached_proof(
     .await
     .context("Failed to stitch boot info")
     .map_err(ProvingError::OtherError)?;
+    // insert partial execution precondition
+    if boot.l1_head == B256::repeat_byte(0xFF) {
+        if let Some(partial) = partial_executions.first().map(|p| p.first()).flatten() {
+            updated_precondition = updated_precondition.partial(partial.precondition_hash());
+            proof_journal.precondition_hash = B256::new(updated_precondition.digest().into());
+        } else {
+            error!("Failed to find partial execution for precondition");
+        }
+    }
     let skip_await_proof = args.proving.skip_await_proof;
     // Skip computation if previously saved to disk
     let mut proof_file = proof_file_name(image_id, &proof_journal);
