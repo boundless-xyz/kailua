@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::client::log;
 use crate::executor::Execution;
 use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
 use crate::rkyv::evm::CacheStateRkyv;
@@ -238,6 +239,7 @@ where
             .is_some_and(|expected| *expected == incoming_hash);
 
         let result = if serve_cached {
+            log(&format!("CACHED {incoming_hash}"));
             let chunk = self
                 .cache
                 .last_mut()
