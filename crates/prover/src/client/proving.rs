@@ -122,10 +122,9 @@ where
         let start = l2_provider
             .header_by_hash(safe_head_hash)
             .context("l2_provider.header_by_hash")?
-            .number
-            + 1;
-        for (block_no, block_partials) in
-            partials_cache.range(start..=initial_boot_info.claimed_l2_block_number)
+            .number;
+        for (parent_block_no, block_partials) in
+            partials_cache.range(start..initial_boot_info.claimed_l2_block_number)
         {
             let mut results = Vec::with_capacity(block_partials.len());
             for partial in block_partials {
@@ -141,7 +140,7 @@ where
                 );
                 // Check if file exists
                 if !Path::new(&proof_file).try_exists().is_ok_and(identity) {
-                    warn!("No proof found for partial in block {block_no}");
+                    warn!("No proof found for partial with parent block {parent_block_no}");
                     continue;
                 }
                 // Load receipt
@@ -161,8 +160,9 @@ where
             }
         }
         info!(
-            "Loaded {} partial executions for blocks {start} to {}.",
+            "Loaded {} partial executions for blocks {} to {}.",
             partial_executions.iter().map(|p| p.len()).sum::<usize>(),
+            start + 1,
             initial_boot_info.claimed_l2_block_number
         );
     }
