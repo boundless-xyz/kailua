@@ -220,6 +220,9 @@ where
 
             // Return result
             let pe_trace = compute_pe_trace(results_hash, block_ctx_hash);
+            log(&format!("{pe_trace}"));
+            log(&format!("{captured_tx_hashes:?}"));
+            log(&format!("{captured_results:?}"));
             return Ok((boot, Precondition::default().partial(pe_trace)));
         }
 

@@ -201,6 +201,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         let parent_hash = exec.artifacts.header.parent_hash;
         let starting_block = exec.artifacts.header.number.saturating_sub(1);
         for partial in split_block_partials(partials, args.proving.num_block_partials) {
+            dbg!(partial.precondition_hash());
+            dbg!(&partial.tx_hashes);
+            dbg!(&partial.results);
             // Log proof in cache
             partial_proof_cache
                 .entry(starting_block)
