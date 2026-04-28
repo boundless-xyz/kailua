@@ -29,6 +29,7 @@ use alloy_evm::revm::{Database as RevmDatabase, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::{OpBlockExecutionCtx, OpEvm, OpEvmFactory, OpTxError};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
+use kona_proof::BootInfo;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
@@ -55,6 +56,18 @@ impl PartialExecution {
             hash_results(&self.tx_hashes, &self.results),
             hash_block_ctx(&self.block_env, &self.op_block_ctx),
         )
+    }
+
+    pub fn boot_info(&self, boot: &BootInfo) -> BootInfo {
+        BootInfo {
+            l1_head: B256::repeat_byte(0xFF),
+            agreed_l2_output_root: self.op_block_ctx.parent_hash,
+            claimed_l2_output_root: self.op_block_ctx.parent_hash,
+            claimed_l2_block_number: self.block_env.number.to::<u64>().saturating_sub(1),
+            chain_id: boot.chain_id,
+            rollup_config: boot.rollup_config.clone(),
+            l1_config: boot.l1_config.clone(),
+        }
     }
 }
 

@@ -34,10 +34,13 @@ use kona_preimage::{
 };
 use kona_proof::HintType;
 use opentelemetry::trace::{TraceContextExt, Tracer};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::task;
 use tokio::task::JoinHandle;
 use tracing::info;
+
+pub type PartialsCache = BTreeMap<u64, Vec<PartialExecution>>;
 
 /// Starts the [PreimageServer] and the client program in separate threads. The client program is
 /// ran natively in this mode.
@@ -51,6 +54,7 @@ use tracing::info;
 ///   exited first.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_native_client(
+    partials_cache: Option<Arc<PartialsCache>>,
     args: ProveArgs,
     disk_kv_store: Option<RWLKeyValueStore>,
     precondition: Precondition,
@@ -165,6 +169,7 @@ pub async fn run_native_client(
     // Start the client program in a separate thread
     let client_task = tokio::spawn(crate::client::proving::run_proving_client(
         use_hokulea.then_some(args.kona.l1_node_address).flatten(),
+        partials_cache,
         args.proving,
         args.boundless,
         OracleReader::new(preimage.client),

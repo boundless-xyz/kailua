@@ -13,10 +13,11 @@
 // limitations under the License.
 
 use crate::args::ProvingArgs;
+use crate::client::native::PartialsCache;
 use crate::client::witgen;
 use crate::driver::{driver_file_name, signal_derivation_trace};
 use crate::profiling::{Profile, ProfiledReceipt};
-use crate::proof::save_to_bincoded_file;
+use crate::proof::{proof_file_name, read_bincoded_file, save_to_bincoded_file};
 use crate::risczero::boundless::BoundlessArgs;
 use crate::ProvingError;
 use alloy_primitives::B256;
@@ -24,23 +25,27 @@ use anyhow::{anyhow, Context};
 use async_channel::Sender;
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
-use kailua_kona::client::core::EthereumDataSourceProvider;
+use kailua_kona::client::core::{fetch_safe_head_hash, EthereumDataSourceProvider};
 use kailua_kona::client::stitching::split_executions;
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::evm::{PartialExecution, PartialExecutionWitness};
 use kailua_kona::executor::Execution;
+use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::vec::{PreimageVecEntry, VecOracle};
 use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
+use kona_executor::TrieDBProvider;
 use kona_preimage::{HintWriterClient, PreimageOracleClient};
 use kona_proof::l1::OracleBlobProvider;
+use kona_proof::l2::OracleL2ChainProvider;
 use kona_proof::{BootInfo, CachingOracle};
 use lazy_static::lazy_static;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Journal;
 use rkyv::rancor::BoxedError;
+use std::convert::identity;
 use std::fmt::Debug;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tracing::{error, info, warn};
@@ -58,6 +63,7 @@ pub const ORACLE_LRU_SIZE: usize = 1024;
 #[allow(clippy::too_many_arguments)]
 pub async fn run_proving_client<P, H>(
     _l1_node_address: Option<String>,
+    partials_cache: Option<Arc<PartialsCache>>,
     proving: ProvingArgs,
     boundless: BoundlessArgs,
     oracle_client: P,
@@ -66,13 +72,13 @@ pub async fn run_proving_client<P, H>(
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
     pe_witness: Option<PartialExecutionWitness>,
-    partial_executions: Vec<Vec<PartialExecution>>,
+    mut partial_executions: Vec<Vec<PartialExecution>>,
     derivation_cache: Option<CachedDriver>,
     trace_derivation: bool,
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<ProfiledReceipt>,
+    mut stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
@@ -82,37 +88,107 @@ where
     P: PreimageOracleClient + Send + Sync + Debug + Clone + 'static,
     H: HintWriterClient + Send + Sync + Debug + Clone + 'static,
 {
-    // preload all data into the vec oracle
+    // Instantiate oracles
+    let preimage_oracle = Arc::new(CachingOracle::new(
+        ORACLE_LRU_SIZE,
+        oracle_client,
+        hint_client,
+    ));
+    let blob_provider = OracleBlobProvider::new(preimage_oracle.clone());
+    // load boot info before any stitching
+    let initial_boot_info = BootInfo::load(preimage_oracle.as_ref())
+        .await
+        .context("BootInfo::load")
+        .map_err(ProvingError::OtherError)?;
+    // Preload cached partial execution proofs
+    if partials_cache.is_some()
+        && !initial_boot_info.l1_head == B256::repeat_byte(0xFF)
+        && partial_executions.is_empty()
+    {
+        let partials_cache = partials_cache.unwrap();
+        let safe_head_hash = fetch_safe_head_hash(
+            preimage_oracle.as_ref(),
+            initial_boot_info.agreed_l2_output_root,
+        )
+        .await
+        .context("fetch_safe_head_hash")?;
+        let l2_provider = OracleL2ChainProvider::new(
+            safe_head_hash,
+            Arc::new(initial_boot_info.rollup_config.clone()),
+            preimage_oracle.clone(),
+        );
+        let image_id = bytemuck::cast::<_, [u8; 32]>(proving.image_id());
+        // insert all cached partials in order
+        let start = l2_provider
+            .header_by_hash(safe_head_hash)
+            .context("l2_provider.header_by_hash")?
+            .number
+            + 1;
+        for (block_no, block_partials) in
+            partials_cache.range(start..=initial_boot_info.claimed_l2_block_number)
+        {
+            let mut results = Vec::with_capacity(block_partials.len());
+            for partial in block_partials {
+                // Derive expected proof file name
+                let proof_file = proof_file_name(
+                    image_id,
+                    &ProofJournal::new(
+                        image_id.into(),
+                        proving.payout_recipient_address.unwrap_or_default(),
+                        partial.precondition_hash(),
+                        &partial.boot_info(&initial_boot_info),
+                    ),
+                );
+                // Check if file exists
+                if !Path::new(&proof_file).try_exists().is_ok_and(identity) {
+                    warn!("No proof found for partial in block {block_no}");
+                    continue;
+                }
+                // Load receipt
+                match read_bincoded_file(None, &proof_file).await {
+                    Ok(receipt) => {
+                        results.push(partial.clone());
+                        stitched_proofs.push(receipt);
+                    }
+                    Err(err) => {
+                        error!("Failed to read proof file {proof_file} contents: {err:?}")
+                    }
+                }
+            }
+            // Push partials
+            if !results.is_empty() {
+                partial_executions.push(results);
+            }
+        }
+        info!(
+            "Loaded {} partial executions for blocks {start} to {}.",
+            partial_executions.iter().map(|p| p.len()).sum::<usize>(),
+            initial_boot_info.claimed_l2_block_number
+        );
+    }
+    // arrange cached executions
     let (_, execution_cache) = split_executions(stitched_executions.clone());
     info!(
         "Running vec witgen client with {} cached executions ({} traces).",
         execution_cache.len(),
         stitched_executions.len()
     );
-    let preimage_oracle = Arc::new(CachingOracle::new(
-        ORACLE_LRU_SIZE,
-        oracle_client,
-        hint_client,
-    ));
-    // Instantiate oracles
-    let blob_provider = OracleBlobProvider::new(preimage_oracle.clone());
     // Run full witgen client to get correct BootInfo and Precondition with oracles
     let witgen_permit = acquire_owned_permit(SEMAPHORE_WITGEN.clone())
         .await
         .map_err(ProvingError::OtherError)?;
-    let (boot_info, proof_journal, updated_precondition, traced_driver, witness, extra_frames) =
-        match (proving.use_hokulea(), proving.use_hana()) {
-            #[cfg(feature = "eigen")]
-            (true, _) => {
-                let (
-                    boot_info,
-                    proof_journal,
-                    precondition,
-                    cached_driver,
-                    witness,
-                    da_preimage,
-                    aux,
-                ) = crate::hokulea::witgen::run_hokulea_witgen_client(
+    let (
+        final_boot_info,
+        proof_journal,
+        updated_precondition,
+        traced_driver,
+        witness,
+        extra_frames,
+    ) = match (proving.use_hokulea(), proving.use_hana()) {
+        #[cfg(feature = "eigen")]
+        (true, _) => {
+            let (boot_info, proof_journal, precondition, cached_driver, witness, da_preimage, aux) =
+                crate::hokulea::witgen::run_hokulea_witgen_client(
                     preimage_oracle.clone(),
                     10 * 1024 * 1024, // default to 10MB chunks
                     blob_provider,
@@ -129,88 +205,52 @@ where
                 .await
                 .context("Failed to run hokulea vec witgen client.")
                 .map_err(ProvingError::OtherError)?;
-                let canoe_proof = hokulea_witgen::from_boot_info_to_canoe_proof(
-                    &boot_info,
-                    &da_preimage,
-                    preimage_oracle.as_ref(),
-                    crate::hokulea::provider::KailuaCanoeSteelProvider {
-                        l1_head: boot_info.l1_head,
-                        eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
-                    },
-                    canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs {},
-                )
-                .await
-                .context("Failed to generate Hokulea DA proofs")?
-                .map(|proof| bincode::serialize(&proof).expect("Canoe proof serialization failed"));
-                let kzg_proofs =
-                    hokulea_compute_proof::create_kzg_proofs_for_eigenda_preimage(&da_preimage);
-                let da_witness = hokulea_proof::eigenda_witness::EigenDAWitness::from_preimage(
-                    da_preimage,
-                    kzg_proofs,
-                    canoe_proof,
-                )
-                .expect("Failed to create EigenDAWitness");
-                // encode witness
-                // todo: sharding into separate frames
-                let eigen_da_frame = rkyv::to_bytes::<BoxedError>(&da_witness)
-                    .expect("Failed to serialize EigenDAWitness")
-                    .to_vec();
-                let aux_frame = rkyv::to_bytes::<BoxedError>(&aux)
-                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-                    .to_vec();
+            let canoe_proof = hokulea_witgen::from_boot_info_to_canoe_proof(
+                &boot_info,
+                &da_preimage,
+                preimage_oracle.as_ref(),
+                crate::hokulea::provider::KailuaCanoeSteelProvider {
+                    l1_head: boot_info.l1_head,
+                    eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
+                },
+                canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs {},
+            )
+            .await
+            .context("Failed to generate Hokulea DA proofs")?
+            .map(|proof| bincode::serialize(&proof).expect("Canoe proof serialization failed"));
+            let kzg_proofs =
+                hokulea_compute_proof::create_kzg_proofs_for_eigenda_preimage(&da_preimage);
+            let da_witness = hokulea_proof::eigenda_witness::EigenDAWitness::from_preimage(
+                da_preimage,
+                kzg_proofs,
+                canoe_proof,
+            )
+            .expect("Failed to create EigenDAWitness");
+            // encode witness
+            // todo: sharding into separate frames
+            let eigen_da_frame = rkyv::to_bytes::<BoxedError>(&da_witness)
+                .expect("Failed to serialize EigenDAWitness")
+                .to_vec();
+            let aux_frame = rkyv::to_bytes::<BoxedError>(&aux)
+                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+                .to_vec();
 
-                (
-                    boot_info,
-                    proof_journal,
-                    precondition,
-                    cached_driver,
-                    witness,
-                    vec![eigen_da_frame, aux_frame],
-                )
-            }
-            #[cfg(feature = "celestia")]
-            (_, true) => {
-                let (boot_info, proof_journal, precondition, cached_driver, witness, da_witness) =
-                    crate::hana::witgen::run_hana_witgen_client::<_, _, VecOracle>(
-                        preimage_oracle.clone(),
-                        10 * 1024 * 1024, // default to 10MB chunks
-                        blob_provider,
-                        proving.payout_recipient_address.unwrap_or_default(),
-                        proposal_data_hash,
-                        execution_cache.clone(),
-                        derivation_cache.clone(),
-                        trace_derivation,
-                        stitched_preconditions.clone(),
-                        stitched_boot_info.clone(),
-                        pe_witness,
-                        partial_executions.clone(),
-                    )
-                    .await
-                    .context("Failed to run hana vec witgen client.")
-                    .map_err(ProvingError::OtherError)?;
-                // serialize celestia frame (todo: sharding)
-                let celestia_da_frame = rkyv::to_bytes::<BoxedError>(&da_witness)
-                    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-                    .to_vec();
-
-                (
-                    boot_info,
-                    proof_journal,
-                    precondition,
-                    cached_driver,
-                    witness,
-                    vec![celestia_da_frame],
-                )
-            }
-            _ => {
-                witgen::run_witgen_client(
-                    B256::from(bytemuck::cast::<_, [u8; 32]>(
-                        kailua_build::KAILUA_FPVM_KONA_ID,
-                    )),
+            (
+                boot_info,
+                proof_journal,
+                precondition,
+                cached_driver,
+                witness,
+                vec![eigen_da_frame, aux_frame],
+            )
+        }
+        #[cfg(feature = "celestia")]
+        (_, true) => {
+            let (boot_info, proof_journal, precondition, cached_driver, witness, da_witness) =
+                crate::hana::witgen::run_hana_witgen_client::<_, _, VecOracle>(
                     preimage_oracle.clone(),
                     10 * 1024 * 1024, // default to 10MB chunks
                     blob_provider,
-                    EthereumDataSourceProvider,
                     proving.payout_recipient_address.unwrap_or_default(),
                     proposal_data_hash,
                     execution_cache.clone(),
@@ -222,19 +262,51 @@ where
                     partial_executions.clone(),
                 )
                 .await
-                .context("Failed to run kona vec witgen client.")
-                .map_err(ProvingError::OtherError)
-                .map(|(b, j, p, d, w)| (b, j, p, d, w, vec![]))?
-            }
-        };
+                .context("Failed to run hana vec witgen client.")
+                .map_err(ProvingError::OtherError)?;
+            // serialize celestia frame (todo: sharding)
+            let celestia_da_frame = rkyv::to_bytes::<BoxedError>(&da_witness)
+                .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+                .to_vec();
+
+            (
+                boot_info,
+                proof_journal,
+                precondition,
+                cached_driver,
+                witness,
+                vec![celestia_da_frame],
+            )
+        }
+        _ => {
+            witgen::run_witgen_client(
+                B256::from(bytemuck::cast::<_, [u8; 32]>(
+                    kailua_build::KAILUA_FPVM_KONA_ID,
+                )),
+                preimage_oracle.clone(),
+                10 * 1024 * 1024, // default to 10MB chunks
+                blob_provider,
+                EthereumDataSourceProvider,
+                proving.payout_recipient_address.unwrap_or_default(),
+                proposal_data_hash,
+                execution_cache.clone(),
+                derivation_cache.clone(),
+                trace_derivation,
+                stitched_preconditions.clone(),
+                stitched_boot_info.clone(),
+                pe_witness,
+                partial_executions.clone(),
+            )
+            .await
+            .context("Failed to run kona vec witgen client.")
+            .map_err(ProvingError::OtherError)
+            .map(|(b, j, p, d, w)| (b, j, p, d, w, vec![]))?
+        }
+    };
     drop(witgen_permit);
 
     // Commit derivation trace to driver file
-    let driver_boot = BootInfo::load(preimage_oracle.as_ref())
-        .await
-        .context("BootInfo::load")
-        .map_err(ProvingError::OtherError)?;
-    let driver_file = driver_file_name(proving.image_id(), &driver_boot, &precondition);
+    let driver_file = driver_file_name(proving.image_id(), &initial_boot_info, &precondition);
     if let Some(traced_driver) = traced_driver.as_ref() {
         let driver_digest = B256::new(traced_driver.digest().into());
         if driver_digest != updated_precondition.derivation_trace {
@@ -280,7 +352,7 @@ where
     }
 
     // Create profile
-    let profile = Profile::new(&boot_info)
+    let profile = Profile::new(&final_boot_info)
         .with_witness(&witness)
         .with_executions(&stitched_executions);
 

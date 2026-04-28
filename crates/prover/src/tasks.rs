@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::args::ProveArgs;
+use crate::client::native::PartialsCache;
 use crate::driver::{driver_file_name, signal_derivation_trace, try_read_driver};
 use crate::kv::RWLKeyValueStore;
 use crate::profiling::ProfiledReceipt;
@@ -40,7 +41,7 @@ use kona_protocol::L2BlockInfo;
 use opentelemetry::trace::{TraceContextExt, Tracer};
 use risc0_zkvm::sha::Digestible;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::BinaryHeap;
 use std::convert::identity;
 use std::path::Path;
 use std::sync::Arc;
@@ -48,7 +49,7 @@ use tracing::{error, info, warn};
 
 #[derive(Clone, Debug)]
 pub struct CachedTask {
-    pub partials_cache: Option<Arc<BTreeMap<u64, Vec<PartialExecution>>>>,
+    pub partials_cache: Option<Arc<PartialsCache>>,
     pub args: ProveArgs,
     pub rollup_config: RollupConfig,
     pub l1_config: L1ChainConfig,
@@ -166,7 +167,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
 /// Send a [Oneshot] task to the prover pool and return once the result arrives
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_oneshot_task(
-    partials_cache: Option<Arc<BTreeMap<u64, Vec<PartialExecution>>>>,
+    partials_cache: Option<Arc<PartialsCache>>,
     args: ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,
@@ -227,7 +228,7 @@ pub async fn compute_oneshot_task(
 /// Computes a receipt if it is not cached
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_fpvm_proof(
-    partials_cache: Option<Arc<BTreeMap<u64, Vec<PartialExecution>>>>,
+    partials_cache: Option<Arc<PartialsCache>>,
     mut args: ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,
@@ -927,7 +928,7 @@ pub fn create_cached_execution_task(
     l1_config: L1ChainConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     execution_cache: &[Arc<Execution>],
-    partials_cache: Option<Arc<BTreeMap<u64, Vec<PartialExecution>>>>,
+    partials_cache: Option<Arc<PartialsCache>>,
 ) -> CachedTask {
     let starting_block = execution_cache
         .iter()
@@ -987,7 +988,7 @@ pub fn create_cached_execution_task(
 /// Launches the native Kailua-Kona client-server pair to compute a [OneshotResultResponse]
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_cached_proof(
-    partials_cache: Option<Arc<BTreeMap<u64, Vec<PartialExecution>>>>,
+    partials_cache: Option<Arc<PartialsCache>>,
     mut args: ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,
@@ -1158,6 +1159,7 @@ pub async fn compute_cached_proof(
 
         // generate a proof using the kailua client and kona server
         crate::client::native::run_native_client(
+            partials_cache,
             args.clone(),
             disk_kv_store,
             precondition,

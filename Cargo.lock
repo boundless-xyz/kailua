@@ -6838,6 +6838,7 @@ dependencies = [
  "kailua-kona",
  "kailua-sync",
  "kona-derive",
+ "kona-executor",
  "kona-genesis",
  "kona-host",
  "kona-preimage",

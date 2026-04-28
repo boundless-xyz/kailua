@@ -58,6 +58,7 @@ kailua-sync.workspace = true
 # Kona
 kailua-kona.workspace = true
 kona-derive.workspace = true
+kona-executor.workspace = true
 kona-genesis.workspace = true
 kona-host.workspace = true
 kona-registry.workspace = true

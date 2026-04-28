@@ -14,6 +14,7 @@
 
 use crate::args::ProveArgs;
 use crate::channel::AsyncChannel;
+use crate::client::native::PartialsCache;
 use crate::config::{generate_l1_config_file, generate_rollup_config_file};
 use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::create_disk_kv_store;
@@ -30,7 +31,6 @@ use itertools::Itertools;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::core::split_block_partials;
 use kailua_kona::driver::CachedDriver;
-use kailua_kona::evm::PartialExecution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
@@ -41,7 +41,7 @@ use opentelemetry::global::tracer;
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
 use risc0_zkvm::sha::Digestible;
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::BinaryHeap;
 use std::env::set_var;
 use std::sync::Arc;
 use std::time::Duration;
@@ -166,7 +166,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     // Prove partial executions
     info!("Dispatching partial execution proving tasks.");
     let mut expected_partials = 0;
-    let mut partial_proof_cache: BTreeMap<u64, Vec<PartialExecution>> = Default::default();
+    let mut partial_proof_cache: PartialsCache = Default::default();
     for (exec, partials) in block_executions
         .into_iter()
         .zip(partial_executions.into_iter())
@@ -277,6 +277,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
             _ => {}
         }
     }
+    info!("Computed {received_partials} partial execution proofs.");
     let partial_proof_cache = Arc::new(partial_proof_cache);
 
     // create channel for receiving proof requests to process and dispatch to handlers
