@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::evm::{PartialAccount, PartialResultAndState};
 use crate::precondition::derivation::flatten_bytes;
 use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
 use alloy_evm::revm::context_interface::result::{
-    ExecutionResult, HaltReason, OutOfGasError, Output, ResultAndState, SuccessReason,
+    ExecutionResult, HaltReason, OutOfGasError, Output, SuccessReason,
 };
-use alloy_evm::revm::state::{Account, EvmState};
 use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Address, Log, B256};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
@@ -53,8 +53,13 @@ pub fn hash_block_ctx(block_env: &BlockEnv, op_block_ctx: &OpBlockExecutionCtx) 
     digest.into()
 }
 
-/// Canonical SHA256 of a list of txn hashes and their `Vec<ResultAndState<OpHaltReason>>`
-pub fn hash_results(tx_hashes: &[B256], results: &[ResultAndState<OpHaltReason>]) -> B256 {
+/// Canonical SHA256 of a list of txn hashes and their
+/// `Vec<PartialResultAndState>`. State must be sorted by address (invariant
+/// upheld by [`PartialResultAndState`]'s `From<ResultAndState>` impl);
+/// per-account storage must likewise be sorted by slot. Both are walked in
+/// iteration order without further sorting, so the byte output is stable for
+/// any input that satisfies these invariants.
+pub fn hash_results(tx_hashes: &[B256], results: &[PartialResultAndState]) -> B256 {
     assert_eq!(
         tx_hashes.len(),
         results.len(),
@@ -69,7 +74,7 @@ pub fn hash_results(tx_hashes: &[B256], results: &[ResultAndState<OpHaltReason>]
                 [
                     tx_hash.as_slice(),
                     flatten_bytes(flatten_execution_result(&ras.result)).as_slice(),
-                    flatten_bytes(flatten_evm_state(&ras.state)).as_slice(),
+                    flatten_bytes(flatten_partial_state(&ras.state)).as_slice(),
                 ]
                 .concat()
             })
@@ -262,9 +267,11 @@ pub fn flatten_execution_result(r: &ExecutionResult<OpHaltReason>) -> Vec<u8> {
     }
 }
 
-fn flatten_account(acct: &Account) -> Vec<u8> {
-    let mut entries: Vec<_> = acct.storage.iter().collect();
-    entries.sort_by_key(|(k, _)| *k);
+fn flatten_partial_account(acct: &PartialAccount) -> Vec<u8> {
+    debug_assert!(
+        acct.storage.windows(2).all(|w| w[0].slot <= w[1].slot),
+        "flatten_partial_account: storage must be sorted by slot",
+    );
     [
         // Pre-tx AccountInfo (original_info) — revm's first-load value for this address.
         // Authenticated so CachedEvm's serve-side `db.basic(addr)` check against
@@ -279,15 +286,23 @@ fn flatten_account(acct: &Account) -> Vec<u8> {
         acct.info.code_hash.as_slice(),
         // Status bitflags (u8).
         [acct.status.bits()].as_slice(),
-        // Storage, sorted by slot key.
-        (entries.len() as u64).to_be_bytes().as_slice(),
-        entries
+        // Storage, in the already-sorted Vec order maintained by `PartialAccount`.
+        (acct.storage.len() as u64).to_be_bytes().as_slice(),
+        acct.storage
             .iter()
-            .map(|(slot, evm_slot)| {
+            .map(|entry| {
                 [
-                    slot.to_be_bytes::<32>().as_slice(),
-                    evm_slot.original_value.to_be_bytes::<32>().as_slice(),
-                    evm_slot.present_value.to_be_bytes::<32>().as_slice(),
+                    entry.slot.to_be_bytes::<32>().as_slice(),
+                    entry
+                        .slot_value
+                        .original_value
+                        .to_be_bytes::<32>()
+                        .as_slice(),
+                    entry
+                        .slot_value
+                        .present_value
+                        .to_be_bytes::<32>()
+                        .as_slice(),
                 ]
                 .concat()
             })
@@ -298,19 +313,21 @@ fn flatten_account(acct: &Account) -> Vec<u8> {
     .concat()
 }
 
-/// Encode an `EvmState` (the per-tx state diff). Entries are sorted by address so the
-/// encoding is invariant to the underlying `HashMap` iteration order.
-pub fn flatten_evm_state(state: &EvmState) -> Vec<u8> {
-    let mut entries: Vec<_> = state.iter().collect();
-    entries.sort_by_key(|(addr, _)| *addr);
+/// Encode the per-tx state diff carried by [`PartialResultAndState`]. The Vec
+/// is sorted by address by construction, so we walk it directly.
+pub fn flatten_partial_state(state: &[crate::evm::PartialStateEntry]) -> Vec<u8> {
+    debug_assert!(
+        state.windows(2).all(|w| w[0].address <= w[1].address),
+        "flatten_partial_state: state must be sorted by address",
+    );
     [
-        (entries.len() as u64).to_be_bytes().as_slice(),
-        entries
+        (state.len() as u64).to_be_bytes().as_slice(),
+        state
             .iter()
-            .map(|(addr, account)| {
+            .map(|entry| {
                 [
-                    addr.as_slice(),
-                    flatten_bytes(flatten_account(account)).as_slice(),
+                    entry.address.as_slice(),
+                    flatten_bytes(flatten_partial_account(&entry.account)).as_slice(),
                 ]
                 .concat()
             })
@@ -324,8 +341,9 @@ pub fn flatten_evm_state(state: &EvmState) -> Vec<u8> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use alloy_evm::revm::context_interface::result::ResultAndState;
     use alloy_evm::revm::primitives::HashMap;
-    use alloy_evm::revm::state::{AccountInfo, Bytecode};
+    use alloy_evm::revm::state::{Account, AccountInfo, Bytecode};
     use alloy_primitives::U256;
     use risc0_zkvm::sha::Digestible;
 
@@ -395,7 +413,7 @@ pub mod tests {
 
     #[test]
     fn hash_results_single_entry_deterministic() {
-        let entry = stub_success(21000);
+        let entry = PartialResultAndState::from(stub_success(21000));
         let h1 = hash_results(&[B256::ZERO], std::slice::from_ref(&entry));
         let h2 = hash_results(&[B256::ZERO], std::slice::from_ref(&entry));
         assert_eq!(h1, h2);
@@ -403,8 +421,8 @@ pub mod tests {
 
     #[test]
     fn hash_results_order_sensitive() {
-        let a = stub_success(21000);
-        let b = stub_success(42000);
+        let a = PartialResultAndState::from(stub_success(21000));
+        let b = PartialResultAndState::from(stub_success(42000));
         let h_ab = hash_results(&[B256::ZERO, B256::ZERO], &[a.clone(), b.clone()]);
         let h_ba = hash_results(&[B256::ZERO, B256::ZERO], &[b, a]);
         assert_ne!(
@@ -415,15 +433,27 @@ pub mod tests {
 
     #[test]
     fn hash_results_gas_change_different() {
-        let h1 = hash_results(&[B256::ZERO], &[stub_success(21000)]);
-        let h2 = hash_results(&[B256::ZERO], &[stub_success(21001)]);
+        let h1 = hash_results(
+            &[B256::ZERO],
+            &vec![PartialResultAndState::from(stub_success(21000))],
+        );
+        let h2 = hash_results(
+            &[B256::ZERO],
+            &vec![PartialResultAndState::from(stub_success(21001))],
+        );
         assert_ne!(h1, h2);
     }
 
     #[test]
     fn hash_results_variant_change_different() {
-        let success = hash_results(&[B256::ZERO], &[stub_success(21000)]);
-        let revert = hash_results(&[B256::ZERO], &[stub_revert(21000, &[])]);
+        let success = hash_results(
+            &[B256::ZERO],
+            &vec![PartialResultAndState::from(stub_success(21000))],
+        );
+        let revert = hash_results(
+            &[B256::ZERO],
+            &vec![PartialResultAndState::from(stub_revert(21000, &[]))],
+        );
         assert_ne!(success, revert);
     }
 
@@ -457,17 +487,19 @@ pub mod tests {
         };
         let h_default = hash_results(
             &[B256::ZERO],
-            std::slice::from_ref(&make_ras(AccountInfo::default())),
+            std::slice::from_ref(&PartialResultAndState::from(make_ras(
+                AccountInfo::default(),
+            ))),
         );
         let h_nonzero = hash_results(
             &[B256::ZERO],
-            std::slice::from_ref(&make_ras(AccountInfo {
+            std::slice::from_ref(&PartialResultAndState::from(make_ras(AccountInfo {
                 nonce: 5,
                 balance: U256::from(999),
                 code_hash: B256::ZERO,
                 account_id: None,
                 code: None,
-            })),
+            }))),
         );
         assert_ne!(
             h_default, h_nonzero,
@@ -481,7 +513,7 @@ pub mod tests {
         let addr = Address::from([0xAA; 20]);
 
         // Baseline: empty state.
-        let base = stub_success(21000);
+        let base = PartialResultAndState::from(stub_success(21000));
         let h_base = hash_results(&[B256::ZERO], std::slice::from_ref(&base));
 
         // Same result but with one account added to state.
@@ -502,7 +534,10 @@ pub mod tests {
                 status: alloy_evm::revm::state::AccountStatus::Touched,
             },
         );
-        let h_modified = hash_results(&[B256::ZERO], std::slice::from_ref(&modified));
+        let h_modified = hash_results(
+            &[B256::ZERO],
+            std::slice::from_ref(&PartialResultAndState::from(modified.clone())),
+        );
 
         assert_ne!(
             h_base, h_modified,
@@ -514,7 +549,10 @@ pub mod tests {
             U256::from(1),
             EvmStorageSlot::new_changed(U256::ZERO, U256::from(42), 0),
         );
-        let h_with_storage = hash_results(&[B256::ZERO], std::slice::from_ref(&modified));
+        let h_with_storage = hash_results(
+            &[B256::ZERO],
+            std::slice::from_ref(&PartialResultAndState::from(modified)),
+        );
         assert_ne!(h_modified, h_with_storage);
     }
 
@@ -586,8 +624,14 @@ pub mod tests {
         );
 
         assert_eq!(
-            hash_results(&[B256::ZERO], std::slice::from_ref(&ras1)),
-            hash_results(&[B256::ZERO], std::slice::from_ref(&ras2)),
+            hash_results(
+                &[B256::ZERO],
+                std::slice::from_ref(&PartialResultAndState::from(ras1))
+            ),
+            hash_results(
+                &[B256::ZERO],
+                std::slice::from_ref(&PartialResultAndState::from(ras2))
+            ),
             "transient fields must not affect the canonical hash"
         );
     }

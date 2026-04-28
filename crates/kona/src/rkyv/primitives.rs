@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_primitives::{Address, B256, B64};
+use alloy_primitives::{Address, B256, B64, U256};
 
 #[derive(Clone, Debug, Copy, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[rkyv(remote = B256)]
@@ -47,6 +47,24 @@ pub struct AddressDef(pub [u8; 20]);
 impl From<AddressDef> for Address {
     fn from(value: AddressDef) -> Self {
         Address::new(value.0)
+    }
+}
+
+/// rkyv mirror of [`U256`]. Archived as the same `[u8; 32]` big-endian
+/// representation revm/alloy uses on-wire elsewhere in this crate
+/// (see `account_info_to_rkyv`'s `balance.to_be_bytes::<32>()` projection).
+#[derive(Clone, Debug, Copy, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[rkyv(remote = U256)]
+#[rkyv(archived = ArchivedU256)]
+pub struct U256Def(#[rkyv(getter = u256_be_bytes)] pub [u8; 32]);
+
+fn u256_be_bytes(v: &U256) -> [u8; 32] {
+    v.to_be_bytes::<32>()
+}
+
+impl From<U256Def> for U256 {
+    fn from(value: U256Def) -> Self {
+        U256::from_be_bytes(value.0)
     }
 }
 

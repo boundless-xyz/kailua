@@ -13,14 +13,13 @@
 // limitations under the License.
 
 use crate::client::log;
-use crate::evm::PartialExecution;
+use crate::evm::{PartialExecution, PartialResultAndState};
 use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::eip7840::BlobParams;
-use alloy_evm::op_revm::{OpHaltReason, OpSpecId};
-use alloy_evm::revm::context::result::ResultAndState;
+use alloy_evm::op_revm::OpSpecId;
 use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
 use alloy_evm::revm::primitives::eip4844::{
@@ -327,7 +326,7 @@ fn expected_blob_excess_gas_and_price(
 
 pub fn build_single_partial_for_block(
     execution: &Execution,
-    traces: Vec<(B256, ResultAndState<OpHaltReason>)>,
+    traces: Vec<(B256, PartialResultAndState)>,
     parent_header: &Header,
     spec_id: OpSpecId,
 ) -> PartialExecution {

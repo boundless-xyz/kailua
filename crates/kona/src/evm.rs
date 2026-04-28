@@ -15,24 +15,127 @@
 use crate::client::log;
 use crate::executor::Execution;
 use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
-use crate::rkyv::evm::CacheStateRkyv;
-use crate::rkyv::evm::{BlockEnvRkyv, OpBlockExecutionCtxRkyv, ResultAndStateRkyv};
-use crate::rkyv::primitives::B256Def;
+use crate::rkyv::evm::{
+    AccountInfoRkyv, AccountStatusRkyv, BlockEnvRkyv, CacheStateRkyv, EvmStorageSlotRkyv,
+    ExecutionResultRkyv, OpBlockExecutionCtxRkyv,
+};
+use crate::rkyv::primitives::{AddressDef, B256Def, U256Def};
 use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
 use alloy_evm::precompiles::PrecompilesMap;
-use alloy_evm::revm::context::result::{EVMError, ResultAndState};
+use alloy_evm::revm::context::result::{EVMError, ExecutionResult, ResultAndState};
 use alloy_evm::revm::context::{BlockEnv, TxEnv};
 use alloy_evm::revm::database::states::CacheAccount;
 use alloy_evm::revm::database::CacheState;
 use alloy_evm::revm::inspector::NoOpInspector;
-use alloy_evm::revm::state::AccountStatus;
+use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmStorageSlot};
 use alloy_evm::revm::{Database as RevmDatabase, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::{OpBlockExecutionCtx, OpEvm, OpEvmFactory, OpTxError};
-use alloy_primitives::{keccak256, Address, Bytes, B256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use kona_proof::BootInfo;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
+
+#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct PartialStorageEntry {
+    #[rkyv(with = U256Def)]
+    pub slot: U256,
+    #[rkyv(with = EvmStorageSlotRkyv)]
+    pub slot_value: EvmStorageSlot,
+}
+
+#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct PartialAccount {
+    #[rkyv(with = AccountInfoRkyv)]
+    pub info: AccountInfo,
+    #[rkyv(with = AccountInfoRkyv)]
+    pub original_info: AccountInfo,
+    pub transaction_id: u64,
+    /// Sorted by slot key.
+    pub storage: Vec<PartialStorageEntry>,
+    #[rkyv(with = AccountStatusRkyv)]
+    pub status: AccountStatus,
+}
+
+impl From<Account> for PartialAccount {
+    fn from(value: Account) -> Self {
+        let mut storage: Vec<PartialStorageEntry> = value
+            .storage
+            .into_iter()
+            .map(|(slot, slot_value)| PartialStorageEntry { slot, slot_value })
+            .collect();
+        storage.sort_by_key(|e| e.slot);
+        Self {
+            info: value.info,
+            original_info: *value.original_info,
+            transaction_id: value.transaction_id as u64,
+            storage,
+            status: value.status,
+        }
+    }
+}
+
+impl From<PartialAccount> for Account {
+    fn from(value: PartialAccount) -> Self {
+        Account {
+            info: value.info,
+            original_info: Box::new(value.original_info),
+            transaction_id: value.transaction_id as usize,
+            storage: value
+                .storage
+                .into_iter()
+                .map(|e| (e.slot, e.slot_value))
+                .collect(),
+            status: value.status,
+        }
+    }
+}
+
+#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct PartialStateEntry {
+    #[rkyv(with = AddressDef)]
+    pub address: Address,
+    pub account: PartialAccount,
+}
+
+#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct PartialResultAndState {
+    #[rkyv(with = ExecutionResultRkyv)]
+    pub result: ExecutionResult<OpHaltReason>,
+    /// Sorted by address.
+    pub state: Vec<PartialStateEntry>,
+}
+
+impl From<ResultAndState<OpHaltReason>> for PartialResultAndState {
+    fn from(r: ResultAndState<OpHaltReason>) -> Self {
+        let mut state: Vec<PartialStateEntry> = r
+            .state
+            .into_iter()
+            .map(|(address, acc)| PartialStateEntry {
+                address,
+                account: PartialAccount::from(acc),
+            })
+            .collect();
+        state.sort_by_key(|e| e.address);
+        Self {
+            result: r.result,
+            state,
+        }
+    }
+}
+
+impl From<PartialResultAndState> for ResultAndState<OpHaltReason> {
+    fn from(value: PartialResultAndState) -> Self {
+        Self {
+            result: value.result,
+            state: value
+                .state
+                .into_iter()
+                .map(|e| (e.address, e.account.into()))
+                .collect(),
+        }
+    }
+}
 
 /// Represents a proven transaction subsequence within a block.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
@@ -40,9 +143,8 @@ pub struct PartialExecution {
     /// The EIP-2718 tx hash for each entry in `results`.
     #[rkyv(with = rkyv::with::Map<B256Def>)]
     pub tx_hashes: Vec<B256>,
-    /// Full per-tx execution results (ExecutionResult + EvmState), in order.
-    #[rkyv(with = rkyv::with::Map<ResultAndStateRkyv>)]
-    pub results: Vec<ResultAndState<OpHaltReason>>,
+    /// Full per-tx execution results (ExecutionResult + sorted state)
+    pub results: Vec<PartialResultAndState>,
     /// Block execution `BlockEnv` under which this chunk's transactions executed
     #[rkyv(with = BlockEnvRkyv)]
     pub block_env: BlockEnv,
@@ -72,20 +174,24 @@ impl PartialExecution {
     }
 }
 
-pub fn cache_results(results: Vec<ResultAndState<OpHaltReason>>) -> CacheState {
+pub fn cache_results(results: Vec<PartialResultAndState>) -> CacheState {
     let mut cache_state = CacheState::default();
     for result in results {
-        for (addr, account) in result.state.into_iter() {
-            let cache_account = cache_state.accounts.entry(addr).or_insert_with(|| {
+        for entry in result.state.into_iter() {
+            let PartialStateEntry { address, account } = entry;
+            let cache_account = cache_state.accounts.entry(address).or_insert_with(|| {
                 if account.status.contains(AccountStatus::LoadedAsNotExisting) {
                     CacheAccount::new_loaded_not_existing()
                 } else {
-                    CacheAccount::new_loaded((*account.original_info).clone(), Default::default())
+                    CacheAccount::new_loaded(account.original_info.clone(), Default::default())
                 }
             });
             if let Some(plain) = cache_account.account.as_mut() {
-                for (slot, evm_slot) in account.storage.into_iter() {
-                    plain.storage.entry(slot).or_insert(evm_slot.original_value);
+                for slot_entry in account.storage.into_iter() {
+                    plain
+                        .storage
+                        .entry(slot_entry.slot)
+                        .or_insert(slot_entry.slot_value.original_value);
                 }
                 if let Some(code) = plain.info.code.take() {
                     cache_state
@@ -142,19 +248,10 @@ impl PartialExecutionWitness {
     }
 }
 
-/// Shared trace buffer, one inner `Vec` per EVM instance created by
-/// [`CachedEvmFactory`] in ascending creation order (which, during normal
-/// derivation, matches ascending L2 block order). Each inner entry pairs the
-/// per-tx identity hash (`keccak256(tx.enveloped_tx)` — the EIP-2718 tx hash)
-/// with its captured `ResultAndState`. Pre-transaction `AccountInfo` is *not*
-/// stored alongside: `ResultAndState.state[addr].original_info` already carries
-/// the chunk's first-load view of each touched address, and `AccountRkyv`
-/// preserves it through the rkyv round-trip, so the chunk proof's
-/// `results_hash` authenticates it directly.
-pub type TransactionResultCollector = Arc<Mutex<Vec<Vec<(B256, ResultAndState<OpHaltReason>)>>>>;
+/// Shared trace buffer
+pub type TransactionResultCollector = Arc<Mutex<Vec<Vec<(B256, PartialResultAndState)>>>>;
 
-/// EVM wrapper that serves pre-computed `ResultAndState` entries from a set of
-/// [`PartialExecution`]s covering this block's ordered transaction body.
+/// EVM wrapper that serves pre-computed `ResultAndState` entries
 pub struct CachedEvm<E: Evm> {
     /// Remaining chunks for this block in *reverse* execution order
     pub cache: Vec<PartialExecution>,
@@ -166,12 +263,7 @@ pub struct CachedEvm<E: Evm> {
 }
 
 impl<E: Evm> CachedEvm<E> {
-    /// Wraps `inner` and prepares the chunk cache, optionally attaching a shared
-    /// trace collector. `chunks` must be in ascending execution order (matching
-    /// `tx_start`); this constructor reverses the outer vec so `pop()` yields the
-    /// next chunk, and each chunk's `results`/`tx_hashes` vecs so `results.pop()`
-    /// (and the parallel `tx_hashes.pop()`) yield the next pre-computed entry in
-    /// execution order.
+    /// Wraps `inner` and prepares the chunk cache
     pub fn new_with_traces(
         evm: E,
         mut cache: Vec<PartialExecution>,
@@ -212,9 +304,7 @@ where
         self.evm.chain_id()
     }
 
-    /// Returns the next pre-computed `ResultAndState` if the top of the cache has an
-    /// entry whose `tx_hash` matches the incoming tx's EIP-2718 hash; otherwise
-    /// delegates to the inner EVM without consuming a cache entry.
+    /// Returns the next pre-computed `ResultAndState` if the top entry matches
     fn transact_raw(
         &mut self,
         tx: Self::Tx,
@@ -267,23 +357,29 @@ where
             //       and folded into `results_hash` by `write_account`, so the
             //       chunk proof authenticates it.
             let db = self.evm.db_mut();
-            for (addr, account) in res_state.state.iter() {
+            for entry in res_state.state.iter() {
                 // Always call `db.basic(addr)` to warm State.cache for this address
-                let actual_info = RevmDatabase::basic(db, *addr).map_err(|_| ()).expect(
-                    "CachedEvm::transact_raw: inner DB basic read failed during \
+                let actual_info = RevmDatabase::basic(db, entry.address)
+                    .map_err(|_| ())
+                    .expect(
+                        "CachedEvm::transact_raw: inner DB basic read failed during \
                      prestate authentication",
-                );
+                    );
                 if let Some(stored_info) = actual_info.as_ref() {
-                    let expected_info = account.original_info.as_ref();
+                    let expected_info = &entry.account.original_info;
                     assert_eq!(
                         stored_info, expected_info,
-                        "CachedEvm::transact_raw: account prestate mismatch at addr={addr}: \
-                         chunk.original_info={expected_info:?} live_db={stored_info:?}"
+                        "CachedEvm::transact_raw: account prestate mismatch at addr={}: \
+                         chunk.original_info={expected_info:?} live_db={stored_info:?}",
+                        entry.address
                     );
                 } else {
                     assert!(
-                        account.status.contains(AccountStatus::Created)
-                            || account.status.contains(AccountStatus::LoadedAsNotExisting),
+                        entry.account.status.contains(AccountStatus::Created)
+                            || entry
+                                .account
+                                .status
+                                .contains(AccountStatus::LoadedAsNotExisting),
                         "Unexpected AccountStatus for non-existing account"
                     );
                 }
@@ -291,28 +387,37 @@ where
                 // Per-slot prestate authentication. The `db.storage` call also
                 // warms State.cache for this slot (needed for the subsequent
                 // `db.commit` by OpBlockExecutor to find the account).
-                for (slot, evm_slot) in account.storage.iter() {
-                    let actual = RevmDatabase::storage(db, *addr, *slot)
+                for slot_entry in entry.account.storage.iter() {
+                    let actual = RevmDatabase::storage(db, entry.address, slot_entry.slot)
                         .map_err(|_| ())
                         .expect(
                             "CachedEvm::transact_raw: inner DB storage read failed during \
                          prestate authentication",
                         );
                     assert_eq!(
-                        actual, evm_slot.original_value,
+                        actual,
+                        slot_entry.slot_value.original_value,
                         "CachedEvm::transact_raw: storage prestate mismatch at \
-                         addr={addr} slot={slot}: chunk.original_value={} live_db={}",
-                        evm_slot.original_value, actual
+                         addr={} slot={}: chunk.original_value={} live_db={}",
+                        entry.address,
+                        slot_entry.slot,
+                        slot_entry.slot_value.original_value,
+                        actual
                     );
                 }
             }
 
-            Ok(res_state)
+            // Materialize the revm `ResultAndState` for the trait return.
+            // `Into` is a single move (no element clones) — see
+            // `From<PartialResultAndState> for ResultAndState`.
+            Ok(res_state.into())
         } else {
             // Execute transaction manually
             let result = self.evm.transact_raw(tx);
 
-            // Capture result
+            // Capture result. We clone the revm result for the trait return,
+            // and drain the clone into a `PartialResultAndState` (sorted Vec
+            // form) for the trace buffer.
             if let (Ok(r), Some(traces)) = (&result, &self.collection_target) {
                 let mut guard = traces.lock().unwrap();
                 guard
@@ -321,7 +426,7 @@ where
                         "CachedEvmFactory pushes an empty slot before constructing \
                      a CachedEvm; last_mut() must exist",
                     )
-                    .push((incoming_hash, r.clone()));
+                    .push((incoming_hash, PartialResultAndState::from(r.clone())));
             }
 
             result
@@ -329,9 +434,7 @@ where
         result
     }
 
-    /// Delegates system calls to the inner EVM. Block-level prelude and epilogue work
-    /// (beacon root, blockhash ring, Canyon deployer, post-block balance increments)
-    /// runs through the inner OpEvm unchanged and does not consume chunk results.
+    /// Delegates system calls to the inner EVM.
     fn transact_system_call(
         &mut self,
         caller: Address,
@@ -374,21 +477,12 @@ pub struct CachedEvmFactory {
 }
 
 impl CachedEvmFactory {
-    /// Constructs a factory with the given positional per-block chunk data. The
-    /// input is expected in **execution order** (outer index 0 = first block
-    /// served); the constructor reverses it internally so that `create_evm`
-    /// pops from the end in execution order.
+    /// Constructs a factory with the given positional per-block chunk data.
     pub fn new(cache: Vec<Vec<PartialExecution>>) -> Self {
         Self::new_with_traces(cache, None)
     }
 
     /// Variant of [`new`](Self::new) that also attaches a shared trace collector.
-    /// Every `CachedEvm` produced by this factory will append successful
-    /// `transact_raw()` results into the last inner `Vec` of the collector (the
-    /// factory pushes a fresh slot on each `create_evm` call). Drain via
-    /// [`take_all_block_traces`](Self::take_all_block_traces) or by
-    /// `std::mem::take` on the shared buffer at the per-block boundary the
-    /// caller chooses (see the integration test in `crates/kona/src/client/core.rs`).
     pub fn new_with_traces(
         mut cache: Vec<Vec<PartialExecution>>,
         block_traces: Option<TransactionResultCollector>,
@@ -401,29 +495,20 @@ impl CachedEvmFactory {
         }
     }
 
-    /// Pops and returns the next block's chunks from the cache, or an empty vec
-    /// when the cache is exhausted. The outer `Vec` was reversed at construction
-    /// time so `pop()` yields blocks in execution order.
+    /// Pops and returns the next block's chunks from the cache
     pub fn take_next_chunks(&self) -> Vec<PartialExecution> {
         self.cache.lock().unwrap().pop().unwrap_or_default()
     }
 
-    /// Atomically drains and returns the shared trace buffer — one inner `Vec` per
-    /// EVM instance this factory produced, in creation order. Returns an empty vec
-    /// when no trace collector is attached. During normal derivation one EVM is
-    /// created per L2 block in ascending block order, so the returned outer index
-    /// maps 1:1 to block position starting from the first block the factory served.
-    pub fn take_all_block_traces(&self) -> Vec<Vec<(B256, ResultAndState<OpHaltReason>)>> {
+    /// Atomically drains and returns the shared trace buffer
+    pub fn take_all_block_traces(&self) -> Vec<Vec<(B256, PartialResultAndState)>> {
         self.block_traces
             .as_ref()
             .map(|t| std::mem::take(&mut *t.lock().unwrap()))
             .unwrap_or_default()
     }
 
-    /// Push an empty slot onto the shared trace buffer so that the next
-    /// `CachedEvm`'s `transact_raw` captures land in a fresh per-EVM `Vec`. No-op
-    /// when no collector is attached. Called from both `create_evm` and
-    /// `create_evm_with_inspector`.
+    /// Push an empty slot onto the shared trace buffer
     fn push_trace_slot(&self) {
         if let Some(traces) = &self.block_traces {
             traces.lock().unwrap().push(Vec::new());
@@ -477,6 +562,7 @@ mod tests {
     use crate::evm::CachedEvmFactory;
     use crate::evm::PartialExecution;
     use crate::evm::PartialExecutionWitness;
+    use crate::evm::PartialResultAndState;
     use alloy_evm::op_revm::{OpHaltReason, OpSpecId, OpTransaction};
     use alloy_evm::revm::context::CfgEnv;
     use alloy_evm::revm::context::{BlockEnv, TxEnv};
@@ -485,6 +571,7 @@ mod tests {
     use alloy_evm::revm::database::in_memory_db::InMemoryDB;
     use alloy_evm::revm::database::states::CacheAccount;
     use alloy_evm::revm::database::CacheState;
+    use alloy_evm::revm::state::Account;
     use alloy_evm::revm::state::AccountInfo;
     use alloy_evm::revm::state::Bytecode;
     use alloy_evm::{Evm, EvmEnv, EvmFactory};
@@ -524,8 +611,6 @@ mod tests {
         }
     }
 
-    /// Builds a stub `ResultAndState` that flags itself with a recognizable gas_used so
-    /// tests can confirm the pre-computed entry — not live execution — was returned.
     fn stub_result_and_state(gas_used: u64) -> ResultAndState<OpHaltReason> {
         ResultAndState {
             result: ExecutionResult::Success {
@@ -540,17 +625,7 @@ mod tests {
     }
 
     fn stub_chunk(block_number: u64, gas_used_markers: &[u64]) -> PartialExecution {
-        // The tests construct incoming txs via `make_transfer(...)`, which is
-        // `OpTransaction { base: TxEnv { .. }, ..Default::default() }`. The
-        // default sets `enveloped_tx: Some(vec![0x00].into())`, so every
-        // incoming tx hashes to `keccak256(&[0x00])`. To make `CachedEvm`'s
-        // per-tx validation accept all test txs, populate each `tx_hashes[i]`
-        // with that same value.
         let default_tx_hash = keccak256([0x00u8]);
-        // The chunk's `block_env.number` must match the EVM's `block_env.number`
-        // or `CachedEvm::transact_raw` rejects the serve with a BlockEnv mismatch.
-        // All other fields default — tests construct the EVM with the same
-        // `BlockEnv::default()` override-only-number shape via `test_env_for_block`.
         let block_env = BlockEnv {
             number: U256::from(block_number),
             ..Default::default()
@@ -561,14 +636,13 @@ mod tests {
                 .iter()
                 .copied()
                 .map(stub_result_and_state)
+                .map(PartialResultAndState::from)
                 .collect(),
             block_env,
             op_block_ctx: alloy_op_evm::block::OpBlockExecutionCtx::default(),
         }
     }
 
-    /// A pre-computed chunk entry must be returned verbatim by `transact_raw()`,
-    /// bypassing inner-EVM execution. The marker gas_used proves it came from the chunk.
     #[test]
     fn precomputed_results_returned_in_order() {
         let chunks = vec![vec![stub_chunk(1, &[100_001, 100_002, 100_003])]];
@@ -604,8 +678,6 @@ mod tests {
         }
     }
 
-    /// Blocks without chunk entries flow through the inner `OpEvm` normally: every
-    /// `transact_raw()` delegates, and the state diff carries real account changes.
     #[test]
     fn empty_chunks_delegate_to_inner() {
         let factory = CachedEvmFactory::new(Vec::new());
@@ -632,9 +704,6 @@ mod tests {
         assert!(result.state.contains_key(&recipient));
     }
 
-    /// System calls bypass chunk routing: they must delegate to the inner EVM and leave
-    /// the tx index untouched so the next tx-body transaction still receives chunk
-    /// result index 0.
     #[test]
     fn system_calls_delegate_and_do_not_advance_tx_index() {
         let chunks = vec![vec![stub_chunk(1, &[42])]];
@@ -659,8 +728,6 @@ mod tests {
         }
     }
 
-    /// Multiple chunks within a block are consumed sequentially, with the cursor
-    /// advancing across chunk boundaries.
     #[test]
     fn multi_chunk_within_block_crosses_boundary() {
         // Chunk 0: txs 0..2, markers [10, 20]. Chunk 1: txs 2..4, markers [30, 40].
@@ -682,10 +749,6 @@ mod tests {
         }
     }
 
-    /// `create_evm` serves chunks in input positional order: slot 0 flows to the
-    /// first `create_evm` call, slot 1 to the second, etc. During normal
-    /// derivation `CachedExecutor` calls `create_evm` once per block in
-    /// ascending order, so outer index `i` maps to the `i`-th block served.
     #[test]
     fn factory_serves_chunks_in_creation_order() {
         // Slot 0: empty (first EVM created gets no pre-computed results).
@@ -725,8 +788,6 @@ mod tests {
         }
     }
 
-    /// Trait-method field access should flow through the default `db()`/`block()` etc.
-    /// methods and reach the inner `OpEvm`.
     #[test]
     fn trait_method_field_access_works() {
         let factory = CachedEvmFactory::new(Vec::new());
@@ -737,9 +798,6 @@ mod tests {
         let _ = evm.db();
     }
 
-    /// `take_next_chunks` pops the next block's chunks in execution order. After
-    /// the cache is drained, subsequent calls return empty vecs (matching the
-    /// "graceful fall-through to inner EVM" behavior).
     #[test]
     fn take_next_chunks_pops_in_order() {
         // No EVM is built here — block_number is irrelevant, but pass a non-zero
@@ -754,9 +812,6 @@ mod tests {
         assert!(factory.take_next_chunks().is_empty());
     }
 
-    /// When a block's chunks are exhausted, further `transact_raw()` calls delegate to
-    /// the inner EVM. This supports graceful fall-through when a block has more tx-body
-    /// calls than chunk results (defensive — in production the host covers every tx).
     #[test]
     fn exhausted_chunks_delegate_to_inner() {
         // Chunk has only one result.
@@ -866,5 +921,232 @@ mod tests {
             Some(code.original_bytes())
         );
         assert_eq!(witness.cache.has_state_clear, recoded.cache.has_state_clear);
+    }
+
+    #[test]
+    fn partial_account_revm_round_trip() {
+        use crate::evm::PartialAccount;
+        use alloy_evm::revm::primitives::HashMap;
+        use alloy_evm::revm::state::{AccountInfo, AccountStatus, EvmStorageSlot};
+
+        let info = AccountInfo {
+            nonce: 7,
+            balance: U256::from(123_456u64),
+            code_hash: B256::repeat_byte(0xAB),
+            account_id: None,
+            code: None,
+        };
+        let original_info = AccountInfo {
+            nonce: 5,
+            balance: U256::from(100_000u64),
+            code_hash: B256::repeat_byte(0xCD),
+            account_id: None,
+            code: None,
+        };
+
+        // Insert in reverse-sorted order to exercise the sort invariant.
+        let mut storage: HashMap<U256, EvmStorageSlot> = Default::default();
+        storage.insert(
+            U256::from(42),
+            EvmStorageSlot::new_changed(U256::ZERO, U256::from(99), 0),
+        );
+        storage.insert(
+            U256::from(7),
+            EvmStorageSlot::new_changed(U256::from(1), U256::from(2), 0),
+        );
+        storage.insert(
+            U256::from(13),
+            EvmStorageSlot::new_changed(U256::from(3), U256::from(4), 0),
+        );
+
+        let account = Account {
+            info,
+            original_info: Box::new(original_info),
+            transaction_id: 99,
+            storage,
+            status: AccountStatus::Touched | AccountStatus::Created,
+        };
+
+        // Capture an independent reference for set-equality comparison after
+        // round-trip.
+        let original_storage_set: std::collections::BTreeSet<(U256, U256, U256)> = account
+            .storage
+            .iter()
+            .map(|(k, v)| (*k, v.original_value, v.present_value))
+            .collect();
+
+        let partial = PartialAccount::from(account);
+
+        // Sort invariant on the Vec.
+        assert!(
+            partial.storage.windows(2).all(|w| w[0].slot < w[1].slot),
+            "PartialAccount::from(Account) must produce storage sorted by slot",
+        );
+        assert_eq!(partial.storage.len(), 3);
+
+        // Round-trip back to revm.
+        let rebuilt: Account = partial.into();
+        assert_eq!(rebuilt.info.nonce, 7);
+        assert_eq!(rebuilt.original_info.nonce, 5);
+        assert_eq!(rebuilt.transaction_id, 99);
+        assert_eq!(rebuilt.storage.len(), 3);
+        let rebuilt_set: std::collections::BTreeSet<(U256, U256, U256)> = rebuilt
+            .storage
+            .iter()
+            .map(|(k, v)| (*k, v.original_value, v.present_value))
+            .collect();
+        assert_eq!(original_storage_set, rebuilt_set);
+    }
+
+    #[test]
+    fn partial_result_and_state_rkyv_round_trip() {
+        use crate::evm::PartialResultAndState;
+        use alloy_evm::revm::primitives::HashMap;
+        use alloy_evm::revm::state::{AccountInfo, AccountStatus, EvmStorageSlot};
+
+        let make_account = |seed: u8| {
+            let mut storage: HashMap<U256, EvmStorageSlot> = Default::default();
+            storage.insert(
+                U256::from(2u64),
+                EvmStorageSlot::new_changed(U256::ZERO, U256::from(seed as u64 + 100), 0),
+            );
+            storage.insert(
+                U256::from(1u64),
+                EvmStorageSlot::new_changed(U256::ZERO, U256::from(seed as u64 + 200), 0),
+            );
+            Account {
+                info: AccountInfo {
+                    nonce: seed as u64,
+                    balance: U256::from(seed as u64 * 1000),
+                    code_hash: B256::repeat_byte(seed),
+                    account_id: None,
+                    code: None,
+                },
+                original_info: Box::new(AccountInfo {
+                    nonce: 0,
+                    balance: U256::ZERO,
+                    code_hash: B256::ZERO,
+                    account_id: None,
+                    code: None,
+                }),
+                transaction_id: seed as usize,
+                storage,
+                status: AccountStatus::Touched,
+            }
+        };
+
+        let mut state: alloy_evm::revm::primitives::HashMap<Address, Account> = Default::default();
+        // Insert out of address order.
+        state.insert(
+            address!("0xCCCC000000000000000000000000000000000000"),
+            make_account(0xCC),
+        );
+        state.insert(
+            address!("0xAAAA000000000000000000000000000000000000"),
+            make_account(0xAA),
+        );
+        state.insert(
+            address!("0xBBBB000000000000000000000000000000000000"),
+            make_account(0xBB),
+        );
+
+        let revm_ras = ResultAndState {
+            result: ExecutionResult::Success {
+                reason: SuccessReason::Return,
+                gas_used: 50_000,
+                gas_refunded: 0,
+                logs: vec![],
+                output: Output::Call(Bytes::new()),
+            },
+            state,
+        };
+
+        let partial = PartialResultAndState::from(revm_ras);
+
+        // Sort invariants.
+        assert!(
+            partial
+                .state
+                .windows(2)
+                .all(|w| w[0].address < w[1].address),
+            "state must be sorted by address",
+        );
+        for entry in &partial.state {
+            assert!(
+                entry
+                    .account
+                    .storage
+                    .windows(2)
+                    .all(|w| w[0].slot < w[1].slot),
+                "per-account storage must be sorted by slot",
+            );
+        }
+
+        // rkyv round-trip.
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&partial).unwrap();
+        let recoded: PartialResultAndState =
+            rkyv::from_bytes::<PartialResultAndState, rkyv::rancor::Error>(&bytes).unwrap();
+
+        // Sort invariants survive the round-trip.
+        assert!(recoded
+            .state
+            .windows(2)
+            .all(|w| w[0].address < w[1].address));
+        for entry in &recoded.state {
+            assert!(entry
+                .account
+                .storage
+                .windows(2)
+                .all(|w| w[0].slot < w[1].slot));
+        }
+
+        // Field equality. ExecutionResult success-variant fields:
+        match (&partial.result, &recoded.result) {
+            (
+                ExecutionResult::Success { gas_used: a, .. },
+                ExecutionResult::Success { gas_used: b, .. },
+            ) => assert_eq!(a, b),
+            _ => panic!("ExecutionResult variant changed across rkyv round-trip"),
+        }
+        assert_eq!(partial.state.len(), recoded.state.len());
+        for (a_entry, b_entry) in partial.state.iter().zip(recoded.state.iter()) {
+            assert_eq!(a_entry.address, b_entry.address);
+            let a_acc = &a_entry.account;
+            let b_acc = &b_entry.account;
+            assert_eq!(a_acc.info.nonce, b_acc.info.nonce);
+            assert_eq!(a_acc.info.balance, b_acc.info.balance);
+            assert_eq!(a_acc.info.code_hash, b_acc.info.code_hash);
+            assert_eq!(a_acc.original_info.nonce, b_acc.original_info.nonce);
+            assert_eq!(a_acc.status.bits(), b_acc.status.bits());
+            assert_eq!(a_acc.storage.len(), b_acc.storage.len());
+            for (sa, sb) in a_acc.storage.iter().zip(b_acc.storage.iter()) {
+                assert_eq!(sa.slot, sb.slot);
+                assert_eq!(sa.slot_value.original_value, sb.slot_value.original_value);
+                assert_eq!(sa.slot_value.present_value, sb.slot_value.present_value);
+            }
+        }
+
+        // Round-trip to revm: HashMap rebuild must preserve set-equality of
+        // (addr, slot, original, present) tuples.
+        let rebuilt: ResultAndState<OpHaltReason> = recoded.into();
+        assert_eq!(rebuilt.state.len(), partial.state.len());
+        for entry in &partial.state {
+            let rebuilt_acc = rebuilt
+                .state
+                .get(&entry.address)
+                .expect("rebuilt state missing address");
+            assert_eq!(rebuilt_acc.storage.len(), entry.account.storage.len());
+            for slot_entry in &entry.account.storage {
+                let rebuilt_v = rebuilt_acc
+                    .storage
+                    .get(&slot_entry.slot)
+                    .expect("rebuilt account missing slot");
+                assert_eq!(
+                    rebuilt_v.original_value,
+                    slot_entry.slot_value.original_value
+                );
+                assert_eq!(rebuilt_v.present_value, slot_entry.slot_value.present_value);
+            }
+        }
     }
 }

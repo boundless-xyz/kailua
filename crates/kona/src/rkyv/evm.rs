@@ -13,11 +13,6 @@
 // limitations under the License.
 
 //! rkyv `ArchiveWith` wrappers for revm's `Cache` and `EvmAccumulatorState`.
-//!
-//! revm's `Cache`, `DbAccount`, `AccountInfo`, and `Bytecode` have no rkyv support.
-//! This module bridges the gap using the `ArchiveWith` / `SerializeWith` / `DeserializeWith`
-//! pattern consistent with `execution.rs` and other rkyv modules. Fields are decomposed into
-//! tuples of rkyv-native types and rkyv handles the actual serialization.
 
 use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
@@ -64,8 +59,6 @@ pub type RkyvedCache = (
 );
 
 /// rkyv wrapper for revm's `Cache`.
-///
-/// Archives `Cache` as a tuple of rkyv-native types via [`RkyvedCache`].
 pub struct CacheRkyv;
 
 impl CacheRkyv {
@@ -260,11 +253,6 @@ fn cache_account_status_from_byte(b: u8) -> CacheAccountStatus {
 }
 
 /// rkyv wrapper for revm's [`CacheState`].
-///
-/// Archives `CacheState` as a tuple of rkyv-native types via [`RkyvedCacheState`].
-/// Unlike [`CacheRkyv`] (which wraps `Cache`), `CacheState` has no `logs` or
-/// `block_hashes` — those fields live on `State` itself, not on the cached
-/// pre-state view.
 pub struct CacheStateRkyv;
 
 impl CacheStateRkyv {
@@ -396,10 +384,6 @@ type RkyvedBlockEnv = (
 );
 
 /// rkyv wrapper for revm's [`BlockEnv`].
-///
-/// Archives as a tuple of rkyv-native types via [`RkyvedBlockEnv`].
-/// `BlobExcessGasAndPrice` is projected through [`RkyvedBlobGasAndPrice`] since
-/// the upstream type lacks rkyv support.
 pub struct BlockEnvRkyv;
 
 impl BlockEnvRkyv {
@@ -858,6 +842,143 @@ where
     }
 }
 
+// -- AccountInfoRkyv / AccountStatusRkyv / EvmStorageSlotRkyv --
+
+/// `with`-wrapper for revm's [`AccountInfo`]. Archives via the existing
+/// `RkyvedAccountInfo = (u64, [u8; 32], [u8; 32])` tuple shape used by
+/// `AccountRkyv`. Drops `account_id` and `code` (consistent with
+/// `AccountRkyv` — `code_hash` binds bytecode content via
+/// `validate_cached_contracts`).
+pub struct AccountInfoRkyv;
+
+impl ArchiveWith<AccountInfo> for AccountInfoRkyv {
+    type Archived = Archived<RkyvedAccountInfo>;
+    type Resolver = Resolver<RkyvedAccountInfo>;
+
+    fn resolve_with(field: &AccountInfo, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = account_info_to_rkyv(field);
+        <RkyvedAccountInfo as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<AccountInfo, S> for AccountInfoRkyv
+where
+    S: Fallible + rkyv::ser::Allocator + rkyv::ser::Writer + ?Sized,
+    <S as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn serialize_with(field: &AccountInfo, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        let rkyved = account_info_to_rkyv(field);
+        <RkyvedAccountInfo as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedAccountInfo>, AccountInfo, D> for AccountInfoRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedAccountInfo>,
+        deserializer: &mut D,
+    ) -> Result<AccountInfo, D::Error> {
+        let rkyved: RkyvedAccountInfo = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(account_info_from_rkyv(rkyved))
+    }
+}
+
+/// `with`-wrapper for revm's [`AccountStatus`]. Archives as
+/// the bitflag's `u8` representation — matches what `AccountRkyv` already
+/// emits for the `status` field.
+pub struct AccountStatusRkyv;
+
+impl ArchiveWith<AccountStatus> for AccountStatusRkyv {
+    type Archived = Archived<u8>;
+    type Resolver = Resolver<u8>;
+
+    fn resolve_with(field: &AccountStatus, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        <u8 as Archive>::resolve(&field.bits(), resolver, out);
+    }
+}
+
+impl<S> SerializeWith<AccountStatus, S> for AccountStatusRkyv
+where
+    S: Fallible + ?Sized,
+    <S as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn serialize_with(
+        field: &AccountStatus,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        <u8 as rkyv::Serialize<S>>::serialize(&field.bits(), serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<u8>, AccountStatus, D> for AccountStatusRkyv
+where
+    D: Fallible + ?Sized,
+{
+    fn deserialize_with(field: &Archived<u8>, _: &mut D) -> Result<AccountStatus, D::Error> {
+        Ok(AccountStatus::from_bits_retain(*field))
+    }
+}
+
+/// `with`-wrapper for revm's [`EvmStorageSlot`].
+/// Archives as `(original_be32, present_be32)` — the shape `AccountRkyv`
+/// already emits per-slot. Transient fields (`transaction_id`, `is_cold`)
+/// are dropped on archive and reset to `(0, false)` on deserialize, matching
+/// `AccountRkyv`'s existing behavior.
+pub struct EvmStorageSlotRkyv;
+
+impl ArchiveWith<EvmStorageSlot> for EvmStorageSlotRkyv {
+    type Archived = Archived<RkyvedEvmStorageSlot>;
+    type Resolver = Resolver<RkyvedEvmStorageSlot>;
+
+    fn resolve_with(field: &EvmStorageSlot, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = (
+            field.original_value.to_be_bytes::<32>(),
+            field.present_value.to_be_bytes::<32>(),
+        );
+        <RkyvedEvmStorageSlot as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<EvmStorageSlot, S> for EvmStorageSlotRkyv
+where
+    S: Fallible + ?Sized,
+    <S as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn serialize_with(
+        field: &EvmStorageSlot,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = (
+            field.original_value.to_be_bytes::<32>(),
+            field.present_value.to_be_bytes::<32>(),
+        );
+        <RkyvedEvmStorageSlot as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedEvmStorageSlot>, EvmStorageSlot, D> for EvmStorageSlotRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: rkyv::rancor::Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedEvmStorageSlot>,
+        deserializer: &mut D,
+    ) -> Result<EvmStorageSlot, D::Error> {
+        let (orig, present): RkyvedEvmStorageSlot =
+            rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(EvmStorageSlot {
+            original_value: U256::from_be_bytes(orig),
+            present_value: U256::from_be_bytes(present),
+            transaction_id: 0,
+            is_cold: false,
+        })
+    }
+}
+
 // -- ExecutionResultRkyv --
 
 type RkyvedLogEntry = ([u8; 20], Vec<[u8; 32]>, Vec<u8>);
@@ -1026,9 +1147,6 @@ where
 type RkyvedResultAndState = (RkyvedExecutionResult, RkyvedEvmState);
 
 /// rkyv wrapper for [`ResultAndState<OpHaltReason>`].
-///
-/// Composes [`ExecutionResultRkyv`] and [`EvmStateRkyv`].
-/// Used by `Chunk.results` via `rkyv::with::Map<ResultAndStateRkyv>`.
 pub struct ResultAndStateRkyv;
 
 impl ResultAndStateRkyv {
