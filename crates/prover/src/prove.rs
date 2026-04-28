@@ -30,6 +30,7 @@ use itertools::Itertools;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::core::split_block_partials;
 use kailua_kona::driver::CachedDriver;
+use kailua_kona::evm::PartialExecution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::Precondition;
 use kailua_sync::provider::optimism::OpNodeProvider;
@@ -40,8 +41,9 @@ use opentelemetry::global::tracer;
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
 use risc0_zkvm::sha::Digestible;
-use std::collections::BinaryHeap;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::env::set_var;
+use std::sync::Arc;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::fs::remove_dir_all;
@@ -164,6 +166,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     // Prove partial executions
     info!("Dispatching partial execution proving tasks.");
     let mut expected_partials = 0;
+    let mut partial_proof_cache: BTreeMap<u64, Vec<PartialExecution>> = Default::default();
     for (exec, partials) in block_executions
         .into_iter()
         .zip(partial_executions.into_iter())
@@ -198,6 +201,12 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         let parent_hash = exec.artifacts.header.parent_hash;
         let starting_block = exec.artifacts.header.number.saturating_sub(1);
         for partial in split_block_partials(partials, args.proving.num_block_partials) {
+            // Log proof in cache
+            partial_proof_cache
+                .entry(starting_block)
+                .or_insert_with(|| Default::default())
+                .push(partial.clone());
+            // Dispatch job
             let job_args = ProveArgs {
                 kona: SingleChainHost {
                     l1_head: B256::repeat_byte(0xFF),
@@ -219,6 +228,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
             let execution = exec.clone();
             tokio::spawn(async move {
                 let result = crate::tasks::compute_oneshot_task(
+                    None,
                     job_args.clone(),
                     rollup_config,
                     l1_config,
@@ -257,12 +267,17 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
             .await
             .expect("Failed to recv prover task");
         received_partials += 1;
-        if let Err(e) = result {
-            error!("Failed to prove partial execution for block {starting_block}: {e:?}");
-        } else {
-            info!("Proved partial for block {starting_block}");
+        match result {
+            Err(e) => {
+                error!("Failed to prove partial execution for block {starting_block}: {e:?}");
+            }
+            Ok(None) => {
+                error!("No proof received for block {starting_block}");
+            }
+            _ => {}
         }
     }
+    let partial_proof_cache = Arc::new(partial_proof_cache);
 
     // create channel for receiving proof requests to process and dispatch to handlers
     let prover_channel = async_channel::unbounded();
@@ -418,8 +433,10 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
             let disk_kv_store = disk_kv_store.clone();
             let task_channel = task_channel.clone();
             let result_channel = result_channel.clone();
+            let partial_proof_cache = partial_proof_cache.clone();
             tokio::spawn(async move {
                 let result = crate::tasks::compute_fpvm_proof(
+                    Some(partial_proof_cache),
                     job_args.clone(),
                     rollup_config,
                     l1_config,
@@ -460,6 +477,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                     Precondition::default().proposal(proposal_precondition_hash)
                 });
                 let cached_task = CachedTask {
+                    partials_cache: Some(partial_proof_cache.clone()),
                     // used for sorting
                     args: job_args.clone(),
                     // all unused
@@ -726,6 +744,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                         .proposal(proposal_precondition_hash)
                         .derivation(driver_cache_hash, driver_cache_hash);
                     let result = crate::tasks::compute_fpvm_proof(
+                        None,
                         stitch_job_args.clone(),
                         rollup_config,
                         l1_config,
@@ -760,6 +779,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
 
                 results.push(OneshotResult {
                     cached_task: CachedTask {
+                        partials_cache: None, // we don't do any block execution in this aggregation pass
                         args: stitch_job_args,
                         rollup_config: rollup_config.clone(),
                         l1_config: l1_config.clone(),

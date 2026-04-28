@@ -40,7 +40,7 @@ use kona_protocol::L2BlockInfo;
 use opentelemetry::trace::{TraceContextExt, Tracer};
 use risc0_zkvm::sha::Digestible;
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::convert::identity;
 use std::path::Path;
 use std::sync::Arc;
@@ -48,6 +48,7 @@ use tracing::{error, info, warn};
 
 #[derive(Clone, Debug)]
 pub struct CachedTask {
+    pub partials_cache: Option<Arc<BTreeMap<u64, Vec<PartialExecution>>>>,
     pub args: ProveArgs,
     pub rollup_config: RollupConfig,
     pub l1_config: L1ChainConfig,
@@ -135,6 +136,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
             .send(OneshotResult {
                 cached_task: cached_task.clone(),
                 result: compute_cached_proof(
+                    cached_task.partials_cache,
                     cached_task.args,
                     cached_task.rollup_config,
                     cached_task.l1_config,
@@ -164,6 +166,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
 /// Send a [Oneshot] task to the prover pool and return once the result arrives
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_oneshot_task(
+    partials_cache: Option<Arc<BTreeMap<u64, Vec<PartialExecution>>>>,
     args: ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,
@@ -184,6 +187,7 @@ pub async fn compute_oneshot_task(
 ) -> Result<OneshotResultResponse, ProvingError> {
     // create proving task
     let cached_task = CachedTask {
+        partials_cache,
         args,
         rollup_config,
         l1_config,
@@ -223,6 +227,7 @@ pub async fn compute_oneshot_task(
 /// Computes a receipt if it is not cached
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_fpvm_proof(
+    partials_cache: Option<Arc<BTreeMap<u64, Vec<PartialExecution>>>>,
     mut args: ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,
@@ -291,6 +296,7 @@ pub async fn compute_fpvm_proof(
     info!("Attempting complete proof.");
     let stitching_only = args.kona.agreed_l2_output_root == args.kona.claimed_l2_output_root;
     let complete_proof_result = compute_oneshot_task(
+        partials_cache.clone(),
         args.clone(),
         rollup_config.clone(),
         l1_config.clone(),
@@ -456,6 +462,7 @@ pub async fn compute_fpvm_proof(
                     old_l1_tail.header.number, l1_tail.header.number
                 );
                 let derivation_only_result = compute_oneshot_task(
+                    partials_cache.clone(),
                     args.clone(),
                     rollup_config.clone(),
                     l1_config.clone(),
@@ -578,6 +585,7 @@ pub async fn compute_fpvm_proof(
             execution_cache.len()
         );
         let provability_result = compute_oneshot_task(
+            partials_cache.clone(),
             args.clone(),
             rollup_config.clone(),
             l1_config.clone(),
@@ -643,6 +651,7 @@ pub async fn compute_fpvm_proof(
                         l1_config.clone(),
                         disk_kv_store.clone(),
                         &execution_cache,
+                        partials_cache.clone(),
                     ),
                     result_sender: execution_result_channel.0.clone(),
                 })
@@ -666,6 +675,7 @@ pub async fn compute_fpvm_proof(
         task_sender
             .send(Oneshot {
                 cached_task: CachedTask {
+                    partials_cache: partials_cache.clone(),
                     args,
                     rollup_config: rollup_config.clone(),
                     l1_config: l1_config.clone(),
@@ -783,6 +793,7 @@ pub async fn compute_fpvm_proof(
                     l1_config.clone(),
                     disk_kv_store.clone(),
                     &execution_cache,
+                    partials_cache.clone(),
                 ),
                 result_sender: execution_result_channel.0.clone(),
             })
@@ -801,6 +812,7 @@ pub async fn compute_fpvm_proof(
                     l1_config.clone(),
                     disk_kv_store.clone(),
                     &execution_cache,
+                    partials_cache.clone(),
                 ),
                 result_sender: execution_result_channel.0.clone(),
             })
@@ -885,6 +897,7 @@ pub async fn compute_fpvm_proof(
 
     Ok(Some(
         compute_oneshot_task(
+            partials_cache.clone(),
             args,
             rollup_config,
             l1_config,
@@ -914,6 +927,7 @@ pub fn create_cached_execution_task(
     l1_config: L1ChainConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     execution_cache: &[Arc<Execution>],
+    partials_cache: Option<Arc<BTreeMap<u64, Vec<PartialExecution>>>>,
 ) -> CachedTask {
     let starting_block = execution_cache
         .iter()
@@ -950,6 +964,7 @@ pub fn create_cached_execution_task(
         .collect::<Vec<_>>();
 
     CachedTask {
+        partials_cache,
         args,
         rollup_config,
         l1_config,
@@ -972,6 +987,7 @@ pub fn create_cached_execution_task(
 /// Launches the native Kailua-Kona client-server pair to compute a [OneshotResultResponse]
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_cached_proof(
+    partials_cache: Option<Arc<BTreeMap<u64, Vec<PartialExecution>>>>,
     mut args: ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,

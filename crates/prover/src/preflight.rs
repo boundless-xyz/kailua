@@ -514,6 +514,7 @@ pub async fn concurrent_preflight(
         );
         // queue and start new job
         let task = tokio::spawn(crate::tasks::compute_cached_proof(
+            None,
             args.clone(),
             rollup_config.clone(),
             l1_config.clone(),
