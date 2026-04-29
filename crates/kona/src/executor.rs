@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::client::log;
-use crate::evm::{PartialExecution, PartialResultAndState};
+use crate::evm::{PartialExecution, PartialExecutionTrace};
 use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
@@ -326,15 +326,23 @@ fn expected_blob_excess_gas_and_price(
 
 pub fn build_single_partial_for_block(
     execution: &Execution,
-    traces: Vec<(B256, PartialResultAndState)>,
+    traces: Vec<PartialExecutionTrace>,
     parent_header: &Header,
     spec_id: OpSpecId,
 ) -> PartialExecution {
     let header = execution.artifacts.header.inner();
-    let (tx_hashes, results): (Vec<B256>, Vec<_>) = traces.into_iter().unzip();
+    let expected_state = traces
+        .first()
+        .map(|trace| trace.expected_state.clone())
+        .unwrap_or_default();
+    let (tx_hashes, results): (Vec<B256>, Vec<_>) = traces
+        .into_iter()
+        .map(|trace| (trace.tx_hash, trace.result))
+        .unzip();
     PartialExecution {
         tx_hashes,
         results,
+        expected_state,
         block_env: BlockEnv {
             number: U256::from(header.number),
             beneficiary: header.beneficiary,

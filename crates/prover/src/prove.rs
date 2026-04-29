@@ -29,7 +29,6 @@ use anyhow::{anyhow, bail, Context};
 use human_bytes::human_bytes;
 use itertools::Itertools;
 use kailua_kona::boot::StitchedBootInfo;
-use kailua_kona::client::core::split_block_partials;
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::Precondition;
@@ -167,7 +166,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     info!("Dispatching partial execution proving tasks.");
     let mut expected_partials = 0;
     let mut partial_proof_cache: PartialsCache = Default::default();
-    for (exec, partials) in block_executions
+    for (exec, mut partials) in block_executions
         .into_iter()
         .zip(partial_executions.into_iter())
     {
@@ -182,7 +181,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
             continue;
         }
         // Ascertain we have partials for non-empty blocks
-        let Some(partial) = partials.first() else {
+        let Some(partial) = partials.pop() else {
             error!(
                 "Missing partial result for {}",
                 exec.artifacts.header.number
@@ -200,7 +199,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         // Dispatch partial proving tasks
         let parent_hash = exec.artifacts.header.parent_hash;
         let starting_block = exec.artifacts.header.number.saturating_sub(1);
-        for partial in split_block_partials(partials, args.proving.num_block_partials) {
+        for partial in partial.split(args.proving.num_block_partials) {
             dbg!(partial.precondition_hash());
             dbg!(&partial.tx_hashes);
             dbg!(&partial.results);

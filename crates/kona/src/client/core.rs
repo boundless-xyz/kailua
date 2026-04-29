@@ -14,15 +14,17 @@
 
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::evm::CachedEvmFactory;
-use crate::evm::PartialExecution;
-use crate::evm::PartialExecutionWitness;
-use crate::evm::TransactionResultCollector;
+use crate::evm::{
+    verify_expected_state, CachedEvmFactory, PartialExecution, PartialExecutionWitness,
+    TransactionResultCollector,
+};
 use crate::executor::build_single_partial_for_block;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
-use crate::precondition::evm::{compute_pe_trace, hash_block_ctx, hash_results};
+use crate::precondition::evm::{
+    compute_pe_trace, hash_block_ctx, hash_expected_state, hash_results,
+};
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
 use alloy_consensus::transaction::SignerRecoverable;
@@ -143,6 +145,7 @@ where
             log("PARTIAL EXECUTION");
             let PartialExecutionWitness {
                 transactions,
+                expected_state,
                 block_env,
                 op_block_ctx,
                 cache,
@@ -180,6 +183,7 @@ where
             let cfg_env = alloy_evm::revm::context::CfgEnv::new()
                 .with_chain_id(boot.chain_id)
                 .with_spec_and_mainnet_gas_params(rollup_config.spec_id(block_env.timestamp.to()));
+            verify_expected_state(&mut state, &expected_state, cfg_env.spec);
             let evm_env = alloy_evm::EvmEnv::new(cfg_env, block_env);
 
             // Instantiate traced block executor to capture all execution results
@@ -214,15 +218,17 @@ where
                 .into_iter()
                 .next()
                 .unwrap_or_default();
-            let (captured_tx_hashes, captured_results): (Vec<B256>, Vec<_>) =
-                traces.into_iter().unzip();
-            let results_hash = hash_results(&captured_tx_hashes, &captured_results);
+            let (captured_tx_hashes, captured_results): (Vec<B256>, Vec<_>) = traces
+                .into_iter()
+                .map(|trace| (trace.tx_hash, trace.result))
+                .unzip();
 
             // Return result
-            let pe_trace = compute_pe_trace(results_hash, block_ctx_hash);
-            log(&format!("{pe_trace}"));
-            log(&format!("{captured_tx_hashes:?}"));
-            log(&format!("{captured_results:?}"));
+            let pe_trace = compute_pe_trace(
+                hash_results(&captured_tx_hashes, &captured_results),
+                block_ctx_hash,
+                hash_expected_state(&expected_state),
+            );
             return Ok((boot, Precondition::default().partial(pe_trace)));
         }
 
@@ -547,49 +553,13 @@ pub fn split_collected_partials(
 ) -> Vec<Vec<PartialExecution>> {
     partials
         .into_iter()
-        .map(|block_partials| split_block_partials(block_partials, partials_per_block))
+        .map(|mut block_partials| {
+            block_partials
+                .pop()
+                .map(|partial| partial.split(partials_per_block))
+                .unwrap_or_default()
+        })
         .collect()
-}
-
-pub fn split_block_partials(
-    partials: Vec<PartialExecution>,
-    partials_per_block: usize,
-) -> Vec<PartialExecution> {
-    // return nothing if we don't want any partials per block
-    if partials_per_block == 0 {
-        return vec![];
-    }
-    // process split
-    partials
-        .first()
-        .cloned()
-        .map(
-            |PartialExecution {
-                 block_env,
-                 op_block_ctx,
-                 ..
-             }| {
-                // Flatten all executions
-                let (tx_hashes, results): (Vec<_>, Vec<_>) = partials
-                    .into_iter()
-                    .flat_map(|p| p.tx_hashes.into_iter().zip(p.results.into_iter()))
-                    .unzip();
-                // Split into specified partial count
-                let partial_size = tx_hashes.len().div_ceil(partials_per_block).max(1);
-                tx_hashes
-                    .chunks(partial_size)
-                    .into_iter()
-                    .zip(results.chunks(partial_size).into_iter())
-                    .map(|(tx_hashes, results)| PartialExecution {
-                        tx_hashes: tx_hashes.to_vec(),
-                        results: results.to_vec(),
-                        block_env: block_env.clone(),
-                        op_block_ctx: op_block_ctx.clone(),
-                    })
-                    .collect()
-            },
-        )
-        .unwrap_or_default()
 }
 
 pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
@@ -981,6 +951,28 @@ pub mod tests {
             }
         }
 
+        let split_captured = split_collected_partials(pre_captured.clone(), usize::MAX);
+
+        // Test a mid-block split partial too. This exercises the proof path whose
+        // expected L1BlockInfo state must include writes from earlier
+        // transactions in the same block.
+        let (split_partial, split_execution) = split_captured
+            .iter()
+            .zip(pre_executions.iter())
+            .find_map(|(partials, execution)| partials.get(1).map(|partial| (partial, execution)))
+            .expect("fixture should include at least one mid-block split partial");
+        let witness =
+            PartialExecutionWitness::from_preflight(split_partial.clone(), split_execution);
+        assert_eq!(split_partial.tx_hashes.len(), witness.transactions.len());
+        let (_, precondition) = test_partial(
+            make_pe_boot(&op_sepolia_16491249_16491349(), &witness),
+            witness,
+        );
+        assert_eq!(
+            precondition,
+            Precondition::default().partial(split_partial.precondition_hash())
+        );
+
         // Run with partials loaded
         let (post_executions, post_captured) = test_derivation_with_partials(
             op_sepolia_16491249_16491349(),
@@ -999,6 +991,20 @@ pub mod tests {
         for (pre, post) in pre_executions.into_iter().zip(post_executions.into_iter()) {
             assert_eq!(pre.artifacts.header, post.artifacts.header);
         }
+
+        // Run with fully split partials loaded
+        let (_post_split_executions, post_split_captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491349(),
+            None,
+            None,
+            Some(Default::default()),
+            split_captured,
+        )
+        .await
+        .unwrap();
+        assert!(post_split_captured
+            .iter()
+            .all(|c| c.first().unwrap().results.is_empty()));
     }
 
     #[tokio::test(flavor = "multi_thread")]

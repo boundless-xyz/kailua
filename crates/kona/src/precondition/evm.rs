@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::evm::{PartialAccount, PartialResultAndState};
+use crate::evm::{
+    PartialAccount, PartialExpectedAccount, PartialExpectedStateEntry, PartialResultAndState,
+};
 use crate::precondition::derivation::flatten_bytes;
 use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context::BlockEnv;
@@ -24,14 +26,23 @@ use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Address, Log, B256};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 
-/// Compute the chunk_trace commitment from the two input hashes.
+/// Compute the chunk_trace commitment from the three input hashes.
 ///
 /// Returns:
 /// ```text
-/// SHA256(results_hash || block_ctx_hash)
+/// SHA256(results_hash || block_ctx_hash || expected_state_hash)
 /// ```
-pub fn compute_pe_trace(results_hash: B256, block_ctx_hash: B256) -> B256 {
-    let hashed_bytes = [results_hash.as_slice(), block_ctx_hash.as_slice()].concat();
+pub fn compute_pe_trace(
+    results_hash: B256,
+    block_ctx_hash: B256,
+    expected_state_hash: B256,
+) -> B256 {
+    let hashed_bytes = [
+        results_hash.as_slice(),
+        block_ctx_hash.as_slice(),
+        expected_state_hash.as_slice(),
+    ]
+    .concat();
     let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
         .as_bytes()
         .try_into()
@@ -84,6 +95,15 @@ pub fn hash_results(tx_hashes: &[B256], results: &[PartialResultAndState]) -> B2
     ]
     .concat();
     let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
+        .as_bytes()
+        .try_into()
+        .unwrap();
+    digest.into()
+}
+
+/// Canonical SHA256 of the expected state carried by a partial execution.
+pub fn hash_expected_state(expected_state: &[PartialExpectedStateEntry]) -> B256 {
+    let digest: [u8; 32] = SHA2::hash_bytes(flatten_expected_state(expected_state).as_slice())
         .as_bytes()
         .try_into()
         .unwrap();
@@ -313,6 +333,56 @@ fn flatten_partial_account(acct: &PartialAccount) -> Vec<u8> {
     .concat()
 }
 
+fn flatten_expected_account(acct: &PartialExpectedAccount) -> Vec<u8> {
+    debug_assert!(
+        acct.storage.windows(2).all(|w| w[0].slot <= w[1].slot),
+        "flatten_expected_account: storage must be sorted by slot",
+    );
+    [
+        [acct.exists as u8].as_slice(),
+        acct.info.nonce.to_be_bytes().as_slice(),
+        acct.info.balance.to_be_bytes::<32>().as_slice(),
+        acct.info.code_hash.as_slice(),
+        (acct.storage.len() as u64).to_be_bytes().as_slice(),
+        acct.storage
+            .iter()
+            .map(|entry| {
+                [
+                    entry.slot.to_be_bytes::<32>().as_slice(),
+                    entry.value.to_be_bytes::<32>().as_slice(),
+                ]
+                .concat()
+            })
+            .collect::<Vec<_>>()
+            .concat()
+            .as_slice(),
+    ]
+    .concat()
+}
+
+pub fn flatten_expected_state(state: &[PartialExpectedStateEntry]) -> Vec<u8> {
+    debug_assert!(
+        state.windows(2).all(|w| w[0].address <= w[1].address),
+        "flatten_expected_state: state must be sorted by address",
+    );
+    [
+        (state.len() as u64).to_be_bytes().as_slice(),
+        state
+            .iter()
+            .map(|entry| {
+                [
+                    entry.address.as_slice(),
+                    flatten_bytes(flatten_expected_account(&entry.account)).as_slice(),
+                ]
+                .concat()
+            })
+            .collect::<Vec<_>>()
+            .concat()
+            .as_slice(),
+    ]
+    .concat()
+}
+
 /// Encode the per-tx state diff carried by [`PartialResultAndState`]. The Vec
 /// is sorted by address by construction, so we walk it directly.
 pub fn flatten_partial_state(state: &[crate::evm::PartialStateEntry]) -> Vec<u8> {
@@ -357,25 +427,52 @@ pub mod tests {
     fn chunk_trace_deterministic() {
         let a = B256::repeat_byte(0x01);
         let b = B256::repeat_byte(0x02);
-        let t1 = compute_pe_trace(a, b);
-        let t2 = compute_pe_trace(a, b);
+        let c = B256::repeat_byte(0x03);
+        let t1 = compute_pe_trace(a, b, c);
+        let t2 = compute_pe_trace(a, b, c);
         assert_eq!(t1, t2);
         assert!(!t1.is_zero());
     }
 
     #[test]
     fn chunk_trace_any_input_change_different() {
-        let base = [B256::repeat_byte(0x01), B256::repeat_byte(0x02)];
-        let baseline = compute_pe_trace(base[0], base[1]);
-        for i in 0..2 {
+        let base = [
+            B256::repeat_byte(0x01),
+            B256::repeat_byte(0x02),
+            B256::repeat_byte(0x03),
+        ];
+        let baseline = compute_pe_trace(base[0], base[1], base[2]);
+        for i in 0..3 {
             let mut modified = base;
             modified[i] = B256::repeat_byte(0xFF);
-            let h = compute_pe_trace(modified[0], modified[1]);
+            let h = compute_pe_trace(modified[0], modified[1], modified[2]);
             assert_ne!(
                 baseline, h,
                 "changing input {i} should produce different trace"
             );
         }
+    }
+
+    #[test]
+    fn hash_expected_state_storage_value_change_different() {
+        let make_state = |value| {
+            vec![PartialExpectedStateEntry {
+                address: Address::ZERO,
+                account: PartialExpectedAccount {
+                    exists: true,
+                    info: AccountInfo::default(),
+                    storage: vec![crate::evm::PartialExpectedStorageEntry {
+                        slot: U256::from(1),
+                        value,
+                    }],
+                },
+            }]
+        };
+
+        assert_ne!(
+            hash_expected_state(&make_state(U256::ZERO)),
+            hash_expected_state(&make_state(U256::from(1))),
+        );
     }
 
     // ========== hash_results tests (results ↔ chunk_trace binding) ==========
@@ -638,7 +735,11 @@ pub mod tests {
 
     #[test]
     fn chunk_trace_integration_with_precondition() {
-        let trace = compute_pe_trace(B256::repeat_byte(0x01), B256::repeat_byte(0x02));
+        let trace = compute_pe_trace(
+            B256::repeat_byte(0x01),
+            B256::repeat_byte(0x02),
+            B256::repeat_byte(0x03),
+        );
         let p = crate::precondition::Precondition::default().partial(trace);
         assert_eq!(p.digest(), risc0_zkvm::Digest::from_bytes(trace.0));
     }
