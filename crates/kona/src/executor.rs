@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use crate::client::log;
-use crate::evm::{PartialExecution, PartialExecutionTrace};
+use crate::evm::partial::PartialExecution;
+use crate::evm::partial::PartialExecutionTrace;
 use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;

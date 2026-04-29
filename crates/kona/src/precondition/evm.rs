@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::evm::{
-    PartialAccount, PartialExpectedAccount, PartialExpectedStateEntry, PartialResultAndState,
-};
+use crate::evm::expected::{ExpectedAccount, ExpectedStateEntry};
+use crate::evm::partial::{PartialAccount, PartialResultAndState};
 use crate::precondition::derivation::flatten_bytes;
 use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context::BlockEnv;
@@ -102,7 +101,7 @@ pub fn hash_results(tx_hashes: &[B256], results: &[PartialResultAndState]) -> B2
 }
 
 /// Canonical SHA256 of the expected state carried by a partial execution.
-pub fn hash_expected_state(expected_state: &[PartialExpectedStateEntry]) -> B256 {
+pub fn hash_expected_state(expected_state: &[ExpectedStateEntry]) -> B256 {
     let digest: [u8; 32] = SHA2::hash_bytes(flatten_expected_state(expected_state).as_slice())
         .as_bytes()
         .try_into()
@@ -333,7 +332,7 @@ fn flatten_partial_account(acct: &PartialAccount) -> Vec<u8> {
     .concat()
 }
 
-fn flatten_expected_account(acct: &PartialExpectedAccount) -> Vec<u8> {
+fn flatten_expected_account(acct: &ExpectedAccount) -> Vec<u8> {
     debug_assert!(
         acct.storage.windows(2).all(|w| w[0].slot <= w[1].slot),
         "flatten_expected_account: storage must be sorted by slot",
@@ -360,7 +359,7 @@ fn flatten_expected_account(acct: &PartialExpectedAccount) -> Vec<u8> {
     .concat()
 }
 
-pub fn flatten_expected_state(state: &[PartialExpectedStateEntry]) -> Vec<u8> {
+pub fn flatten_expected_state(state: &[ExpectedStateEntry]) -> Vec<u8> {
     debug_assert!(
         state.windows(2).all(|w| w[0].address <= w[1].address),
         "flatten_expected_state: state must be sorted by address",
@@ -385,7 +384,7 @@ pub fn flatten_expected_state(state: &[PartialExpectedStateEntry]) -> Vec<u8> {
 
 /// Encode the per-tx state diff carried by [`PartialResultAndState`]. The Vec
 /// is sorted by address by construction, so we walk it directly.
-pub fn flatten_partial_state(state: &[crate::evm::PartialStateEntry]) -> Vec<u8> {
+pub fn flatten_partial_state(state: &[crate::evm::partial::PartialStateEntry]) -> Vec<u8> {
     debug_assert!(
         state.windows(2).all(|w| w[0].address <= w[1].address),
         "flatten_partial_state: state must be sorted by address",
@@ -456,12 +455,12 @@ pub mod tests {
     #[test]
     fn hash_expected_state_storage_value_change_different() {
         let make_state = |value| {
-            vec![PartialExpectedStateEntry {
+            vec![ExpectedStateEntry {
                 address: Address::ZERO,
-                account: PartialExpectedAccount {
+                account: ExpectedAccount {
                     exists: true,
                     info: AccountInfo::default(),
-                    storage: vec![crate::evm::PartialExpectedStorageEntry {
+                    storage: vec![crate::evm::expected::ExpectedStorageEntry {
                         slot: U256::from(1),
                         value,
                     }],

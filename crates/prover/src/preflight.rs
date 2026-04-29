@@ -26,7 +26,7 @@ use alloy_rlp::Decodable;
 use anyhow::{anyhow, bail, Context};
 use ark_ff::{BigInteger, PrimeField};
 use kailua_kona::blobs::BlobFetchRequest;
-use kailua_kona::evm::PartialExecution;
+use kailua_kona::evm::partial::PartialExecution;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::proposal::ProposalPrecondition;

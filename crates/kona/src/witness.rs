@@ -15,7 +15,8 @@
 use crate::blobs::BlobWitnessData;
 use crate::boot::StitchedBootInfo;
 use crate::driver::CachedDriver;
-use crate::evm::{PartialExecution, PartialExecutionWitness};
+use crate::evm::partial::PartialExecution;
+use crate::evm::witness::PartialExecutionWitness;
 use crate::executor::Execution;
 use crate::oracle::vec::VecOracle;
 use crate::oracle::WitnessOracle;

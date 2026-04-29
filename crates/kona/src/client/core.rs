@@ -14,10 +14,10 @@
 
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::evm::{
-    verify_expected_state, CachedEvmFactory, PartialExecution, PartialExecutionWitness,
-    TransactionResultCollector,
-};
+use crate::evm::cached::CachedEvmFactory;
+use crate::evm::expected::verify_expected_state;
+use crate::evm::partial::{PartialExecution, TransactionResultCollector};
+use crate::evm::witness::PartialExecutionWitness;
 use crate::executor::build_single_partial_for_block;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
 use crate::kona::OracleL1ChainProvider;

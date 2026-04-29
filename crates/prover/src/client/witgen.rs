@@ -24,7 +24,8 @@ use kailua_kona::client::core::{
 };
 use kailua_kona::client::stitching::stitch_boot_info;
 use kailua_kona::driver::CachedDriver;
-use kailua_kona::evm::{PartialExecution, PartialExecutionWitness};
+use kailua_kona::evm::partial::PartialExecution;
+use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::kona::OracleL1ChainProvider;
