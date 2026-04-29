@@ -531,11 +531,11 @@ pub mod tests {
     fn hash_results_gas_change_different() {
         let h1 = hash_results(
             &[B256::ZERO],
-            &vec![PartialResultAndState::from(stub_success(21000))],
+            &[PartialResultAndState::from(stub_success(21000))],
         );
         let h2 = hash_results(
             &[B256::ZERO],
-            &vec![PartialResultAndState::from(stub_success(21001))],
+            &[PartialResultAndState::from(stub_success(21001))],
         );
         assert_ne!(h1, h2);
     }
@@ -544,11 +544,11 @@ pub mod tests {
     fn hash_results_variant_change_different() {
         let success = hash_results(
             &[B256::ZERO],
-            &vec![PartialResultAndState::from(stub_success(21000))],
+            &[PartialResultAndState::from(stub_success(21000))],
         );
         let revert = hash_results(
             &[B256::ZERO],
-            &vec![PartialResultAndState::from(stub_revert(21000, &[]))],
+            &[PartialResultAndState::from(stub_revert(21000, &[]))],
         );
         assert_ne!(success, revert);
     }

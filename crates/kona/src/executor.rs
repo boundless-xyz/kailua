@@ -76,8 +76,7 @@ impl Execution {
             .collect();
         tx_hashes
             .iter()
-            .map(|h| by_hash.get(h).cloned())
-            .flatten()
+            .filter_map(|h| by_hash.get(h).cloned())
             .collect()
     }
 }

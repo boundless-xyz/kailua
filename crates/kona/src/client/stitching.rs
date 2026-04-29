@@ -693,6 +693,7 @@ pub mod tests {
         assert!(proof_journal.fpvm_image_id.is_zero());
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn test_stitching(
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
@@ -719,6 +720,7 @@ pub mod tests {
         validate_proof_journal(proof_journal, boot_info, precondition_hash);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn test_stitching_client(
         boot_info: BootInfo,
         proposal_precondition: Option<ProposalPrecondition>,

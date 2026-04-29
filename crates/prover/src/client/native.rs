@@ -152,12 +152,12 @@ pub async fn run_native_client(
 
     // Precompute partial execution witness
     let pe_witness = if args.kona.l1_head == B256::repeat_byte(0xFF) {
-        let Some(partial) = partial_executions.pop().map(|mut p| p.pop()).flatten() else {
+        let Some(partial) = partial_executions.pop().and_then(|mut p| p.pop()) else {
             return Err(ProvingError::OtherError(anyhow!(
                 "No partial execution to prove"
             )));
         };
-        let Some(exec) = stitched_executions.pop().map(|mut e| e.pop()).flatten() else {
+        let Some(exec) = stitched_executions.pop().and_then(|mut e| e.pop()) else {
             return Err(ProvingError::OtherError(anyhow!(
                 "No corresponding execution for partial"
             )));

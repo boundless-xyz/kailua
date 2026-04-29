@@ -201,8 +201,7 @@ where
 
             // Execute all transactions in partial
             for tx_bytes in transactions {
-                let mut buf = tx_bytes.as_slice();
-                let tx = OpTxEnvelope::decode_2718_exact(&mut buf)
+                let tx = OpTxEnvelope::decode_2718_exact(&tx_bytes)
                     .context("invalid transaction encoding in partial witness")?;
                 let recovered = tx
                     .try_into_recovered()
@@ -735,7 +734,7 @@ pub mod tests {
     ) -> anyhow::Result<B256> {
         // Ensure boot info triggers execution only
         assert!(boot_info.l1_head.is_zero());
-        let execution_cache: Vec<_> = execution_cache.into_iter().map(|e| Arc::new(e)).collect();
+        let execution_cache: Vec<_> = execution_cache.into_iter().map(Arc::new).collect();
         let expected_precondition_hash = exec_precondition_hash(execution_cache.as_slice());
 
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
@@ -934,7 +933,7 @@ pub mod tests {
         for (partials, execution) in pre_captured.iter().zip(pre_executions.iter()) {
             for partial_execution in partials {
                 let witness =
-                    PartialExecutionWitness::from_preflight(partial_execution.clone(), &execution);
+                    PartialExecutionWitness::from_preflight(partial_execution.clone(), execution);
                 // all partials should be found
                 assert_eq!(
                     partial_execution.tx_hashes.len(),

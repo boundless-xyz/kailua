@@ -203,7 +203,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
             // Log proof in cache
             partial_proof_cache
                 .entry(starting_block)
-                .or_insert_with(|| Default::default())
+                .or_default()
                 .push(partial.clone());
             // Dispatch job
             let job_args = ProveArgs {

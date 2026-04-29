@@ -1079,7 +1079,7 @@ pub async fn compute_cached_proof(
     .map_err(ProvingError::OtherError)?;
     // insert partial execution precondition
     if boot.l1_head == B256::repeat_byte(0xFF) {
-        if let Some(partial) = partial_executions.first().map(|p| p.first()).flatten() {
+        if let Some(partial) = partial_executions.first().and_then(|p| p.first()) {
             updated_precondition = updated_precondition.partial(partial.precondition_hash());
             proof_journal.precondition_hash = B256::new(updated_precondition.digest().into());
         } else {

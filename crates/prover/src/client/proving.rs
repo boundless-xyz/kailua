@@ -102,70 +102,72 @@ where
         .context("BootInfo::load")
         .map_err(ProvingError::OtherError)?;
     // Preload cached partial execution proofs
-    if partials_cache.is_some()
-        && !initial_boot_info.l1_head == B256::repeat_byte(0xFF)
-        && partial_executions.is_empty()
-    {
-        let partials_cache = partials_cache.unwrap();
-        let safe_head_hash = fetch_safe_head_hash(
-            preimage_oracle.as_ref(),
-            initial_boot_info.agreed_l2_output_root,
-        )
-        .await
-        .context("fetch_safe_head_hash")?;
-        let l2_provider = OracleL2ChainProvider::new(
-            safe_head_hash,
-            Arc::new(initial_boot_info.rollup_config.clone()),
-            preimage_oracle.clone(),
-        );
-        let image_id = bytemuck::cast::<_, [u8; 32]>(proving.image_id());
-        // insert all cached partials in order
-        let start = l2_provider
-            .header_by_hash(safe_head_hash)
-            .context("l2_provider.header_by_hash")?
-            .number;
-        for (parent_block_no, block_partials) in
-            partials_cache.range(start..initial_boot_info.claimed_l2_block_number)
+    match partials_cache {
+        Some(partials_cache)
+            if !initial_boot_info.l1_head == B256::repeat_byte(0xFF)
+                && partial_executions.is_empty() =>
         {
-            let mut results = Vec::with_capacity(block_partials.len());
-            for partial in block_partials {
-                // Derive expected proof file name
-                let proof_file = proof_file_name(
-                    image_id,
-                    &ProofJournal::new(
-                        image_id.into(),
-                        proving.payout_recipient_address.unwrap_or_default(),
-                        partial.precondition_hash(),
-                        &partial.boot_info(&initial_boot_info),
-                    ),
-                );
-                // Check if file exists
-                if !Path::new(&proof_file).try_exists().is_ok_and(identity) {
-                    warn!("No proof found for partial with parent block {parent_block_no}");
-                    continue;
+            let safe_head_hash = fetch_safe_head_hash(
+                preimage_oracle.as_ref(),
+                initial_boot_info.agreed_l2_output_root,
+            )
+            .await
+            .context("fetch_safe_head_hash")?;
+            let l2_provider = OracleL2ChainProvider::new(
+                safe_head_hash,
+                Arc::new(initial_boot_info.rollup_config.clone()),
+                preimage_oracle.clone(),
+            );
+            let image_id = bytemuck::cast::<_, [u8; 32]>(proving.image_id());
+            // insert all cached partials in order
+            let start = l2_provider
+                .header_by_hash(safe_head_hash)
+                .context("l2_provider.header_by_hash")?
+                .number;
+            for (parent_block_no, block_partials) in
+                partials_cache.range(start..initial_boot_info.claimed_l2_block_number)
+            {
+                let mut results = Vec::with_capacity(block_partials.len());
+                for partial in block_partials {
+                    // Derive expected proof file name
+                    let proof_file = proof_file_name(
+                        image_id,
+                        &ProofJournal::new(
+                            image_id.into(),
+                            proving.payout_recipient_address.unwrap_or_default(),
+                            partial.precondition_hash(),
+                            &partial.boot_info(&initial_boot_info),
+                        ),
+                    );
+                    // Check if file exists
+                    if !Path::new(&proof_file).try_exists().is_ok_and(identity) {
+                        warn!("No proof found for partial with parent block {parent_block_no}");
+                        continue;
+                    }
+                    // Load receipt
+                    match read_bincoded_file(None, &proof_file).await {
+                        Ok(receipt) => {
+                            results.push(partial.clone());
+                            stitched_proofs.push(receipt);
+                        }
+                        Err(err) => {
+                            error!("Failed to read proof file {proof_file} contents: {err:?}")
+                        }
+                    }
                 }
-                // Load receipt
-                match read_bincoded_file(None, &proof_file).await {
-                    Ok(receipt) => {
-                        results.push(partial.clone());
-                        stitched_proofs.push(receipt);
-                    }
-                    Err(err) => {
-                        error!("Failed to read proof file {proof_file} contents: {err:?}")
-                    }
+                // Push partials
+                if !results.is_empty() {
+                    partial_executions.push(results);
                 }
             }
-            // Push partials
-            if !results.is_empty() {
-                partial_executions.push(results);
-            }
+            info!(
+                "Loaded {} partial executions for blocks {} to {}.",
+                partial_executions.iter().map(|p| p.len()).sum::<usize>(),
+                start + 1,
+                initial_boot_info.claimed_l2_block_number
+            );
         }
-        info!(
-            "Loaded {} partial executions for blocks {} to {}.",
-            partial_executions.iter().map(|p| p.len()).sum::<usize>(),
-            start + 1,
-            initial_boot_info.claimed_l2_block_number
-        );
+        _ => {}
     }
     // arrange cached executions
     let (_, execution_cache) = split_executions(stitched_executions.clone());
