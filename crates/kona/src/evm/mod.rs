@@ -22,7 +22,7 @@ pub mod witness;
 mod tests {
     use crate::evm::cached::CachedEvmFactory;
     use crate::evm::expected::{
-        required_l1_block_slots, ExpectedAccount, ExpectedStateEntry, ExpectedStorageEntry,
+        ExpectedAccount, ExpectedStateEntry, ExpectedStorageEntry, EXPECTED_STORAGE_SLOTS,
     };
     use crate::evm::partial::{PartialExecution, PartialResultAndState};
     use crate::evm::witness::PartialExecutionWitness;
@@ -133,7 +133,7 @@ mod tests {
             account: ExpectedAccount {
                 exists: true,
                 info: AccountInfo::default(),
-                storage: required_l1_block_slots()
+                storage: EXPECTED_STORAGE_SLOTS
                     .into_iter()
                     .map(|slot| ExpectedStorageEntry {
                         slot,
@@ -146,7 +146,7 @@ mod tests {
 
     fn insert_stub_expected_state(db: &mut InMemoryDB) {
         db.insert_account_info(L1_BLOCK_CONTRACT, AccountInfo::default());
-        for slot in required_l1_block_slots() {
+        for slot in EXPECTED_STORAGE_SLOTS {
             db.insert_account_storage(L1_BLOCK_CONTRACT, slot, U256::ZERO)
                 .unwrap();
         }
@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "PartialExecution expected_state missing required address")]
+    #[should_panic(expected = "ExpectedState validation failure.")]
     fn cached_chunk_rejects_missing_expected_state() {
         let mut chunk = stub_chunk(1, &[42]);
         chunk.expected_state.clear();
@@ -225,18 +225,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "verify_expected_state: storage mismatch")]
+    #[should_panic(expected = "ExpectedState validation failure.")]
     fn cached_chunk_rejects_expected_state_mismatch() {
         let factory = CachedEvmFactory::new(vec![vec![stub_chunk(1, &[42])]]);
 
         let mut db = InMemoryDB::default();
         insert_stub_expected_state(&mut db);
-        db.insert_account_storage(
-            L1_BLOCK_CONTRACT,
-            required_l1_block_slots()[0],
-            U256::from(1),
-        )
-        .unwrap();
+        db.insert_account_storage(L1_BLOCK_CONTRACT, EXPECTED_STORAGE_SLOTS[0], U256::from(1))
+            .unwrap();
         let mut evm = factory.create_evm(db, test_env_for_block(1));
 
         let sender = address!("0x1000000000000000000000000000000000000000");
@@ -247,7 +243,7 @@ mod tests {
 
     #[test]
     fn cached_chunk_verifies_expected_state_only_on_first_use() {
-        let changed_slot = required_l1_block_slots()[0];
+        let changed_slot = EXPECTED_STORAGE_SLOTS[0];
         let mut chunk = stub_chunk(1, &[10, 20]);
         chunk.results[0] =
             stub_result_with_l1_block_slot_change(10, changed_slot, U256::ZERO, U256::from(1));
@@ -477,7 +473,6 @@ mod tests {
 
         let witness = PartialExecutionWitness {
             transactions: vec![vec![0x01, 0x02, 0x03], Vec::new(), vec![0xff; 32]],
-            expected_state: stub_expected_state(),
             cache,
             block_env,
             op_block_ctx,
@@ -492,7 +487,6 @@ mod tests {
 
         // BlockEnv derives PartialEq.
         assert_eq!(witness.block_env, recoded.block_env);
-        assert_eq!(witness.expected_state.len(), recoded.expected_state.len());
 
         // OpBlockExecutionCtx does not derive PartialEq — compare its three fields,
         // matching the pattern used by `op_block_execution_ctx_round_trip` in
@@ -750,5 +744,61 @@ mod tests {
                 assert_eq!(rebuilt_v.present_value, slot_entry.slot_value.present_value);
             }
         }
+    }
+
+    #[test]
+    fn witness_cache_round_trips_expected_state() {
+        use crate::evm::expected::capture_required_expected_state;
+        use crate::precondition::evm::hash_expected_state;
+        use alloy_evm::revm::database::State;
+
+        // The host derives `expected_state` via
+        // `capture_required_expected_state` during preflight. This test
+        // proves that re-running the same routine against a State backed
+        // by the witness's cache reproduces the same snapshot — so the
+        // chunk's `pe_trace` will match what the host hashed in.
+        let mut seed_db = InMemoryDB::default();
+        insert_stub_expected_state(&mut seed_db);
+        let original = capture_required_expected_state(&mut seed_db);
+
+        let mut chunk = stub_chunk(1, &[42]);
+        chunk.expected_state = original.clone();
+        let witness = PartialExecutionWitness::new(chunk, vec![]);
+
+        let mut state = State::builder()
+            .with_database(InMemoryDB::default())
+            .with_cached_prestate(witness.cache)
+            .build();
+        let derived = capture_required_expected_state(&mut state);
+
+        assert_eq!(
+            hash_expected_state(&original),
+            hash_expected_state(&derived)
+        );
+    }
+
+    #[test]
+    fn apply_result_to_expected_state_does_not_add_new_slots() {
+        use crate::evm::expected::apply_result_to_expected_state;
+
+        // A tx result that writes to a slot NOT already in
+        // `expected_state` must leave `expected_state` unchanged in slot
+        // count — adding new slots would inflate the splitter's
+        // per-chunk snapshot beyond what the spec-bounded re-derive
+        // produces, breaking the pe_trace round-trip.
+        let mut expected = stub_expected_state();
+        let initial_slot_count = expected[0].account.storage.len();
+        let extra_slot = U256::from(0xDEADu64);
+        let result =
+            stub_result_with_l1_block_slot_change(10, extra_slot, U256::ZERO, U256::from(99));
+
+        apply_result_to_expected_state(&mut expected, &result);
+
+        assert_eq!(expected[0].account.storage.len(), initial_slot_count);
+        assert!(expected[0]
+            .account
+            .storage
+            .iter()
+            .all(|s| s.slot != extra_slot));
     }
 }

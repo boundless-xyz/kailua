@@ -14,6 +14,7 @@
 
 use crate::client::log;
 use crate::evm::expected;
+use crate::evm::expected::capture_required_expected_state;
 use crate::evm::partial::PartialExecutionTrace;
 use crate::evm::partial::{
     ActivePartialExecution, PartialExecution, PartialResultAndState, TransactionResultCollector,
@@ -36,8 +37,6 @@ pub struct CachedEvm<E: Evm> {
     cache: Vec<ActivePartialExecution>,
     /// Actual EVM implementation
     pub evm: E,
-    /// OP hardfork spec for this EVM environment.
-    spec_id: OpSpecId,
     /// Optional trace collector shared across all `CachedEvm` instances produced
     /// by one [`CachedEvmFactory`].
     pub collection_target: Option<TransactionResultCollector>,
@@ -47,7 +46,6 @@ impl<E: Evm> CachedEvm<E> {
     /// Wraps `inner` and prepares the chunk cache
     pub fn new_with_traces(
         evm: E,
-        spec_id: OpSpecId,
         mut cache: Vec<PartialExecution>,
         collection_target: Option<TransactionResultCollector>,
     ) -> Self {
@@ -66,7 +64,6 @@ impl<E: Evm> CachedEvm<E> {
         Self {
             evm,
             cache,
-            spec_id,
             collection_target,
         }
     }
@@ -128,7 +125,6 @@ where
                 .cache
                 .last_mut()
                 .expect("serve_cached implies cache is non-empty");
-            let should_verify_expected_state = !chunk.expected_state_verified;
             let _consumed_hash = chunk
                 .partial
                 .tx_hashes
@@ -147,19 +143,14 @@ where
                 "BlockEnv mismatch"
             );
 
-            // Prestate authentication. For every address the chunk's tx touched:
-            //   (a) per-slot: inner_db.storage_ref(addr, slot) must equal
-            //       `EvmStorageSlot.original_value` (the value revm first read
-            //       for that slot during the chunk's execution).
-            //   (b) per-account: inner_db.basic_ref(addr) must equal
-            //       `*account.original_info` (the `AccountInfo` revm first loaded
-            //       for that address during the chunk's execution). `original_info`
-            //       is now preserved across the rkyv round-trip by `AccountRkyv`,
-            //       and folded into `results_hash` by `write_account`, so the
-            //       chunk proof authenticates it.
+            // Prestate authentication
             let db = self.evm.db_mut();
-            if should_verify_expected_state {
-                expected::verify_expected_state(db, &chunk.partial.expected_state, self.spec_id);
+            if !chunk.expected_state_verified {
+                assert_eq!(
+                    capture_required_expected_state(db),
+                    chunk.partial.expected_state,
+                    "ExpectedState validation failure."
+                );
                 chunk.expected_state_verified = true;
             }
             for entry in res_state.state.iter() {
@@ -218,9 +209,10 @@ where
             Ok(res_state.into())
         } else {
             // Execute transaction manually
-            let expected_state = self.collection_target.as_ref().map(|_| {
-                expected::capture_required_expected_state(self.evm.db_mut(), self.spec_id)
-            });
+            let expected_state = self
+                .collection_target
+                .as_ref()
+                .map(|_| expected::capture_required_expected_state(self.evm.db_mut()));
             let result = self.evm.transact_raw(tx);
 
             // Capture result. We clone the revm result for the trait return,
@@ -347,10 +339,8 @@ impl EvmFactory for CachedEvmFactory {
     ) -> Self::Evm<DB, NoOpInspector> {
         let chunks = self.take_next_chunks();
         self.push_trace_slot();
-        let spec_id = input.cfg_env.spec;
         CachedEvm::new_with_traces(
             self.inner.create_evm(db, input),
-            spec_id,
             chunks,
             self.block_traces.clone(),
         )
@@ -364,10 +354,8 @@ impl EvmFactory for CachedEvmFactory {
     ) -> Self::Evm<DB, I> {
         let chunks = self.take_next_chunks();
         self.push_trace_slot();
-        let spec_id = input.cfg_env.spec;
         CachedEvm::new_with_traces(
             self.inner.create_evm_with_inspector(db, input, inspector),
-            spec_id,
             chunks,
             self.block_traces.clone(),
         )

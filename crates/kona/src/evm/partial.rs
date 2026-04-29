@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::evm::expected;
-use crate::evm::expected::ExpectedStateEntry;
+use crate::evm::expected::{
+    apply_result_to_expected_state, canonicalize_expected_state, ExpectedStateEntry,
+};
 use crate::precondition::evm::{
     compute_pe_trace, hash_block_ctx, hash_expected_state, hash_results,
 };
@@ -139,7 +140,6 @@ pub struct PartialExecutionTrace {
     pub expected_state: Vec<ExpectedStateEntry>,
 }
 
-
 /// Shared trace buffer
 pub type TransactionResultCollector = Arc<Mutex<Vec<Vec<PartialExecutionTrace>>>>;
 
@@ -190,12 +190,12 @@ impl PartialExecution {
 
         // Flatten all executions, carrying the expected prestate at each tx boundary.
         let mut flattened = Vec::new();
-        let mut running_expected_state = expected::canonicalize_expected_state(self.expected_state);
+        let mut running_expected_state = canonicalize_expected_state(self.expected_state);
         for (tx_hash, result) in self.tx_hashes.into_iter().zip(self.results) {
             // Push this result with expected state so far
             flattened.push((tx_hash, result.clone(), running_expected_state.clone()));
             // Update new expected state with any relevant results
-            expected::apply_result_to_expected_state(&mut running_expected_state, &result);
+            apply_result_to_expected_state(&mut running_expected_state, &result);
         }
 
         // Split into specified partial count

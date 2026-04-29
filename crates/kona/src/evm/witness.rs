@@ -22,6 +22,60 @@ use alloy_evm::revm::database::CacheState;
 use alloy_evm::revm::state::AccountStatus;
 use alloy_op_evm::OpBlockExecutionCtx;
 
+/// Witness data for proving a single transaction subsequence within a block.
+///
+/// `expected_state` is not carried explicitly: `cache_results` seeds the
+/// host's snapshot into `cache` during construction (alongside this chunk's
+/// own per-tx prestate), and the guest re-derives the snapshot via
+/// `capture_required_expected_state` against `cache` when it needs to
+/// compute `hash_expected_state`. The splitter keeps `expected_state`
+/// bounded by `required_l1_block_slots_for_spec` plus the conditional
+/// Ecotone L1_OVERHEAD, so the spec-bounded re-derive matches the host's
+/// pre-hash input by construction.
+#[derive(Clone, Debug, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct PartialExecutionWitness {
+    /// List of transactions to execute
+    pub transactions: Vec<Vec<u8>>,
+    /// Pre-state cache (also implicitly carries the L1Block expected_state
+    /// snapshot — see `cache_results`).
+    #[rkyv(with = CacheStateRkyv)]
+    pub cache: CacheState,
+    /// Block execution context
+    #[rkyv(with = BlockEnvRkyv)]
+    pub block_env: BlockEnv,
+    /// OP Block context
+    #[rkyv(with = OpBlockExecutionCtxRkyv)]
+    pub op_block_ctx: OpBlockExecutionCtx,
+}
+
+impl PartialExecutionWitness {
+    pub fn new(partial_execution: PartialExecution, transactions: Vec<Vec<u8>>) -> Self {
+        let PartialExecution {
+            results,
+            expected_state,
+            block_env,
+            op_block_ctx,
+            ..
+        } = partial_execution;
+
+        PartialExecutionWitness {
+            transactions,
+            cache: cache_results(results, expected_state),
+            block_env,
+            op_block_ctx,
+        }
+    }
+
+    pub fn from_preflight(partial: PartialExecution, execution: &Execution) -> Self {
+        let transactions = execution
+            .get_transactions(&partial.tx_hashes)
+            .into_iter()
+            .map(|tx| tx.to_vec())
+            .collect();
+        Self::new(partial, transactions)
+    }
+}
+
 pub fn cache_results(
     results: Vec<PartialResultAndState>,
     expected_state: Vec<ExpectedStateEntry>,
@@ -81,51 +135,4 @@ pub fn cache_results(
         }
     }
     cache_state
-}
-
-/// Witness data for proving a single transaction subsequence within a block.
-#[derive(Clone, Debug, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub struct PartialExecutionWitness {
-    /// List of transactions to execute
-    pub transactions: Vec<Vec<u8>>,
-    /// State read by OP execution logic outside the returned tx state.
-    pub expected_state: Vec<ExpectedStateEntry>,
-    /// Pre-state cache
-    #[rkyv(with = CacheStateRkyv)]
-    pub cache: CacheState,
-    /// Block execution context
-    #[rkyv(with = BlockEnvRkyv)]
-    pub block_env: BlockEnv,
-    /// OP Block context
-    #[rkyv(with = OpBlockExecutionCtxRkyv)]
-    pub op_block_ctx: OpBlockExecutionCtx,
-}
-
-impl PartialExecutionWitness {
-    pub fn new(partial_execution: PartialExecution, transactions: Vec<Vec<u8>>) -> Self {
-        let PartialExecution {
-            results,
-            expected_state,
-            block_env,
-            op_block_ctx,
-            ..
-        } = partial_execution;
-
-        PartialExecutionWitness {
-            transactions,
-            cache: cache_results(results, expected_state.clone()),
-            expected_state,
-            block_env,
-            op_block_ctx,
-        }
-    }
-
-    pub fn from_preflight(partial: PartialExecution, execution: &Execution) -> Self {
-        let transactions = execution
-            .get_transactions(&partial.tx_hashes)
-            .into_iter()
-            .map(|tx| tx.to_vec())
-            .collect();
-        Self::new(partial, transactions)
-    }
 }

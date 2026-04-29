@@ -15,7 +15,7 @@
 use crate::client::log;
 use crate::driver::CachedDriver;
 use crate::evm::cached::CachedEvmFactory;
-use crate::evm::expected::verify_expected_state;
+use crate::evm::expected::capture_required_expected_state;
 use crate::evm::partial::{PartialExecution, TransactionResultCollector};
 use crate::evm::witness::PartialExecutionWitness;
 use crate::executor::build_single_partial_for_block;
@@ -145,7 +145,6 @@ where
             log("PARTIAL EXECUTION");
             let PartialExecutionWitness {
                 transactions,
-                expected_state,
                 block_env,
                 op_block_ctx,
                 cache,
@@ -183,7 +182,9 @@ where
             let cfg_env = alloy_evm::revm::context::CfgEnv::new()
                 .with_chain_id(boot.chain_id)
                 .with_spec_and_mainnet_gas_params(rollup_config.spec_id(block_env.timestamp.to()));
-            verify_expected_state(&mut state, &expected_state, cfg_env.spec);
+            // Re-derive the expected state snapshot
+            let expected_state_hash =
+                hash_expected_state(&capture_required_expected_state(&mut state));
             let evm_env = alloy_evm::EvmEnv::new(cfg_env, block_env);
 
             // Instantiate traced block executor to capture all execution results
@@ -227,7 +228,7 @@ where
             let pe_trace = compute_pe_trace(
                 hash_results(&captured_tx_hashes, &captured_results),
                 block_ctx_hash,
-                hash_expected_state(&expected_state),
+                expected_state_hash,
             );
             return Ok((boot, Precondition::default().partial(pe_trace)));
         }
