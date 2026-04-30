@@ -204,6 +204,7 @@ where
                     stitched_boot_info.clone(),
                     pe_witness,
                     partial_executions.clone(),
+                    !seek_proof,
                 )
                 .await
                 .context("Failed to run hokulea vec witgen client.")
@@ -263,6 +264,7 @@ where
                     stitched_boot_info.clone(),
                     pe_witness,
                     partial_executions.clone(),
+                    !seek_proof,
                 )
                 .await
                 .context("Failed to run hana vec witgen client.")
@@ -299,6 +301,7 @@ where
                 stitched_boot_info.clone(),
                 pe_witness,
                 partial_executions.clone(),
+                !seek_proof,
             )
             .await
             .context("Failed to run kona vec witgen client.")

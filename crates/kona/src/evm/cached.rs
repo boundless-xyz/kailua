@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use crate::client::log;
-use crate::evm::expected;
 use crate::evm::expected::capture_required_expected_state;
 use crate::evm::partial::PartialExecutionTrace;
 use crate::evm::partial::{
@@ -212,7 +211,7 @@ where
             let expected_state = self
                 .collection_target
                 .as_ref()
-                .map(|_| expected::capture_required_expected_state(self.evm.db_mut()));
+                .map(|_| capture_required_expected_state(self.evm.db_mut()));
             let result = self.evm.transact_raw(tx);
 
             // Capture result. We clone the revm result for the trait return,

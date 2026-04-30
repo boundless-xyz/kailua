@@ -60,6 +60,7 @@ pub async fn run_witgen_client<P, B, O, D>(
     stitched_boot_info: Vec<StitchedBootInfo>,
     pe_witness: Option<PartialExecutionWitness>,
     partial_executions: Vec<Vec<PartialExecution>>,
+    trace_partials: bool,
 ) -> anyhow::Result<(
     BootInfo,
     ProofJournal,
@@ -107,7 +108,7 @@ where
         trace_derivation.then(|| derivation_trace.clone()),
         pe_witness.clone(),
         partial_executions,
-        Some(partials_collector.clone()),
+        trace_partials.then_some(partials_collector.clone()),
     )?;
     // Fix claimed output of captured executions
     let stitched_executions =

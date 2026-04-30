@@ -162,6 +162,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     // create channel for receiving proving results from handlers
     let result_channel = async_channel::unbounded();
 
+    let proving_start_time = current_time();
     // Prove partial executions
     info!("Dispatching partial execution proving tasks.");
     let mut expected_partials = 0;
@@ -832,8 +833,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
 
     let end_time = current_time();
     info!(
-        "Exiting prover program after {}.",
-        humantime::format_duration(Duration::from_secs(end_time - start_time))
+        "Exiting prover program after {} ({} proving).",
+        humantime::format_duration(Duration::from_secs(end_time - start_time)),
+        humantime::format_duration(Duration::from_secs(end_time - proving_start_time))
     );
     Ok(final_result)
 }
