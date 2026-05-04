@@ -47,7 +47,7 @@ kona-protocol.workspace = true
 risc0-zkvm.workspace = true
 
 [target.'cfg(all(target_os = "zkvm", target_vendor = "risc0"))'.dependencies]
-risc0-crypto-evm = { git = "https://github.com/boundless-xyz/risc0-crypto", rev = "92de69e3732b0a59cc1f843d72d7ef2c8ccc7e64" }
+risc0-crypto-evm = "=0.1.0-rc.1"
 
 [dev-dependencies]
 alloy = { workspace = true, features = ["genesis"] }
