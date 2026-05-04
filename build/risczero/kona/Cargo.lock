@@ -4231,8 +4231,9 @@ dependencies = [
 
 [[package]]
 name = "risc0-crypto"
-version = "0.1.0"
-source = "git+https://github.com/boundless-xyz/risc0-crypto?rev=92de69e3732b0a59cc1f843d72d7ef2c8ccc7e64#92de69e3732b0a59cc1f843d72d7ef2c8ccc7e64"
+version = "0.1.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66597cf3daedbb967414c9c68ab603cccefe4d917b2834edad346bb2414d8247"
 dependencies = [
  "bytemuck",
  "cargo_metadata 0.23.1",
@@ -4243,8 +4244,9 @@ dependencies = [
 
 [[package]]
 name = "risc0-crypto-evm"
-version = "0.1.0"
-source = "git+https://github.com/boundless-xyz/risc0-crypto?rev=92de69e3732b0a59cc1f843d72d7ef2c8ccc7e64#92de69e3732b0a59cc1f843d72d7ef2c8ccc7e64"
+version = "0.1.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcd8062563b5737d4e160ebf71819df2b6a9604b1d4e226df461ad36a1ca25df"
 dependencies = [
  "alloy-primitives",
  "risc0-crypto",
