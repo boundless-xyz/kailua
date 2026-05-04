@@ -649,8 +649,7 @@ async fn fire_precompile_probe_tx(devnet: &DevnetConfig) -> anyhow::Result<()> {
     use alloy::rpc::types::TransactionRequest;
     use alloy::signers::local::PrivateKeySigner;
 
-    const DEV_PRIV_KEY: &str =
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const DEV_PRIV_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
     let signer: PrivateKeySigner = DEV_PRIV_KEY.parse()?;
     let l2_url = devnet.l2_rpc_url()?.parse()?;
