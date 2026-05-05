@@ -800,47 +800,566 @@ mod tests {
     use crate::{from_bytes_with, to_bytes_with};
     use alloy_primitives::address;
 
-    #[test]
-    fn block_env_round_trip() {
-        let env = BlockEnv {
-            number: U256::from(42),
-            beneficiary: address!("0x1111111111111111111111111111111111111111"),
-            timestamp: U256::from(1234),
-            gas_limit: 30_000_000,
-            basefee: 7,
-            difficulty: U256::ZERO,
-            prevrandao: Some(B256::repeat_byte(0xAA)),
-            blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
-                excess_blob_gas: 1000,
-                blob_gasprice: 42,
-            }),
-        };
-        let bytes = to_bytes_with!(BlockEnvRkyv, &env);
-        let deser = from_bytes_with!(BlockEnvRkyv, BlockEnv, &bytes);
-        assert_eq!(deser.number, env.number);
-        assert_eq!(deser.beneficiary, env.beneficiary);
-        assert_eq!(deser.timestamp, env.timestamp);
-        assert_eq!(deser.gas_limit, env.gas_limit);
-        assert_eq!(deser.basefee, env.basefee);
-        assert_eq!(deser.difficulty, env.difficulty);
-        assert_eq!(deser.prevrandao, env.prevrandao);
-        assert_eq!(
-            deser.blob_excess_gas_and_price,
-            env.blob_excess_gas_and_price
-        );
+    fn info_with(nonce: u64, balance: U256, code_hash: B256) -> AccountInfo {
+        AccountInfo {
+            nonce,
+            balance,
+            code_hash,
+            account_id: Some(7),
+            code: Some(Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]))),
+        }
+    }
+
+    fn slot(orig: u64, present: u64) -> EvmStorageSlot {
+        EvmStorageSlot {
+            original_value: U256::from(orig),
+            present_value: U256::from(present),
+            transaction_id: 99,
+            is_cold: true,
+        }
+    }
+
+    /// Round-trip-aware equality: persistent fields are compared field-wise,
+    /// and the wrapper is also asserted to drop the transient `account_id` and
+    /// `code` regardless of input — the latter is the central invariant of
+    /// `AccountInfoRkyv` and applies anywhere it round-trips.
+    fn assert_account_info_round_trip(deser: &AccountInfo, original: &AccountInfo) {
+        assert_eq!(deser.nonce, original.nonce);
+        assert_eq!(deser.balance, original.balance);
+        assert_eq!(deser.code_hash, original.code_hash);
+        assert!(deser.account_id.is_none(), "account_id must drop");
+        assert!(deser.code.is_none(), "code must drop");
     }
 
     #[test]
-    fn op_block_execution_ctx_round_trip() {
-        let ctx = OpBlockExecutionCtx {
-            parent_hash: B256::repeat_byte(0xBB),
-            parent_beacon_block_root: Some(B256::repeat_byte(0xCC)),
-            extra_data: Bytes::from_static(&[1, 2, 3]),
+    fn block_env_round_trip_matrix() {
+        // Cover every (prevrandao Some/None) × (blob_excess Some/None) combo,
+        // each paired with a different field-value profile so we also exercise
+        // ZERO / typical / MAX edges in a single dense pass.
+        let cases = [
+            // Some/Some: typical mainnet shape.
+            BlockEnv {
+                number: U256::from(42),
+                beneficiary: address!("0x1111111111111111111111111111111111111111"),
+                timestamp: U256::from(1234),
+                gas_limit: 30_000_000,
+                basefee: 7,
+                difficulty: U256::ZERO,
+                prevrandao: Some(B256::repeat_byte(0xAA)),
+                blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
+                    excess_blob_gas: 1000,
+                    blob_gasprice: 42,
+                }),
+            },
+            // Some/None: prevrandao set, no blob fields. Pushes integer fields to MAX.
+            BlockEnv {
+                number: U256::MAX,
+                beneficiary: Address::from([0xFE; 20]),
+                timestamp: U256::from(u64::MAX),
+                gas_limit: u64::MAX,
+                basefee: u64::MAX,
+                difficulty: U256::MAX,
+                prevrandao: Some(B256::ZERO),
+                blob_excess_gas_and_price: None,
+            },
+            // None/Some: covers the MAX `blob_gasprice` u128 path through the
+            // [u8; 16] big-endian encoding.
+            BlockEnv {
+                number: U256::from(1u64),
+                beneficiary: Address::ZERO,
+                timestamp: U256::from(1u64),
+                gas_limit: 1,
+                basefee: 1,
+                difficulty: U256::from(1u64),
+                prevrandao: None,
+                blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
+                    excess_blob_gas: u64::MAX,
+                    blob_gasprice: u128::MAX,
+                }),
+            },
+            // None/None: ZERO baseline.
+            BlockEnv {
+                number: U256::ZERO,
+                beneficiary: Address::ZERO,
+                timestamp: U256::ZERO,
+                gas_limit: 0,
+                basefee: 0,
+                difficulty: U256::ZERO,
+                prevrandao: None,
+                blob_excess_gas_and_price: None,
+            },
+        ];
+        for env in &cases {
+            let bytes = to_bytes_with!(BlockEnvRkyv, env);
+            let deser = from_bytes_with!(BlockEnvRkyv, BlockEnv, &bytes);
+            assert_eq!(deser.number, env.number);
+            assert_eq!(deser.beneficiary, env.beneficiary);
+            assert_eq!(deser.timestamp, env.timestamp);
+            assert_eq!(deser.gas_limit, env.gas_limit);
+            assert_eq!(deser.basefee, env.basefee);
+            assert_eq!(deser.difficulty, env.difficulty);
+            assert_eq!(deser.prevrandao, env.prevrandao);
+            assert_eq!(
+                deser.blob_excess_gas_and_price,
+                env.blob_excess_gas_and_price
+            );
+        }
+    }
+
+    #[test]
+    fn op_block_execution_ctx_round_trip_matrix() {
+        // (parent_beacon_block_root Some/None) × (extra_data empty/small/larger).
+        let cases = [
+            OpBlockExecutionCtx {
+                parent_hash: B256::repeat_byte(0xBB),
+                parent_beacon_block_root: Some(B256::repeat_byte(0xCC)),
+                extra_data: Bytes::from_static(&[1, 2, 3]),
+            },
+            OpBlockExecutionCtx {
+                parent_hash: B256::ZERO,
+                parent_beacon_block_root: None,
+                extra_data: Bytes::new(),
+            },
+            OpBlockExecutionCtx {
+                parent_hash: B256::repeat_byte(0xFF),
+                parent_beacon_block_root: Some(B256::ZERO),
+                extra_data: Bytes::from_static(&[0; 64]),
+            },
+        ];
+        for ctx in &cases {
+            let bytes = to_bytes_with!(OpBlockExecutionCtxRkyv, ctx);
+            let deser = from_bytes_with!(OpBlockExecutionCtxRkyv, OpBlockExecutionCtx, &bytes);
+            assert_eq!(deser.parent_hash, ctx.parent_hash);
+            assert_eq!(deser.parent_beacon_block_root, ctx.parent_beacon_block_root);
+            assert_eq!(deser.extra_data, ctx.extra_data);
+        }
+    }
+
+    // -- AccountInfoRkyv --
+
+    #[test]
+    fn account_info_round_trip_matrix() {
+        // Spans every (account_id Some/None) × (code Some/None) combination
+        // alongside ZERO / typical / MAX value edges. The shared assertion
+        // also checks the central drop invariant on every case.
+        let cases = [
+            // Some/Some + typical values: confirms transient fields drop even
+            // when both are populated.
+            info_with(11, U256::from(1u64 << 60), B256::repeat_byte(0xDE)),
+            // None/None + ZERO baseline.
+            AccountInfo {
+                nonce: 0,
+                balance: U256::ZERO,
+                code_hash: B256::ZERO,
+                account_id: None,
+                code: None,
+            },
+            // Some/None + MAX values.
+            AccountInfo {
+                nonce: u64::MAX,
+                balance: U256::MAX,
+                code_hash: B256::repeat_byte(0xFF),
+                account_id: Some(usize::MAX),
+                code: None,
+            },
+            // None/Some: code present without an id.
+            AccountInfo {
+                nonce: 1,
+                balance: U256::from(1u64),
+                code_hash: B256::repeat_byte(0xAB),
+                account_id: None,
+                code: Some(Bytecode::new_raw(Bytes::from_static(&[0xFE]))),
+            },
+        ];
+        for info in &cases {
+            let bytes = to_bytes_with!(AccountInfoRkyv, info);
+            let deser = from_bytes_with!(AccountInfoRkyv, AccountInfo, &bytes);
+            assert_account_info_round_trip(&deser, info);
+        }
+    }
+
+    // -- AccountStatusRkyv --
+
+    #[test]
+    fn account_status_round_trip_preserves_bits() {
+        // empty(), single bit, multi-bit, and all-bits patterns
+        let cases = [
+            AccountStatus::empty(),
+            AccountStatus::Created,
+            AccountStatus::Touched | AccountStatus::Created | AccountStatus::Cold,
+            AccountStatus::from_bits_retain(0xFF),
+        ];
+        for status in cases {
+            let bytes = to_bytes_with!(AccountStatusRkyv, &status);
+            let deser = from_bytes_with!(AccountStatusRkyv, AccountStatus, &bytes);
+            assert_eq!(deser.bits(), status.bits(), "round trip {status:?}");
+        }
+    }
+
+    // -- EvmStorageSlotRkyv --
+
+    #[test]
+    fn evm_storage_slot_round_trip_matrix() {
+        // Persistent values are exercised over (typical, ZERO, MAX); transient
+        // fields are seeded with both states (true / false) — both must drop on
+        // round-trip regardless of input.
+        let cases = [
+            // typical + transient set
+            slot(0xAA, 0xBB),
+            // ZERO + transient cleared
+            EvmStorageSlot {
+                original_value: U256::ZERO,
+                present_value: U256::ZERO,
+                transaction_id: 0,
+                is_cold: false,
+            },
+            // MAX original / 1 present + MAX transient_id, is_cold true
+            EvmStorageSlot {
+                original_value: U256::MAX,
+                present_value: U256::from(1u64),
+                transaction_id: usize::MAX,
+                is_cold: true,
+            },
+        ];
+        for s in &cases {
+            let bytes = to_bytes_with!(EvmStorageSlotRkyv, s);
+            let deser = from_bytes_with!(EvmStorageSlotRkyv, EvmStorageSlot, &bytes);
+            assert_eq!(deser.original_value, s.original_value);
+            assert_eq!(deser.present_value, s.present_value);
+            // Transient fields always drop, regardless of input value.
+            assert_eq!(deser.transaction_id, 0, "transaction_id must drop");
+            assert!(!deser.is_cold, "is_cold must drop");
+        }
+    }
+
+    // -- CacheStateRkyv --
+
+    /// Single dense round-trip covering the full `CacheStateRkyv` surface in
+    /// the same shape it sees in production: every `CacheAccountStatus` variant
+    /// alongside multi-key storage, multiple contracts, and embedded
+    /// `AccountInfo` edge values (ZERO, MAX, typical). Run once with
+    /// `has_state_clear=true` and once with `false` so both branches encode and
+    /// decode. A trailing fully-empty case exercises the empty-vector paths.
+    #[test]
+    fn cache_state_round_trip_dense() {
+        let statuses = [
+            (CacheAccountStatus::LoadedNotExisting, false),
+            (CacheAccountStatus::Loaded, true),
+            (CacheAccountStatus::LoadedEmptyEIP161, true),
+            (CacheAccountStatus::InMemoryChange, true),
+            (CacheAccountStatus::Changed, true),
+            (CacheAccountStatus::Destroyed, true),
+            (CacheAccountStatus::DestroyedChanged, true),
+            (CacheAccountStatus::DestroyedAgain, true),
+        ];
+
+        for has_state_clear in [true, false] {
+            let mut cs = CacheState::new(has_state_clear);
+            for (i, (status, has_account)) in statuses.iter().enumerate() {
+                let addr = Address::from([i as u8 + 1; 20]);
+                // Mix AccountInfo edge cases inline so the embedded
+                // AccountInfoRkyv path also sees ZERO and MAX values.
+                let info = match i {
+                    0 => AccountInfo {
+                        nonce: 0,
+                        balance: U256::ZERO,
+                        code_hash: B256::ZERO,
+                        account_id: None,
+                        code: None,
+                    },
+                    1 => AccountInfo {
+                        nonce: u64::MAX,
+                        balance: U256::MAX,
+                        code_hash: B256::repeat_byte(0xFF),
+                        account_id: Some(usize::MAX),
+                        code: None,
+                    },
+                    _ => info_with(
+                        i as u64,
+                        U256::from(1000 + i as u64),
+                        B256::repeat_byte(i as u8),
+                    ),
+                };
+                let account = has_account.then(|| {
+                    let mut p = PlainAccount {
+                        info,
+                        storage: Default::default(),
+                    };
+                    p.storage
+                        .insert(U256::from(i as u64 + 100), U256::from(i as u64 + 200));
+                    p.storage.insert(U256::from(0xFFu64), U256::from(0xEEu64));
+                    p
+                });
+                cs.accounts.insert(
+                    addr,
+                    CacheAccount {
+                        account,
+                        status: *status,
+                    },
+                );
+            }
+            // Multiple contracts with distinct hashes / payload sizes.
+            cs.contracts.insert(
+                B256::repeat_byte(0x01),
+                Bytecode::new_raw(Bytes::from_static(&[0x60, 0x01])),
+            );
+            cs.contracts.insert(
+                B256::repeat_byte(0x02),
+                Bytecode::new_raw(Bytes::from_static(&[
+                    0x60, 0x02, 0x60, 0x03, 0x60, 0x04, 0x60, 0x05,
+                ])),
+            );
+
+            let bytes = to_bytes_with!(CacheStateRkyv, &cs);
+            let deser = from_bytes_with!(CacheStateRkyv, CacheState, &bytes);
+
+            assert_eq!(deser.has_state_clear, has_state_clear);
+            assert_eq!(deser.accounts.len(), cs.accounts.len());
+            assert_eq!(deser.contracts.len(), cs.contracts.len());
+
+            for (addr, orig) in &cs.accounts {
+                let got = deser.accounts.get(addr).expect("addr present");
+                assert_eq!(got.status, orig.status, "status for {addr}");
+                match (&got.account, &orig.account) {
+                    (None, None) => {}
+                    (Some(g), Some(o)) => {
+                        assert_account_info_round_trip(&g.info, &o.info);
+                        assert_eq!(g.storage, o.storage);
+                    }
+                    _ => panic!("account-presence mismatch for {addr}"),
+                }
+            }
+            for (hash, orig) in &cs.contracts {
+                let got = deser.contracts.get(hash).expect("hash present");
+                assert_eq!(got.original_bytes(), orig.original_bytes());
+            }
+        }
+
+        // Fully empty: exercises the empty-vector paths in both directions.
+        let cs = CacheState::new(false);
+        let bytes = to_bytes_with!(CacheStateRkyv, &cs);
+        let deser = from_bytes_with!(CacheStateRkyv, CacheState, &bytes);
+        assert!(deser.accounts.is_empty());
+        assert!(deser.contracts.is_empty());
+        assert!(!deser.has_state_clear);
+    }
+
+    // -- ExecutionResultRkyv --
+
+    fn all_oog_variants() -> [OutOfGasError; 6] {
+        [
+            OutOfGasError::Basic,
+            OutOfGasError::MemoryLimit,
+            OutOfGasError::Memory,
+            OutOfGasError::Precompile,
+            OutOfGasError::InvalidOperand,
+            OutOfGasError::ReentrancySentry,
+        ]
+    }
+
+    fn all_halt_reasons() -> Vec<HaltReason> {
+        let mut v: Vec<HaltReason> = all_oog_variants()
+            .into_iter()
+            .map(HaltReason::OutOfGas)
+            .collect();
+        v.extend([
+            HaltReason::OpcodeNotFound,
+            HaltReason::InvalidFEOpcode,
+            HaltReason::InvalidJump,
+            HaltReason::NotActivated,
+            HaltReason::StackUnderflow,
+            HaltReason::StackOverflow,
+            HaltReason::OutOfOffset,
+            HaltReason::CreateCollision,
+            HaltReason::PrecompileError,
+            HaltReason::PrecompileErrorWithContext("ctx".into()),
+            HaltReason::NonceOverflow,
+            HaltReason::CreateContractSizeLimit,
+            HaltReason::CreateContractStartingWithEF,
+            HaltReason::CreateInitCodeSizeLimit,
+            HaltReason::OverflowPayment,
+            HaltReason::StateChangeDuringStaticCall,
+            HaltReason::CallNotAllowedInsideStatic,
+            HaltReason::OutOfFunds,
+            HaltReason::CallTooDeep,
+        ]);
+        v
+    }
+
+    /// Single dense round-trip across every `ExecutionResult` shape:
+    ///   Success  : SuccessReason × Output(Call/Create-with-addr/Create-no-addr,
+    ///              empty / non-empty payload) × log counts {0, 1, 3}
+    ///   Revert   : empty + non-empty output, ZERO and MAX gas
+    ///   Halt     : every base `HaltReason` variant (incl. all `OutOfGasError`
+    ///              and `PrecompileErrorWithContext`) plus `OpHaltReason::FailedDeposit`
+    /// Folding these into one body is intentional: the variants share encoding
+    /// machinery (`success_reason_byte`, `halt_reason_rkyv`, etc.) and a
+    /// regression in any helper trips multiple branches at once.
+    #[test]
+    fn execution_result_round_trip_dense() {
+        // -- Success --
+        let log = Log::new_unchecked(
+            Address::from([0xAB; 20]),
+            vec![B256::repeat_byte(0x01), B256::repeat_byte(0x02)],
+            Bytes::from_static(&[0xDE, 0xAD]),
+        );
+        let outputs = [
+            Output::Call(Bytes::from_static(&[1, 2, 3])),
+            Output::Call(Bytes::new()),
+            Output::Create(
+                Bytes::from_static(&[0x60, 0x80]),
+                Some(Address::from([0xCD; 20])),
+            ),
+            Output::Create(Bytes::new(), None),
+        ];
+        for reason in [
+            SuccessReason::Stop,
+            SuccessReason::Return,
+            SuccessReason::SelfDestruct,
+        ] {
+            for output in &outputs {
+                for &count in &[0usize, 1, 3] {
+                    let logs = vec![log.clone(); count];
+                    let r = ExecutionResult::<OpHaltReason>::Success {
+                        reason,
+                        gas_used: 21_000,
+                        gas_refunded: 1_234,
+                        logs,
+                        output: output.clone(),
+                    };
+                    let bytes = to_bytes_with!(ExecutionResultRkyv, &r);
+                    let deser = from_bytes_with!(
+                        ExecutionResultRkyv,
+                        ExecutionResult<OpHaltReason>,
+                        &bytes
+                    );
+                    let ExecutionResult::Success {
+                        reason: deser_reason,
+                        gas_used,
+                        gas_refunded,
+                        logs: deser_logs,
+                        output: deser_output,
+                    } = deser
+                    else {
+                        panic!("expected Success for reason={reason:?} output={output:?}");
+                    };
+                    assert_eq!(deser_reason, reason);
+                    assert_eq!(gas_used, 21_000);
+                    assert_eq!(gas_refunded, 1_234);
+                    assert_eq!(deser_logs.len(), count);
+                    for got in &deser_logs {
+                        assert_eq!(got.address, log.address);
+                        assert_eq!(got.data.topics(), log.data.topics());
+                        assert_eq!(got.data.data, log.data.data);
+                    }
+                    assert_eq!(&deser_output, output);
+                }
+            }
+        }
+
+        // -- Revert -- (empty / non-empty output, ZERO and MAX gas)
+        for (gas_used, output) in [
+            (500u64, Bytes::from_static(&[0xCA, 0xFE])),
+            (0, Bytes::new()),
+            (u64::MAX, Bytes::from_static(&[0xFF; 32])),
+        ] {
+            let r = ExecutionResult::<OpHaltReason>::Revert {
+                gas_used,
+                output: output.clone(),
+            };
+            let bytes = to_bytes_with!(ExecutionResultRkyv, &r);
+            let deser =
+                from_bytes_with!(ExecutionResultRkyv, ExecutionResult<OpHaltReason>, &bytes);
+            let ExecutionResult::Revert {
+                gas_used: g,
+                output: o,
+            } = deser
+            else {
+                panic!("expected Revert");
+            };
+            assert_eq!(g, gas_used);
+            assert_eq!(o, output);
+        }
+
+        // -- Halt::Base -- every HaltReason
+        for h in all_halt_reasons() {
+            let r = ExecutionResult::<OpHaltReason>::Halt {
+                reason: OpHaltReason::Base(h.clone()),
+                gas_used: 2_500,
+            };
+            let bytes = to_bytes_with!(ExecutionResultRkyv, &r);
+            let deser =
+                from_bytes_with!(ExecutionResultRkyv, ExecutionResult<OpHaltReason>, &bytes);
+            let ExecutionResult::Halt {
+                reason: OpHaltReason::Base(got),
+                gas_used,
+            } = deser
+            else {
+                panic!("expected Halt::Base for {h:?}");
+            };
+            assert_eq!(got, h, "round trip {h:?}");
+            assert_eq!(gas_used, 2_500);
+        }
+
+        // -- Halt::FailedDeposit --
+        let r = ExecutionResult::<OpHaltReason>::Halt {
+            reason: OpHaltReason::FailedDeposit,
+            gas_used: 0,
         };
-        let bytes = to_bytes_with!(OpBlockExecutionCtxRkyv, &ctx);
-        let deser = from_bytes_with!(OpBlockExecutionCtxRkyv, OpBlockExecutionCtx, &bytes);
-        assert_eq!(deser.parent_hash, ctx.parent_hash);
-        assert_eq!(deser.parent_beacon_block_root, ctx.parent_beacon_block_root);
-        assert_eq!(deser.extra_data, ctx.extra_data);
+        let bytes = to_bytes_with!(ExecutionResultRkyv, &r);
+        let deser = from_bytes_with!(ExecutionResultRkyv, ExecutionResult<OpHaltReason>, &bytes);
+        let ExecutionResult::Halt {
+            reason: OpHaltReason::FailedDeposit,
+            gas_used,
+        } = deser
+        else {
+            panic!("expected Halt::FailedDeposit");
+        };
+        assert_eq!(gas_used, 0);
+    }
+
+    // -- Panic paths for invalid discriminants --
+
+    #[test]
+    #[should_panic(expected = "invalid SuccessReason byte")]
+    fn success_reason_from_byte_panics_on_invalid() {
+        let _ = success_reason_from_byte(99);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid OutOfGasError byte")]
+    fn oog_from_byte_panics_on_invalid() {
+        let _ = oog_from_byte(99);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid CacheAccountStatus byte")]
+    fn cache_account_status_from_byte_panics_on_invalid() {
+        let _ = cache_account_status_from_byte(99);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid HaltReason discriminant")]
+    fn halt_reason_raw_panics_on_invalid_discriminant() {
+        let _ = halt_reason_raw((99, 0, None));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid OpHaltReason discriminant")]
+    fn op_halt_reason_raw_panics_on_invalid_discriminant() {
+        let _ = op_halt_reason_raw((99, None));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid ExecutionResult discriminant")]
+    fn execution_result_raw_panics_on_invalid_discriminant() {
+        let _ = ExecutionResultRkyv::raw((99, 0, 0, 0, vec![], None, None, None));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid Output discriminant")]
+    fn execution_result_raw_panics_on_invalid_output_disc() {
+        // Success disc with a malformed inner Output disc (only 0/1 are valid).
+        let _ = ExecutionResultRkyv::raw((0, 0, 0, 0, vec![], Some((9, vec![], None)), None, None));
     }
 }
