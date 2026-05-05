@@ -623,6 +623,44 @@ pub mod tests {
         );
     }
 
+    #[test]
+    fn build_single_partial_for_block_blob_param_branches() {
+        let execution = gen_executions(1)
+            .pop()
+            .expect("gen_executions(1) yields one");
+        let parent_header = Header::default();
+
+        // Pre-ECOTONE: `expected_blob_excess_gas_and_price` selects `(None, 0)`
+        // and `maybe_next_block_excess_blob_gas(None)` short-circuits to None,
+        // and the `or_else` closure also returns None (ECOTONE not enabled).
+        let bedrock = build_single_partial_for_block(
+            execution.as_ref(),
+            Vec::new(),
+            &parent_header,
+            OpSpecId::BEDROCK,
+        );
+        assert!(
+            bedrock.block_env.blob_excess_gas_and_price.is_none(),
+            "BEDROCK must yield None blob_excess_gas_and_price",
+        );
+
+        // ISTHMUS: selects `(Some(prague), PRAGUE_FRAC)`. Default header has no
+        // `excess_blob_gas`, so `maybe_next_block_excess_blob_gas` returns None,
+        // the `or_else` fallback supplies Some(0), and `BlobExcessGasAndPrice::new`
+        // is constructed with the prague fraction.
+        let isthmus = build_single_partial_for_block(
+            execution.as_ref(),
+            Vec::new(),
+            &parent_header,
+            OpSpecId::ISTHMUS,
+        );
+        let blob = isthmus
+            .block_env
+            .blob_excess_gas_and_price
+            .expect("ISTHMUS must yield Some blob_excess_gas_and_price");
+        assert_eq!(blob.excess_blob_gas, 0);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_execution_cursor() {
         // prepare oracle data

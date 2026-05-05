@@ -1025,6 +1025,81 @@ pub mod tests {
         assert_eq!(pre_executions.len(), pre_captured.len());
     }
 
+    /// Exercises the failure path on the partial-execution branch: a witness
+    /// where revm rejects a transaction must propagate via the
+    /// `partial transaction execution failed` `map_err` closure on the
+    /// `op_block_executor.execute_transaction(...)` call.
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_partial_execution_failure_propagates_error() {
+        // Capture real witnesses from a derivation; we need at least one
+        // non-deposit tx whose sender lives in the witness cache.
+        let (pre_executions, pre_captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491349(),
+            None,
+            None,
+            Some(Default::default()),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        // Find a witness whose first user (non-deposit) tx has a tamperable
+        // sender entry in the prestate cache, then bump that sender's nonce so
+        // revm rejects with `NonceTooLow` when the tx executes.
+        let mut tampered: Option<PartialExecutionWitness> = None;
+        'outer: for (partials, execution) in pre_captured.iter().zip(pre_executions.iter()) {
+            for partial in partials {
+                let mut witness =
+                    PartialExecutionWitness::from_preflight(partial.clone(), execution);
+                for tx_bytes in &witness.transactions {
+                    let Ok(tx) = OpTxEnvelope::decode_2718_exact(tx_bytes) else {
+                        continue;
+                    };
+                    if tx.is_deposit() {
+                        continue;
+                    }
+                    let Ok(recovered) = tx.try_into_recovered() else {
+                        continue;
+                    };
+                    let sender = recovered.signer();
+                    if let Some(cache_account) = witness.cache.accounts.get_mut(&sender) {
+                        if let Some(plain) = cache_account.account.as_mut() {
+                            plain.info.nonce = plain.info.nonce.saturating_add(1);
+                            tampered = Some(witness);
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+        }
+        let witness =
+            tampered.expect("fixture must contain at least one user tx with cached sender");
+
+        // Drive the partial-execution branch with the tampered witness.
+        let boot_info = make_pe_boot(&op_sepolia_16491249_16491349(), &witness);
+        let oracle = Arc::new(crate::client::tests::TestOracle::new(boot_info.clone()));
+        let err = run_core_client(
+            B256::ZERO,
+            oracle.clone(),
+            oracle.clone(),
+            OracleBlobProvider::new(oracle.clone()),
+            EthereumDataSourceProvider,
+            vec![],
+            None,
+            None,
+            None,
+            Some(witness),
+            Vec::new(),
+            None,
+        )
+        .expect_err("tampered witness must fail partial transaction execution");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("partial transaction execution failed"),
+            "expected 'partial transaction execution failed' in error chain, got: {msg}",
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491349() {
         let (executions, _) = test_derivation(
@@ -1172,6 +1247,14 @@ pub mod tests {
         .await
         .unwrap();
         assert!(executions.is_empty());
+    }
+
+    #[test]
+    fn validate_contract_hash_zero_workaround() {
+        use alloy_primitives::Bytes;
+
+        // Workaround branch: zero `expected_hash` requires empty bytecode.
+        validate_contract_hash(&B256::ZERO, &Bytecode::new_raw(Bytes::new()));
     }
 
     fn make_pe_boot(boot_info: &BootInfo, witness: &PartialExecutionWitness) -> BootInfo {
