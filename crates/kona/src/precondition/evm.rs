@@ -408,6 +408,7 @@ pub fn flatten_partial_state(state: &[crate::evm::partial::PartialStateEntry]) -
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
     use crate::evm::expected::ExpectedStorageEntry;

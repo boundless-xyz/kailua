@@ -633,7 +633,7 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
 pub mod tests {
     use super::*;
     use crate::client::core::tests::{
-        op_sepolia_16491249_16491349, test_derivation, test_derivation_with_partials,
+        make_pe_boot, op_sepolia_16491249_16491349, test_derivation, test_derivation_with_partials,
     };
     use crate::client::core::{split_collected_partials, EthereumDataSourceProvider};
     use crate::client::tests::TestOracle;
@@ -1149,6 +1149,85 @@ pub mod tests {
         .unwrap();
 
         teardown();
+    }
+
+    /// `precompute_pe_boots` must skip empty per-block `partial_executions`
+    /// without producing a stitched-boot entry (covers the
+    /// `if block_partials.is_empty() { continue; }` guard).
+    #[test]
+    fn precompute_pe_boots_skips_empty_block_partials() {
+        let empty: Vec<Vec<PartialExecution>> = vec![vec![], vec![], vec![]];
+        let result = precompute_pe_boots(&empty);
+        assert!(result.is_empty());
+    }
+
+    /// Exercises the partial-execution short-circuit in
+    /// `run_stitching_client`: when the recovered boot has the
+    /// `0xFF…FF` sentinel `l1_head`, the function must build a
+    /// `ProofJournal` directly from the boot+precondition and return
+    /// without entering any stitching logic.
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_partial_exec_stitching_short_circuit() {
+        // Capture a real partial via the existing derivation harness.
+        let (executions, captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491349(),
+            None,
+            None,
+            Some(Default::default()),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        // Pick the first per-block partial and build a witness from it.
+        let (partial, execution) = captured
+            .iter()
+            .zip(executions.iter())
+            .find_map(|(partials, e)| partials.first().map(|p| (p, e)))
+            .expect("fixture must include at least one partial");
+        let witness = PartialExecutionWitness::from_preflight(partial.clone(), execution);
+
+        // Build the matching PE boot (l1_head = 0xFF…FF) and oracle.
+        let boot_info = make_pe_boot(&op_sepolia_16491249_16491349(), &witness);
+        let oracle = Arc::new(TestOracle::new(boot_info.clone()));
+
+        let (out_boot, journal, precondition) = KonaStitchingClient(EthereumDataSourceProvider)
+            .run_stitching_client(
+                B256::ZERO,
+                oracle.clone(),
+                oracle.clone(),
+                OracleBlobProvider::new(oracle.clone()),
+                B256::ZERO,
+                Address::ZERO,
+                vec![],
+                None,
+                false,
+                vec![],
+                vec![],
+                Some(witness),
+                Vec::new(),
+            );
+
+        // Boot is unchanged through the short-circuit and journal mirrors it.
+        assert_eq!(out_boot.l1_head, B256::repeat_byte(0xFF));
+        assert_eq!(journal.l1_head, boot_info.l1_head);
+        assert_eq!(
+            journal.agreed_l2_output_root,
+            boot_info.agreed_l2_output_root
+        );
+        assert_eq!(
+            journal.claimed_l2_output_root,
+            boot_info.claimed_l2_output_root
+        );
+        assert_eq!(
+            journal.claimed_l2_block_number,
+            boot_info.claimed_l2_block_number
+        );
+        // Precondition digest in the journal must match the precondition.
+        assert_eq!(
+            journal.precondition_hash,
+            B256::new(precondition.digest().into())
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

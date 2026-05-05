@@ -913,6 +913,21 @@ mod tests {
             assert_eq!(expected.len(), initial_addr_count);
             assert!(expected.iter().all(|e| e.address != irrelevant));
         }
+
+        // (6) L1Block in result but missing from expected_state — the
+        // `let Some(expected_entry) = expected_by_address.get_mut(...)`
+        // miss path must `continue` without inserting.
+        {
+            let mut expected: Vec<ExpectedStateEntry> = vec![];
+            let result = stub_result_with_l1_block_slot_change(
+                10,
+                EXPECTED_STORAGE_SLOTS[0],
+                U256::ZERO,
+                U256::from(0xAB),
+            );
+            apply_result_to_expected_state(&mut expected, &result);
+            assert!(expected.is_empty(), "must not insert new entries");
+        }
     }
 
     // ============================================================

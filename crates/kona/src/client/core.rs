@@ -1257,7 +1257,7 @@ pub mod tests {
         validate_contract_hash(&B256::ZERO, &Bytecode::new_raw(Bytes::new()));
     }
 
-    fn make_pe_boot(boot_info: &BootInfo, witness: &PartialExecutionWitness) -> BootInfo {
+    pub fn make_pe_boot(boot_info: &BootInfo, witness: &PartialExecutionWitness) -> BootInfo {
         BootInfo {
             l1_head: B256::repeat_byte(0xFF),
             agreed_l2_output_root: witness.op_block_ctx.parent_hash,
