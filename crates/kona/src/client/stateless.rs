@@ -81,7 +81,9 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
         witness.trace_derivation,
         witness.stitched_preconditions,
         witness.stitched_boot_info,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         witness.pe_witness,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         witness.partial_executions,
     );
 
@@ -96,9 +98,9 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::client::core::tests::{
-        op_sepolia_16491249_16491349, test_derivation, test_derivation_with_partials,
-    };
+    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    use crate::client::core::tests::test_derivation_with_partials;
+    use crate::client::core::tests::{op_sepolia_16491249_16491349, test_derivation};
     use crate::client::core::EthereumDataSourceProvider;
     use crate::client::stitching::KonaStitchingClient;
     use crate::client::tests::TestOracle;
@@ -108,7 +110,7 @@ pub mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_stateless_client() -> anyhow::Result<()> {
         let mut boot_info = op_sepolia_16491249_16491349();
-        let (stitched_executions, _) = test_derivation(boot_info.clone(), None, None, None)
+        let stitched_executions = test_derivation(boot_info.clone(), None, None, None)
             .await
             .context("test_derivation")?;
         boot_info.l1_head = B256::ZERO;
@@ -126,7 +128,9 @@ pub mod tests {
             stitched_preconditions: vec![],
             stitched_boot_info: vec![],
             fpvm_image_id: Default::default(),
+            #[cfg(feature = "enable-experimental-transaction-stitching")]
             pe_witness: None,
+            #[cfg(feature = "enable-experimental-transaction-stitching")]
             partial_executions: Vec::new(),
         };
 
@@ -135,6 +139,7 @@ pub mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "enable-experimental-transaction-stitching")]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_stateless_client_with_partials() -> anyhow::Result<()> {
         let mut boot_info = op_sepolia_16491249_16491349();

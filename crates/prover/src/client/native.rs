@@ -22,6 +22,7 @@ use async_channel::Sender;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::evm::partial::PartialExecution;
+#[cfg(feature = "enable-experimental-transaction-stitching")]
 use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::precondition::Precondition;
@@ -54,6 +55,10 @@ pub type PartialsCache = BTreeMap<u64, Vec<PartialExecution>>;
 /// - `Err(_)` if the client program failed to execute, was killed by a signal, or the host program
 ///   exited first.
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(
+    not(feature = "enable-experimental-transaction-stitching"),
+    allow(unused_mut)
+)]
 pub async fn run_native_client(
     partials_cache: Option<Arc<PartialsCache>>,
     args: ProveArgs,
@@ -151,6 +156,7 @@ pub async fn run_native_client(
     };
 
     // Precompute partial execution witness
+    #[cfg(feature = "enable-experimental-transaction-stitching")]
     let pe_witness = if args.kona.l1_head == B256::repeat_byte(0xFF) {
         let Some(partial) = partial_executions.pop().and_then(|mut p| p.pop()) else {
             return Err(ProvingError::OtherError(anyhow!(
@@ -178,6 +184,7 @@ pub async fn run_native_client(
         precondition,
         proposal_data_hash,
         stitched_executions,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         pe_witness,
         partial_executions,
         derivation_cache,

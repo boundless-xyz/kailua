@@ -28,3 +28,8 @@ hana-celestia.workspace = true
 hana-oracle.workspace = true
 
 risc0-steel.workspace = true
+
+[features]
+enable-experimental-transaction-stitching = [
+    "kailua-kona/enable-experimental-transaction-stitching"
+]

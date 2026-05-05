@@ -1147,6 +1147,7 @@ pub mod tests {
             false,
             stitched_preconditions,
             stitched_boot_info,
+            #[cfg(feature = "enable-experimental-transaction-stitching")]
             vec![],
         );
         assert_eq!(

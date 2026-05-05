@@ -18,7 +18,9 @@ use alloy_primitives::{Address, B256};
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
+#[cfg(feature = "enable-experimental-transaction-stitching")]
 use kailua_kona::evm::partial::PartialExecution;
+#[cfg(feature = "enable-experimental-transaction-stitching")]
 use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
@@ -52,8 +54,12 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        pe_witness: Option<PartialExecutionWitness>,
-        partial_executions: Vec<Vec<PartialExecution>>,
+        #[cfg(feature = "enable-experimental-transaction-stitching")] pe_witness: Option<
+            PartialExecutionWitness,
+        >,
+        #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
+            Vec<PartialExecution>,
+        >,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
@@ -78,7 +84,9 @@ impl<
                 derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
                 pe_witness,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
                 partial_executions,
             );
         // Ensure boot record is the same for both oracles

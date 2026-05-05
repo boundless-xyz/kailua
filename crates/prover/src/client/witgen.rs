@@ -12,20 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy::consensus::{Blob, Header};
+use alloy::consensus::Blob;
 use alloy_primitives::{Address, B256};
-use alloy_rlp::Decodable;
 use anyhow::Context;
 use async_trait::async_trait;
 use kailua_kona::blobs::BlobWitnessData;
 use kailua_kona::boot::StitchedBootInfo;
-use kailua_kona::client::core::{
-    recover_collected_executions, recover_collected_partials, DASourceProvider,
-};
+use kailua_kona::client::core::{recover_collected_executions, DASourceProvider};
 use kailua_kona::client::stitching::stitch_boot_info;
 use kailua_kona::driver::CachedDriver;
-use kailua_kona::evm::partial::PartialExecution;
-use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::kona::OracleL1ChainProvider;
@@ -35,7 +30,6 @@ use kailua_kona::witness::Witness;
 use kona_derive::BlobProvider;
 use kona_preimage::errors::PreimageOracleResult;
 use kona_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};
-use kona_proof::errors::OracleProviderError;
 use kona_proof::{BootInfo, FlushableCache};
 use kona_protocol::BlockInfo;
 use std::fmt::Debug;
@@ -43,6 +37,11 @@ use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use tracing::info;
 use tracing::log::error;
+#[cfg(feature = "enable-experimental-transaction-stitching")]
+use {
+    alloy::consensus::Header, alloy_rlp::Decodable, kailua_kona::evm::partial::PartialExecution,
+    kailua_kona::evm::witness::PartialExecutionWitness, kona_proof::errors::OracleProviderError,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_witgen_client<P, B, O, D>(
@@ -58,9 +57,13 @@ pub async fn run_witgen_client<P, B, O, D>(
     trace_derivation: bool,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    pe_witness: Option<PartialExecutionWitness>,
-    partial_executions: Vec<Vec<PartialExecution>>,
-    trace_partials: bool,
+    #[cfg(feature = "enable-experimental-transaction-stitching")] pe_witness: Option<
+        PartialExecutionWitness,
+    >,
+    #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
+        Vec<PartialExecution>,
+    >,
+    #[cfg(feature = "enable-experimental-transaction-stitching")] trace_partials: bool,
 ) -> anyhow::Result<(
     BootInfo,
     ProofJournal,
@@ -94,6 +97,7 @@ where
 
     // Run client
     let execution_trace = Arc::new(Mutex::new(Vec::new()));
+    #[cfg(feature = "enable-experimental-transaction-stitching")]
     let partials_collector = Arc::new(Mutex::new(Vec::new()));
     let derivation_trace = Arc::new(Mutex::new(None));
     let (boot, precondition) = kailua_kona::client::core::run_core_client(
@@ -106,8 +110,11 @@ where
         Some(execution_trace.clone()),
         derivation_cache.clone(),
         trace_derivation.then(|| derivation_trace.clone()),
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         pe_witness.clone(),
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         partial_executions,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         trace_partials.then_some(partials_collector.clone()),
     )?;
     // Fix claimed output of captured executions
@@ -122,6 +129,7 @@ where
         }
     };
     // Capture partials
+    #[cfg(feature = "enable-experimental-transaction-stitching")]
     let partial_executions = match stitched_executions.first() {
         None => vec![],
         Some(execution) => {
@@ -130,7 +138,7 @@ where
                     *execution.artifacts.header.parent_hash,
                 ))
                 .await?;
-            recover_collected_partials(
+            kailua_kona::client::core::recover_collected_partials(
                 &boot,
                 partials_collector,
                 &stitched_executions,
@@ -166,7 +174,9 @@ where
         stitched_preconditions,
         stitched_boot_info,
         fpvm_image_id,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         pe_witness,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         partial_executions,
     };
     witness

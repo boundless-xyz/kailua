@@ -50,7 +50,7 @@ fmt:
 
 clippy:
   RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked --all-targets -- -D warnings
-  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -F eigen -F celestia --all-targets -- -D warnings
+  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -F eigen -F celestia -F enable-experimental-transaction-stitching --all-targets -- -D warnings
 
   cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
   cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
@@ -63,7 +63,7 @@ clippy-kona:
   cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
 
 coverage +ARGS="":
-  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
+  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona -F enable-experimental-transaction-stitching --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
 #  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona --branch --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
 
 coverage-open: (coverage "--open")
@@ -71,13 +71,13 @@ coverage-open: (coverage "--open")
 devnet-fetch:
   ./scripts/devnet-fetch.sh
 
-devnet-build +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia": (build ARGS)
+devnet-build +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia -F enable-experimental-transaction-stitching": (build ARGS)
 
-devnet-build-kona +ARGS="--bin kailua-cli -F devnet -F prove": (build ARGS)
+devnet-build-kona +ARGS="--bin kailua-cli -F devnet -F prove -F enable-experimental-transaction-stitching": (build ARGS)
 
-devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia": vendor (build ARGS)
+devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia -F enable-experimental-transaction-stitching": vendor (build ARGS)
 
-devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm": vendor (build ARGS)
+devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F enable-experimental-transaction-stitching": vendor (build ARGS)
 
 devnet-up:
   ./scripts/devnet-up.sh

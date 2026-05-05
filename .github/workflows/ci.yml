@@ -170,7 +170,7 @@ jobs:
       - name: vendor fpvm sources
         run: cargo vendor --manifest-path build/risczero/kona/Cargo.toml --sync build/risczero/hokulea/Cargo.toml --sync build/risczero/hana/Cargo.toml build/risczero/vendor
       - name: cargo test kailua
-        run: cargo test --locked --workspace -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
+        run: cargo test --locked --workspace -F devnet -F prove -F rebuild-fpvm -F enable-experimental-transaction-stitching -- --test-threads 1
 
   cargo-test-eigen:
     needs: cargo-test
@@ -253,7 +253,7 @@ jobs:
       - name: vendor fpvm sources
         run: cargo vendor --manifest-path build/risczero/kona/Cargo.toml --sync build/risczero/hokulea/Cargo.toml --sync build/risczero/hana/Cargo.toml build/risczero/vendor
       - name: cargo test kailua-hokulea
-        run: cargo test --locked -p kailua-cli -F eigen -F devnet -F prove -F rebuild-fpvm -- --test-threads 1
+        run: cargo test --locked -p kailua-cli -F eigen -F devnet -F prove -F rebuild-fpvm -F enable-experimental-transaction-stitching -- --test-threads 1
 
   cargo-llvm-cov:
     runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]

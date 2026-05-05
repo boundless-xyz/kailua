@@ -59,6 +59,11 @@ serde.workspace = true
 serde_json.workspace = true
 
 [features]
+enable-experimental-transaction-stitching = [
+    "kailua-kona/enable-experimental-transaction-stitching",
+    "kailua-prover/enable-experimental-transaction-stitching",
+    "kailua-validator/enable-experimental-transaction-stitching",
+]
 devnet = [
     "kailua-proposer/devnet",
     "kailua-sync/devnet",

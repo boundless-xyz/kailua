@@ -29,6 +29,7 @@ use kailua_kona::client::core::{fetch_safe_head_hash, EthereumDataSourceProvider
 use kailua_kona::client::stitching::split_executions;
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::evm::partial::PartialExecution;
+#[cfg(feature = "enable-experimental-transaction-stitching")]
 use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
@@ -72,7 +73,9 @@ pub async fn run_proving_client<P, H>(
     precondition: Precondition,
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
-    pe_witness: Option<PartialExecutionWitness>,
+    #[cfg(feature = "enable-experimental-transaction-stitching")] pe_witness: Option<
+        PartialExecutionWitness,
+    >,
     mut partial_executions: Vec<Vec<PartialExecution>>,
     derivation_cache: Option<CachedDriver>,
     trace_derivation: bool,
@@ -202,8 +205,11 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
+                    #[cfg(feature = "enable-experimental-transaction-stitching")]
                     pe_witness,
+                    #[cfg(feature = "enable-experimental-transaction-stitching")]
                     partial_executions.clone(),
+                    #[cfg(feature = "enable-experimental-transaction-stitching")]
                     !seek_proof,
                 )
                 .await
@@ -262,8 +268,11 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
+                    #[cfg(feature = "enable-experimental-transaction-stitching")]
                     pe_witness,
+                    #[cfg(feature = "enable-experimental-transaction-stitching")]
                     partial_executions.clone(),
+                    #[cfg(feature = "enable-experimental-transaction-stitching")]
                     !seek_proof,
                 )
                 .await
@@ -299,8 +308,11 @@ where
                 trace_derivation,
                 stitched_preconditions.clone(),
                 stitched_boot_info.clone(),
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
                 pe_witness,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
                 partial_executions.clone(),
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
                 !seek_proof,
             )
             .await
@@ -453,6 +465,7 @@ pub fn process_witness(
 ) -> Result<Vec<Vec<u8>>, ProvingError> {
     // Replace outputs with inputs
     let execution_trace = core::mem::replace(&mut witness.stitched_executions, stitched_executions);
+    #[cfg(feature = "enable-experimental-transaction-stitching")]
     let partial_executions =
         core::mem::replace(&mut witness.partial_executions, partial_executions);
 
