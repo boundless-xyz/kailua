@@ -268,10 +268,10 @@ jobs:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@main
       - uses: boundless-xyz/boundless/.github/actions/sccache@main
-#      - name: Install nightly toolchain
-#        uses: risc0/risc0/.github/actions/rustup@main
-#        with:
-#          toolchain: nightly-2026-03-26
+      - name: Install nightly toolchain
+        uses: risc0/risc0/.github/actions/rustup@main
+        with:
+          toolchain: nightly-2026-03-26
       - name: Install svm-rs
         uses: risc0/cargo-install@b9307573043522ab0d3e3be64a51763b765b52a4
         with:
@@ -291,7 +291,7 @@ jobs:
           crate: cargo-llvm-cov
       - name: kailua-kona coverage # --branch is currently broken for async code (issue: llvm/llvm-project#189169)
 #        run: cargo +nightly-2026-03-26 llvm-cov -p kailua-kona --branch --fail-uncovered-functions 0 --fail-uncovered-lines 10
-        run: cargo llvm-cov -p kailua-kona --fail-uncovered-functions 0 --fail-uncovered-lines 10
+        run: cargo +nightly-2026-03-26 llvm-cov -p kailua-kona --fail-uncovered-functions 0 --fail-uncovered-lines 10
 
   forge-fmt:
     runs-on: ubuntu-latest
