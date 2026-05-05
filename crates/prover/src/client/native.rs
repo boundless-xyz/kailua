@@ -21,9 +21,6 @@ use anyhow::anyhow;
 use async_channel::Sender;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::driver::CachedDriver;
-use kailua_kona::evm::partial::PartialExecution;
-#[cfg(feature = "enable-experimental-transaction-stitching")]
-use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::precondition::Precondition;
 use kailua_sync::retry_res_ctx_timeout;
@@ -36,12 +33,17 @@ use kona_preimage::{
 };
 use kona_proof::HintType;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::task;
 use tokio::task::JoinHandle;
 use tracing::info;
+#[cfg(feature = "enable-experimental-transaction-stitching")]
+use {
+    kailua_kona::evm::partial::PartialExecution,
+    kailua_kona::evm::witness::PartialExecutionWitness, std::collections::BTreeMap,
+};
 
+#[cfg(feature = "enable-experimental-transaction-stitching")]
 pub type PartialsCache = BTreeMap<u64, Vec<PartialExecution>>;
 
 /// Starts the [PreimageServer] and the client program in separate threads. The client program is
@@ -60,7 +62,9 @@ pub type PartialsCache = BTreeMap<u64, Vec<PartialExecution>>;
     allow(unused_mut)
 )]
 pub async fn run_native_client(
-    partials_cache: Option<Arc<PartialsCache>>,
+    #[cfg(feature = "enable-experimental-transaction-stitching")] partials_cache: Option<
+        Arc<PartialsCache>,
+    >,
     args: ProveArgs,
     disk_kv_store: Option<RWLKeyValueStore>,
     precondition: Precondition,
@@ -75,7 +79,9 @@ pub async fn run_native_client(
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
-    mut partial_executions: Vec<Vec<PartialExecution>>,
+    #[cfg(feature = "enable-experimental-transaction-stitching")] mut partial_executions: Vec<
+        Vec<PartialExecution>,
+    >,
 ) -> Result<(), ProvingError> {
     // Instantiate data channels
     let hint = BidirectionalChannel::new().map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
@@ -176,6 +182,7 @@ pub async fn run_native_client(
     // Start the client program in a separate thread
     let client_task = tokio::spawn(crate::client::proving::run_proving_client(
         use_hokulea.then_some(args.kona.l1_node_address).flatten(),
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         partials_cache,
         args.proving,
         args.boundless,
@@ -186,6 +193,7 @@ pub async fn run_native_client(
         stitched_executions,
         #[cfg(feature = "enable-experimental-transaction-stitching")]
         pe_witness,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         partial_executions,
         derivation_cache,
         trace_derivation,

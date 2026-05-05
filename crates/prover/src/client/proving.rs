@@ -13,11 +13,10 @@
 // limitations under the License.
 
 use crate::args::ProvingArgs;
-use crate::client::native::PartialsCache;
 use crate::client::witgen;
 use crate::driver::{driver_file_name, signal_derivation_trace};
 use crate::profiling::{Profile, ProfiledReceipt};
-use crate::proof::{proof_file_name, read_bincoded_file, save_to_bincoded_file};
+use crate::proof::save_to_bincoded_file;
 use crate::risczero::boundless::BoundlessArgs;
 use crate::ProvingError;
 use alloy_primitives::B256;
@@ -25,32 +24,38 @@ use anyhow::{anyhow, Context};
 use async_channel::Sender;
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
-use kailua_kona::client::core::{fetch_safe_head_hash, EthereumDataSourceProvider};
+use kailua_kona::client::core::EthereumDataSourceProvider;
 use kailua_kona::client::stitching::split_executions;
 use kailua_kona::driver::CachedDriver;
-use kailua_kona::evm::partial::PartialExecution;
-#[cfg(feature = "enable-experimental-transaction-stitching")]
-use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
-use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::vec::{PreimageVecEntry, VecOracle};
 use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
-use kona_executor::TrieDBProvider;
 use kona_preimage::{HintWriterClient, PreimageOracleClient};
 use kona_proof::l1::OracleBlobProvider;
-use kona_proof::l2::OracleL2ChainProvider;
 use kona_proof::{BootInfo, CachingOracle};
 use lazy_static::lazy_static;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Journal;
 use rkyv::rancor::BoxedError;
-use std::convert::identity;
 use std::fmt::Debug;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tracing::{error, info, warn};
+#[cfg(feature = "enable-experimental-transaction-stitching")]
+use {
+    crate::client::native::PartialsCache,
+    crate::proof::{proof_file_name, read_bincoded_file},
+    kailua_kona::client::core::fetch_safe_head_hash,
+    kailua_kona::evm::partial::PartialExecution,
+    kailua_kona::evm::witness::PartialExecutionWitness,
+    kailua_kona::journal::ProofJournal,
+    kona_executor::TrieDBProvider,
+    kona_proof::l2::OracleL2ChainProvider,
+    std::convert::identity,
+    std::path::Path,
+};
 
 lazy_static! {
     pub static ref SEMAPHORE_WITGEN: Arc<Mutex<Arc<Semaphore>>> =
@@ -65,7 +70,9 @@ pub const ORACLE_LRU_SIZE: usize = 1024;
 #[allow(clippy::too_many_arguments)]
 pub async fn run_proving_client<P, H>(
     _l1_node_address: Option<String>,
-    partials_cache: Option<Arc<PartialsCache>>,
+    #[cfg(feature = "enable-experimental-transaction-stitching")] partials_cache: Option<
+        Arc<PartialsCache>,
+    >,
     proving: ProvingArgs,
     boundless: BoundlessArgs,
     oracle_client: P,
@@ -76,12 +83,18 @@ pub async fn run_proving_client<P, H>(
     #[cfg(feature = "enable-experimental-transaction-stitching")] pe_witness: Option<
         PartialExecutionWitness,
     >,
-    mut partial_executions: Vec<Vec<PartialExecution>>,
+    #[cfg(feature = "enable-experimental-transaction-stitching")] mut partial_executions: Vec<
+        Vec<PartialExecution>,
+    >,
     derivation_cache: Option<CachedDriver>,
     trace_derivation: bool,
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
+    #[cfg_attr(
+        not(feature = "enable-experimental-transaction-stitching"),
+        allow(unused_mut)
+    )]
     mut stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
@@ -105,6 +118,7 @@ where
         .context("BootInfo::load")
         .map_err(ProvingError::OtherError)?;
     // Preload cached partial execution proofs
+    #[cfg(feature = "enable-experimental-transaction-stitching")]
     match partials_cache {
         Some(partials_cache)
             if !initial_boot_info.l1_head == B256::repeat_byte(0xFF)
@@ -384,6 +398,7 @@ where
         &proving,
         witness,
         stitched_executions,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         partial_executions,
         extra_frames,
         seek_proof,
@@ -396,7 +411,7 @@ where
     if processed_witness.is_ok()
         || matches!(
             processed_witness.as_ref(),
-            Err(ProvingError::NotSeekingProof(..))
+            Err(ProvingError::NotSeekingProof { .. })
         )
     {
         // signal the cached driver to the tracer before seeking a proof
@@ -455,7 +470,9 @@ pub fn process_witness(
     proving: &ProvingArgs,
     mut witness: Witness<VecOracle>,
     stitched_executions: Vec<Vec<Execution>>,
-    partial_executions: Vec<Vec<PartialExecution>>,
+    #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
+        Vec<PartialExecution>,
+    >,
     extra_frames: Vec<Vec<u8>>,
     seek_proof: bool,
     force_attempt: bool,
@@ -492,15 +509,16 @@ pub fn process_witness(
         );
         if !force_attempt {
             warn!("Aborting.");
-            return Err(ProvingError::WitnessSizeError(
-                preloaded_wit_size,
-                streamed_wit_size,
-                proving.max_witness_size,
-                execution_trace,
-                partial_executions,
-                Box::new(derivation_cache),
+            return Err(ProvingError::WitnessSizeError {
+                preloaded_size: preloaded_wit_size,
+                streamed_size: streamed_wit_size,
+                limit: proving.max_witness_size,
+                executions: execution_trace,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                partials: partial_executions,
+                derivation_cache: Box::new(derivation_cache),
                 derivation_trace,
-            ));
+            });
         }
         warn!("Continuing..");
     }
@@ -513,28 +531,30 @@ pub fn process_witness(
         );
         if !force_attempt {
             warn!("Aborting.");
-            return Err(ProvingError::BlockCountError(
-                num_executions,
-                proving.max_block_executions,
-                execution_trace,
-                partial_executions,
-                Box::new(derivation_cache),
+            return Err(ProvingError::BlockCountError {
+                count: num_executions,
+                limit: proving.max_block_executions,
+                executions: execution_trace,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                partials: partial_executions,
+                derivation_cache: Box::new(derivation_cache),
                 derivation_trace,
-            ));
+            });
         }
         warn!("Continuing..");
     }
 
     if !seek_proof {
-        return Err(ProvingError::NotSeekingProof(
-            preloaded_wit_size,
-            streamed_wit_size,
-            execution_trace,
-            partial_executions,
-            Box::new(derivation_cache),
+        return Err(ProvingError::NotSeekingProof {
+            preloaded_size: preloaded_wit_size,
+            streamed_size: streamed_wit_size,
+            executions: execution_trace,
+            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            partials: partial_executions,
+            derivation_cache: Box::new(derivation_cache),
             derivation_trace,
             derivation_trace_hash,
-        ));
+        });
     }
 
     // collect input frames

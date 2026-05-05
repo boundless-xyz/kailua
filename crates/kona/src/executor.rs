@@ -13,23 +13,13 @@
 // limitations under the License.
 
 use crate::client::log;
-use crate::evm::partial::PartialExecution;
-use crate::evm::partial::PartialExecutionTrace;
 use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
-use alloy_consensus::{BlockHeader, Header};
-use alloy_eips::eip7840::BlobParams;
-use alloy_evm::op_revm::OpSpecId;
-use alloy_evm::revm::context::BlockEnv;
-use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
-use alloy_evm::revm::primitives::eip4844::{
-    BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-};
+use alloy_consensus::Header;
 use alloy_evm::EvmFactory;
-use alloy_op_evm::OpBlockExecutionCtx;
+use alloy_primitives::Bytes;
 use alloy_primitives::{keccak256, Sealed, B256};
-use alloy_primitives::{Bytes, U256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
 use kona_executor::{BlockBuildingOutcome, TrieDBProvider};
@@ -45,6 +35,20 @@ use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use spin::RwLock;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "enable-experimental-transaction-stitching")]
+use {
+    crate::evm::partial::{PartialExecution, PartialExecutionTrace},
+    alloy_consensus::BlockHeader,
+    alloy_eips::eip7840::BlobParams,
+    alloy_evm::op_revm::OpSpecId,
+    alloy_evm::revm::context::BlockEnv,
+    alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice,
+    alloy_evm::revm::primitives::eip4844::{
+        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+    },
+    alloy_op_evm::OpBlockExecutionCtx,
+    alloy_primitives::U256,
+};
 
 /// Represents a block execution process and its results.
 ///
@@ -300,6 +304,7 @@ where
     Ok(Arc::new(RwLock::new(cursor)))
 }
 
+#[cfg(feature = "enable-experimental-transaction-stitching")]
 fn expected_blob_excess_gas_and_price(
     parent_header: &Header,
     spec_id: OpSpecId,
@@ -324,6 +329,7 @@ fn expected_blob_excess_gas_and_price(
         .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
 }
 
+#[cfg(feature = "enable-experimental-transaction-stitching")]
 pub fn build_single_partial_for_block(
     execution: &Execution,
     traces: Vec<PartialExecutionTrace>,
@@ -623,6 +629,7 @@ pub mod tests {
         );
     }
 
+    #[cfg(feature = "enable-experimental-transaction-stitching")]
     #[test]
     fn build_single_partial_for_block_blob_param_branches() {
         let execution = gen_executions(1)

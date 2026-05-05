@@ -17,6 +17,7 @@
 use alloy_primitives::B256;
 use async_channel::Sender;
 use kailua_kona::driver::CachedDriver;
+#[cfg(feature = "enable-experimental-transaction-stitching")]
 use kailua_kona::evm::partial::PartialExecution;
 use kailua_kona::executor::Execution;
 use std::time::SystemTime;
@@ -44,40 +45,45 @@ pub enum ProvingError {
     #[error("DerivationProofError error: execution proofs {0}")]
     SkippingDerivation(usize),
 
-    #[error("NotSeekingProof error: preloaded {0} streamed {1}")]
-    NotSeekingProof(
-        usize,
-        usize,
-        Vec<Vec<Execution>>,
-        Vec<Vec<PartialExecution>>,
-        Box<Option<CachedDriver>>,
-        Option<Sender<CachedDriver>>,
-        B256,
-    ),
+    #[error("NotSeekingProof error: preloaded {preloaded_size} streamed {streamed_size}")]
+    NotSeekingProof {
+        preloaded_size: usize,
+        streamed_size: usize,
+        executions: Vec<Vec<Execution>>,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        partials: Vec<Vec<PartialExecution>>,
+        derivation_cache: Box<Option<CachedDriver>>,
+        derivation_trace: Option<Sender<CachedDriver>>,
+        derivation_trace_hash: B256,
+    },
 
     #[error("NotAwaitingProof error")]
     NotAwaitingProof,
 
-    #[error("BlockCountError error: count {0} limit {1}")]
-    BlockCountError(
-        usize,
-        usize,
-        Vec<Vec<Execution>>,
-        Vec<Vec<PartialExecution>>,
-        Box<Option<CachedDriver>>,
-        Option<Sender<CachedDriver>>,
-    ),
+    #[error("BlockCountError error: count {count} limit {limit}")]
+    BlockCountError {
+        count: usize,
+        limit: usize,
+        executions: Vec<Vec<Execution>>,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        partials: Vec<Vec<PartialExecution>>,
+        derivation_cache: Box<Option<CachedDriver>>,
+        derivation_trace: Option<Sender<CachedDriver>>,
+    },
 
-    #[error("WitnessSizeError error: preloaded {0} streamed {1} limit {2}")]
-    WitnessSizeError(
-        usize,
-        usize,
-        usize,
-        Vec<Vec<Execution>>,
-        Vec<Vec<PartialExecution>>,
-        Box<Option<CachedDriver>>,
-        Option<Sender<CachedDriver>>,
-    ),
+    #[error(
+        "WitnessSizeError error: preloaded {preloaded_size} streamed {streamed_size} limit {limit}"
+    )]
+    WitnessSizeError {
+        preloaded_size: usize,
+        streamed_size: usize,
+        limit: usize,
+        executions: Vec<Vec<Execution>>,
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        partials: Vec<Vec<PartialExecution>>,
+        derivation_cache: Box<Option<CachedDriver>>,
+        derivation_trace: Option<Sender<CachedDriver>>,
+    },
 
     #[error("ProvingTimeout error")]
     ProvingTimeout,
@@ -89,50 +95,61 @@ pub enum ProvingError {
 impl ProvingError {
     pub fn with_driver_cache(self, driver_cache: Option<CachedDriver>) -> Self {
         match self {
-            ProvingError::NotSeekingProof(
-                preloaded,
-                streamed,
+            ProvingError::NotSeekingProof {
+                preloaded_size,
+                streamed_size,
                 executions,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
                 partials,
-                _,
-                driver_trace,
+                derivation_cache: _,
+                derivation_trace,
                 derivation_trace_hash,
-            ) => ProvingError::NotSeekingProof(
-                preloaded,
-                streamed,
+            } => ProvingError::NotSeekingProof {
+                preloaded_size,
+                streamed_size,
                 executions,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
                 partials,
-                Box::new(driver_cache),
-                driver_trace,
+                derivation_cache: Box::new(driver_cache),
+                derivation_trace,
                 derivation_trace_hash,
-            ),
-            ProvingError::BlockCountError(count, limit, executions, partials, _, driver_trace) => {
-                ProvingError::BlockCountError(
-                    count,
-                    limit,
-                    executions,
-                    partials,
-                    Box::new(driver_cache),
-                    driver_trace,
-                )
-            }
-            ProvingError::WitnessSizeError(
-                preloaded,
-                streamed,
+            },
+            ProvingError::BlockCountError {
+                count,
                 limit,
                 executions,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
                 partials,
-                _,
-                driver_trace,
-            ) => ProvingError::WitnessSizeError(
-                preloaded,
-                streamed,
+                derivation_cache: _,
+                derivation_trace,
+            } => ProvingError::BlockCountError {
+                count,
                 limit,
                 executions,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
                 partials,
-                Box::new(driver_cache),
-                driver_trace,
-            ),
+                derivation_cache: Box::new(driver_cache),
+                derivation_trace,
+            },
+            ProvingError::WitnessSizeError {
+                preloaded_size,
+                streamed_size,
+                limit,
+                executions,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                partials,
+                derivation_cache: _,
+                derivation_trace,
+            } => ProvingError::WitnessSizeError {
+                preloaded_size,
+                streamed_size,
+                limit,
+                executions,
+                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                partials,
+                derivation_cache: Box::new(driver_cache),
+                derivation_trace,
+            },
             err => err,
         }
     }
