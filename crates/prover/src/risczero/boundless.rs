@@ -1579,7 +1579,10 @@ mod tests {
         let parent = parse_with(&["--boundless-enable-upload-caching=false"]);
         assert!(!parent.boundless_enable_upload_caching);
         assert_eq!(
-            value_after(&parent.to_arg_vec(&None), "--boundless-enable-upload-caching"),
+            value_after(
+                &parent.to_arg_vec(&None),
+                "--boundless-enable-upload-caching"
+            ),
             "false"
         );
     }
