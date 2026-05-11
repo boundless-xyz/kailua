@@ -1528,3 +1528,63 @@ impl R2Storage {
         self.upload(&key, input.to_vec()).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for the `boundless_legacy_pricing` declaration that this PR replaced.
+    ///
+    /// The old `#[clap(long, env, default_value_t = true)] bool` had two bugs that combined
+    /// to make the SDK path effectively unreachable:
+    ///   1. clap derive picked `ArgAction::SetTrue`, so `--boundless-legacy-pricing=false`
+    ///      errored and bare `--boundless-legacy-pricing` kept it `true`. Only the env var
+    ///      spelled exactly `BOUNDLESS_LEGACY_PRICING=false` worked.
+    ///   2. `to_arg_vec` emitted the flag only when `true`, so even a successful parent
+    ///      override didn't reach the prover subprocess — the child fell back to the
+    ///      `true` default.
+    ///
+    /// Both bugs disappear when the field is named `boundless_dynamic_pricing` with
+    /// `default_value_t = false` (opt-in). This test pins that:
+    ///   - bare `--boundless-dynamic-pricing` parses to `true` (would fail if anyone
+    ///     re-introduces `default_value_t = true` here);
+    ///   - `to_arg_vec` includes `--boundless-dynamic-pricing` when the value is `true`
+    ///     (would fail if the emit-when-true convention is broken).
+    #[test]
+    fn dynamic_pricing_flag_parses_and_propagates() {
+        let base = [
+            "kailua",
+            "--boundless-rpc-url",
+            "http://localhost:8545",
+            "--boundless-wallet-key",
+            "0101010101010101010101010101010101010101010101010101010101010101",
+        ];
+
+        // No flag → legacy is the default. Catches a regression that flips the default
+        // back to `true` (which combined with `default_value_t = true` on a bool would
+        // re-introduce the clap quirk where `--…=false` errors).
+        let default_cfg = MarketProviderConfig::try_parse_from(base).unwrap();
+        assert!(
+            !default_cfg.boundless_dynamic_pricing,
+            "legacy pricing must be the default"
+        );
+
+        // Bare `--boundless-dynamic-pricing` → enabled. Would fail under the old
+        // `default_value_t = true` shape because the SetTrue action couldn't distinguish
+        // it from the default.
+        let mut enabled = base.to_vec();
+        enabled.push("--boundless-dynamic-pricing");
+        let parent = MarketProviderConfig::try_parse_from(enabled).unwrap();
+        assert!(parent.boundless_dynamic_pricing);
+
+        // `to_arg_vec` must propagate the flag (the validator spawns the prover as a
+        // subprocess and serializes its config through this method).
+        let serialized = parent.to_arg_vec(&None);
+        assert!(
+            serialized
+                .iter()
+                .any(|s| s == "--boundless-dynamic-pricing"),
+            "to_arg_vec dropped --boundless-dynamic-pricing; got {serialized:?}"
+        );
+    }
+}
