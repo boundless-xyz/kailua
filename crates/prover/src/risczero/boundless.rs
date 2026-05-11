@@ -127,7 +127,13 @@ pub struct MarketProviderConfig {
     pub boundless_order_stream_url: Option<Cow<'static, str>>,
 
     /// Whether to look back at prior proof requests
-    #[clap(long, env, required = false, default_value_t = true)]
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
     pub boundless_look_back: bool,
     /// Whether to skip preflighting execution and assume a fixed cycle count.
     #[clap(long, env, required = false)]
@@ -178,7 +184,13 @@ pub struct MarketProviderConfig {
     #[clap(long, env, required = false, default_value_t = 12)]
     pub boundless_order_check_interval: u64,
     /// Whether to enable upload caching
-    #[clap(long, env, required = false, default_value_t = true)]
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
     pub boundless_enable_upload_caching: bool,
 
     /// Funding mode for order submission.
@@ -392,9 +404,10 @@ impl MarketProviderConfig {
             ]);
         };
         // Lookback
-        if self.boundless_look_back {
-            proving_args.push(String::from("--boundless-look-back"));
-        }
+        proving_args.extend(vec![
+            String::from("--boundless-look-back"),
+            self.boundless_look_back.to_string(),
+        ]);
         // Preflight skip
         if let Some(cycle_count) = self.boundless_assume_cycle_count {
             proving_args.extend(vec![
@@ -1527,5 +1540,55 @@ impl R2Storage {
         let digest = Sha256::digest(input);
         let key = format!("v2/kailua/input/{}.bin", hex::encode(digest));
         self.upload(&key, input.to_vec()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE_ARGS: [&str; 5] = [
+        "kailua",
+        "--boundless-rpc-url",
+        "http://localhost:8545",
+        "--boundless-wallet-key",
+        "0101010101010101010101010101010101010101010101010101010101010101",
+    ];
+
+    fn parse_with(extra: &[&str]) -> MarketProviderConfig {
+        let args: Vec<&str> = BASE_ARGS
+            .iter()
+            .copied()
+            .chain(extra.iter().copied())
+            .collect();
+        MarketProviderConfig::try_parse_from(args).unwrap()
+    }
+
+    /// `boundless_look_back` must accept `--flag=false` and emit the value via `to_arg_vec`.
+    #[test]
+    fn boundless_look_back_can_be_disabled_and_propagated() {
+        let parent = parse_with(&["--boundless-look-back=false"]);
+        assert!(!parent.boundless_look_back);
+
+        let serialized = parent.to_arg_vec(&None);
+        let idx = serialized
+            .iter()
+            .position(|s| s == "--boundless-look-back")
+            .unwrap();
+        assert_eq!(serialized[idx + 1], "false");
+    }
+
+    /// `boundless_enable_upload_caching` must accept `--flag=false` and emit the value via `to_arg_vec`.
+    #[test]
+    fn boundless_enable_upload_caching_can_be_disabled_and_propagated() {
+        let parent = parse_with(&["--boundless-enable-upload-caching=false"]);
+        assert!(!parent.boundless_enable_upload_caching);
+
+        let serialized = parent.to_arg_vec(&None);
+        let idx = serialized
+            .iter()
+            .position(|s| s == "--boundless-enable-upload-caching")
+            .unwrap();
+        assert_eq!(serialized[idx + 1], "false");
     }
 }
