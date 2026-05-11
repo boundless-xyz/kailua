@@ -1547,7 +1547,7 @@ impl R2Storage {
 mod tests {
     use super::*;
 
-    const BASE_ARGS: [&str; 5] = [
+    const BASE_ARGS: &[&str] = &[
         "kailua",
         "--boundless-rpc-url",
         "http://localhost:8545",
@@ -1556,39 +1556,31 @@ mod tests {
     ];
 
     fn parse_with(extra: &[&str]) -> MarketProviderConfig {
-        let args: Vec<&str> = BASE_ARGS
-            .iter()
-            .copied()
-            .chain(extra.iter().copied())
-            .collect();
-        MarketProviderConfig::try_parse_from(args).unwrap()
+        MarketProviderConfig::try_parse_from(BASE_ARGS.iter().chain(extra.iter())).unwrap()
     }
 
-    /// `boundless_look_back` must accept `--flag=false` and emit the value via `to_arg_vec`.
+    fn value_after(args: &[String], flag: &str) -> String {
+        let idx = args.iter().position(|s| s == flag).unwrap();
+        args[idx + 1].clone()
+    }
+
     #[test]
     fn boundless_look_back_can_be_disabled_and_propagated() {
         let parent = parse_with(&["--boundless-look-back=false"]);
         assert!(!parent.boundless_look_back);
-
-        let serialized = parent.to_arg_vec(&None);
-        let idx = serialized
-            .iter()
-            .position(|s| s == "--boundless-look-back")
-            .unwrap();
-        assert_eq!(serialized[idx + 1], "false");
+        assert_eq!(
+            value_after(&parent.to_arg_vec(&None), "--boundless-look-back"),
+            "false"
+        );
     }
 
-    /// `boundless_enable_upload_caching` must accept `--flag=false` and emit the value via `to_arg_vec`.
     #[test]
     fn boundless_enable_upload_caching_can_be_disabled_and_propagated() {
         let parent = parse_with(&["--boundless-enable-upload-caching=false"]);
         assert!(!parent.boundless_enable_upload_caching);
-
-        let serialized = parent.to_arg_vec(&None);
-        let idx = serialized
-            .iter()
-            .position(|s| s == "--boundless-enable-upload-caching")
-            .unwrap();
-        assert_eq!(serialized[idx + 1], "false");
+        assert_eq!(
+            value_after(&parent.to_arg_vec(&None), "--boundless-enable-upload-caching"),
+            "false"
+        );
     }
 }
