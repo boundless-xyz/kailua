@@ -1534,7 +1534,7 @@ mod tests {
     use super::*;
 
     /// `boundless_dynamic_pricing` must be off by default, settable by bare flag, and
-    /// propagated by `to_arg_vec` (validator → prover subprocess).
+    /// included in `to_arg_vec` output when set.
     #[test]
     fn dynamic_pricing_flag_parses_and_propagates() {
         let base = [
