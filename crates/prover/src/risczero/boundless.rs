@@ -144,21 +144,11 @@ pub struct MarketProviderConfig {
 
     /// Minimum price per cycle (e.g., "0.00001 USD", "0.0000001 ETH").
     /// If unset, the SDK uses market pricing from the price provider.
-    #[clap(
-        long,
-        env,
-        required = false,
-        requires = "boundless_dynamic_pricing"
-    )]
+    #[clap(long, env, required = false, requires = "boundless_dynamic_pricing")]
     pub boundless_min_price_per_cycle: Option<Amount>,
     /// Maximum price per cycle (e.g., "0.00001 USD", "0.0000001 ETH").
     /// If unset, the SDK default (~100 Kwei/cycle, 99th percentile) is used.
-    #[clap(
-        long,
-        env,
-        required = false,
-        requires = "boundless_dynamic_pricing"
-    )]
+    #[clap(long, env, required = false, requires = "boundless_dynamic_pricing")]
     pub boundless_max_price_per_cycle: Option<Amount>,
     /// Hard cap on total order price (e.g., "0.5 ETH", "100 USD"). Safety mechanism.
     #[clap(long, env, required = false)]
@@ -1265,7 +1255,11 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
 
     info!(
         "Boundless pricing path: {}",
-        if market.boundless_dynamic_pricing { "dynamic-sdk" } else { "legacy" }
+        if market.boundless_dynamic_pricing {
+            "dynamic-sdk"
+        } else {
+            "legacy"
+        }
     );
     let mut request = if !market.boundless_dynamic_pricing {
         // Legacy path: manual pricing with static wei parameters
