@@ -1568,21 +1568,17 @@ mod tests {
     fn boundless_look_back_can_be_disabled_and_propagated() {
         let parent = parse_with(&["--boundless-look-back=false"]);
         assert!(!parent.boundless_look_back);
-        assert_eq!(
-            value_after(&parent.to_arg_vec(&None), "--boundless-look-back"),
-            "false"
-        );
+        let args = parent.to_arg_vec(&None);
+        assert_eq!(value_after(&args, "--boundless-look-back"), "false");
     }
 
     #[test]
     fn boundless_enable_upload_caching_can_be_disabled_and_propagated() {
         let parent = parse_with(&["--boundless-enable-upload-caching=false"]);
         assert!(!parent.boundless_enable_upload_caching);
+        let args = parent.to_arg_vec(&None);
         assert_eq!(
-            value_after(
-                &parent.to_arg_vec(&None),
-                "--boundless-enable-upload-caching"
-            ),
+            value_after(&args, "--boundless-enable-upload-caching"),
             "false"
         );
     }
