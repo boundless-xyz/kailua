@@ -247,8 +247,13 @@ export-fpvm target="release" data="./build/risczero/src/bin" verbosity="":
   ./target/{{target}}/kailua-cli export {{verbosity}} --data-dir {{data}}
 
 # Run the client program natively with the host program attached.
-prove block_number block_count l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data target="release" seq_window="50" verbosity="":
+prove block_number block_count l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data target="release" seq_window="50" verbosity="" system="0":
   #!/usr/bin/env bash
+
+  case "{{system}}" in
+    1|yes|true|TRUE) KAILUA_CLI=(kailua-cli) ;;
+    *) KAILUA_CLI=("./target/{{target}}/kailua-cli") ;;
+  esac
 
   L1_NODE_ADDRESS="{{l1_rpc}}"
   L1_BEACON_ADDRESS="{{l1_beacon_rpc}}"
@@ -275,7 +280,7 @@ prove block_number block_count l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data 
   AGREED_L2_HEAD=$(cast block --rpc-url $L2_NODE_ADDRESS $((L2_BLOCK_NUMBER - 1)) --json | jq -r .hash)
 
   echo "Running host program with zk client program..."
-  ./target/{{target}}/kailua-cli prove {{verbosity}} \
+  "${KAILUA_CLI[@]}" prove {{verbosity}} \
     --op-node-address $OP_NODE_ADDRESS \
     --l1-head $L1_HEAD \
     --agreed-l2-head-hash $AGREED_L2_HEAD \

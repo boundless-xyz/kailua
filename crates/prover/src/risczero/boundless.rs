@@ -1581,7 +1581,7 @@ mod tests {
             "false"
         );
     }
-  
+
     /// `boundless_dynamic_pricing` must be off by default, settable by bare flag, and
     /// included in `to_arg_vec` output when set.
     #[test]
@@ -1597,5 +1597,4 @@ mod tests {
             .iter()
             .any(|s| s == "--boundless-dynamic-pricing"));
     }
-  
 }
