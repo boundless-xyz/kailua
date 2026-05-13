@@ -632,39 +632,6 @@ fn base_proving_args(max_witness_size: usize) -> ProvingArgs {
     }
 }
 
-/// Fires a single L2 tx whose `to` is the SHA256 precompile (0x02). Sending a tx
-/// directly to a precompile address invokes the precompile via the EVM call frame,
-/// which is the only way revm's `Crypto::sha256` is reached. Used to verify that
-/// the experimental R0VM crypto provider is actually exercised end-to-end on the
-/// devnet (which otherwise produces only L1-attributes deposit txs that touch no
-/// precompiles).
-///
-/// The signing account is the standard hardhat dev mnemonic account #0, which is
-/// prefunded on the L2 by `fund_dev_accounts: true` in `kurtosis.yaml`.
-async fn fire_precompile_probe_tx(devnet: &DevnetConfig) -> anyhow::Result<()> {
-    use alloy::network::TransactionBuilder;
-    use alloy::primitives::{address, Bytes};
-    use alloy::providers::ProviderBuilder;
-    use alloy::rpc::types::TransactionRequest;
-    use alloy::signers::local::PrivateKeySigner;
-
-    const DEV_PRIV_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-
-    let signer: PrivateKeySigner = DEV_PRIV_KEY.parse()?;
-    let l2_url = devnet.l2_rpc_url()?.parse()?;
-    let provider = ProviderBuilder::new().wallet(signer).connect_http(l2_url);
-
-    let tx = TransactionRequest::default()
-        .with_to(address!("0x0000000000000000000000000000000000000002"))
-        .with_input(Bytes::from_static(b"r0vm-crypto-probe"));
-    let receipt = provider.send_transaction(tx).await?.get_receipt().await?;
-    println!(
-        "Precompile probe (sha256) included in L2 block #{:?}, tx {:?}",
-        receipt.block_number, receipt.transaction_hash
-    );
-    Ok(())
-}
-
 async fn run_prover(
     devnet: &DevnetConfig,
     proof_size: u64,
@@ -994,10 +961,9 @@ async fn prover() {
     // update dgf to use kailua
     deploy_kailua_contracts(&devnet, 60).await.unwrap();
 
-    fire_precompile_probe_tx(&devnet).await.unwrap();
-
-    let proving = base_proving_args(5 * 1024 * 1024);
-    run_prover(&devnet, PROOF_SIZE, proving).await.unwrap();
+    run_prover(&devnet, PROOF_SIZE, base_proving_args(5 * 1024 * 1024))
+        .await
+        .unwrap();
 
     // Stop and discard the devnet
     stop_all_devnets().await;
