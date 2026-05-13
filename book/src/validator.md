@@ -211,7 +211,7 @@ These parameters can be passed in as CLI arguments or set as environment variabl
 * `boundless-collateral-token-address`: Address of the stake collateral ERC-20 contract.
 
 #### Execution Estimation
-* `boundless-look-back`: (Defaults to `true`) Whether to inspect for duplicates before making a new proof request.
+* `boundless-look-back`: Whether to inspect for duplicates before making a new proof request.
 * `boundless-assume-cycle-count`: Skip preflighting execution and assume the given cycle count.
 * `boundless-assume-cycles-per-gas`: Skip preflighting and assume a fixed cycle count per gas.
 * `boundless-assume-cycles-per-byte`: Skip preflighting and assume a fixed cycle count per input byte.
