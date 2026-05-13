@@ -2272,11 +2272,13 @@ making this process safe to delegate.</p>
 for every fault proof, a proof request is submitted to the network, where it goes through the standard
 <a href="https://docs.boundless.network/developers/proof-lifecycle">proof life-cycle</a> on Boundless, before being published by
 your validator to settle a dispute.</p>
-<p>Pricing, timing, and collateral for proof requests are handled automatically by the
-<a href="https://docs.boundless.network/developers/tutorials/request">Boundless SDK</a>. The SDK determines
-appropriate prices from market data and gas costs, sets cycle-aware timeouts, and uses chain-specific
-collateral defaults. See the <a href="https://docs.boundless.network/developers/tutorials/auction">auction parameter guide</a>
-for details on how the reverse Dutch auction works.</p>
+<p>Pricing, timing, and collateral for proof requests can either be computed from static wei-based
+parameters (the default — see <a href="validator.html#legacy-pricing">Legacy Pricing</a> below) or delegated to the
+<a href="https://docs.boundless.network/developers/tutorials/request">Boundless SDK</a> by passing
+<code>--boundless-dynamic-pricing</code>. The SDK determines appropriate prices from market data and gas
+costs, sets cycle-aware timeouts, and uses chain-specific collateral defaults. See the
+<a href="https://docs.boundless.network/developers/tutorials/auction">auction parameter guide</a> for
+details on how the reverse Dutch auction works.</p>
 <p>This functionality requires some additional parameters when starting the validator.
 These parameters can be passed in as CLI arguments or set as environment variables.</p>
 <h4 id="connection"><a class="header" href="#connection">Connection</a></h4>
@@ -2298,9 +2300,10 @@ These parameters can be passed in as CLI arguments or set as environment variabl
 <li><code>boundless-assume-cycles-per-byte</code>: Skip preflighting and assume a fixed cycle count per input byte.</li>
 <li><code>boundless-assume-cycles-per-snark</code>: Skip preflighting and assume a fixed cycle count per recursive snark.</li>
 </ul>
-<h4 id="pricing"><a class="header" href="#pricing">Pricing</a></h4>
-<p>By default, the Boundless SDK sets pricing automatically based on market conditions and gas costs.
-The following optional parameters allow you to override the SDK defaults:</p>
+<h4 id="dynamic-pricing-sdk"><a class="header" href="#dynamic-pricing-sdk">Dynamic Pricing (SDK)</a></h4>
+<p>Pass <code>--boundless-dynamic-pricing</code> to delegate pricing to the Boundless SDK based on market
+conditions and gas costs. The following optional parameters allow you to override the SDK defaults
+(they require <code>--boundless-dynamic-pricing</code> to be set):</p>
 <ul>
 <li><code>boundless-min-price-per-cycle</code>: Minimum price per cycle, e.g. <code>"0.00001 USD"</code> or <code>"0.0000001 ETH"</code>. Requires a unit. If unset, the SDK uses market pricing from the price provider.</li>
 <li><code>boundless-max-price-per-cycle</code>: Maximum price per cycle, same format. If unset, the SDK uses a market-calibrated default plus a gas cost buffer.</li>
@@ -2324,9 +2327,8 @@ The following optional parameters allow you to override the SDK defaults:</p>
 <li><code>boundless-order-funding-threshold</code>: Threshold (wei) for <code>below-threshold</code> funding mode.</li>
 </ul>
 <h4 id="legacy-pricing"><a class="header" href="#legacy-pricing">Legacy Pricing</a></h4>
-<p>For backward compatibility, static wei-based pricing can be enabled with <code>--boundless-legacy-pricing</code>.
-When this flag is set, the SDK's dynamic pricing is bypassed and the following parameters are used instead.
-These flags are hidden from <code>--help</code> and require <code>--boundless-legacy-pricing</code> to be set.</p>
+<p>Legacy static wei-based pricing is the <strong>default</strong> path. The following parameters tune it. They are
+hidden from <code>--help</code> and are rejected when <code>--boundless-dynamic-pricing</code> is set.</p>
 <ul>
 <li><code>boundless-cycle-min-wei</code>: Starting price (wei) per cycle (Default <code>200000000</code>).</li>
 <li><code>boundless-cycle-max-wei</code>: Maximum price (wei) per cycle (Default <code>600000000</code>).</li>
