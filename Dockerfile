@@ -77,8 +77,12 @@ RUN set -e; \
 # debian:bookworm-slim only has glibc 2.36 and will fail at runtime.
 FROM ubuntu:24.04 AS kailua
 
+WORKDIR /kailua
+
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
     jq \
+    just \
+    git \
     ca-certificates \
     curl \
     unzip \
@@ -100,6 +104,13 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
     && apt-get install -y --no-install-recommends google-cloud-cli \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Foundry cast
+RUN curl -L https://foundry.paradigm.xyz | bash \
+    && /root/.foundry/bin/foundryup \
+    && mv /root/.foundry/bin/cast /usr/local/bin/cast \
+    && rm -rf /root/.foundry
+
 COPY --from=builder /kailua/out/kailua-cli /usr/local/bin/kailua-cli
+COPY justfile /kailua/justfile
 
 ENTRYPOINT ["/bin/sh", "-c"]
