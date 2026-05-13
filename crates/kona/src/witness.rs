@@ -60,13 +60,6 @@ pub struct Witness<O: WitnessOracle> {
     /// Represents the fault-proof virtual machine program image id.
     #[rkyv(with = B256Def)]
     pub fpvm_image_id: B256,
-    /// Opt-in switch for the experimental R0VM-accelerated revm `Crypto` provider
-    /// backed by `risc0-crypto-evm`. When `false` (the default), the guest leaves
-    /// revm's `DefaultCrypto` in place. The two providers MUST be functionally
-    /// equivalent on every input revm hands them; this flag only changes proving
-    /// cost, not the journal. Will remain opt-in until `risc0-crypto` has been
-    /// fully audited.
-    pub enable_experimental_r0vm_crypto: bool,
 }
 
 impl Witness<VecOracle> {
@@ -119,7 +112,6 @@ pub mod tests {
             ],
             stitched_boot_info: gen_boot_infos(32, 128),
             fpvm_image_id: keccak256(b"fpvm_image_id"),
-            enable_experimental_r0vm_crypto: false,
         };
 
         (witness, values)

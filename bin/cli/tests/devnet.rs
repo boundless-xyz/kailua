@@ -629,7 +629,6 @@ fn base_proving_args(max_witness_size: usize) -> ProvingArgs {
         #[cfg(feature = "celestia")]
         hana: Default::default(),
         export_profile_csv: false,
-        enable_experimental_r0vm_crypto: false,
     }
 }
 
@@ -997,8 +996,7 @@ async fn prover() {
 
     fire_precompile_probe_tx(&devnet).await.unwrap();
 
-    let mut proving = base_proving_args(5 * 1024 * 1024);
-    proving.enable_experimental_r0vm_crypto = true;
+    let proving = base_proving_args(5 * 1024 * 1024);
     run_prover(&devnet, PROOF_SIZE, proving).await.unwrap();
 
     // Stop and discard the devnet

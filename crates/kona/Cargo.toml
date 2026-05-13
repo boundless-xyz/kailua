@@ -47,7 +47,14 @@ kona-protocol.workspace = true
 risc0-zkvm.workspace = true
 
 [target.'cfg(all(target_os = "zkvm", target_vendor = "risc0"))'.dependencies]
-risc0-crypto-evm = "=0.1.0-rc.1"
+risc0-crypto-evm = { version = "=0.1.0-rc.1", optional = true }
+
+[features]
+# Opt in to the R0VM-accelerated revm `Crypto` provider backed by
+# `risc0-crypto-evm`. Off by default until `risc0-crypto` has been fully
+# audited. Only takes effect when the consuming crate is built for the
+# zkVM target; on host targets this feature is a no-op.
+r0vm-crypto = ["dep:risc0-crypto-evm"]
 
 [dev-dependencies]
 alloy = { workspace = true, features = ["genesis"] }

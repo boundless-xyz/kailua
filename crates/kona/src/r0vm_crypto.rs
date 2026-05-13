@@ -14,27 +14,24 @@
 
 //! revm `Crypto` adapter over the primitives in `risc0-crypto-evm`.
 //!
-//! The adapter routes `sha256`, `modexp`, `bn254_g1_{add,mul}`,
-//! `secp256r1_verify_signature`, and `secp256k1_ecrecover` through
-//! [`risc0_crypto_evm`]. All other `Crypto` methods fall through to
-//! `DefaultCrypto`.
+//! Routes `sha256`, `modexp`, `bn254_g1_{add,mul}`, `secp256r1_verify_signature`,
+//! and `secp256k1_ecrecover` through [`risc0_crypto_evm`]; all other `Crypto`
+//! methods fall through to `DefaultCrypto`.
 //!
-//! ## Experimental, opt-in
-//!
-//! Until `risc0-crypto` has been fully audited this provider is treated as
-//! experimental. Installation is gated at runtime by
-//! [`Witness::enable_experimental_r0vm_crypto`](crate::witness::Witness),
-//! defaulting to `false`. Soundness depends on this provider being
-//! functionally equivalent to revm's `DefaultCrypto` on every input — flipping
-//! the witness flag must not change the proof journal, only its proving cost.
-//!
-//! [`install_r0vm_crypto`] is only defined on the zkVM target — calling it
-//! from host code is a compile error, not a silent no-op. Callers gate the
-//! install point with the same `cfg` attribute. Revm types are pulled in via
-//! `alloy_evm::revm::precompile` so the install targets the same global
-//! `OnceLock` that the EVM executor uses.
+//! Gated behind the `r0vm-crypto` Cargo feature on `kailua-kona`, off by default
+//! until `risc0-crypto` has been audited. Compile-time selection bakes the
+//! choice into the FPVM ELF (and its image id) — a witness cannot turn it on.
+//! [`install_r0vm_crypto`] only exists when the feature is on AND the target is
+//! zkVM: calling it from host code is a compile error, not a silent no-op, so
+//! every call site must gate itself with the same predicate. Soundness depends
+//! on this provider being functionally equivalent to `DefaultCrypto` on every
+//! input: flipping the feature must not change the proof journal.
 
-#![cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+#![cfg(all(
+    feature = "r0vm-crypto",
+    target_os = "zkvm",
+    target_vendor = "risc0"
+))]
 
 /// Installs the R0VM-accelerated crypto provider globally.
 ///

@@ -77,12 +77,6 @@ pub struct ProvingArgs {
     /// Whether to export profiling data to a CSV file
     #[clap(long, env, default_value_t = false)]
     pub export_profile_csv: bool,
-    /// Opt in to the experimental R0VM-accelerated revm `Crypto` provider backed
-    /// by `risc0-crypto-evm`. Off by default until `risc0-crypto` has been fully
-    /// audited. The two providers are required to be functionally equivalent;
-    /// this flag only changes proving cost, not the journal.
-    #[clap(long, env, default_value_t = false)]
-    pub enable_experimental_r0vm_crypto: bool,
 
     #[clap(flatten)]
     #[cfg(feature = "eigen")]
@@ -114,8 +108,6 @@ impl ProvingArgs {
                     .then(|| String::from("--skip-derivation-proof")),
                 self.skip_await_proof
                     .then(|| String::from("--skip-await-proof")),
-                self.enable_experimental_r0vm_crypto
-                    .then(|| String::from("--enable-experimental-r0vm-crypto")),
             ]
             .into_iter()
             .flatten(),

@@ -98,7 +98,7 @@ where
         .await
         .map_err(ProvingError::OtherError)?;
     // Run witgen client to get correct BootInfo and Precondition
-    let (boot_info, proof_journal, updated_precondition, traced_driver, mut witness, extra_frames) =
+    let (boot_info, proof_journal, updated_precondition, traced_driver, witness, extra_frames) =
         match (proving.use_hokulea(), proving.use_hana()) {
             #[cfg(feature = "eigen")]
             (true, _) => {
@@ -220,9 +220,6 @@ where
             }
         };
     drop(witgen_permit);
-
-    // Propagate the experimental-crypto opt-in into the witness so the guest sees it.
-    witness.enable_experimental_r0vm_crypto = proving.enable_experimental_r0vm_crypto;
 
     // Commit derivation trace to driver file
     let driver_boot = BootInfo::load(preimage_oracle.as_ref())
