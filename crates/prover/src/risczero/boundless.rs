@@ -127,7 +127,13 @@ pub struct MarketProviderConfig {
     pub boundless_order_stream_url: Option<Cow<'static, str>>,
 
     /// Whether to look back at prior proof requests
-    #[clap(long, env, required = false, default_value_t = true)]
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
     pub boundless_look_back: bool,
     /// Whether to skip preflighting execution and assume a fixed cycle count.
     #[clap(long, env, required = false)]
@@ -168,7 +174,13 @@ pub struct MarketProviderConfig {
     #[clap(long, env, required = false, default_value_t = 12)]
     pub boundless_order_check_interval: u64,
     /// Whether to enable upload caching
-    #[clap(long, env, required = false, default_value_t = true)]
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
     pub boundless_enable_upload_caching: bool,
 
     /// Funding mode for order submission.
@@ -382,9 +394,10 @@ impl MarketProviderConfig {
             ]);
         };
         // Lookback
-        if self.boundless_look_back {
-            proving_args.push(String::from("--boundless-look-back"));
-        }
+        proving_args.extend(vec![
+            String::from("--boundless-look-back"),
+            self.boundless_look_back.to_string(),
+        ]);
         // Preflight skip
         if let Some(cycle_count) = self.boundless_assume_cycle_count {
             proving_args.extend(vec![
@@ -1533,24 +1546,50 @@ impl R2Storage {
 mod tests {
     use super::*;
 
+    const BASE_ARGS: &[&str] = &[
+        "kailua",
+        "--boundless-rpc-url",
+        "http://localhost:8545",
+        "--boundless-wallet-key",
+        "0101010101010101010101010101010101010101010101010101010101010101",
+    ];
+
+    fn parse_with(extra: &[&str]) -> MarketProviderConfig {
+        MarketProviderConfig::try_parse_from(BASE_ARGS.iter().chain(extra.iter())).unwrap()
+    }
+
+    fn value_after(args: &[String], flag: &str) -> String {
+        let idx = args.iter().position(|s| s == flag).unwrap();
+        args[idx + 1].clone()
+    }
+
+    #[test]
+    fn boundless_look_back_can_be_disabled_and_propagated() {
+        let parent = parse_with(&["--boundless-look-back=false"]);
+        assert!(!parent.boundless_look_back);
+        let args = parent.to_arg_vec(&None);
+        assert_eq!(value_after(&args, "--boundless-look-back"), "false");
+    }
+
+    #[test]
+    fn boundless_enable_upload_caching_can_be_disabled_and_propagated() {
+        let parent = parse_with(&["--boundless-enable-upload-caching=false"]);
+        assert!(!parent.boundless_enable_upload_caching);
+        let args = parent.to_arg_vec(&None);
+        assert_eq!(
+            value_after(&args, "--boundless-enable-upload-caching"),
+            "false"
+        );
+    }
+  
     /// `boundless_dynamic_pricing` must be off by default, settable by bare flag, and
     /// included in `to_arg_vec` output when set.
     #[test]
     fn dynamic_pricing_flag_parses_and_propagates() {
-        let base = [
-            "kailua",
-            "--boundless-rpc-url",
-            "http://localhost:8545",
-            "--boundless-wallet-key",
-            "0101010101010101010101010101010101010101010101010101010101010101",
-        ];
-
-        let default_cfg = MarketProviderConfig::try_parse_from(base).unwrap();
+        let default_cfg = MarketProviderConfig::try_parse_from(BASE_ARGS).unwrap();
         assert!(!default_cfg.boundless_dynamic_pricing);
 
-        let mut enabled = base.to_vec();
-        enabled.push("--boundless-dynamic-pricing");
-        let parent = MarketProviderConfig::try_parse_from(enabled).unwrap();
+        let parent = parse_with(&["--boundless-dynamic-pricing"]);
         assert!(parent.boundless_dynamic_pricing);
 
         let serialized = parent.to_arg_vec(&None);
@@ -1558,4 +1597,5 @@ mod tests {
             .iter()
             .any(|s| s == "--boundless-dynamic-pricing"));
     }
+  
 }
