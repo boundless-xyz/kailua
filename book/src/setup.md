@@ -73,6 +73,18 @@ to double-check verifier availability.
 
 Once you have these values you'll need to save them for later use during migration.
 
+### Experimental Config
+If you are using the experimental build, you should see these values instead:
+```
+KAILUA_FPVM_KONA_ID: 0x4DFCC2438337F11F5AA1B8E70E1BF3521FA386949A892AE5D8CF03BF295185AE
+KAILUA_FPVM_KONA_ELF: 10.4 MiB
+KAILUA_FPVM_HOKULEA_ID: 0x525AB84CE9E49BDB91572BAE167B386CC25861D25D4BCCD8BEA363B35F6DA2A2
+KAILUA_FPVM_HOKULEA_ELF: 11.6 MiB
+KAILUA_FPVM_HANA_ID: 0xC60156DB0960E0C4A9BA04AB62BCA70A75BAEC4A300B6D1F45FE7CFB256BA5AE
+KAILUA_FPVM_HANA_ELF: 11.2 MiB
+```
+
+
 ## Telemetry
 
 All Kailua binaries and commands support exporting telemetry data to an
