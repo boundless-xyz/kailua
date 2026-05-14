@@ -14,4 +14,5 @@ pub const KAILUA_FPVM_HOKULEA_ID: [u32; 8] = [0xA8B2D2B7, 0x4E1062B3, 0x54DCD0F4
 pub const KAILUA_FPVM_HANA_ELF: &[u8] = include_bytes!("bin/kailua-fpvm-hana.bin");
 #[cfg(feature = "celestia")]
 pub const KAILUA_FPVM_HANA_PATH: &str = "bin/kailua-fpvm-hana.bin";
+#[cfg(feature = "celestia")]
 pub const KAILUA_FPVM_HANA_ID: [u32; 8] = [0x3BE9DC39, 0xDFB50747, 0xD710ECEF, 0x736207EA, 0x5F7EBBB, 0xAA6527, 0x66780F5A, 0xBC1DCCBF];
