@@ -153,6 +153,7 @@ impl<
         .expect("Failed to compute output hash.");
 
         // Short-circuit all stitching logic when partial proving
+        #[cfg(feature = "enable-experimental-transaction-stitching")]
         if boot.l1_head == B256::repeat_byte(0xFF) {
             let proof_journal = ProofJournal::new(
                 fpvm_image_id,

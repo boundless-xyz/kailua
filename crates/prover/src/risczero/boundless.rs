@@ -127,7 +127,13 @@ pub struct MarketProviderConfig {
     pub boundless_order_stream_url: Option<Cow<'static, str>>,
 
     /// Whether to look back at prior proof requests
-    #[clap(long, env, required = false, default_value_t = true)]
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
     pub boundless_look_back: bool,
     /// Whether to skip preflighting execution and assume a fixed cycle count.
     #[clap(long, env, required = false)]
@@ -144,21 +150,11 @@ pub struct MarketProviderConfig {
 
     /// Minimum price per cycle (e.g., "0.00001 USD", "0.0000001 ETH").
     /// If unset, the SDK uses market pricing from the price provider.
-    #[clap(
-        long,
-        env,
-        required = false,
-        conflicts_with = "boundless_legacy_pricing"
-    )]
+    #[clap(long, env, required = false, requires = "boundless_dynamic_pricing")]
     pub boundless_min_price_per_cycle: Option<Amount>,
     /// Maximum price per cycle (e.g., "0.00001 USD", "0.0000001 ETH").
     /// If unset, the SDK default (~100 Kwei/cycle, 99th percentile) is used.
-    #[clap(
-        long,
-        env,
-        required = false,
-        conflicts_with = "boundless_legacy_pricing"
-    )]
+    #[clap(long, env, required = false, requires = "boundless_dynamic_pricing")]
     pub boundless_max_price_per_cycle: Option<Amount>,
     /// Hard cap on total order price (e.g., "0.5 ETH", "100 USD"). Safety mechanism.
     #[clap(long, env, required = false)]
@@ -178,7 +174,13 @@ pub struct MarketProviderConfig {
     #[clap(long, env, required = false, default_value_t = 12)]
     pub boundless_order_check_interval: u64,
     /// Whether to enable upload caching
-    #[clap(long, env, required = false, default_value_t = true)]
+    #[clap(
+        long,
+        env,
+        required = false,
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
     pub boundless_enable_upload_caching: bool,
 
     /// Funding mode for order submission.
@@ -191,10 +193,10 @@ pub struct MarketProviderConfig {
     #[clap(long, env, required = false)]
     pub boundless_order_funding_threshold: Option<U256>,
 
-    /// Use legacy static wei-based pricing instead of dynamic SDK pricing.
-    /// When enabled, the flags below are used instead of the SDK's OfferLayer.
-    #[clap(long, env, required = false, default_value_t = true)]
-    pub boundless_legacy_pricing: bool,
+    /// Opt in to the Boundless SDK's dynamic pricing (`OfferLayer`).
+    /// When unset (the default), the legacy static wei-based pricing parameters below are used.
+    #[clap(long, env, required = false, default_value_t = false)]
+    pub boundless_dynamic_pricing: bool,
     /// Starting price (wei) per cycle.
     #[clap(
         long,
@@ -202,7 +204,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value = "200000000",
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_cycle_min_wei: U256,
     /// Maximum price (wei) per cycle.
@@ -212,7 +214,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value = "600000000",
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_cycle_max_wei: U256,
     /// Minimum megacycles per proving order.
@@ -222,7 +224,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value_t = 250,
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_mega_cycle_min: u64,
     /// Collateral (ZKC) per megacycle.
@@ -232,7 +234,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value = "2500000000000000",
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_mega_cycle_collateral: U256,
     /// Minimum collateral (ZKC) per order.
@@ -242,7 +244,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value = "5000000000000000000",
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_order_min_collateral: U256,
     /// Multiplier for delay before order price starts ramping up.
@@ -252,7 +254,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value_t = 0.5,
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_order_bid_delay_factor: f64,
     /// Minimum number of seconds to set as bid delay time.
@@ -262,7 +264,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value_t = 120,
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_order_min_bid_delay: u64,
     /// Multiplier for order price to ramp up from min to max.
@@ -272,7 +274,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value_t = 1.0,
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_order_ramp_up_factor: f64,
     /// Minimum number of seconds to set as ramp up time.
@@ -282,7 +284,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value_t = 600,
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_order_min_ramp_up: u32,
     /// Multiplier for order fulfillment timeout (seconds/segment) after locking.
@@ -292,7 +294,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value_t = 3.0,
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_order_lock_timeout_factor: f64,
     /// Minimum number of seconds to set as lock timeout time.
@@ -302,7 +304,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value_t = 1200,
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_order_min_lock_timeout: u32,
     /// Multiplier for order expiry timeout (seconds/segment) after lock timeout.
@@ -312,7 +314,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value_t = 1.0,
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_order_expiry_factor: f64,
     /// Minimum number of seconds to set as expiry time.
@@ -322,7 +324,7 @@ pub struct MarketProviderConfig {
         required = false,
         default_value_t = 900,
         hide = true,
-        requires = "boundless_legacy_pricing"
+        conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_order_min_expiry: u32,
 }
@@ -392,9 +394,10 @@ impl MarketProviderConfig {
             ]);
         };
         // Lookback
-        if self.boundless_look_back {
-            proving_args.push(String::from("--boundless-look-back"));
-        }
+        proving_args.extend(vec![
+            String::from("--boundless-look-back"),
+            self.boundless_look_back.to_string(),
+        ]);
         // Preflight skip
         if let Some(cycle_count) = self.boundless_assume_cycle_count {
             proving_args.extend(vec![
@@ -421,9 +424,10 @@ impl MarketProviderConfig {
                 cap.to_string(),
             ]);
         }
-        if self.boundless_legacy_pricing {
+        if self.boundless_dynamic_pricing {
+            proving_args.push(String::from("--boundless-dynamic-pricing"));
+        } else {
             proving_args.extend(vec![
-                String::from("--boundless-legacy-pricing"),
                 String::from("--boundless-cycle-min-wei"),
                 self.boundless_cycle_min_wei.to_string(),
                 String::from("--boundless-cycle-max-wei"),
@@ -1262,7 +1266,15 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
         )
         .with_request_id(RequestId::new(boundless_wallet_address, fresh_nonce));
 
-    let mut request = if market.boundless_legacy_pricing {
+    info!(
+        "Boundless pricing path: {}",
+        if market.boundless_dynamic_pricing {
+            "dynamic-sdk"
+        } else {
+            "legacy"
+        }
+    );
+    let mut request = if !market.boundless_dynamic_pricing {
         // Legacy path: manual pricing with static wei parameters
         let boundless_rpc_time = retry_res_timeout!(
             15,
@@ -1527,5 +1539,62 @@ impl R2Storage {
         let digest = Sha256::digest(input);
         let key = format!("v2/kailua/input/{}.bin", hex::encode(digest));
         self.upload(&key, input.to_vec()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE_ARGS: &[&str] = &[
+        "kailua",
+        "--boundless-rpc-url",
+        "http://localhost:8545",
+        "--boundless-wallet-key",
+        "0101010101010101010101010101010101010101010101010101010101010101",
+    ];
+
+    fn parse_with(extra: &[&str]) -> MarketProviderConfig {
+        MarketProviderConfig::try_parse_from(BASE_ARGS.iter().chain(extra.iter())).unwrap()
+    }
+
+    fn value_after(args: &[String], flag: &str) -> String {
+        let idx = args.iter().position(|s| s == flag).unwrap();
+        args[idx + 1].clone()
+    }
+
+    #[test]
+    fn boundless_look_back_can_be_disabled_and_propagated() {
+        let parent = parse_with(&["--boundless-look-back=false"]);
+        assert!(!parent.boundless_look_back);
+        let args = parent.to_arg_vec(&None);
+        assert_eq!(value_after(&args, "--boundless-look-back"), "false");
+    }
+
+    #[test]
+    fn boundless_enable_upload_caching_can_be_disabled_and_propagated() {
+        let parent = parse_with(&["--boundless-enable-upload-caching=false"]);
+        assert!(!parent.boundless_enable_upload_caching);
+        let args = parent.to_arg_vec(&None);
+        assert_eq!(
+            value_after(&args, "--boundless-enable-upload-caching"),
+            "false"
+        );
+    }
+
+    /// `boundless_dynamic_pricing` must be off by default, settable by bare flag, and
+    /// included in `to_arg_vec` output when set.
+    #[test]
+    fn dynamic_pricing_flag_parses_and_propagates() {
+        let default_cfg = MarketProviderConfig::try_parse_from(BASE_ARGS).unwrap();
+        assert!(!default_cfg.boundless_dynamic_pricing);
+
+        let parent = parse_with(&["--boundless-dynamic-pricing"]);
+        assert!(parent.boundless_dynamic_pricing);
+
+        let serialized = parent.to_arg_vec(&None);
+        assert!(serialized
+            .iter()
+            .any(|s| s == "--boundless-dynamic-pricing"));
     }
 }

@@ -18,8 +18,7 @@ use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
 use alloy_evm::EvmFactory;
-use alloy_primitives::Bytes;
-use alloy_primitives::{keccak256, Sealed, B256};
+use alloy_primitives::{Sealed, B256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
 use kona_executor::{BlockBuildingOutcome, TrieDBProvider};
@@ -47,7 +46,7 @@ use {
         BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
     },
     alloy_op_evm::OpBlockExecutionCtx,
-    alloy_primitives::U256,
+    alloy_primitives::{keccak256, Bytes, U256},
 };
 
 /// Represents a block execution process and its results.
@@ -71,6 +70,7 @@ pub struct Execution {
     pub claimed_output: B256,
 }
 
+#[cfg(feature = "enable-experimental-transaction-stitching")]
 impl Execution {
     pub fn get_transactions(&self, tx_hashes: &[B256]) -> Vec<Bytes> {
         let transactions = self.attributes.transactions.as_deref().unwrap_or(&[]);

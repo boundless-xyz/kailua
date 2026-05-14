@@ -22,13 +22,25 @@ vendor:
 build +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F eigen -F celestia --locked":
   cargo build {{ARGS}}
 
+build-experimental +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F eigen -F celestia -F enable-experimental-transaction-stitching --locked":
+  cargo build {{ARGS}}
+
 build-kona +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode --locked":
+  cargo build {{ARGS}}
+
+build-kona-experimental +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F enable-experimental-transaction-stitching --locked":
   cargo build {{ARGS}}
 
 build-fpvm +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm -F eigen -F celestia --locked -vvv": vendor
   RISC0_USE_DOCKER=1 cargo build {{ARGS}}
 
+build-fpvm-experimental +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm -F eigen -F celestia -F enable-experimental-transaction-stitching --locked -vvv": vendor
+  RISC0_USE_DOCKER=1 cargo build {{ARGS}}
+
 build-fpvm-kona +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm --locked -vvv": vendor
+  RISC0_USE_DOCKER=1 cargo build {{ARGS}}
+
+build-fpvm-kona-experimental +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm -F enable-experimental-transaction-stitching --locked -vvv": vendor
   RISC0_USE_DOCKER=1 cargo build {{ARGS}}
 
 fpvm-kona:
@@ -71,13 +83,21 @@ coverage-open: (coverage "--open")
 devnet-fetch:
   ./scripts/devnet-fetch.sh
 
-devnet-build +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia -F enable-experimental-transaction-stitching": (build ARGS)
+devnet-build +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia": (build ARGS)
 
-devnet-build-kona +ARGS="--bin kailua-cli -F devnet -F prove -F enable-experimental-transaction-stitching": (build ARGS)
+devnet-build-experimental +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia -F enable-experimental-transaction-stitching": (build ARGS)
 
-devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia -F enable-experimental-transaction-stitching": vendor (build ARGS)
+devnet-build-kona +ARGS="--bin kailua-cli -F devnet -F prove": (build ARGS)
 
-devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F enable-experimental-transaction-stitching": vendor (build ARGS)
+devnet-build-kona-experimental +ARGS="--bin kailua-cli -F devnet -F prove -F enable-experimental-transaction-stitching": (build ARGS)
+
+devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia": vendor (build ARGS)
+
+devnet-build-fpvm-experimental +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia -F enable-experimental-transaction-stitching": vendor (build ARGS)
+
+devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm": vendor (build ARGS)
+
+devnet-build-fpvm-kona-experimental +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F enable-experimental-transaction-stitching": vendor (build ARGS)
 
 devnet-up:
   ./scripts/devnet-up.sh
@@ -247,8 +267,13 @@ export-fpvm target="release" data="./build/risczero/src/bin" verbosity="":
   ./target/{{target}}/kailua-cli export {{verbosity}} --data-dir {{data}}
 
 # Run the client program natively with the host program attached.
-prove block_number block_count l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data target="release" seq_window="50" verbosity="":
+prove block_number block_count l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data target="release" seq_window="50" verbosity="" system="0":
   #!/usr/bin/env bash
+
+  case "{{system}}" in
+    1|yes|true|TRUE) KAILUA_CLI=(kailua-cli) ;;
+    *) KAILUA_CLI=("./target/{{target}}/kailua-cli") ;;
+  esac
 
   L1_NODE_ADDRESS="{{l1_rpc}}"
   L1_BEACON_ADDRESS="{{l1_beacon_rpc}}"
@@ -275,7 +300,7 @@ prove block_number block_count l1_rpc l1_beacon_rpc l2_rpc rollup_node_rpc data 
   AGREED_L2_HEAD=$(cast block --rpc-url $L2_NODE_ADDRESS $((L2_BLOCK_NUMBER - 1)) --json | jq -r .hash)
 
   echo "Running host program with zk client program..."
-  ./target/{{target}}/kailua-cli prove {{verbosity}} \
+  "${KAILUA_CLI[@]}" prove {{verbosity}} \
     --op-node-address $OP_NODE_ADDRESS \
     --l1-head $L1_HEAD \
     --agreed-l2-head-hash $AGREED_L2_HEAD \

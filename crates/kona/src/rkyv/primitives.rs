@@ -75,6 +75,18 @@ mod tests {
     use crate::{from_bytes_with, to_bytes_with};
 
     #[test]
+    fn test_u256() {
+        let bytes = [42u8; 32];
+        let def = U256Def(bytes);
+        let u256: U256 = def.into();
+        assert_eq!(&u256.to_be_bytes(), &bytes);
+
+        let serialized = to_bytes_with!(U256Def, &u256);
+        let deserialized = from_bytes_with!(U256Def, U256, &serialized);
+        assert_eq!(def.0, deserialized.to_be_bytes());
+    }
+
+    #[test]
     fn test_b256() {
         let bytes = [42u8; 32];
         let def = B256Def(bytes);

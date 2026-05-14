@@ -189,11 +189,13 @@ for every fault proof, a proof request is submitted to the network, where it goe
 [proof life-cycle](https://docs.boundless.network/developers/proof-lifecycle) on Boundless, before being published by
 your validator to settle a dispute.
 
-Pricing, timing, and collateral for proof requests are handled automatically by the
-[Boundless SDK](https://docs.boundless.network/developers/tutorials/request). The SDK determines
-appropriate prices from market data and gas costs, sets cycle-aware timeouts, and uses chain-specific
-collateral defaults. See the [auction parameter guide](https://docs.boundless.network/developers/tutorials/auction)
-for details on how the reverse Dutch auction works.
+Pricing, timing, and collateral for proof requests can either be computed from static wei-based
+parameters (the default — see [Legacy Pricing](#legacy-pricing) below) or delegated to the
+[Boundless SDK](https://docs.boundless.network/developers/tutorials/request) by passing
+`--boundless-dynamic-pricing`. The SDK determines appropriate prices from market data and gas
+costs, sets cycle-aware timeouts, and uses chain-specific collateral defaults. See the
+[auction parameter guide](https://docs.boundless.network/developers/tutorials/auction) for
+details on how the reverse Dutch auction works.
 
 This functionality requires some additional parameters when starting the validator.
 These parameters can be passed in as CLI arguments or set as environment variables.
@@ -209,15 +211,16 @@ These parameters can be passed in as CLI arguments or set as environment variabl
 * `boundless-collateral-token-address`: Address of the stake collateral ERC-20 contract.
 
 #### Execution Estimation
-* `boundless-look-back`: (Defaults to `true`) Whether to inspect for duplicates before making a new proof request.
+* `boundless-look-back`: Whether to inspect for duplicates before making a new proof request.
 * `boundless-assume-cycle-count`: Skip preflighting execution and assume the given cycle count.
 * `boundless-assume-cycles-per-gas`: Skip preflighting and assume a fixed cycle count per gas.
 * `boundless-assume-cycles-per-byte`: Skip preflighting and assume a fixed cycle count per input byte.
 * `boundless-assume-cycles-per-snark`: Skip preflighting and assume a fixed cycle count per recursive snark.
 
-#### Pricing
-By default, the Boundless SDK sets pricing automatically based on market conditions and gas costs.
-The following optional parameters allow you to override the SDK defaults:
+#### Dynamic Pricing (SDK)
+Pass `--boundless-dynamic-pricing` to delegate pricing to the Boundless SDK based on market
+conditions and gas costs. The following optional parameters allow you to override the SDK defaults
+(they require `--boundless-dynamic-pricing` to be set):
 * `boundless-min-price-per-cycle`: Minimum price per cycle, e.g. `"0.00001 USD"` or `"0.0000001 ETH"`. Requires a unit. If unset, the SDK uses market pricing from the price provider.
 * `boundless-max-price-per-cycle`: Maximum price per cycle, same format. If unset, the SDK uses a market-calibrated default plus a gas cost buffer.
 * `boundless-max-price-cap`: Hard cap on total order price (e.g. `"0.5 ETH"`, `"100 USD"`). Safety mechanism to prevent excessive spending.
@@ -237,9 +240,8 @@ When a proof request expires without being fulfilled, it is automatically resubm
 * `boundless-order-funding-threshold`: Threshold (wei) for `below-threshold` funding mode.
 
 #### Legacy Pricing
-For backward compatibility, static wei-based pricing can be enabled with `--boundless-legacy-pricing`.
-When this flag is set, the SDK's dynamic pricing is bypassed and the following parameters are used instead.
-These flags are hidden from `--help` and require `--boundless-legacy-pricing` to be set.
+Legacy static wei-based pricing is the **default** path. The following parameters tune it. They are
+hidden from `--help` and are rejected when `--boundless-dynamic-pricing` is set.
 
 * `boundless-cycle-min-wei`: Starting price (wei) per cycle (Default `200000000`).
 * `boundless-cycle-max-wei`: Maximum price (wei) per cycle (Default `600000000`).

@@ -63,6 +63,14 @@ fn main() {
                 opts
             };
 
+            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            let guest_options = {
+                let mut opts = guest_options;
+                opts.features
+                    .push(String::from("enable-experimental-transaction-stitching"));
+                opts
+            };
+
             std::collections::HashMap::from([
                 ("kailua-fpvm-kona", guest_options.clone()),
                 ("kailua-fpvm-hokulea", guest_options.clone()),

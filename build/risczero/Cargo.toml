@@ -28,3 +28,4 @@ rebuild-fpvm = [
 ]
 eigen = []
 celestia = []
+enable-experimental-transaction-stitching = []

@@ -30,6 +30,7 @@ pub struct ExportArgs {
 }
 
 pub async fn export(data_dir: PathBuf) -> anyhow::Result<()> {
+    #[cfg(not(feature = "enable-experimental-transaction-stitching"))]
     let programs = [
         (kailua_build::KAILUA_FPVM_KONA_ELF, "kailua-fpvm-kona.bin"),
         #[cfg(feature = "eigen")]
@@ -39,6 +40,23 @@ pub async fn export(data_dir: PathBuf) -> anyhow::Result<()> {
         ),
         #[cfg(feature = "celestia")]
         (kailua_build::KAILUA_FPVM_HANA_ELF, "kailua-fpvm-hana.bin"),
+    ];
+    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    let programs = [
+        (
+            kailua_build::KAILUA_FPVM_KONA_ELF,
+            "kailua-fpvm-kona-experimental.bin",
+        ),
+        #[cfg(feature = "eigen")]
+        (
+            kailua_build::KAILUA_FPVM_HOKULEA_ELF,
+            "kailua-fpvm-hokulea-experimental.bin",
+        ),
+        #[cfg(feature = "celestia")]
+        (
+            kailua_build::KAILUA_FPVM_HANA_ELF,
+            "kailua-fpvm-hana-experimental.bin",
+        ),
     ];
 
     for (elf, file_name) in programs {
