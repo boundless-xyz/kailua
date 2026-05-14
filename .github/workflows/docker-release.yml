@@ -25,8 +25,10 @@ jobs:
         include:
           - build_features: "celestia,eigen"
             tag_prefix: ""
+            cache: "standard"
           - build_features: "celestia,eigen,experimental"
             tag_prefix: "experimental-"
+            cache: "experimental"
 
     steps:
       - uses: actions/checkout@v4
@@ -53,5 +55,5 @@ jobs:
           build-args: |
             CARGO_BUILD_JOBS=4
             BUILD_FEATURES=${{ matrix.build_features }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.build_features || 'base' }}
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.build_features || 'base' }},mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.cache || 'base' }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ matrix.cache || 'base' }},mode=max
