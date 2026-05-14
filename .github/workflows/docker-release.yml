@@ -23,9 +23,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - build_features: celesia,eigen
+          - build_features: "celestia,eigen"
             tag_prefix: ""
-          - build_features: celesia,eigen,experimental
+          - build_features: "celestia,eigen,experimental"
             tag_prefix: "experimental-"
 
     steps:
