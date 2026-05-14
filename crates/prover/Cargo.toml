@@ -98,10 +98,10 @@ risc0-zkvm.workspace = true
 risc0-steel = { workspace = true, features = ["host"] }
 
 [features]
-enable-experimental-transaction-stitching = [
-    "kailua-kona/enable-experimental-transaction-stitching",
-    "kailua-hokulea?/enable-experimental-transaction-stitching",
-    "kailua-hana?/enable-experimental-transaction-stitching",
+experimental = [
+    "kailua-kona/experimental",
+    "kailua-hokulea?/experimental",
+    "kailua-hana?/experimental",
 ]
 devnet = [
     "kailua-sync/devnet"

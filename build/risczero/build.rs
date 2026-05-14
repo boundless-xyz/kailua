@@ -63,11 +63,10 @@ fn main() {
                 opts
             };
 
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             let guest_options = {
                 let mut opts = guest_options;
-                opts.features
-                    .push(String::from("enable-experimental-transaction-stitching"));
+                opts.features.push(String::from("experimental"));
                 opts
             };
 

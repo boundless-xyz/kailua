@@ -6,9 +6,9 @@ use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_hokulea::canoe::KailuaCanoeVerifier;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::driver::CachedDriver;
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use kailua_kona::evm::partial::PartialExecution;
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
@@ -35,13 +35,13 @@ pub async fn run_hokulea_witgen_client<P, B, O>(
     trace_derivation: bool,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] pe_witness: Option<
+    #[cfg(feature = "experimental")] pe_witness: Option<
         PartialExecutionWitness,
     >,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
+    #[cfg(feature = "experimental")] partial_executions: Vec<
         Vec<PartialExecution>,
     >,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] trace_partials: bool,
+    #[cfg(feature = "experimental")] trace_partials: bool,
 ) -> anyhow::Result<(
     BootInfo,
     ProofJournal,
@@ -102,11 +102,11 @@ where
             trace_derivation,
             stitched_preconditions,
             stitched_boot_info,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             pe_witness,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partial_executions,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             trace_partials,
         )
         .await?;

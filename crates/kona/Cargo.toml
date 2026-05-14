@@ -58,7 +58,7 @@ tokio.workspace = true
 tracing-subscriber.workspace = true
 
 [features]
-enable-experimental-transaction-stitching = []
+experimental = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }

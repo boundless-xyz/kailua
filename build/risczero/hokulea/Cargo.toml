@@ -33,15 +33,15 @@ kailua-kona = { path = "../../../crates/kona" }
 kailua-hokulea = { path = "../../../crates/hokulea" }
 
 risc0-zkvm = { version = "3.0.5", features = ["std", "heap-embedded-alloc", "unstable"] }
-hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "08441048204a8f15444c9460891476c586165fcc", default-features = false }
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9", default-features = false }
 
 [features]
 disable-dev-mode = [
     "risc0-zkvm/disable-dev-mode"
 ]
-enable-experimental-transaction-stitching = [
-    "kailua-kona/enable-experimental-transaction-stitching",
-    "kailua-hokulea/enable-experimental-transaction-stitching"
+experimental = [
+    "kailua-kona/experimental",
+    "kailua-hokulea/experimental"
 ]
 
 

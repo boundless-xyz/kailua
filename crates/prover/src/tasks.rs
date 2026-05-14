@@ -44,12 +44,12 @@ use std::convert::identity;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, info, warn};
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use {crate::client::native::PartialsCache, kailua_kona::evm::partial::PartialExecution};
 
 #[derive(Clone, Debug)]
 pub struct CachedTask {
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     pub partials_cache: Option<Arc<PartialsCache>>,
     pub args: ProveArgs,
     pub rollup_config: RollupConfig,
@@ -58,7 +58,7 @@ pub struct CachedTask {
     pub precondition: Precondition,
     pub proposal_data_hash: B256,
     pub stitched_executions: Vec<Vec<Execution>>,
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     pub partial_executions: Vec<Vec<PartialExecution>>,
     pub derivation_cache: Option<CachedDriver>,
     pub derivation_trace_sender: Option<Sender<CachedDriver>>,
@@ -139,7 +139,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
             .send(OneshotResult {
                 cached_task: cached_task.clone(),
                 result: compute_cached_proof(
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     cached_task.partials_cache,
                     cached_task.args,
                     cached_task.rollup_config,
@@ -152,7 +152,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
                     cached_task.derivation_trace_sender,
                     cached_task.stitched_preconditions,
                     cached_task.stitched_boot_info,
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     cached_task.partial_executions,
                     cached_task.stitched_proofs,
                     cached_task.prove_snark,
@@ -171,9 +171,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
 /// Send a [Oneshot] task to the prover pool and return once the result arrives
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_oneshot_task(
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partials_cache: Option<
-        Arc<PartialsCache>,
-    >,
+    #[cfg(feature = "experimental")] partials_cache: Option<Arc<PartialsCache>>,
     args: ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,
@@ -185,9 +183,7 @@ pub async fn compute_oneshot_task(
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
-        Vec<PartialExecution>,
-    >,
+    #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
@@ -196,7 +192,7 @@ pub async fn compute_oneshot_task(
 ) -> Result<OneshotResultResponse, ProvingError> {
     // create proving task
     let cached_task = CachedTask {
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partials_cache,
         args,
         rollup_config,
@@ -209,7 +205,7 @@ pub async fn compute_oneshot_task(
         derivation_trace_sender: derivation_trace,
         stitched_preconditions,
         stitched_boot_info,
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partial_executions,
         stitched_proofs,
         prove_snark,
@@ -238,9 +234,7 @@ pub async fn compute_oneshot_task(
 /// Computes a receipt if it is not cached
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_fpvm_proof(
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partials_cache: Option<
-        Arc<PartialsCache>,
-    >,
+    #[cfg(feature = "experimental")] partials_cache: Option<Arc<PartialsCache>>,
     mut args: ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,
@@ -309,7 +303,7 @@ pub async fn compute_fpvm_proof(
     info!("Attempting complete proof.");
     let stitching_only = args.kona.agreed_l2_output_root == args.kona.claimed_l2_output_root;
     let complete_proof_result = compute_oneshot_task(
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partials_cache.clone(),
         args.clone(),
         rollup_config.clone(),
@@ -322,7 +316,7 @@ pub async fn compute_fpvm_proof(
         derivation_trace, // note: the task sends its driver trace if it starts proving
         stitched_preconditions.clone(),
         stitched_boot_info.clone(),
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         vec![], // we don't use this flow for partial execution proving
         stitched_proofs.clone(),
         // pass through snark requirement
@@ -478,7 +472,7 @@ pub async fn compute_fpvm_proof(
                     old_l1_tail.header.number, l1_tail.header.number
                 );
                 let derivation_only_result = compute_oneshot_task(
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     partials_cache.clone(),
                     args.clone(),
                     rollup_config.clone(),
@@ -497,7 +491,7 @@ pub async fn compute_fpvm_proof(
                     Some(derivation_trace), // note: the task sends its driver trace if witness size is fine
                     vec![],
                     vec![],
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     vec![], // we don't use this flow for partial execution proving
                     vec![],
                     false,
@@ -608,7 +602,7 @@ pub async fn compute_fpvm_proof(
             execution_cache.len()
         );
         let provability_result = compute_oneshot_task(
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partials_cache.clone(),
             args.clone(),
             rollup_config.clone(),
@@ -621,7 +615,7 @@ pub async fn compute_fpvm_proof(
             derivation_trace, // note: the task sends its driver trace if it succeeds
             stitched_preconditions.clone(),
             stitched_boot_info.clone(),
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             vec![], // we don't use this flow for partial execution proving
             stitched_proofs.clone(),
             false,
@@ -679,7 +673,7 @@ pub async fn compute_fpvm_proof(
                         l1_config.clone(),
                         disk_kv_store.clone(),
                         &execution_cache,
-                        #[cfg(feature = "enable-experimental-transaction-stitching")]
+                        #[cfg(feature = "experimental")]
                         partials_cache.clone(),
                     ),
                     result_sender: execution_result_channel.0.clone(),
@@ -704,7 +698,7 @@ pub async fn compute_fpvm_proof(
         task_sender
             .send(Oneshot {
                 cached_task: CachedTask {
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     partials_cache: partials_cache.clone(),
                     args,
                     rollup_config: rollup_config.clone(),
@@ -726,7 +720,7 @@ pub async fn compute_fpvm_proof(
                     derivation_trace_sender: None, // we don't need to send the trace anywhere
                     stitched_preconditions: vec![],
                     stitched_boot_info: vec![],
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     partial_executions: vec![], // we don't use this flow for partial execution proving
                     stitched_proofs: vec![],
                     prove_snark: false,
@@ -771,7 +765,7 @@ pub async fn compute_fpvm_proof(
                 streamed_size: streamed,
                 limit,
                 executions: e,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                     partials: p,
                 ..
             } => {
@@ -787,7 +781,7 @@ pub async fn compute_fpvm_proof(
                         streamed_size: streamed,
                         limit,
                         executions: e,
-                        #[cfg(feature = "enable-experimental-transaction-stitching")]
+                        #[cfg(feature = "experimental")]
                         partials: p,
                         derivation_cache: Box::new(None),
                         derivation_trace: None,
@@ -833,7 +827,7 @@ pub async fn compute_fpvm_proof(
                     l1_config.clone(),
                     disk_kv_store.clone(),
                     &execution_cache,
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     partials_cache.clone(),
                 ),
                 result_sender: execution_result_channel.0.clone(),
@@ -853,7 +847,7 @@ pub async fn compute_fpvm_proof(
                     l1_config.clone(),
                     disk_kv_store.clone(),
                     &execution_cache,
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     partials_cache.clone(),
                 ),
                 result_sender: execution_result_channel.0.clone(),
@@ -939,7 +933,7 @@ pub async fn compute_fpvm_proof(
 
     Ok(Some(
         compute_oneshot_task(
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partials_cache.clone(),
             args,
             rollup_config,
@@ -952,7 +946,7 @@ pub async fn compute_fpvm_proof(
             None, // driver trace precondition hash enforced by precondition arg having it
             [tail_preconditions, stitched_preconditions].concat(),
             [tail_boot_infos, stitched_boot_info].concat(),
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             vec![], // we don't use this flow for partial execution proving
             [tail_proofs, stitched_proofs, execution_proofs].concat(),
             prove_snark,
@@ -971,7 +965,7 @@ pub fn create_cached_execution_task(
     l1_config: L1ChainConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     execution_cache: &[Arc<Execution>],
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partials_cache: Option<
+    #[cfg(feature = "experimental")] partials_cache: Option<
         Arc<PartialsCache>,
     >,
 ) -> CachedTask {
@@ -1010,7 +1004,7 @@ pub fn create_cached_execution_task(
         .collect::<Vec<_>>();
 
     CachedTask {
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partials_cache,
         args,
         rollup_config,
@@ -1023,7 +1017,7 @@ pub fn create_cached_execution_task(
         derivation_trace_sender: None,
         stitched_preconditions: vec![],
         stitched_boot_info: vec![],
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partial_executions: vec![], // we don't use this flow for partial execution proving
         stitched_proofs: vec![],
         prove_snark: false,
@@ -1035,7 +1029,7 @@ pub fn create_cached_execution_task(
 /// Launches the native Kailua-Kona client-server pair to compute a [OneshotResultResponse]
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_cached_proof(
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partials_cache: Option<
+    #[cfg(feature = "experimental")] partials_cache: Option<
         Arc<PartialsCache>,
     >,
     mut args: ProveArgs,
@@ -1049,7 +1043,7 @@ pub async fn compute_cached_proof(
     mut derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
+    #[cfg(feature = "experimental")] partial_executions: Vec<
         Vec<PartialExecution>,
     >,
     stitched_proofs: Vec<ProfiledReceipt>,
@@ -1117,7 +1111,7 @@ pub async fn compute_cached_proof(
 
     // Construct expected journal
     #[cfg_attr(
-        not(feature = "enable-experimental-transaction-stitching"),
+        not(feature = "experimental"),
         allow(unused_mut)
     )]
     let (boot, mut proof_journal, mut updated_precondition) = stitch_boot_info::<VecOracle>(
@@ -1133,7 +1127,7 @@ pub async fn compute_cached_proof(
     .context("Failed to stitch boot info")
     .map_err(ProvingError::OtherError)?;
     // insert partial execution precondition
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     if boot.l1_head == B256::repeat_byte(0xFF) {
         if let Some(partial) = partial_executions.first().and_then(|p| p.first()) {
             updated_precondition = updated_precondition.partial(partial.precondition_hash());
@@ -1215,7 +1209,7 @@ pub async fn compute_cached_proof(
 
         // generate a proof using the kailua client and kona server
         crate::client::native::run_native_client(
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partials_cache,
             args.clone(),
             disk_kv_store,
@@ -1231,7 +1225,7 @@ pub async fn compute_cached_proof(
             prove_snark,
             force_attempt,
             seek_proof,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partial_executions,
         )
         .await?;

@@ -17,7 +17,7 @@
 use alloy_primitives::B256;
 use async_channel::Sender;
 use kailua_kona::driver::CachedDriver;
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use kailua_kona::evm::partial::PartialExecution;
 use kailua_kona::executor::Execution;
 use std::time::SystemTime;
@@ -50,7 +50,7 @@ pub enum ProvingError {
         preloaded_size: usize,
         streamed_size: usize,
         executions: Vec<Vec<Execution>>,
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partials: Vec<Vec<PartialExecution>>,
         derivation_cache: Box<Option<CachedDriver>>,
         derivation_trace: Option<Sender<CachedDriver>>,
@@ -65,7 +65,7 @@ pub enum ProvingError {
         count: usize,
         limit: usize,
         executions: Vec<Vec<Execution>>,
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partials: Vec<Vec<PartialExecution>>,
         derivation_cache: Box<Option<CachedDriver>>,
         derivation_trace: Option<Sender<CachedDriver>>,
@@ -79,7 +79,7 @@ pub enum ProvingError {
         streamed_size: usize,
         limit: usize,
         executions: Vec<Vec<Execution>>,
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partials: Vec<Vec<PartialExecution>>,
         derivation_cache: Box<Option<CachedDriver>>,
         derivation_trace: Option<Sender<CachedDriver>>,
@@ -99,7 +99,7 @@ impl ProvingError {
                 preloaded_size,
                 streamed_size,
                 executions,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partials,
                 derivation_cache: _,
                 derivation_trace,
@@ -108,7 +108,7 @@ impl ProvingError {
                 preloaded_size,
                 streamed_size,
                 executions,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partials,
                 derivation_cache: Box::new(driver_cache),
                 derivation_trace,
@@ -118,7 +118,7 @@ impl ProvingError {
                 count,
                 limit,
                 executions,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partials,
                 derivation_cache: _,
                 derivation_trace,
@@ -126,7 +126,7 @@ impl ProvingError {
                 count,
                 limit,
                 executions,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partials,
                 derivation_cache: Box::new(driver_cache),
                 derivation_trace,
@@ -136,7 +136,7 @@ impl ProvingError {
                 streamed_size,
                 limit,
                 executions,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partials,
                 derivation_cache: _,
                 derivation_trace,
@@ -145,7 +145,7 @@ impl ProvingError {
                 streamed_size,
                 limit,
                 executions,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partials,
                 derivation_cache: Box::new(driver_cache),
                 derivation_trace,

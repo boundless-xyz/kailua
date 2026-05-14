@@ -18,7 +18,7 @@ use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Digest;
 
 pub mod derivation;
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 pub mod evm;
 pub mod execution;
 pub mod proposal;

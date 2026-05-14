@@ -33,6 +33,6 @@ hokulea-proof.workspace = true
 hokulea-zkvm-verification.workspace = true
 
 [features]
-enable-experimental-transaction-stitching = [
-    "kailua-kona/enable-experimental-transaction-stitching"
+experimental = [
+    "kailua-kona/experimental"
 ]

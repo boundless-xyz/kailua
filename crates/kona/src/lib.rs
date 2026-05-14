@@ -27,7 +27,7 @@ pub mod config;
 /// Implementation for caching support in derivation.
 pub mod driver;
 /// EVM wrappers for chunk aggregation (guest-side chunk result injection).
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 pub mod evm;
 /// Implementation for an execution engine with caching support.
 pub mod executor;

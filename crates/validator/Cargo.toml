@@ -41,9 +41,9 @@ opentelemetry.workspace = true
 risc0-zkvm.workspace = true
 
 [features]
-enable-experimental-transaction-stitching = [
-    "kailua-kona/enable-experimental-transaction-stitching",
-    "kailua-prover/enable-experimental-transaction-stitching",
+experimental = [
+    "kailua-kona/experimental",
+    "kailua-prover/experimental",
 ]
 devnet = [
     "kailua-prover/devnet",

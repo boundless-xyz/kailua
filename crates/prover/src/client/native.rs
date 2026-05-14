@@ -37,13 +37,13 @@ use std::sync::Arc;
 use tokio::task;
 use tokio::task::JoinHandle;
 use tracing::info;
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use {
     kailua_kona::evm::partial::PartialExecution,
     kailua_kona::evm::witness::PartialExecutionWitness, std::collections::BTreeMap,
 };
 
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 pub type PartialsCache = BTreeMap<u64, Vec<PartialExecution>>;
 
 /// Starts the [PreimageServer] and the client program in separate threads. The client program is
@@ -58,11 +58,11 @@ pub type PartialsCache = BTreeMap<u64, Vec<PartialExecution>>;
 ///   exited first.
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(
-    not(feature = "enable-experimental-transaction-stitching"),
+    not(feature = "experimental"),
     allow(unused_mut)
 )]
 pub async fn run_native_client(
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partials_cache: Option<
+    #[cfg(feature = "experimental")] partials_cache: Option<
         Arc<PartialsCache>,
     >,
     args: ProveArgs,
@@ -79,7 +79,7 @@ pub async fn run_native_client(
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] mut partial_executions: Vec<
+    #[cfg(feature = "experimental")] mut partial_executions: Vec<
         Vec<PartialExecution>,
     >,
 ) -> Result<(), ProvingError> {
@@ -162,7 +162,7 @@ pub async fn run_native_client(
     };
 
     // Precompute partial execution witness
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     let pe_witness = if args.kona.l1_head == B256::repeat_byte(0xFF) {
         let Some(partial) = partial_executions.pop().and_then(|mut p| p.pop()) else {
             return Err(ProvingError::OtherError(anyhow!(
@@ -182,7 +182,7 @@ pub async fn run_native_client(
     // Start the client program in a separate thread
     let client_task = tokio::spawn(crate::client::proving::run_proving_client(
         use_hokulea.then_some(args.kona.l1_node_address).flatten(),
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partials_cache,
         args.proving,
         args.boundless,
@@ -191,9 +191,9 @@ pub async fn run_native_client(
         precondition,
         proposal_data_hash,
         stitched_executions,
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         pe_witness,
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partial_executions,
         derivation_cache,
         trace_derivation,

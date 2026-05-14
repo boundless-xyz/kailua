@@ -36,8 +36,8 @@ risc0-zkvm = { version = "3.0.5", features = ["std", "heap-embedded-alloc", "uns
 disable-dev-mode = [
     "risc0-zkvm/disable-dev-mode"
 ]
-enable-experimental-transaction-stitching = [
-    "kailua-kona/enable-experimental-transaction-stitching"
+experimental = [
+    "kailua-kona/experimental"
 ]
 
 [patch.crates-io]

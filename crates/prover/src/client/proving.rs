@@ -43,7 +43,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tracing::{error, info, warn};
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use {
     crate::client::native::PartialsCache,
     crate::proof::{proof_file_name, read_bincoded_file},
@@ -70,7 +70,7 @@ pub const ORACLE_LRU_SIZE: usize = 1024;
 #[allow(clippy::too_many_arguments)]
 pub async fn run_proving_client<P, H>(
     _l1_node_address: Option<String>,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partials_cache: Option<
+    #[cfg(feature = "experimental")] partials_cache: Option<
         Arc<PartialsCache>,
     >,
     proving: ProvingArgs,
@@ -80,10 +80,10 @@ pub async fn run_proving_client<P, H>(
     precondition: Precondition,
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] pe_witness: Option<
+    #[cfg(feature = "experimental")] pe_witness: Option<
         PartialExecutionWitness,
     >,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] mut partial_executions: Vec<
+    #[cfg(feature = "experimental")] mut partial_executions: Vec<
         Vec<PartialExecution>,
     >,
     derivation_cache: Option<CachedDriver>,
@@ -92,7 +92,7 @@ pub async fn run_proving_client<P, H>(
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
     #[cfg_attr(
-        not(feature = "enable-experimental-transaction-stitching"),
+        not(feature = "experimental"),
         allow(unused_mut)
     )]
     mut stitched_proofs: Vec<ProfiledReceipt>,
@@ -118,7 +118,7 @@ where
         .context("BootInfo::load")
         .map_err(ProvingError::OtherError)?;
     // Preload cached partial execution proofs
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     match partials_cache {
         Some(partials_cache)
             if !initial_boot_info.l1_head == B256::repeat_byte(0xFF)
@@ -219,11 +219,11 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     pe_witness,
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     partial_executions.clone(),
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     !seek_proof,
                 )
                 .await
@@ -282,11 +282,11 @@ where
                     trace_derivation,
                     stitched_preconditions.clone(),
                     stitched_boot_info.clone(),
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     pe_witness,
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     partial_executions.clone(),
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     !seek_proof,
                 )
                 .await
@@ -322,11 +322,11 @@ where
                 trace_derivation,
                 stitched_preconditions.clone(),
                 stitched_boot_info.clone(),
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 pe_witness,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partial_executions.clone(),
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 !seek_proof,
             )
             .await
@@ -398,7 +398,7 @@ where
         &proving,
         witness,
         stitched_executions,
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partial_executions,
         extra_frames,
         seek_proof,
@@ -470,7 +470,7 @@ pub fn process_witness(
     proving: &ProvingArgs,
     mut witness: Witness<VecOracle>,
     stitched_executions: Vec<Vec<Execution>>,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
+    #[cfg(feature = "experimental")] partial_executions: Vec<
         Vec<PartialExecution>,
     >,
     extra_frames: Vec<Vec<u8>>,
@@ -482,7 +482,7 @@ pub fn process_witness(
 ) -> Result<Vec<Vec<u8>>, ProvingError> {
     // Replace outputs with inputs
     let execution_trace = core::mem::replace(&mut witness.stitched_executions, stitched_executions);
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     let partial_executions =
         core::mem::replace(&mut witness.partial_executions, partial_executions);
 
@@ -514,7 +514,7 @@ pub fn process_witness(
                 streamed_size: streamed_wit_size,
                 limit: proving.max_witness_size,
                 executions: execution_trace,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partials: partial_executions,
                 derivation_cache: Box::new(derivation_cache),
                 derivation_trace,
@@ -535,7 +535,7 @@ pub fn process_witness(
                 count: num_executions,
                 limit: proving.max_block_executions,
                 executions: execution_trace,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partials: partial_executions,
                 derivation_cache: Box::new(derivation_cache),
                 derivation_trace,
@@ -549,7 +549,7 @@ pub fn process_witness(
             preloaded_size: preloaded_wit_size,
             streamed_size: streamed_wit_size,
             executions: execution_trace,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partials: partial_executions,
             derivation_cache: Box::new(derivation_cache),
             derivation_trace,

@@ -19,7 +19,7 @@ use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
 use crate::precondition::execution::exec_precondition_hash;
 use crate::precondition::{proposal, Precondition};
-#[cfg(not(feature = "enable-experimental-transaction-stitching"))]
+#[cfg(not(feature = "experimental"))]
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Sealed, B256};
 use anyhow::{bail, Context};
@@ -38,7 +38,7 @@ use risc0_zkvm::sha::Digestible;
 use std::fmt::Debug;
 use std::mem::take;
 use std::sync::{Arc, Mutex};
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use {
     crate::evm::{
         cached::CachedEvmFactory,
@@ -122,15 +122,9 @@ pub fn run_core_client<
     execution_trace: Option<Arc<Mutex<Vec<Execution>>>>,
     derivation_cache: Option<CachedDriver>,
     derivation_trace: Option<Arc<Mutex<Option<CachedDriver>>>>,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] pe_witness: Option<
-        PartialExecutionWitness,
-    >,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
-        Vec<PartialExecution>,
-    >,
-    #[cfg(feature = "enable-experimental-transaction-stitching")] partials_collector: Option<
-        TransactionResultCollector,
-    >,
+    #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+    #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
+    #[cfg(feature = "experimental")] partials_collector: Option<TransactionResultCollector>,
 ) -> anyhow::Result<(BootInfo, Precondition)>
 where
     <B as BlobProvider>::Error: Debug,
@@ -157,7 +151,7 @@ where
         ////////////////////////////////////////////////////////////////
         //                     PARTIAL EXECUTION                      //
         ////////////////////////////////////////////////////////////////
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         if boot.l1_head == B256::repeat_byte(0xFF) {
             log("PARTIAL EXECUTION");
             let PartialExecutionWitness {
@@ -286,7 +280,7 @@ where
                     .context("new_execution_cursor")?;
             l2_provider.set_cursor(cursor.clone());
 
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             let mut kona_executor: KonaExecutor<'_, _, _, CachedEvmFactory> = KonaExecutor::new(
                 rollup_config.as_ref(),
                 l2_provider.clone(),
@@ -294,7 +288,7 @@ where
                 CachedEvmFactory::new_with_traces(partial_executions, partials_collector),
                 None,
             );
-            #[cfg(not(feature = "enable-experimental-transaction-stitching"))]
+            #[cfg(not(feature = "experimental"))]
             let mut kona_executor: KonaExecutor<'_, _, _, OpEvmFactory> = KonaExecutor::new(
                 rollup_config.as_ref(),
                 l2_provider.clone(),
@@ -386,7 +380,7 @@ where
         let da_provider =
             da_source_provider.new_from_parts(l1_provider.clone(), beacon, &rollup_config);
 
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, CachedEvmFactory>>::new(
             execution_cache,
             rollup_config.as_ref(),
@@ -395,7 +389,7 @@ where
             CachedEvmFactory::new_with_traces(partial_executions, partials_collector),
             execution_trace,
         );
-        #[cfg(not(feature = "enable-experimental-transaction-stitching"))]
+        #[cfg(not(feature = "experimental"))]
         let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, OpEvmFactory>>::new(
             execution_cache,
             rollup_config.as_ref(),
@@ -559,7 +553,7 @@ pub fn recover_collected_executions(
     take::<Vec<Execution>>(executions.as_mut())
 }
 
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 pub fn recover_collected_partials(
     boot_info: &BootInfo,
     partials_collector: TransactionResultCollector,
@@ -584,7 +578,7 @@ pub fn recover_collected_partials(
     partial_executions
 }
 
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 pub fn split_collected_partials(
     partials: Vec<Vec<PartialExecution>>,
     partials_per_block: usize,
@@ -600,7 +594,7 @@ pub fn split_collected_partials(
         .collect()
 }
 
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
     if expected_hash.is_zero() {
         // workaround
@@ -616,7 +610,7 @@ pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
 }
 
 /// Validates every [`Bytecode`] entry
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 pub fn validate_cache(cache: &CacheState) {
     // Top-level contracts map (bytecode served via `code_by_hash`).
     for (expected_hash, bytecode) in &cache.contracts {
@@ -671,11 +665,11 @@ pub mod tests {
             Some(executions_collector.clone()),
             derivation_cache,
             derivation_trace.clone(),
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             None,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             Vec::new(),
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             None,
         )
         .context("run_core_client")?;
@@ -744,7 +738,7 @@ pub mod tests {
         Ok((header, boot.rollup_config))
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     pub async fn test_derivation_with_partials(
         boot_info: BootInfo,
         proposal_data: Option<ProposalPrecondition>,
@@ -774,11 +768,11 @@ pub mod tests {
             Some(executions_collector.clone()),
             derivation_cache,
             derivation_trace.clone(),
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             None,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partial_executions,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             Some(partials_collector.clone()),
         )
         .context("run_core_client")?;
@@ -856,11 +850,11 @@ pub mod tests {
             None,
             None,
             None,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             None,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             Vec::new(),
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             None,
         )
         .expect("run_core_client");
@@ -890,7 +884,7 @@ pub mod tests {
         Ok(expected_precondition_hash)
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     pub fn test_partial(
         boot_info: BootInfo,
         partial_witness: PartialExecutionWitness,
@@ -942,7 +936,7 @@ pub mod tests {
         .unwrap();
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491250_partials_roundtrip() {
         // Capture partials
@@ -977,7 +971,7 @@ pub mod tests {
         }
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491250_split_partials_roundtrip() {
         // Capture partials
@@ -1030,7 +1024,7 @@ pub mod tests {
         }
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491349_partials_roundtrip() {
         // Capture partials
@@ -1122,7 +1116,7 @@ pub mod tests {
             .all(|c| c.first().unwrap().results.is_empty()));
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491349_with_empty_partials() {
         let partials = vec![Vec::<PartialExecution>::new(); 100];
@@ -1145,7 +1139,7 @@ pub mod tests {
     /// where revm rejects a transaction must propagate via the
     /// `partial transaction execution failed` `map_err` closure on the
     /// `op_block_executor.execute_transaction(...)` call.
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_partial_execution_failure_propagates_error() {
         // Capture real witnesses from a derivation; we need at least one
@@ -1366,7 +1360,7 @@ pub mod tests {
         assert!(executions.is_empty());
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[test]
     fn validate_contract_hash_zero_workaround() {
         use alloy_primitives::Bytes;
@@ -1375,7 +1369,7 @@ pub mod tests {
         validate_contract_hash(&B256::ZERO, &Bytecode::new_raw(Bytes::new()));
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     pub fn make_pe_boot(boot_info: &BootInfo, witness: &PartialExecutionWitness) -> BootInfo {
         BootInfo {
             l1_head: B256::repeat_byte(0xFF),

@@ -26,7 +26,7 @@ use alloy_rlp::Decodable;
 use anyhow::{anyhow, bail, Context};
 use ark_ff::{BigInteger, PrimeField};
 use kailua_kona::blobs::BlobFetchRequest;
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use kailua_kona::evm::partial::PartialExecution;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
@@ -178,7 +178,7 @@ pub async fn fetch_precondition_data(
 pub struct PreflightResult {
     pub l1_head_sufficient: bool,
     pub block_executions: Vec<Execution>,
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     pub partial_executions: Vec<Vec<PartialExecution>>,
 }
 
@@ -232,7 +232,7 @@ pub async fn concurrent_preflight(
         return Ok(PreflightResult {
             l1_head_sufficient: true,
             block_executions: vec![],
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partial_executions: vec![],
         });
     }
@@ -528,7 +528,7 @@ pub async fn concurrent_preflight(
         );
         // queue and start new job
         let task = tokio::spawn(crate::tasks::compute_cached_proof(
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             None,
             args.clone(),
             rollup_config.clone(),
@@ -541,7 +541,7 @@ pub async fn concurrent_preflight(
             None,
             vec![],
             vec![],
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             vec![],
             vec![],
             false,
@@ -580,7 +580,7 @@ pub async fn concurrent_preflight(
     // Await L2 preflight tasks
     let mut l1_head_sufficient = true;
     let mut block_executions = vec![];
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     let mut partial_executions: Vec<Vec<PartialExecution>> = vec![];
     for (target_l2_height, job) in jobs {
         let result = job.await?;
@@ -588,7 +588,7 @@ pub async fn concurrent_preflight(
             Err(e) => {
                 let ProvingError::NotSeekingProof {
                     mut executions,
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     partials,
                     ..
                 } = e
@@ -607,7 +607,7 @@ pub async fn concurrent_preflight(
                     continue;
                 };
                 block_executions.extend(executions.pop().unwrap());
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partial_executions.extend(partials);
                 claimed_l2_block
             }
@@ -625,7 +625,7 @@ pub async fn concurrent_preflight(
     Ok(PreflightResult {
         l1_head_sufficient,
         block_executions,
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partial_executions,
     })
 }

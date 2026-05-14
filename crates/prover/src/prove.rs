@@ -45,13 +45,16 @@ use std::time::Duration;
 use tempfile::tempdir;
 use tokio::fs::remove_dir_all;
 use tracing::{error, info, warn};
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use {crate::client::native::PartialsCache, std::sync::Arc};
 
 pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt>> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("prove"));
     let start_time = current_time();
+
+    #[cfg(feature = "experimental")]
+    warn!("You are running the EXPERIMENTAL version. Some features have not yet been audited for production.");
 
     // fetch starting block number
     let l2_provider = if args.kona.is_offline() {
@@ -139,12 +142,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     );
     let crate::preflight::PreflightResult {
         l1_head_sufficient: is_l1_head_sufficient,
-        #[cfg_attr(
-            not(feature = "enable-experimental-transaction-stitching"),
-            allow(unused_variables)
-        )]
+        #[cfg_attr(not(feature = "experimental"), allow(unused_variables))]
         block_executions,
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         partial_executions,
     } = concurrent_preflight(
         &args,
@@ -173,7 +173,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
 
     let proving_start_time = current_time();
     // Prove partial executions
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     let partial_proof_cache = {
         info!("Dispatching partial execution proving tasks.");
         let mut expected_partials = 0;
@@ -240,7 +240,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                 let execution = exec.clone();
                 tokio::spawn(async move {
                     let result = crate::tasks::compute_oneshot_task(
-                        #[cfg(feature = "enable-experimental-transaction-stitching")]
+                        #[cfg(feature = "experimental")]
                         None,
                         job_args.clone(),
                         rollup_config,
@@ -253,7 +253,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                         None,
                         vec![],
                         vec![],
-                        #[cfg(feature = "enable-experimental-transaction-stitching")]
+                        #[cfg(feature = "experimental")]
                         vec![vec![partial]],
                         vec![],
                         false,
@@ -454,11 +454,11 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
             let disk_kv_store = disk_kv_store.clone();
             let task_channel = task_channel.clone();
             let result_channel = result_channel.clone();
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             let partial_proof_cache = partial_proof_cache.clone();
             tokio::spawn(async move {
                 let result = crate::tasks::compute_fpvm_proof(
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     Some(partial_proof_cache),
                     job_args.clone(),
                     rollup_config,
@@ -500,7 +500,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                     Precondition::default().proposal(proposal_precondition_hash)
                 });
                 let cached_task = CachedTask {
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     partials_cache: Some(partial_proof_cache.clone()),
                     // used for sorting
                     args: job_args.clone(),
@@ -515,7 +515,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                     derivation_trace_sender: None,
                     stitched_preconditions: vec![],
                     stitched_boot_info: vec![],
-                    #[cfg(feature = "enable-experimental-transaction-stitching")]
+                    #[cfg(feature = "experimental")]
                     partial_executions: vec![],
                     stitched_proofs: vec![],
                     prove_snark: false,
@@ -776,7 +776,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                         .proposal(proposal_precondition_hash)
                         .derivation(driver_cache_hash, driver_cache_hash);
                     let result = crate::tasks::compute_fpvm_proof(
-                        #[cfg(feature = "enable-experimental-transaction-stitching")]
+                        #[cfg(feature = "experimental")]
                         None,
                         stitch_job_args.clone(),
                         rollup_config,
@@ -812,7 +812,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
 
                 results.push(OneshotResult {
                     cached_task: CachedTask {
-                        #[cfg(feature = "enable-experimental-transaction-stitching")]
+                        #[cfg(feature = "experimental")]
                         partials_cache: None, // we don't do any block execution in this aggregation pass
                         args: stitch_job_args,
                         rollup_config: rollup_config.clone(),
@@ -825,7 +825,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                         derivation_trace_sender: None,
                         stitched_preconditions: vec![],
                         stitched_boot_info: vec![],
-                        #[cfg(feature = "enable-experimental-transaction-stitching")]
+                        #[cfg(feature = "experimental")]
                         partial_executions: vec![],
                         stitched_proofs: vec![],
                         prove_snark: false,

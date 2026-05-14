@@ -22,7 +22,7 @@ use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use kailua_kona::evm::{partial::PartialExecution, witness::PartialExecutionWitness};
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
@@ -69,10 +69,10 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        #[cfg(feature = "enable-experimental-transaction-stitching")] pe_witness: Option<
+        #[cfg(feature = "experimental")] pe_witness: Option<
             PartialExecutionWitness,
         >,
-        #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
+        #[cfg(feature = "experimental")] partial_executions: Vec<
             Vec<PartialExecution>,
         >,
     ) -> (BootInfo, ProofJournal, Precondition)
@@ -107,9 +107,9 @@ impl<
                 derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 pe_witness,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partial_executions,
             );
         // Ensure boot record is the same for both oracles

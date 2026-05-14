@@ -34,7 +34,7 @@ use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use spin::RwLock;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use {
     crate::evm::partial::{PartialExecution, PartialExecutionTrace},
     alloy_consensus::BlockHeader,
@@ -70,7 +70,7 @@ pub struct Execution {
     pub claimed_output: B256,
 }
 
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 impl Execution {
     pub fn get_transactions(&self, tx_hashes: &[B256]) -> Vec<Bytes> {
         let transactions = self.attributes.transactions.as_deref().unwrap_or(&[]);
@@ -304,7 +304,7 @@ where
     Ok(Arc::new(RwLock::new(cursor)))
 }
 
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 fn expected_blob_excess_gas_and_price(
     parent_header: &Header,
     spec_id: OpSpecId,
@@ -329,7 +329,7 @@ fn expected_blob_excess_gas_and_price(
         .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
 }
 
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 pub fn build_single_partial_for_block(
     execution: &Execution,
     traces: Vec<PartialExecutionTrace>,
@@ -629,7 +629,7 @@ pub mod tests {
         );
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[test]
     fn build_single_partial_for_block_blob_param_branches() {
         let execution = gen_executions(1)

@@ -17,7 +17,7 @@ use crate::client::core::DASourceProvider;
 use crate::client::log;
 use crate::config::config_hash;
 use crate::driver::CachedDriver;
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 use crate::evm::{partial::PartialExecution, witness::PartialExecutionWitness};
 use crate::executor::Execution;
 use crate::journal::ProofJournal;
@@ -81,12 +81,8 @@ pub trait StitchingClient<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        #[cfg(feature = "enable-experimental-transaction-stitching")] pe_witness: Option<
-            PartialExecutionWitness,
-        >,
-        #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
-            Vec<PartialExecution>,
-        >,
+        #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug;
@@ -114,12 +110,8 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        #[cfg(feature = "enable-experimental-transaction-stitching")] pe_witness: Option<
-            PartialExecutionWitness,
-        >,
-        #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
-            Vec<PartialExecution>,
-        >,
+        #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
@@ -128,7 +120,7 @@ impl<
         let (stitched_executions, execution_cache) = split_executions(stitched_executions);
 
         // Precompute binding data for stitching partial executions before they are moved
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         let pe_boots = precompute_pe_boots(&partial_executions);
 
         // Attempt to recompute the output hash at the target block number using kona
@@ -143,17 +135,17 @@ impl<
             None,
             derivation_cache,
             derivation_trace.then(Default::default),
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             pe_witness,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partial_executions,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             None,
         )
         .expect("Failed to compute output hash.");
 
         // Short-circuit all stitching logic when partial proving
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         if boot.l1_head == B256::repeat_byte(0xFF) {
             let proof_journal = ProofJournal::new(
                 fpvm_image_id,
@@ -169,7 +161,7 @@ impl<
         let proven_fpvm_journals = load_stitching_journals(fpvm_image_id);
 
         // Stitch recursively composed partial executions
-        #[cfg(feature = "enable-experimental-transaction-stitching")]
+        #[cfg(feature = "experimental")]
         stitch_partial_executions(
             &boot,
             fpvm_image_id,
@@ -422,7 +414,7 @@ pub fn stitch_executions(
 }
 
 /// Precomputes precondition and stitched boot info data for partial executions
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 pub fn precompute_pe_boots(
     partial_executions: &[Vec<PartialExecution>],
 ) -> Vec<(B256, StitchedBootInfo)> {
@@ -451,7 +443,7 @@ pub fn precompute_pe_boots(
 }
 
 /// Stitches recursively-composed partial execution proofs into the proof journal.
-#[cfg(feature = "enable-experimental-transaction-stitching")]
+#[cfg(feature = "experimental")]
 pub fn stitch_partial_executions(
     boot: &BootInfo,
     fpvm_image_id: B256,
@@ -655,7 +647,7 @@ pub mod tests {
     use alloy_primitives::b256;
     use anyhow::Context;
     use kona_proof::l1::OracleBlobProvider;
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     use {
         crate::client::core::split_collected_partials,
         crate::client::core::tests::{make_pe_boot, test_derivation_with_partials},
@@ -721,7 +713,7 @@ pub mod tests {
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
+        #[cfg(feature = "experimental")] partial_executions: Vec<
             Vec<PartialExecution>,
         >,
     ) {
@@ -736,7 +728,7 @@ pub mod tests {
             derivation_trace,
             stitched_preconditions,
             stitched_boot_info,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partial_executions,
         );
         validate_proof_journal(proof_journal, boot_info, precondition_hash);
@@ -751,7 +743,7 @@ pub mod tests {
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
+        #[cfg(feature = "experimental")] partial_executions: Vec<
             Vec<PartialExecution>,
         >,
     ) -> ProofJournal {
@@ -773,15 +765,15 @@ pub mod tests {
                 derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 None,
-                #[cfg(feature = "enable-experimental-transaction-stitching")]
+                #[cfg(feature = "experimental")]
                 partial_executions,
             )
             .1
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     pub async fn test_stitching_boots(
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
@@ -892,7 +884,7 @@ pub mod tests {
             false,
             vec![],
             vec![],
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             vec![],
         );
         let n = stitched_executions.len();
@@ -910,7 +902,7 @@ pub mod tests {
             false,
             vec![],
             vec![],
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             vec![],
         );
         // fully fragmented pass
@@ -922,7 +914,7 @@ pub mod tests {
             false,
             vec![],
             vec![],
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             vec![],
         );
         Ok(())
@@ -933,7 +925,7 @@ pub mod tests {
         precondition_validation_data: Option<ProposalPrecondition>,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        #[cfg(feature = "enable-experimental-transaction-stitching")] partial_executions: Vec<
+        #[cfg(feature = "experimental")] partial_executions: Vec<
             Vec<PartialExecution>,
         >,
     ) -> anyhow::Result<()> {
@@ -955,7 +947,7 @@ pub mod tests {
             false,
             stitched_preconditions,
             stitched_boot_info,
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             partial_executions,
         );
         Ok(())
@@ -987,7 +979,7 @@ pub mod tests {
             false,
             vec![],
             vec![],
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             vec![],
         );
 
@@ -1039,7 +1031,7 @@ pub mod tests {
             false,
             vec![],
             vec![],
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             vec![],
         );
 
@@ -1074,7 +1066,7 @@ pub mod tests {
             None,
             vec![],
             vec![],
-            #[cfg(feature = "enable-experimental-transaction-stitching")]
+            #[cfg(feature = "experimental")]
             vec![],
         )
         .await
@@ -1083,7 +1075,7 @@ pub mod tests {
         teardown();
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     pub async fn test_stitching_partials(
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
@@ -1127,7 +1119,7 @@ pub mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491349_stitched_boots() {
         setup();
@@ -1148,7 +1140,7 @@ pub mod tests {
         teardown();
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491250_stitched_partials() {
         setup();
@@ -1177,7 +1169,7 @@ pub mod tests {
         teardown();
     }
 
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491349_stitched_partials() {
         setup();
@@ -1200,7 +1192,7 @@ pub mod tests {
     /// `precompute_pe_boots` must skip empty per-block `partial_executions`
     /// without producing a stitched-boot entry (covers the
     /// `if block_partials.is_empty() { continue; }` guard).
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[test]
     fn precompute_pe_boots_skips_empty_block_partials() {
         let empty: Vec<Vec<PartialExecution>> = vec![vec![], vec![], vec![]];
@@ -1213,7 +1205,7 @@ pub mod tests {
     /// `0xFF…FF` sentinel `l1_head`, the function must build a
     /// `ProofJournal` directly from the boot+precondition and return
     /// without entering any stitching logic.
-    #[cfg(feature = "enable-experimental-transaction-stitching")]
+    #[cfg(feature = "experimental")]
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_partial_exec_stitching_short_circuit() {
         // Capture a real partial via the existing derivation harness.
