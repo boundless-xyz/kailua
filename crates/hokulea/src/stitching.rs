@@ -69,12 +69,8 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        #[cfg(feature = "experimental")] pe_witness: Option<
-            PartialExecutionWitness,
-        >,
-        #[cfg(feature = "experimental")] partial_executions: Vec<
-            Vec<PartialExecution>,
-        >,
+        #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,

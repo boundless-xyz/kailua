@@ -965,9 +965,7 @@ pub fn create_cached_execution_task(
     l1_config: L1ChainConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
     execution_cache: &[Arc<Execution>],
-    #[cfg(feature = "experimental")] partials_cache: Option<
-        Arc<PartialsCache>,
-    >,
+    #[cfg(feature = "experimental")] partials_cache: Option<Arc<PartialsCache>>,
 ) -> CachedTask {
     let starting_block = execution_cache
         .iter()
@@ -1029,9 +1027,7 @@ pub fn create_cached_execution_task(
 /// Launches the native Kailua-Kona client-server pair to compute a [OneshotResultResponse]
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_cached_proof(
-    #[cfg(feature = "experimental")] partials_cache: Option<
-        Arc<PartialsCache>,
-    >,
+    #[cfg(feature = "experimental")] partials_cache: Option<Arc<PartialsCache>>,
     mut args: ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,
@@ -1043,9 +1039,7 @@ pub async fn compute_cached_proof(
     mut derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    #[cfg(feature = "experimental")] partial_executions: Vec<
-        Vec<PartialExecution>,
-    >,
+    #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     stitched_proofs: Vec<ProfiledReceipt>,
     prove_snark: bool,
     force_attempt: bool,
@@ -1110,10 +1104,7 @@ pub async fn compute_cached_proof(
     }
 
     // Construct expected journal
-    #[cfg_attr(
-        not(feature = "experimental"),
-        allow(unused_mut)
-    )]
+    #[cfg_attr(not(feature = "experimental"), allow(unused_mut))]
     let (boot, mut proof_journal, mut updated_precondition) = stitch_boot_info::<VecOracle>(
         None, // assume l1 head chain continuity on host side
         boot,

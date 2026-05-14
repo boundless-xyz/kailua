@@ -57,14 +57,9 @@ pub type PartialsCache = BTreeMap<u64, Vec<PartialExecution>>;
 /// - `Err(_)` if the client program failed to execute, was killed by a signal, or the host program
 ///   exited first.
 #[allow(clippy::too_many_arguments)]
-#[cfg_attr(
-    not(feature = "experimental"),
-    allow(unused_mut)
-)]
+#[cfg_attr(not(feature = "experimental"), allow(unused_mut))]
 pub async fn run_native_client(
-    #[cfg(feature = "experimental")] partials_cache: Option<
-        Arc<PartialsCache>,
-    >,
+    #[cfg(feature = "experimental")] partials_cache: Option<Arc<PartialsCache>>,
     args: ProveArgs,
     disk_kv_store: Option<RWLKeyValueStore>,
     precondition: Precondition,
@@ -79,9 +74,7 @@ pub async fn run_native_client(
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
-    #[cfg(feature = "experimental")] mut partial_executions: Vec<
-        Vec<PartialExecution>,
-    >,
+    #[cfg(feature = "experimental")] mut partial_executions: Vec<Vec<PartialExecution>>,
 ) -> Result<(), ProvingError> {
     // Instantiate data channels
     let hint = BidirectionalChannel::new().map_err(|e| ProvingError::OtherError(anyhow!(e)))?;

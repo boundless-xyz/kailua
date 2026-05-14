@@ -70,9 +70,7 @@ pub const ORACLE_LRU_SIZE: usize = 1024;
 #[allow(clippy::too_many_arguments)]
 pub async fn run_proving_client<P, H>(
     _l1_node_address: Option<String>,
-    #[cfg(feature = "experimental")] partials_cache: Option<
-        Arc<PartialsCache>,
-    >,
+    #[cfg(feature = "experimental")] partials_cache: Option<Arc<PartialsCache>>,
     proving: ProvingArgs,
     boundless: BoundlessArgs,
     oracle_client: P,
@@ -80,22 +78,16 @@ pub async fn run_proving_client<P, H>(
     precondition: Precondition,
     proposal_data_hash: B256,
     stitched_executions: Vec<Vec<Execution>>,
-    #[cfg(feature = "experimental")] pe_witness: Option<
-        PartialExecutionWitness,
-    >,
-    #[cfg(feature = "experimental")] mut partial_executions: Vec<
-        Vec<PartialExecution>,
-    >,
+    #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+    #[cfg(feature = "experimental")] mut partial_executions: Vec<Vec<PartialExecution>>,
     derivation_cache: Option<CachedDriver>,
     trace_derivation: bool,
     derivation_trace: Option<Sender<CachedDriver>>,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    #[cfg_attr(
-        not(feature = "experimental"),
-        allow(unused_mut)
-    )]
-    mut stitched_proofs: Vec<ProfiledReceipt>,
+    #[cfg_attr(not(feature = "experimental"), allow(unused_mut))] mut stitched_proofs: Vec<
+        ProfiledReceipt,
+    >,
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
@@ -470,9 +462,7 @@ pub fn process_witness(
     proving: &ProvingArgs,
     mut witness: Witness<VecOracle>,
     stitched_executions: Vec<Vec<Execution>>,
-    #[cfg(feature = "experimental")] partial_executions: Vec<
-        Vec<PartialExecution>,
-    >,
+    #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     extra_frames: Vec<Vec<u8>>,
     seek_proof: bool,
     force_attempt: bool,

@@ -713,9 +713,7 @@ pub mod tests {
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        #[cfg(feature = "experimental")] partial_executions: Vec<
-            Vec<PartialExecution>,
-        >,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) {
         let precondition_hash = precondition_validation_data
             .as_ref()
@@ -743,9 +741,7 @@ pub mod tests {
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        #[cfg(feature = "experimental")] partial_executions: Vec<
-            Vec<PartialExecution>,
-        >,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> ProofJournal {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let precondition_validation_data_hash = match proposal_precondition {
@@ -925,9 +921,7 @@ pub mod tests {
         precondition_validation_data: Option<ProposalPrecondition>,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
-        #[cfg(feature = "experimental")] partial_executions: Vec<
-            Vec<PartialExecution>,
-        >,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> anyhow::Result<()> {
         let stitched_executions = test_derivation(
             boot_info.clone(),

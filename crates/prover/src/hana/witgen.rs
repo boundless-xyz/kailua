@@ -48,12 +48,8 @@ pub async fn run_hana_witgen_client<P, B, O>(
     trace_derivation: bool,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
-    #[cfg(feature = "experimental")] pe_witness: Option<
-        PartialExecutionWitness,
-    >,
-    #[cfg(feature = "experimental")] partial_executions: Vec<
-        Vec<PartialExecution>,
-    >,
+    #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+    #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     #[cfg(feature = "experimental")] trace_partials: bool,
 ) -> anyhow::Result<(
     BootInfo,
