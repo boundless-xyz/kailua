@@ -23,12 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - build_features: ""
+          - build_features: celesia,eigen
             tag_prefix: ""
-          - build_features: celestia
-            tag_prefix: "celestia-"
-          - build_features: eigen
-            tag_prefix: "eigen-"
+          - build_features: celesia,eigen,experimental
+            tag_prefix: "experimental-"
 
     steps:
       - uses: actions/checkout@v4
