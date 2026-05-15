@@ -99,6 +99,7 @@ risc0-steel = { workspace = true, features = ["host"] }
 
 [features]
 experimental = [
+    "kailua-build/experimental",
     "kailua-kona/experimental",
     "kailua-hokulea?/experimental",
     "kailua-hana?/experimental",
