@@ -40,11 +40,7 @@ pub mod oracle;
 /// Structures and logic for defining preconditions for Kailua proofs.
 pub mod precondition;
 /// R0VM-accelerated revm `Crypto` provider for EVM precompiles.
-#[cfg(all(
-    feature = "r0vm-crypto",
-    target_os = "zkvm",
-    target_vendor = "risc0"
-))]
+#[cfg(all(feature = "experimental", target_os = "zkvm", target_vendor = "risc0"))]
 pub mod r0vm_crypto;
 /// Utility methods for zero-copy (de)serialization using the `rkyv` crate.
 pub mod rkyv;

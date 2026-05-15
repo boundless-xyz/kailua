@@ -52,11 +52,7 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
     witness: Witness<O>,
     stitching_client: S,
 ) -> ProofJournal {
-    #[cfg(all(
-        feature = "r0vm-crypto",
-        target_os = "zkvm",
-        target_vendor = "risc0"
-    ))]
+    #[cfg(all(feature = "experimental", target_os = "zkvm", target_vendor = "risc0"))]
     crate::r0vm_crypto::install_r0vm_crypto();
 
     log(&format!(
