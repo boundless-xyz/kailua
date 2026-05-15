@@ -39,6 +39,9 @@ disable-dev-mode = [
 experimental = [
     "kailua-kona/experimental"
 ]
+r0vm-crypto = [
+    "kailua-kona/r0vm-crypto"
+]
 
 [patch.crates-io]
 blst = { git = "https://github.com/risc0/blst", tag = "v0.3.15-risczero.1"}

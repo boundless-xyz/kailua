@@ -29,3 +29,4 @@ rebuild-fpvm = [
 eigen = []
 celestia = []
 experimental = []
+r0vm-crypto = []

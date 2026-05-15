@@ -60,6 +60,14 @@ fn main() {
                     opts.features.push(String::from("disable-dev-mode"));
                     opts
                 };
+
+                // Forward the experimental R0VM crypto opt-in to the guest crates.
+                #[cfg(feature = "r0vm-crypto")]
+                let opts = {
+                    let mut opts = opts;
+                    opts.features.push(String::from("r0vm-crypto"));
+                    opts
+                };
                 opts
             };
 
