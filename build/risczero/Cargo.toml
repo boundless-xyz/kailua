@@ -28,3 +28,7 @@ rebuild-fpvm = [
 ]
 eigen = []
 celestia = []
+# Build the FPVM guest ELFs with the experimental R0VM-accelerated revm
+# `Crypto` provider enabled. Off by default until `risc0-crypto` has been
+# fully audited. Selecting this changes the guest image id.
+r0vm-crypto = []

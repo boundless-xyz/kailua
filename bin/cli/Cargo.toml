@@ -30,7 +30,7 @@ tracing.workspace = true
 
 opentelemetry.workspace = true
 
-alloy = { workspace = true, features = ["full", "kzg", "signer-aws", "signer-gcp"] }
+alloy = { workspace = true, features = ["full", "kzg", "signer-aws", "signer-gcp", "signer-local"] }
 
 kailua-build.workspace = true
 kailua-kona.workspace = true
