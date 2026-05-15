@@ -72,15 +72,18 @@ where
     );
     // Instantiate verifier to populate data
     let (eigen_verifier, boot_info) = KailuaCanoeVerifier::new(eigen_oracle.clone());
-    eigenda_witness_to_preloaded_provider(
-        eigen_oracle,
-        &boot_info,
-        eigen_verifier,
-        CanoeVerifierAddressFetcherDeployedByEigenLabs {},
-        Default::default(),
-    )
-    .await
-    .expect("Failed to validate EigenDA Witness.");
+    // Skip EigenDA witness validation for partial-execution proofs
+    if boot_info.l1_head != B256::repeat_byte(0xFF) {
+        eigenda_witness_to_preloaded_provider(
+            eigen_oracle,
+            &boot_info,
+            eigen_verifier,
+            CanoeVerifierAddressFetcherDeployedByEigenLabs {},
+            Default::default(),
+        )
+        .await
+        .expect("Failed to validate EigenDA Witness.");
+    }
     // Run regular witgen client
     let (boot, proof_journal, precondition, cached_driver, witness) =
         witgen::run_witgen_client::<P, B, O, _>(

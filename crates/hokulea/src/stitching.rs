@@ -18,6 +18,7 @@ use alloy_primitives::aliases::B256;
 use alloy_primitives::Address;
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_proof::eigenda_witness::EigenDAWitness;
+use hokulea_proof::preloaded_eigenda_provider::PreloadedEigenDAPreimageProvider;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
@@ -80,7 +81,9 @@ impl<
         let (eigen_verifier, boot) = KailuaCanoeVerifier::new(eigen_oracle.clone());
 
         // Run the stitching client with the EigenDA DASProvider
-        let eigen_stitching_client = KonaStitchingClient(EigenDADataSourceProvider(
+        let preloaded_provider = if boot.l1_head == B256::repeat_byte(0xFF) {
+            PreloadedEigenDAPreimageProvider::default()
+        } else {
             kona_proof::block_on(eigenda_witness_to_preloaded_provider(
                 eigen_oracle,
                 &boot,
@@ -88,8 +91,11 @@ impl<
                 CanoeVerifierAddressFetcherDeployedByEigenLabs {},
                 self.eigen_da_witness,
             ))
-            .expect("Failed to validate EigenDA Witness."),
-        ));
+            .expect("Failed to validate EigenDA Witness.")
+        };
+
+        let eigen_stitching_client =
+            KonaStitchingClient(EigenDADataSourceProvider(preloaded_provider));
         let (kona_boot_info, proof_journal, precondition) = eigen_stitching_client
             .run_stitching_client(
                 precondition_validation_data_hash,

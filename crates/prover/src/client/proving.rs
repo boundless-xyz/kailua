@@ -221,19 +221,24 @@ where
                 .await
                 .context("Failed to run hokulea vec witgen client.")
                 .map_err(ProvingError::OtherError)?;
-            let canoe_proof = hokulea_witgen::from_boot_info_to_canoe_proof(
-                &boot_info,
-                &da_preimage,
-                preimage_oracle.as_ref(),
-                crate::hokulea::provider::KailuaCanoeSteelProvider {
-                    l1_head: boot_info.l1_head,
-                    eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
-                },
-                canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs {},
-            )
-            .await
-            .context("Failed to generate Hokulea DA proofs")?
-            .map(|proof| bincode::serialize(&proof).expect("Canoe proof serialization failed"));
+            // Skip canoe proof generation for partial-execution proofs
+            let canoe_proof = if boot_info.l1_head == B256::repeat_byte(0xFF) {
+                None
+            } else {
+                hokulea_witgen::from_boot_info_to_canoe_proof(
+                    &boot_info,
+                    &da_preimage,
+                    preimage_oracle.as_ref(),
+                    crate::hokulea::provider::KailuaCanoeSteelProvider {
+                        l1_head: boot_info.l1_head,
+                        eth_rpc_url: _l1_node_address.expect("Missing Hokulea L1 Node Provider"),
+                    },
+                    canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs {},
+                )
+                .await
+                .context("Failed to generate Hokulea DA proofs")?
+                .map(|proof| bincode::serialize(&proof).expect("Canoe proof serialization failed"))
+            };
             let kzg_proofs =
                 hokulea_compute_proof::create_kzg_proofs_for_eigenda_preimage(&da_preimage);
             let da_witness = hokulea_proof::eigenda_witness::EigenDAWitness::from_preimage(
