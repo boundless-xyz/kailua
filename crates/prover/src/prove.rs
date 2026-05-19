@@ -45,11 +45,19 @@ use std::time::Duration;
 use tempfile::tempdir;
 use tokio::fs::remove_dir_all;
 use tracing::{error, info, warn};
+#[cfg(feature = "experimental")]
+use {
+    crate::client::native::PartialsCache, kailua_kona::boot::L1_HEAD_TXN_ONLY_SENTINEL,
+    std::sync::Arc,
+};
 
 pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt>> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("prove"));
     let start_time = current_time();
+
+    #[cfg(feature = "experimental")]
+    warn!("You are running the EXPERIMENTAL version. Some features have not yet been audited for production.");
 
     // fetch starting block number
     let l2_provider = if args.kona.is_offline() {
@@ -127,29 +135,32 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     // create concurrent db
     let disk_kv_store = create_disk_kv_store(&args.kona);
     // perform preflight
-    let do_preflight = args.proving.num_concurrent_preflights > 0
-        || args.kona.enable_experimental_witness_endpoint;
     if args.proving.num_concurrent_preflights == 0 {
         args.proving.num_concurrent_preflights = 1;
     }
     // run parallelized preflight instances to populate kv store
-    if do_preflight {
-        info!(
-            "Running Kailua preflights with {} threads",
-            args.proving.num_concurrent_preflights
-        );
-        if !concurrent_preflight(
-            &args,
-            rollup_config.clone(),
-            l1_config.clone(),
-            op_node_provider.as_ref().expect("Missing op_node_provider"),
-            disk_kv_store.clone(),
-        )
-        .await
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-        {
-            return Ok(None);
-        }
+    info!(
+        "Running Kailua preflights with {} threads",
+        args.proving.num_concurrent_preflights
+    );
+    let crate::preflight::PreflightResult {
+        l1_head_sufficient: is_l1_head_sufficient,
+        #[cfg_attr(not(feature = "experimental"), allow(unused_variables))]
+        block_executions,
+        #[cfg(feature = "experimental")]
+        partial_executions,
+    } = concurrent_preflight(
+        &args,
+        rollup_config.clone(),
+        l1_config.clone(),
+        op_node_provider.as_ref().expect("Missing op_node_provider"),
+        disk_kv_store.clone(),
+    )
+    .await
+    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
+    // early abort if we can't create proof
+    if !is_l1_head_sufficient {
+        return Ok(None);
     }
     // We only use executionWitness/executePayload during preflight.
     args.kona.enable_experimental_witness_endpoint = false;
@@ -160,10 +171,138 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     for _ in 0..args.proving.num_concurrent_proofs {
         proving_handlers.push(tokio::spawn(handle_oneshot_tasks(task_channel.1.clone())));
     }
-    let mut result_pq = BinaryHeap::new();
-
     // create channel for receiving proving results from handlers
     let result_channel = async_channel::unbounded();
+
+    let proving_start_time = current_time();
+    // Prove partial executions
+    #[cfg(feature = "experimental")]
+    let partial_proof_cache = {
+        info!("Dispatching partial execution proving tasks.");
+        let mut expected_partials = 0;
+        let mut partial_proof_cache: PartialsCache = Default::default();
+        for (exec, mut partials) in block_executions
+            .clone()
+            .into_iter()
+            .zip(partial_executions.into_iter())
+        {
+            // Skip system-tx-only blocks
+            if exec
+                .attributes
+                .transactions
+                .as_ref()
+                .map(|txs| txs.is_empty())
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            // Ascertain we have partials for non-empty blocks
+            let Some(partial) = partials.pop() else {
+                error!(
+                    "Missing partial result for {}",
+                    exec.artifacts.header.number
+                );
+                continue;
+            };
+            // Sanity check that execution and partials are for the same block
+            if exec.artifacts.header.parent_hash != partial.op_block_ctx.parent_hash {
+                error!(
+                    "Preflight returned execution result for {} but partial result on top of {}",
+                    exec.artifacts.header.number, partial.block_env.number
+                );
+                continue;
+            }
+            // Dispatch partial proving tasks
+            let parent_hash = exec.artifacts.header.parent_hash;
+            let starting_block = exec.artifacts.header.number.saturating_sub(1);
+            for partial in partial.split(args.proving.num_block_partials) {
+                // Log proof in cache
+                partial_proof_cache
+                    .entry(starting_block)
+                    .or_default()
+                    .push(partial.clone());
+                // Dispatch job
+                let job_args = ProveArgs {
+                    kona: SingleChainHost {
+                        l1_head: L1_HEAD_TXN_ONLY_SENTINEL,
+                        agreed_l2_head_hash: parent_hash,
+                        agreed_l2_output_root: parent_hash,
+                        claimed_l2_output_root: parent_hash,
+                        claimed_l2_block_number: starting_block,
+                        ..args.kona.clone()
+                    },
+                    ..args.clone()
+                };
+                // spawn an async task that computes the proof using one of the instantiated handlers and sends back the result to result_channel
+                expected_partials += 1;
+                let rollup_config = rollup_config.clone();
+                let l1_config = l1_config.clone();
+                let disk_kv_store = disk_kv_store.clone();
+                let task_sender = task_channel.0.clone();
+                let result_sender = result_channel.0.clone();
+                let execution = exec.clone();
+                tokio::spawn(async move {
+                    let result = crate::tasks::compute_oneshot_task(
+                        #[cfg(feature = "experimental")]
+                        None,
+                        job_args.clone(),
+                        rollup_config,
+                        l1_config,
+                        disk_kv_store,
+                        Precondition::default(),
+                        B256::ZERO,
+                        vec![vec![execution]],
+                        None,
+                        None,
+                        vec![],
+                        vec![],
+                        #[cfg(feature = "experimental")]
+                        vec![vec![partial]],
+                        vec![],
+                        false,
+                        true,
+                        true,
+                        task_sender,
+                    )
+                    .await;
+
+                    result_sender
+                        .send((starting_block, job_args, true, result.map(Some)))
+                        .await
+                        .expect("Failed to send fpvm proof result");
+                });
+            }
+        }
+
+        // Await partial proofs
+        {
+            let mut received_partials = 0;
+            while received_partials < expected_partials {
+                // receive and process new results
+                let (starting_block, _, _, result) = result_channel
+                    .1
+                    .recv()
+                    .await
+                    .expect("Failed to recv prover task");
+                received_partials += 1;
+                match result {
+                    Err(e) => {
+                        error!(
+                            "Failed to prove partial execution for block {starting_block}: {e:?}"
+                        );
+                    }
+                    Ok(None) => {
+                        error!("No proof received for block {starting_block}");
+                    }
+                    _ => {}
+                }
+            }
+            info!("Computed {received_partials} partial execution proofs.");
+        }
+
+        Arc::new(partial_proof_cache)
+    };
+
     // create channel for receiving proof requests to process and dispatch to handlers
     let prover_channel = async_channel::unbounded();
     // create channel for receiving the last derivation trace in case of stitching
@@ -271,6 +410,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     }
 
     // wait for required proofs to arrive
+    let mut result_pq = BinaryHeap::new();
     while result_pq.len() < num_proofs {
         // dispatch all pending proofs
         while !prover_channel.1.is_empty() {
@@ -317,8 +457,12 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
             let disk_kv_store = disk_kv_store.clone();
             let task_channel = task_channel.clone();
             let result_channel = result_channel.clone();
+            #[cfg(feature = "experimental")]
+            let partial_proof_cache = partial_proof_cache.clone();
             tokio::spawn(async move {
                 let result = crate::tasks::compute_fpvm_proof(
+                    #[cfg(feature = "experimental")]
+                    Some(partial_proof_cache),
                     job_args.clone(),
                     rollup_config,
                     l1_config,
@@ -359,6 +503,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                     Precondition::default().proposal(proposal_precondition_hash)
                 });
                 let cached_task = CachedTask {
+                    #[cfg(feature = "experimental")]
+                    partials_cache: Some(partial_proof_cache.clone()),
                     // used for sorting
                     args: job_args.clone(),
                     // all unused
@@ -372,6 +518,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                     derivation_trace_sender: None,
                     stitched_preconditions: vec![],
                     stitched_boot_info: vec![],
+                    #[cfg(feature = "experimental")]
+                    partial_executions: vec![],
                     stitched_proofs: vec![],
                     prove_snark: false,
                     force_attempt,
@@ -397,7 +545,14 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
             Err(err) => {
                 // Handle error case
                 let (derivation_cache, derivation_trace) = match err {
-                    ProvingError::WitnessSizeError(preloaded, streamed, limit, _, d, s) => {
+                    ProvingError::WitnessSizeError {
+                        preloaded_size: preloaded,
+                        streamed_size: streamed,
+                        limit,
+                        derivation_cache: d,
+                        derivation_trace: s,
+                        ..
+                    } => {
                         if force_attempt {
                             bail!(
                                 "Received WitnessSizeError({preloaded},{streamed},{limit}) for a forced proving attempt."
@@ -414,10 +569,10 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                     ProvingError::OtherError(e) => {
                         bail!("Irrecoverable proving error: {e:?}")
                     }
-                    ProvingError::BlockCountError(..) => {
+                    ProvingError::BlockCountError { .. } => {
                         unreachable!("BlockCountError bubbled up")
                     }
-                    ProvingError::NotSeekingProof(..) => {
+                    ProvingError::NotSeekingProof { .. } => {
                         unreachable!("NotSeekingProof bubbled up")
                     }
                     ProvingError::ProvingTimeout => {
@@ -624,6 +779,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                         .proposal(proposal_precondition_hash)
                         .derivation(driver_cache_hash, driver_cache_hash);
                     let result = crate::tasks::compute_fpvm_proof(
+                        #[cfg(feature = "experimental")]
+                        None,
                         stitch_job_args.clone(),
                         rollup_config,
                         l1_config,
@@ -658,6 +815,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
 
                 results.push(OneshotResult {
                     cached_task: CachedTask {
+                        #[cfg(feature = "experimental")]
+                        partials_cache: None, // we don't do any block execution in this aggregation pass
                         args: stitch_job_args,
                         rollup_config: rollup_config.clone(),
                         l1_config: l1_config.clone(),
@@ -669,6 +828,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                         derivation_trace_sender: None,
                         stitched_preconditions: vec![],
                         stitched_boot_info: vec![],
+                        #[cfg(feature = "experimental")]
+                        partial_executions: vec![],
                         stitched_proofs: vec![],
                         prove_snark: false,
                         force_attempt: false,
@@ -709,8 +870,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
 
     let end_time = current_time();
     info!(
-        "Exiting prover program after {}.",
-        humantime::format_duration(Duration::from_secs(end_time - start_time))
+        "Exiting prover program after {} ({} proving).",
+        humantime::format_duration(Duration::from_secs(end_time - start_time)),
+        humantime::format_duration(Duration::from_secs(end_time - proving_start_time))
     );
     Ok(final_result)
 }

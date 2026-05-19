@@ -18,10 +18,13 @@ use alloy_primitives::aliases::B256;
 use alloy_primitives::Address;
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_proof::eigenda_witness::EigenDAWitness;
+use hokulea_proof::preloaded_eigenda_provider::PreloadedEigenDAPreimageProvider;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
-use kailua_kona::boot::StitchedBootInfo;
+use kailua_kona::boot::{StitchedBootInfo, L1_HEAD_TXN_ONLY_SENTINEL};
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
+#[cfg(feature = "experimental")]
+use kailua_kona::evm::{partial::PartialExecution, witness::PartialExecutionWitness};
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
@@ -67,6 +70,8 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
@@ -76,7 +81,9 @@ impl<
         let (eigen_verifier, boot) = KailuaCanoeVerifier::new(eigen_oracle.clone());
 
         // Run the stitching client with the EigenDA DASProvider
-        let eigen_stitching_client = KonaStitchingClient(EigenDADataSourceProvider(
+        let preloaded_provider = if boot.l1_head == L1_HEAD_TXN_ONLY_SENTINEL {
+            PreloadedEigenDAPreimageProvider::default()
+        } else {
             kona_proof::block_on(eigenda_witness_to_preloaded_provider(
                 eigen_oracle,
                 &boot,
@@ -84,8 +91,11 @@ impl<
                 CanoeVerifierAddressFetcherDeployedByEigenLabs {},
                 self.eigen_da_witness,
             ))
-            .expect("Failed to validate EigenDA Witness."),
-        ));
+            .expect("Failed to validate EigenDA Witness.")
+        };
+
+        let eigen_stitching_client =
+            KonaStitchingClient(EigenDADataSourceProvider(preloaded_provider));
         let (kona_boot_info, proof_journal, precondition) = eigen_stitching_client
             .run_stitching_client(
                 precondition_validation_data_hash,
@@ -99,6 +109,10 @@ impl<
                 derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
+                #[cfg(feature = "experimental")]
+                pe_witness,
+                #[cfg(feature = "experimental")]
+                partial_executions,
             );
         // Ensure boot record is the same for both oracles
         assert_eq!(boot, kona_boot_info);

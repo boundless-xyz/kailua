@@ -12,14 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::boot::StitchedBootInfo;
+use crate::boot::{StitchedBootInfo, L1_HEAD_EXEC_ONLY_SENTINEL, L1_HEAD_SENTINELS};
 use crate::client::core::DASourceProvider;
 use crate::client::log;
+use crate::config::config_hash;
 use crate::driver::CachedDriver;
 use crate::executor::Execution;
 use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
 use crate::precondition::Precondition;
+#[cfg(feature = "experimental")]
+use crate::{
+    boot::L1_HEAD_TXN_ONLY_SENTINEL,
+    evm::{partial::PartialExecution, witness::PartialExecutionWitness},
+};
 use alloy_primitives::{Address, B256};
 use anyhow::Context;
 use kona_derive::{BlobProvider, ChainProvider};
@@ -62,6 +68,8 @@ pub trait StitchingClient<
     /// * `stitched_preconditions`: A vector of `Precondition` objects for the stitched proofs.
     /// * `stitched_boot_info` - A vector of `StitchedBootInfo` objects describing proofs
     ///   to be stitched together.
+    /// * `chunk_witness`: An optional witness for running a partial execution
+    /// * `chunks`: A list of partial executions to reuse
     #[allow(clippy::too_many_arguments)]
     fn run_stitching_client(
         self,
@@ -76,6 +84,8 @@ pub trait StitchingClient<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug;
@@ -103,12 +113,18 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
     {
         // Queue up precomputed executions
         let (stitched_executions, execution_cache) = split_executions(stitched_executions);
+
+        // Precompute binding data for stitching partial executions before they are moved
+        #[cfg(feature = "experimental")]
+        let pe_boots = precompute_pe_boots(&partial_executions);
 
         // Attempt to recompute the output hash at the target block number using kona
         log("RUN");
@@ -122,12 +138,41 @@ impl<
             None,
             derivation_cache,
             derivation_trace.then(Default::default),
+            #[cfg(feature = "experimental")]
+            pe_witness,
+            #[cfg(feature = "experimental")]
+            partial_executions,
+            #[cfg(feature = "experimental")]
+            None,
         )
         .expect("Failed to compute output hash.");
+
+        // Short-circuit all stitching logic when partial proving
+        #[cfg(feature = "experimental")]
+        if boot.l1_head == L1_HEAD_TXN_ONLY_SENTINEL {
+            let proof_journal = ProofJournal::new(
+                fpvm_image_id,
+                payout_recipient_address,
+                B256::new(precondition.digest().into()),
+                &boot,
+            );
+            return (boot, proof_journal, precondition);
+        }
 
         // Verify proofs recursively for boundless composition
         #[cfg(target_os = "zkvm")]
         let proven_fpvm_journals = load_stitching_journals(fpvm_image_id);
+
+        // Stitch recursively composed partial executions
+        #[cfg(feature = "experimental")]
+        stitch_partial_executions(
+            &boot,
+            fpvm_image_id,
+            payout_recipient_address,
+            pe_boots,
+            #[cfg(target_os = "zkvm")]
+            &proven_fpvm_journals,
+        );
 
         // Stitch recursively composed execution-only proofs
         stitch_executions(
@@ -326,9 +371,9 @@ pub fn stitch_executions(
     stitched_executions: &Vec<Vec<Arc<Execution>>>,
     #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
 ) {
-    let config_hash = crate::config::config_hash(&boot.rollup_config, &boot.l1_config);
+    let config_hash = config_hash(&boot.rollup_config, &boot.l1_config);
     // When running an execution-only proof, we may only have one batch validated by the kailua client
-    if boot.l1_head.is_zero() {
+    if boot.l1_head == L1_HEAD_EXEC_ONLY_SENTINEL {
         assert_eq!(1, stitched_executions.len());
         return;
     };
@@ -371,13 +416,73 @@ pub fn stitch_executions(
     }
 }
 
+/// Precomputes precondition and stitched boot info data for partial executions
+#[cfg(feature = "experimental")]
+pub fn precompute_pe_boots(
+    partial_executions: &[Vec<PartialExecution>],
+) -> Vec<(B256, StitchedBootInfo)> {
+    let mut result = vec![];
+
+    for block_partials in partial_executions {
+        if block_partials.is_empty() {
+            continue;
+        }
+
+        // Verify each chunk's journal.
+        for partial in block_partials {
+            // Create required boot info
+            let stitched_boot = StitchedBootInfo {
+                l1_head: L1_HEAD_TXN_ONLY_SENTINEL,
+                agreed_l2_output_root: partial.op_block_ctx.parent_hash,
+                claimed_l2_output_root: partial.op_block_ctx.parent_hash,
+                claimed_l2_block_number: partial.block_env.number.to::<u64>().saturating_sub(1),
+            };
+
+            result.push((partial.precondition_hash(), stitched_boot));
+        }
+    }
+
+    result
+}
+
+/// Stitches recursively-composed partial execution proofs into the proof journal.
+#[cfg(feature = "experimental")]
+pub fn stitch_partial_executions(
+    boot: &BootInfo,
+    fpvm_image_id: B256,
+    payout_recipient_address: Address,
+    pe_boots: Vec<(B256, StitchedBootInfo)>,
+    #[cfg(target_os = "zkvm")] proven_fpvm_journals: &HashSet<Digest>,
+) {
+    let config_hash = config_hash(&boot.rollup_config, &boot.l1_config);
+
+    for (precondition_hash, stitched_boot) in pe_boots {
+        // Create journal
+        let encoded_journal = ProofJournal::new_stitched(
+            fpvm_image_id,
+            payout_recipient_address,
+            precondition_hash,
+            B256::from(config_hash),
+            &stitched_boot,
+        )
+        .encode_packed();
+
+        verify_stitching_journal(
+            fpvm_image_id,
+            encoded_journal,
+            #[cfg(target_os = "zkvm")]
+            proven_fpvm_journals,
+        );
+    }
+}
+
 /// Stitches multiple boot information records into a unified `ProofJournal`.
 ///
 /// This function consolidates and verifies multiple bootstrapping records, validating their
 /// integrity and creating a coherent journal that reflects the intermediate states and outputs
 /// of the bootstrapping process.
 ///
-/// NOTE: This method does not support combining execution-only proofs.
+/// NOTE: This method does not support combining non-derivation proofs.
 ///
 /// # Arguments
 ///
@@ -453,7 +558,7 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
 
     // Stitch boot info instances
     let mut l1_head_number = match l1_provider.as_mut() {
-        Some(provider) if !boot.l1_head.is_zero() => Some(
+        Some(provider) if !L1_HEAD_SENTINELS.contains(&boot.l1_head) => Some(
             provider
                 .header_by_hash(boot.l1_head)
                 .await
@@ -464,8 +569,10 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
     };
     for (stitched_boot, stitched_precondition) in zip(stitched_boot_infos, stitched_preconditions) {
         // Check if stitched l1 head is in the same chain
-        if boot.l1_head.is_zero() || stitched_boot.l1_head.is_zero() {
-            unimplemented!("Stitching boot infos of execution-only proofs is not supported.");
+        if L1_HEAD_SENTINELS.contains(&boot.l1_head)
+            || L1_HEAD_SENTINELS.contains(&stitched_boot.l1_head)
+        {
+            unimplemented!("Stitching boot infos of non-derivation proofs is not supported.");
         } else if let Some(l1_provider) = l1_provider.as_mut() {
             // Retrieve the full header, which must then be verified to be from the same chain
             let stitched_l1_header = l1_provider
@@ -536,15 +643,20 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::client::core::tests::test_derivation;
+    use crate::client::core::tests::{op_sepolia_16491249_16491349, test_derivation};
     use crate::client::core::EthereumDataSourceProvider;
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
     use alloy_primitives::b256;
     use anyhow::Context;
     use kona_proof::l1::OracleBlobProvider;
-    use rayon::prelude::{IntoParallelIterator, ParallelIterator};
-    use std::iter::repeat_n;
+    #[cfg(feature = "experimental")]
+    use {
+        crate::client::core::split_collected_partials,
+        crate::client::core::tests::{make_pe_boot, test_derivation_with_partials},
+        rayon::prelude::{IntoParallelIterator, ParallelIterator},
+        std::iter::repeat_n,
+    };
 
     fn setup() {
         let _ = kona_cli::LogConfig::new(kona_cli::LogArgs {
@@ -595,6 +707,7 @@ pub mod tests {
         assert!(proof_journal.fpvm_image_id.is_zero());
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn test_stitching(
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
@@ -603,6 +716,7 @@ pub mod tests {
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) {
         let precondition_hash = precondition_validation_data
             .as_ref()
@@ -615,10 +729,13 @@ pub mod tests {
             derivation_trace,
             stitched_preconditions,
             stitched_boot_info,
+            #[cfg(feature = "experimental")]
+            partial_executions,
         );
         validate_proof_journal(proof_journal, boot_info, precondition_hash);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn test_stitching_client(
         boot_info: BootInfo,
         proposal_precondition: Option<ProposalPrecondition>,
@@ -627,6 +744,7 @@ pub mod tests {
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> ProofJournal {
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         let precondition_validation_data_hash = match proposal_precondition {
@@ -646,13 +764,19 @@ pub mod tests {
                 derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
+                #[cfg(feature = "experimental")]
+                None,
+                #[cfg(feature = "experimental")]
+                partial_executions,
             )
             .1
     }
 
-    pub fn test_stitching_boots(
+    #[cfg(feature = "experimental")]
+    pub async fn test_stitching_boots(
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
+        partial_executions: Vec<Vec<PartialExecution>>,
     ) -> anyhow::Result<()> {
         let stitched_executions = test_derivation(
             boot_info.clone(),
@@ -660,10 +784,8 @@ pub mod tests {
             None,
             None,
         )
-        .context("test_derivation")?
-        .into_iter()
-        .map(|e| e.as_ref().clone())
-        .collect::<Vec<_>>();
+        .await
+        .context("test_derivation")?;
         let stitched_boot_info = stitched_executions
             .iter()
             .map(|e| StitchedBootInfo {
@@ -702,6 +824,7 @@ pub mod tests {
             false,
             stitched_preconditions.clone().into_iter().rev().collect(),
             stitched_boot_info.clone().into_iter().rev().collect(),
+            partial_executions,
         );
         validate_proof_journal(proof_journal, boot_info.clone(), precondition_hash);
         // fail out of order stitching
@@ -729,6 +852,7 @@ pub mod tests {
                         false,
                         stitched_preconditions.clone().into_iter().rev().collect(),
                         stitched_boot_info.clone().into_iter().rev().collect(),
+                        vec![],
                     )
                 });
                 assert!(result.is_err());
@@ -738,7 +862,7 @@ pub mod tests {
         Ok(())
     }
 
-    pub fn test_stitching_executions(
+    pub async fn test_stitching_executions(
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
     ) -> anyhow::Result<()> {
@@ -748,10 +872,8 @@ pub mod tests {
             None,
             None,
         )
-        .context("test_derivation")?
-        .into_iter()
-        .map(|e| e.as_ref().clone())
-        .collect::<Vec<_>>();
+        .await
+        .context("test_derivation")?;
         // flat pass
         test_stitching(
             boot_info.clone(),
@@ -760,6 +882,8 @@ pub mod tests {
             None,
             false,
             vec![],
+            vec![],
+            #[cfg(feature = "experimental")]
             vec![],
         );
         let n = stitched_executions.len();
@@ -777,6 +901,8 @@ pub mod tests {
             false,
             vec![],
             vec![],
+            #[cfg(feature = "experimental")]
+            vec![],
         );
         // fully fragmented pass
         test_stitching(
@@ -787,15 +913,18 @@ pub mod tests {
             false,
             vec![],
             vec![],
+            #[cfg(feature = "experimental")]
+            vec![],
         );
         Ok(())
     }
 
-    pub fn test_stitching_execution_only(
+    pub async fn test_stitching_execution_only(
         mut boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> anyhow::Result<()> {
         let stitched_executions = test_derivation(
             boot_info.clone(),
@@ -803,10 +932,8 @@ pub mod tests {
             None,
             None,
         )
-        .context("test_derivation")?
-        .into_iter()
-        .map(|e| e.as_ref().clone())
-        .collect::<Vec<_>>();
+        .await
+        .context("test_derivation")?;
         // flat pass
         boot_info.l1_head = B256::ZERO;
         test_stitching(
@@ -817,6 +944,8 @@ pub mod tests {
             false,
             stitched_preconditions,
             stitched_boot_info,
+            #[cfg(feature = "experimental")]
+            partial_executions,
         );
         Ok(())
     }
@@ -847,6 +976,8 @@ pub mod tests {
             false,
             vec![],
             vec![],
+            #[cfg(feature = "experimental")]
+            vec![],
         );
 
         teardown();
@@ -874,6 +1005,7 @@ pub mod tests {
             },
             None,
         )
+        .await
         .unwrap();
 
         teardown();
@@ -884,21 +1016,7 @@ pub mod tests {
         setup();
 
         test_stitching(
-            BootInfo {
-                l1_head: b256!(
-                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
-                ),
-                agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-                ),
-                claimed_l2_block_number: 16491349,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
-            },
+            op_sepolia_16491249_16491349(),
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
@@ -910,6 +1028,8 @@ pub mod tests {
             false,
             vec![],
             vec![],
+            #[cfg(feature = "experimental")]
+            vec![],
         );
 
         teardown();
@@ -920,21 +1040,7 @@ pub mod tests {
         setup();
 
         test_stitching_executions(
-            BootInfo {
-                l1_head: b256!(
-                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
-                ),
-                agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-                ),
-                claimed_l2_block_number: 16491349,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
-            },
+            op_sepolia_16491249_16491349(),
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
@@ -942,6 +1048,7 @@ pub mod tests {
                 blob_hashes: vec![],
             }),
         )
+        .await
         .unwrap();
 
         teardown();
@@ -952,35 +1059,90 @@ pub mod tests {
         setup();
 
         test_stitching_execution_only(
-            BootInfo {
-                l1_head: b256!(
-                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
-                ),
-                agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-                ),
-                claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-                ),
-                claimed_l2_block_number: 16491349,
-                chain_id: 11155420,
-                rollup_config: Default::default(),
-                l1_config: Default::default(),
-            },
+            op_sepolia_16491249_16491349(),
             None,
             vec![],
             vec![],
+            #[cfg(feature = "experimental")]
+            vec![],
         )
+        .await
         .unwrap();
 
         teardown();
     }
 
+    #[cfg(feature = "experimental")]
+    pub async fn test_stitching_partials(
+        boot_info: BootInfo,
+        precondition_validation_data: Option<ProposalPrecondition>,
+    ) -> anyhow::Result<()> {
+        // Capture monolithic per-block partials alongside the execution trace.
+        let (_executions, captured) = test_derivation_with_partials(
+            boot_info.clone(),
+            precondition_validation_data.clone(),
+            None,
+            None,
+            Vec::new(),
+        )
+        .await
+        .context("test_derivation_with_partials")?;
+
+        // Monolithic pass: one partial per block.
+        test_stitching(
+            boot_info.clone(),
+            precondition_validation_data.clone(),
+            vec![],
+            None,
+            false,
+            vec![],
+            vec![],
+            captured.clone(),
+        );
+
+        // Fully fragmented pass: one partial per transaction.
+        let split = split_collected_partials(captured, usize::MAX);
+        test_stitching(
+            boot_info,
+            precondition_validation_data,
+            vec![],
+            None,
+            false,
+            vec![],
+            vec![],
+            split,
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "experimental")]
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_sepolia_16491249_16491349_stitched_boots() {
         setup();
 
         test_stitching_boots(
+            op_sepolia_16491249_16491349(),
+            Some(ProposalPrecondition {
+                proposal_l2_head_number: 16491249,
+                proposal_output_count: 1,
+                output_block_span: 100,
+                blob_hashes: vec![],
+            }),
+            vec![],
+        )
+        .await
+        .unwrap();
+
+        teardown();
+    }
+
+    #[cfg(feature = "experimental")]
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491250_stitched_partials() {
+        setup();
+
+        test_stitching_partials(
             BootInfo {
                 l1_head: b256!(
                     "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
@@ -989,13 +1151,28 @@ pub mod tests {
                     "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
                 ),
-                claimed_l2_block_number: 16491349,
+                claimed_l2_block_number: 16491250,
                 chain_id: 11155420,
                 rollup_config: Default::default(),
                 l1_config: Default::default(),
             },
+            None,
+        )
+        .await
+        .unwrap();
+
+        teardown();
+    }
+
+    #[cfg(feature = "experimental")]
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491349_stitched_partials() {
+        setup();
+
+        test_stitching_partials(
+            op_sepolia_16491249_16491349(),
             Some(ProposalPrecondition {
                 proposal_l2_head_number: 16491249,
                 proposal_output_count: 1,
@@ -1003,9 +1180,91 @@ pub mod tests {
                 blob_hashes: vec![],
             }),
         )
+        .await
         .unwrap();
 
         teardown();
+    }
+
+    /// `precompute_pe_boots` must skip empty per-block `partial_executions`
+    /// without producing a stitched-boot entry (covers the
+    /// `if block_partials.is_empty() { continue; }` guard).
+    #[cfg(feature = "experimental")]
+    #[test]
+    fn precompute_pe_boots_skips_empty_block_partials() {
+        let empty: Vec<Vec<PartialExecution>> = vec![vec![], vec![], vec![]];
+        let result = precompute_pe_boots(&empty);
+        assert!(result.is_empty());
+    }
+
+    /// Exercises the partial-execution short-circuit in
+    /// `run_stitching_client`: when the recovered boot has the
+    /// `0xFF…FF` sentinel `l1_head`, the function must build a
+    /// `ProofJournal` directly from the boot+precondition and return
+    /// without entering any stitching logic.
+    #[cfg(feature = "experimental")]
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_partial_exec_stitching_short_circuit() {
+        // Capture a real partial via the existing derivation harness.
+        let (executions, captured) = test_derivation_with_partials(
+            op_sepolia_16491249_16491349(),
+            None,
+            None,
+            Some(Default::default()),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        // Pick the first per-block partial and build a witness from it.
+        let (partial, execution) = captured
+            .iter()
+            .zip(executions.iter())
+            .find_map(|(partials, e)| partials.first().map(|p| (p, e)))
+            .expect("fixture must include at least one partial");
+        let witness = PartialExecutionWitness::from_preflight(partial.clone(), execution);
+
+        // Build the matching PE boot (l1_head = 0xFF…FF) and oracle.
+        let boot_info = make_pe_boot(&op_sepolia_16491249_16491349(), &witness);
+        let oracle = Arc::new(TestOracle::new(boot_info.clone()));
+
+        let (out_boot, journal, precondition) = KonaStitchingClient(EthereumDataSourceProvider)
+            .run_stitching_client(
+                B256::ZERO,
+                oracle.clone(),
+                oracle.clone(),
+                OracleBlobProvider::new(oracle.clone()),
+                B256::ZERO,
+                Address::ZERO,
+                vec![],
+                None,
+                false,
+                vec![],
+                vec![],
+                Some(witness),
+                Vec::new(),
+            );
+
+        // Boot is unchanged through the short-circuit and journal mirrors it.
+        assert_eq!(out_boot.l1_head, L1_HEAD_TXN_ONLY_SENTINEL);
+        assert_eq!(journal.l1_head, boot_info.l1_head);
+        assert_eq!(
+            journal.agreed_l2_output_root,
+            boot_info.agreed_l2_output_root
+        );
+        assert_eq!(
+            journal.claimed_l2_output_root,
+            boot_info.claimed_l2_output_root
+        );
+        assert_eq!(
+            journal.claimed_l2_block_number,
+            boot_info.claimed_l2_block_number
+        );
+        // Precondition digest in the journal must match the precondition.
+        assert_eq!(
+            journal.precondition_hash,
+            B256::new(precondition.digest().into())
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1037,7 +1296,7 @@ pub mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[should_panic(expected = "execution-only proofs")]
+    #[should_panic(expected = "non-derivation proofs")]
     pub async fn test_stitch_boot_info_execution_only_panics() {
         // Exercises the `unimplemented!()` guard that rejects stitching of
         // execution-only proofs (either boot.l1_head or stitched.l1_head == 0).

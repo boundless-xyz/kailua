@@ -615,6 +615,7 @@ fn base_proving_args(max_witness_size: usize) -> ProvingArgs {
         max_block_executions: usize::MAX,
         max_proof_stitches: usize::MAX,
         max_witness_size,
+        num_block_partials: usize::MAX,
         num_tail_blocks: 10,
         num_concurrent_preflights: 4,
         num_concurrent_proofs: 2,

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_primitives::{Address, B256, B64};
+use alloy_primitives::{Address, B256, B64, U256};
 
 #[derive(Clone, Debug, Copy, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[rkyv(remote = B256)]
@@ -50,11 +50,41 @@ impl From<AddressDef> for Address {
     }
 }
 
+/// rkyv mirror of [`U256`]. Archived as the same `[u8; 32]` big-endian
+/// representation revm/alloy uses on-wire elsewhere in this crate
+/// (see `account_info_to_rkyv`'s `balance.to_be_bytes::<32>()` projection).
+#[derive(Clone, Debug, Copy, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[rkyv(remote = U256)]
+#[rkyv(archived = ArchivedU256)]
+pub struct U256Def(#[rkyv(getter = u256_be_bytes)] pub [u8; 32]);
+
+fn u256_be_bytes(v: &U256) -> [u8; 32] {
+    v.to_be_bytes::<32>()
+}
+
+impl From<U256Def> for U256 {
+    fn from(value: U256Def) -> Self {
+        U256::from_be_bytes(value.0)
+    }
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::{from_bytes_with, to_bytes_with};
+
+    #[test]
+    fn test_u256() {
+        let bytes = [42u8; 32];
+        let def = U256Def(bytes);
+        let u256: U256 = def.into();
+        assert_eq!(&u256.to_be_bytes(), &bytes);
+
+        let serialized = to_bytes_with!(U256Def, &u256);
+        let deserialized = from_bytes_with!(U256Def, U256, &serialized);
+        assert_eq!(def.0, deserialized.to_be_bytes());
+    }
 
     #[test]
     fn test_b256() {

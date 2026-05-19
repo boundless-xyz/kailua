@@ -1,6 +1,6 @@
 [package]
 name = "kailua-hana"
-version = "1.2.1"
+version = "1.3.0"
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.92.0"
@@ -28,3 +28,8 @@ hana-celestia.workspace = true
 hana-oracle.workspace = true
 
 risc0-steel.workspace = true
+
+[features]
+experimental = [
+    "kailua-kona/experimental"
+]

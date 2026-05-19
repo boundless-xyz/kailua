@@ -18,6 +18,10 @@ use alloy_primitives::{Address, B256};
 use kailua_kona::boot::StitchedBootInfo;
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
+#[cfg(feature = "experimental")]
+use kailua_kona::evm::partial::PartialExecution;
+#[cfg(feature = "experimental")]
+use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
@@ -50,6 +54,8 @@ impl<
         derivation_trace: bool,
         stitched_preconditions: Vec<Precondition>,
         stitched_boot_info: Vec<StitchedBootInfo>,
+        #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+        #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
     ) -> (BootInfo, ProofJournal, Precondition)
     where
         <B as BlobProvider>::Error: Debug,
@@ -74,6 +80,10 @@ impl<
                 derivation_trace,
                 stitched_preconditions,
                 stitched_boot_info,
+                #[cfg(feature = "experimental")]
+                pe_witness,
+                #[cfg(feature = "experimental")]
+                partial_executions,
             );
         // Ensure boot record is the same for both oracles
         assert_eq!(boot, kona_boot_info);

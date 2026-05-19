@@ -22,13 +22,25 @@ vendor:
 build +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F eigen -F celestia --locked":
   cargo build {{ARGS}}
 
+build-experimental +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F eigen -F celestia -F experimental --locked":
+  cargo build {{ARGS}}
+
 build-kona +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode --locked":
+  cargo build {{ARGS}}
+
+build-kona-experimental +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F experimental --locked":
   cargo build {{ARGS}}
 
 build-fpvm +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm -F eigen -F celestia --locked -vvv": vendor
   RISC0_USE_DOCKER=1 cargo build {{ARGS}}
 
+build-fpvm-experimental +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm -F eigen -F celestia -F experimental --locked -vvv": vendor
+  RISC0_USE_DOCKER=1 cargo build {{ARGS}}
+
 build-fpvm-kona +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm --locked -vvv": vendor
+  RISC0_USE_DOCKER=1 cargo build {{ARGS}}
+
+build-fpvm-kona-experimental +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F rebuild-fpvm -F experimental --locked -vvv": vendor
   RISC0_USE_DOCKER=1 cargo build {{ARGS}}
 
 fpvm-kona:
@@ -50,7 +62,7 @@ fmt:
 
 clippy:
   RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked --all-targets -- -D warnings
-  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -F eigen -F celestia --all-targets -- -D warnings
+  RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -F devnet -F eigen -F celestia -F experimental --all-targets -- -D warnings
 
   cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
   cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
@@ -63,7 +75,7 @@ clippy-kona:
   cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
 
 coverage +ARGS="":
-  cargo llvm-cov -p kailua-kona --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
+  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona -F experimental --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
 #  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona --branch --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
 
 coverage-open: (coverage "--open")
@@ -73,11 +85,19 @@ devnet-fetch:
 
 devnet-build +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia": (build ARGS)
 
+devnet-build-experimental +ARGS="--bin kailua-cli -F devnet -F prove -F eigen -F celestia -F experimental": (build ARGS)
+
 devnet-build-kona +ARGS="--bin kailua-cli -F devnet -F prove": (build ARGS)
+
+devnet-build-kona-experimental +ARGS="--bin kailua-cli -F devnet -F prove -F experimental": (build ARGS)
 
 devnet-build-fpvm +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia": vendor (build ARGS)
 
+devnet-build-fpvm-experimental +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F eigen -F celestia -F experimental": vendor (build ARGS)
+
 devnet-build-fpvm-kona +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm": vendor (build ARGS)
+
+devnet-build-fpvm-kona-experimental +ARGS="--bin kailua-cli -F devnet -F prove -F rebuild-fpvm -F experimental": vendor (build ARGS)
 
 devnet-up:
   ./scripts/devnet-up.sh

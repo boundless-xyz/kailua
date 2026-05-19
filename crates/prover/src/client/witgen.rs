@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024 - 2026 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,6 +37,11 @@ use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use tracing::info;
 use tracing::log::error;
+#[cfg(feature = "experimental")]
+use {
+    alloy::consensus::Header, alloy_rlp::Decodable, kailua_kona::evm::partial::PartialExecution,
+    kailua_kona::evm::witness::PartialExecutionWitness, kona_proof::errors::OracleProviderError,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_witgen_client<P, B, O, D>(
@@ -52,6 +57,9 @@ pub async fn run_witgen_client<P, B, O, D>(
     trace_derivation: bool,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
+    #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+    #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
+    #[cfg(feature = "experimental")] trace_partials: bool,
 ) -> anyhow::Result<(
     BootInfo,
     ProofJournal,
@@ -85,6 +93,8 @@ where
 
     // Run client
     let execution_trace = Arc::new(Mutex::new(Vec::new()));
+    #[cfg(feature = "experimental")]
+    let partials_collector = Arc::new(Mutex::new(Vec::new()));
     let derivation_trace = Arc::new(Mutex::new(None));
     let (boot, precondition) = kailua_kona::client::core::run_core_client(
         proposal_data_hash,
@@ -96,6 +106,12 @@ where
         Some(execution_trace.clone()),
         derivation_cache.clone(),
         trace_derivation.then(|| derivation_trace.clone()),
+        #[cfg(feature = "experimental")]
+        pe_witness.clone(),
+        #[cfg(feature = "experimental")]
+        partial_executions,
+        #[cfg(feature = "experimental")]
+        trace_partials.then_some(partials_collector.clone()),
     )?;
     // Fix claimed output of captured executions
     let stitched_executions =
@@ -108,6 +124,27 @@ where
             None
         }
     };
+    // Capture partials
+    #[cfg(feature = "experimental")]
+    let partial_executions = match stitched_executions.first() {
+        None => vec![],
+        Some(execution) => {
+            let header_bytes = preimage_oracle
+                .get(PreimageKey::new_keccak256(
+                    *execution.artifacts.header.parent_hash,
+                ))
+                .await?;
+            kailua_kona::client::core::recover_collected_partials(
+                &boot,
+                partials_collector,
+                &stitched_executions,
+                Header::decode(&mut header_bytes.as_slice())
+                    .map_err(OracleProviderError::Rlp)
+                    .context("Header::decode")?,
+            )
+        }
+    };
+
     // Stitch boot infos
     let (boot, journal_output, precondition) = stitch_boot_info(
         Some(stream),
@@ -133,6 +170,10 @@ where
         stitched_preconditions,
         stitched_boot_info,
         fpvm_image_id,
+        #[cfg(feature = "experimental")]
+        pe_witness,
+        #[cfg(feature = "experimental")]
+        partial_executions,
     };
     witness
         .oracle_witness

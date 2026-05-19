@@ -59,6 +59,12 @@ serde.workspace = true
 serde_json.workspace = true
 
 [features]
+experimental = [
+    "kailua-build/experimental",
+    "kailua-kona/experimental",
+    "kailua-prover/experimental",
+    "kailua-validator/experimental",
+]
 devnet = [
     "kailua-proposer/devnet",
     "kailua-sync/devnet",

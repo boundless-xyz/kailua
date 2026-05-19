@@ -18,7 +18,7 @@
 //! and `secp256k1_ecrecover` through [`risc0_crypto_evm`]; all other `Crypto`
 //! methods fall through to `DefaultCrypto`.
 //!
-//! Gated behind the `r0vm-crypto` Cargo feature on `kailua-kona`, off by default
+//! Gated behind the `experimental` Cargo feature on `kailua-kona`, off by default
 //! until `risc0-crypto` has been audited. Compile-time selection bakes the
 //! choice into the FPVM ELF (and its image id) — a witness cannot turn it on.
 //! [`install_r0vm_crypto`] only exists when the feature is on AND the target is
@@ -27,11 +27,7 @@
 //! on this provider being functionally equivalent to `DefaultCrypto` on every
 //! input: flipping the feature must not change the proof journal.
 
-#![cfg(all(
-    feature = "r0vm-crypto",
-    target_os = "zkvm",
-    target_vendor = "risc0"
-))]
+#![cfg(all(feature = "experimental", target_os = "zkvm", target_vendor = "risc0"))]
 
 /// Installs the R0VM-accelerated crypto provider globally.
 ///

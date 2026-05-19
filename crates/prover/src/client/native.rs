@@ -37,6 +37,14 @@ use std::sync::Arc;
 use tokio::task;
 use tokio::task::JoinHandle;
 use tracing::info;
+#[cfg(feature = "experimental")]
+use {
+    kailua_kona::boot::L1_HEAD_TXN_ONLY_SENTINEL, kailua_kona::evm::partial::PartialExecution,
+    kailua_kona::evm::witness::PartialExecutionWitness, std::collections::BTreeMap,
+};
+
+#[cfg(feature = "experimental")]
+pub type PartialsCache = BTreeMap<u64, Vec<PartialExecution>>;
 
 /// Starts the [PreimageServer] and the client program in separate threads. The client program is
 /// ran natively in this mode.
@@ -49,12 +57,14 @@ use tracing::info;
 /// - `Err(_)` if the client program failed to execute, was killed by a signal, or the host program
 ///   exited first.
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "experimental"), allow(unused_mut))]
 pub async fn run_native_client(
+    #[cfg(feature = "experimental")] partials_cache: Option<Arc<PartialsCache>>,
     args: ProveArgs,
     disk_kv_store: Option<RWLKeyValueStore>,
     precondition: Precondition,
     proposal_data_hash: B256,
-    stitched_executions: Vec<Vec<Execution>>,
+    mut stitched_executions: Vec<Vec<Execution>>,
     derivation_cache: Option<CachedDriver>,
     trace_derivation: bool,
     derivation_trace: Option<Sender<CachedDriver>>,
@@ -64,6 +74,7 @@ pub async fn run_native_client(
     prove_snark: bool,
     force_attempt: bool,
     seek_proof: bool,
+    #[cfg(feature = "experimental")] mut partial_executions: Vec<Vec<PartialExecution>>,
 ) -> Result<(), ProvingError> {
     // Instantiate data channels
     let hint = BidirectionalChannel::new().map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
@@ -143,9 +154,29 @@ pub async fn run_native_client(
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?,
     };
 
+    // Precompute partial execution witness
+    #[cfg(feature = "experimental")]
+    let pe_witness = if args.kona.l1_head == L1_HEAD_TXN_ONLY_SENTINEL {
+        let Some(partial) = partial_executions.pop().and_then(|mut p| p.pop()) else {
+            return Err(ProvingError::OtherError(anyhow!(
+                "No partial execution to prove"
+            )));
+        };
+        let Some(exec) = stitched_executions.pop().and_then(|mut e| e.pop()) else {
+            return Err(ProvingError::OtherError(anyhow!(
+                "No corresponding execution for partial"
+            )));
+        };
+        Some(PartialExecutionWitness::from_preflight(partial, &exec))
+    } else {
+        None
+    };
+
     // Start the client program in a separate thread
     let client_task = tokio::spawn(crate::client::proving::run_proving_client(
         use_hokulea.then_some(args.kona.l1_node_address).flatten(),
+        #[cfg(feature = "experimental")]
+        partials_cache,
         args.proving,
         args.boundless,
         OracleReader::new(preimage.client),
@@ -153,6 +184,10 @@ pub async fn run_native_client(
         precondition,
         proposal_data_hash,
         stitched_executions,
+        #[cfg(feature = "experimental")]
+        pe_witness,
+        #[cfg(feature = "experimental")]
+        partial_executions,
         derivation_cache,
         trace_derivation,
         derivation_trace,

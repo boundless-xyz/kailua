@@ -34,6 +34,7 @@ use kailua_contracts::{
     *,
 };
 use kailua_kona::blobs::hash_to_fe;
+use kailua_kona::boot::L1_HEAD_EXEC_ONLY_SENTINEL;
 use kailua_kona::config::config_hash;
 use kona_genesis::RollupConfig;
 use opentelemetry::global::tracer;
@@ -321,7 +322,7 @@ impl SyncAgent {
             {
                 Ok(ProposalSync::IGNORED(contract, l1_head)) => {
                     // Record batcher nonce at proposal l1 head if needed
-                    if !l1_head.is_zero() {
+                    if l1_head != L1_HEAD_EXEC_ONLY_SENTINEL {
                         self.sync_l1_head(args, contract, l1_head)
                             .with_context(context.clone())
                             .await;

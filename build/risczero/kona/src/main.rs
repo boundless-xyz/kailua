@@ -18,7 +18,7 @@ use kailua_kona::client::stitching::KonaStitchingClient;
 use kailua_kona::oracle::vec::VecOracle;
 use kailua_kona::{client::log, witness::Witness};
 use risc0_zkvm::guest::env;
-use rkyv::rancor::Error;
+use rkyv::rancor::BoxedError;
 
 fn main() {
     // Load main witness
@@ -26,7 +26,7 @@ fn main() {
         // Read serialized witness data
         let witness_data = env::read_frame();
         log("DESERIALIZE WITNESS");
-        rkyv::from_bytes::<Witness<VecOracle>, Error>(&witness_data)
+        rkyv::from_bytes::<Witness<VecOracle>, BoxedError>(&witness_data)
             .expect("Failed to deserialize witness")
     };
 

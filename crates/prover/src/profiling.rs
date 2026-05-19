@@ -2,6 +2,7 @@ use crate::current_time;
 use crate::proof::{proof_id, proof_id_file_name, read_bincoded_file, save_to_file};
 use alloy_primitives::{Address, B256, U256};
 use bytemuck::NoUninit;
+use kailua_kona::boot::L1_HEAD_SENTINELS;
 use kailua_kona::executor::Execution;
 use kailua_kona::oracle::WitnessOracle;
 use kailua_kona::witness::Witness;
@@ -60,7 +61,7 @@ impl Profile {
     pub fn new(boot_info: &BootInfo) -> Self {
         Self {
             chain_id: boot_info.chain_id,
-            derivation: !boot_info.l1_head.is_zero(),
+            derivation: !L1_HEAD_SENTINELS.contains(&boot_info.l1_head),
             block_start: boot_info.claimed_l2_block_number,
             block_end: boot_info.claimed_l2_block_number,
             ..Default::default()

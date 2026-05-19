@@ -15,6 +15,10 @@
 use crate::blobs::BlobWitnessData;
 use crate::boot::StitchedBootInfo;
 use crate::driver::CachedDriver;
+#[cfg(feature = "experimental")]
+use crate::evm::partial::PartialExecution;
+#[cfg(feature = "experimental")]
+use crate::evm::witness::PartialExecutionWitness;
 use crate::executor::Execution;
 use crate::oracle::vec::VecOracle;
 use crate::oracle::WitnessOracle;
@@ -49,6 +53,12 @@ pub struct Witness<O: WitnessOracle> {
     /// # Notes:
     /// - Ensure all `Execution` objects within the groups are properly sorted.
     pub stitched_executions: Vec<Vec<Execution>>,
+    /// Optional witness data for partial execution.
+    #[cfg(feature = "experimental")]
+    pub pe_witness: Option<PartialExecutionWitness>,
+    /// Pre-computed per-block chunk aggregation data.
+    #[cfg(feature = "experimental")]
+    pub partial_executions: Vec<Vec<PartialExecution>>,
     /// An initial state for the derivation pipeline
     pub derivation_cache: Option<CachedDriver>,
     /// Whether to record a derivation trace precondition in the output journal
@@ -112,6 +122,10 @@ pub mod tests {
             ],
             stitched_boot_info: gen_boot_infos(32, 128),
             fpvm_image_id: keccak256(b"fpvm_image_id"),
+            #[cfg(feature = "experimental")]
+            pe_witness: None,
+            #[cfg(feature = "experimental")]
+            partial_executions: Vec::new(),
         };
 
         (witness, values)

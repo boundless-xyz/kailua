@@ -52,11 +52,7 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
     witness: Witness<O>,
     stitching_client: S,
 ) -> ProofJournal {
-    #[cfg(all(
-        feature = "r0vm-crypto",
-        target_os = "zkvm",
-        target_vendor = "risc0"
-    ))]
+    #[cfg(all(feature = "experimental", target_os = "zkvm", target_vendor = "risc0"))]
     crate::r0vm_crypto::install_r0vm_crypto();
 
     log(&format!(
@@ -88,6 +84,10 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
         witness.trace_derivation,
         witness.stitched_preconditions,
         witness.stitched_boot_info,
+        #[cfg(feature = "experimental")]
+        witness.pe_witness,
+        #[cfg(feature = "experimental")]
+        witness.partial_executions,
     );
 
     if oracle.preimage_count() > 0 {
@@ -101,34 +101,21 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::client::core::tests::test_derivation;
+    #[cfg(feature = "experimental")]
+    use crate::client::core::tests::test_derivation_with_partials;
+    use crate::client::core::tests::{op_sepolia_16491249_16491349, test_derivation};
     use crate::client::core::EthereumDataSourceProvider;
     use crate::client::stitching::KonaStitchingClient;
     use crate::client::tests::TestOracle;
-    use alloy_primitives::{b256, B256};
+    use alloy_primitives::B256;
     use anyhow::Context;
-    use kona_proof::BootInfo;
 
-    #[test]
-    fn test_stateless_client() -> anyhow::Result<()> {
-        let mut boot_info = BootInfo {
-            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
-            agreed_l2_output_root: b256!(
-                "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
-            ),
-            claimed_l2_output_root: b256!(
-                "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
-            ),
-            claimed_l2_block_number: 16491349,
-            chain_id: 11155420,
-            rollup_config: Default::default(),
-            l1_config: Default::default(),
-        };
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_stateless_client() -> anyhow::Result<()> {
+        let mut boot_info = op_sepolia_16491249_16491349();
         let stitched_executions = test_derivation(boot_info.clone(), None, None, None)
-            .context("test_derivation")?
-            .into_iter()
-            .map(|e| e.as_ref().clone())
-            .collect::<Vec<_>>();
+            .await
+            .context("test_derivation")?;
         boot_info.l1_head = B256::ZERO;
         let oracle_witness = TestOracle::new(boot_info.clone());
         let stream_witness = oracle_witness.clone();
@@ -144,6 +131,53 @@ pub mod tests {
             stitched_preconditions: vec![],
             stitched_boot_info: vec![],
             fpvm_image_id: Default::default(),
+            #[cfg(feature = "experimental")]
+            pe_witness: None,
+            #[cfg(feature = "experimental")]
+            partial_executions: Vec::new(),
+        };
+
+        run_stateless_client(witness, KonaStitchingClient(EthereumDataSourceProvider));
+
+        Ok(())
+    }
+
+    #[cfg(feature = "experimental")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_stateless_client_with_partials() -> anyhow::Result<()> {
+        let mut boot_info = op_sepolia_16491249_16491349();
+
+        // capture
+        let (stitched_executions, partial_executions) = test_derivation_with_partials(
+            boot_info.clone(),
+            None,
+            None,
+            Some(Default::default()),
+            Vec::new(),
+        )
+        .await
+        .context("capture pass")?;
+        assert!(!stitched_executions.is_empty());
+        assert_eq!(stitched_executions.len(), partial_executions.len());
+
+        // replay
+        boot_info.l1_head = B256::ZERO;
+        let oracle_witness = TestOracle::new(boot_info.clone());
+        let stream_witness = oracle_witness.clone();
+        let witness = Witness {
+            oracle_witness,
+            stream_witness,
+            blobs_witness: Default::default(),
+            payout_recipient_address: Default::default(),
+            precondition_validation_data_hash: Default::default(),
+            stitched_executions: vec![stitched_executions],
+            derivation_cache: None,
+            trace_derivation: false,
+            stitched_preconditions: vec![],
+            stitched_boot_info: vec![],
+            fpvm_image_id: Default::default(),
+            pe_witness: None,
+            partial_executions,
         };
 
         run_stateless_client(witness, KonaStitchingClient(EthereumDataSourceProvider));

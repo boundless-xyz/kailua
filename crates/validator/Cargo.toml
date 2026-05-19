@@ -41,6 +41,10 @@ opentelemetry.workspace = true
 risc0-zkvm.workspace = true
 
 [features]
+experimental = [
+    "kailua-kona/experimental",
+    "kailua-prover/experimental",
+]
 devnet = [
     "kailua-prover/devnet",
     "kailua-sync/devnet"

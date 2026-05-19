@@ -4,8 +4,12 @@ use alloy_primitives::{Address, B256};
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_hokulea::canoe::KailuaCanoeVerifier;
-use kailua_kona::boot::StitchedBootInfo;
+use kailua_kona::boot::{StitchedBootInfo, L1_HEAD_TXN_ONLY_SENTINEL};
 use kailua_kona::driver::CachedDriver;
+#[cfg(feature = "experimental")]
+use kailua_kona::evm::partial::PartialExecution;
+#[cfg(feature = "experimental")]
+use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::local::LocalOnceOracle;
@@ -31,6 +35,9 @@ pub async fn run_hokulea_witgen_client<P, B, O>(
     trace_derivation: bool,
     stitched_preconditions: Vec<Precondition>,
     stitched_boot_info: Vec<StitchedBootInfo>,
+    #[cfg(feature = "experimental")] pe_witness: Option<PartialExecutionWitness>,
+    #[cfg(feature = "experimental")] partial_executions: Vec<Vec<PartialExecution>>,
+    #[cfg(feature = "experimental")] trace_partials: bool,
 ) -> anyhow::Result<(
     BootInfo,
     ProofJournal,
@@ -65,15 +72,18 @@ where
     );
     // Instantiate verifier to populate data
     let (eigen_verifier, boot_info) = KailuaCanoeVerifier::new(eigen_oracle.clone());
-    eigenda_witness_to_preloaded_provider(
-        eigen_oracle,
-        &boot_info,
-        eigen_verifier,
-        CanoeVerifierAddressFetcherDeployedByEigenLabs {},
-        Default::default(),
-    )
-    .await
-    .expect("Failed to validate EigenDA Witness.");
+    // Skip EigenDA witness validation for partial-execution proofs
+    if boot_info.l1_head != L1_HEAD_TXN_ONLY_SENTINEL {
+        eigenda_witness_to_preloaded_provider(
+            eigen_oracle,
+            &boot_info,
+            eigen_verifier,
+            CanoeVerifierAddressFetcherDeployedByEigenLabs {},
+            Default::default(),
+        )
+        .await
+        .expect("Failed to validate EigenDA Witness.");
+    }
     // Run regular witgen client
     let (boot, proof_journal, precondition, cached_driver, witness) =
         witgen::run_witgen_client::<P, B, O, _>(
@@ -91,6 +101,12 @@ where
             trace_derivation,
             stitched_preconditions,
             stitched_boot_info,
+            #[cfg(feature = "experimental")]
+            pe_witness,
+            #[cfg(feature = "experimental")]
+            partial_executions,
+            #[cfg(feature = "experimental")]
+            trace_partials,
         )
         .await?;
     // Finalize witness

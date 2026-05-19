@@ -17,7 +17,7 @@ use crate::rkyv::execution::BlockBuildingOutcomeRkyv;
 use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
-use alloy_op_evm::OpEvmFactory;
+use alloy_evm::EvmFactory;
 use alloy_primitives::{Sealed, B256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
@@ -34,6 +34,21 @@ use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use spin::RwLock;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "experimental")]
+use {
+    crate::evm::partial::{PartialExecution, PartialExecutionTrace},
+    alloy_consensus::BlockHeader,
+    alloy_eips::eip7840::BlobParams,
+    alloy_evm::op_revm::OpSpecId,
+    alloy_evm::revm::context::BlockEnv,
+    alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice,
+    alloy_evm::revm::primitives::eip4844::{
+        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+    },
+    alloy_op_evm::OpBlockExecutionCtx,
+    alloy_primitives::{Bytes, U256},
+    risc0_zkvm::sha::{Impl as SHA2, Sha256},
+};
 
 /// Represents a block execution process and its results.
 ///
@@ -56,6 +71,26 @@ pub struct Execution {
     pub claimed_output: B256,
 }
 
+#[cfg(feature = "experimental")]
+impl Execution {
+    pub fn get_transactions(&self, tx_hashes: &[B256]) -> Vec<Bytes> {
+        let transactions = self.attributes.transactions.as_deref().unwrap_or(&[]);
+        let by_hash: std::collections::HashMap<B256, Bytes> = transactions
+            .iter()
+            .map(|tx| {
+                (
+                    B256::from_slice(SHA2::hash_bytes(tx.as_ref()).as_bytes()),
+                    tx.clone(),
+                )
+            })
+            .collect();
+        tx_hashes
+            .iter()
+            .filter_map(|h| by_hash.get(h).cloned())
+            .collect()
+    }
+}
+
 /// A structure that provides a caching layer for an `Executor` implementation.
 ///
 /// The `CachedExecutor` is a generic struct that allows the caching of executed tasks
@@ -71,18 +106,30 @@ pub struct CachedExecutor<E: Executor + Send + Sync + Debug> {
     pub collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
 }
 
-impl<'a, P, H> CachedExecutor<KonaExecutor<'a, P, H, OpEvmFactory>>
+impl<'a, P, H, Evm> CachedExecutor<KonaExecutor<'a, P, H, Evm>>
 where
     P: TrieDBProvider + Send + Sync + Clone + Debug,
     H: TrieHinter + Send + Sync + Clone + Debug,
+    Evm: EvmFactory<
+            Spec = alloy_evm::op_revm::OpSpecId,
+            BlockEnv = alloy_evm::revm::context::BlockEnv,
+        > + Send
+        + Sync
+        + Clone
+        + Debug
+        + 'static,
+    Evm::Tx: alloy_evm::FromTxWithEncoded<op_alloy_consensus::OpTxEnvelope>
+        + alloy_evm::FromRecoveredTx<op_alloy_consensus::OpTxEnvelope>
+        + alloy_op_evm::block::OpTxEnv,
 {
     pub fn new(
         execution_cache: Vec<Arc<Execution>>,
         rollup_config: &'a RollupConfig,
         trie_provider: P,
         trie_hinter: H,
+        evm_factory: Evm,
         collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
-    ) -> CachedExecutor<KonaExecutor<'a, P, H, OpEvmFactory>> {
+    ) -> CachedExecutor<KonaExecutor<'a, P, H, Evm>> {
         CachedExecutor {
             cache: {
                 // The cache elements will be popped from first to last
@@ -94,7 +141,7 @@ where
                 rollup_config,
                 trie_provider,
                 trie_hinter,
-                OpEvmFactory::default(),
+                evm_factory,
                 None,
             ),
             collection_target,
@@ -236,34 +283,6 @@ impl<E: Executor + Send + Sync + Debug> Executor for CachedExecutor<E> {
 }
 
 /// Initializes and constructs a new `PipelineCursor` for a given L2 chain.
-///
-/// This function sets up the execution cursor required for processing rollup blocks. It
-/// adjusts the starting L1 block position based on the `channel_timeout` to ensure
-/// that the entire channel data is included for processing.
-///
-/// # Arguments
-/// * `rollup_config` - A reference to the rollup configuration containing chain-specific settings.
-/// * `safe_header` - A sealed header representing the latest safe L2 block.
-/// * `l2_chain_provider` - A mutable reference to an L2 chain provider for fetching L2 block data.
-///
-/// # Type Parameters
-/// * `O` - A generic parameter representing the Oracle client implementation.
-///   It must implement the traits `CommsClient`, `FlushableCache`, `Send`, `Sync`, and `Debug`.
-///
-/// # Returns
-/// A shared reference to a thread-safe `PipelineCursor` wrapped in an `Arc` and `RwLock`,
-/// or an error of type `OracleProviderError` if the cursor initialization fails.
-///
-/// # Errors
-/// This function will return an error if:
-/// - The L2 chain provider fails to fetch the block information for the given `safe_header`.
-///
-/// # Details
-/// - Retrieves the L2 block information associated with the provided `safe_header`.
-/// - Computes the `channel_timeout` based on the rollup configuration and L2 block timestamp.
-/// - Creates a new `PipelineCursor` using the computed `channel_timeout`.
-/// - Advances the cursor to the proper state based on default `BlockInfo` and the L2 tip.
-/// - Returns the cursor wrapped in an `Arc<RwLock<PipelineCursor>>` for safe concurrent access.
 pub async fn new_execution_cursor<O>(
     rollup_config: &RollupConfig,
     safe_header: Sealed<Header>,
@@ -289,6 +308,69 @@ where
 
     // Wrap the cursor in a shared read-write lock
     Ok(Arc::new(RwLock::new(cursor)))
+}
+
+#[cfg(feature = "experimental")]
+fn expected_blob_excess_gas_and_price(
+    parent_header: &Header,
+    spec_id: OpSpecId,
+) -> Option<BlobExcessGasAndPrice> {
+    let (params, fraction) = if spec_id.is_enabled_in(OpSpecId::ISTHMUS) {
+        (
+            Some(BlobParams::prague()),
+            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        )
+    } else if spec_id.is_enabled_in(OpSpecId::ECOTONE) {
+        (
+            Some(BlobParams::cancun()),
+            BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN,
+        )
+    } else {
+        (None, 0)
+    };
+
+    parent_header
+        .maybe_next_block_excess_blob_gas(params)
+        .or_else(|| spec_id.is_enabled_in(OpSpecId::ECOTONE).then_some(0))
+        .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
+}
+
+#[cfg(feature = "experimental")]
+pub fn build_single_partial_for_block(
+    execution: &Execution,
+    traces: Vec<PartialExecutionTrace>,
+    parent_header: &Header,
+    spec_id: OpSpecId,
+) -> PartialExecution {
+    let header = execution.artifacts.header.inner();
+    let expected_state = traces
+        .first()
+        .map(|trace| trace.expected_state.clone())
+        .unwrap_or_default();
+    let (tx_hashes, results): (Vec<B256>, Vec<_>) = traces
+        .into_iter()
+        .map(|trace| (trace.tx_hash, trace.result))
+        .unzip();
+    PartialExecution {
+        tx_hashes,
+        results,
+        expected_state,
+        block_env: BlockEnv {
+            number: U256::from(header.number),
+            beneficiary: header.beneficiary,
+            timestamp: U256::from(header.timestamp),
+            gas_limit: header.gas_limit,
+            basefee: header.base_fee_per_gas.unwrap_or(0),
+            difficulty: header.difficulty,
+            prevrandao: Some(header.mix_hash),
+            blob_excess_gas_and_price: expected_blob_excess_gas_and_price(parent_header, spec_id),
+        },
+        op_block_ctx: OpBlockExecutionCtx {
+            parent_hash: header.parent_hash,
+            parent_beacon_block_root: header.parent_beacon_block_root,
+            extra_data: header.extra_data.clone(),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -551,6 +633,45 @@ pub mod tests {
             collection_target.lock().unwrap().len(),
             executions.len() - 1
         );
+    }
+
+    #[cfg(feature = "experimental")]
+    #[test]
+    fn build_single_partial_for_block_blob_param_branches() {
+        let execution = gen_executions(1)
+            .pop()
+            .expect("gen_executions(1) yields one");
+        let parent_header = Header::default();
+
+        // Pre-ECOTONE: `expected_blob_excess_gas_and_price` selects `(None, 0)`
+        // and `maybe_next_block_excess_blob_gas(None)` short-circuits to None,
+        // and the `or_else` closure also returns None (ECOTONE not enabled).
+        let bedrock = build_single_partial_for_block(
+            execution.as_ref(),
+            Vec::new(),
+            &parent_header,
+            OpSpecId::BEDROCK,
+        );
+        assert!(
+            bedrock.block_env.blob_excess_gas_and_price.is_none(),
+            "BEDROCK must yield None blob_excess_gas_and_price",
+        );
+
+        // ISTHMUS: selects `(Some(prague), PRAGUE_FRAC)`. Default header has no
+        // `excess_blob_gas`, so `maybe_next_block_excess_blob_gas` returns None,
+        // the `or_else` fallback supplies Some(0), and `BlobExcessGasAndPrice::new`
+        // is constructed with the prague fraction.
+        let isthmus = build_single_partial_for_block(
+            execution.as_ref(),
+            Vec::new(),
+            &parent_header,
+            OpSpecId::ISTHMUS,
+        );
+        let blob = isthmus
+            .block_env
+            .blob_excess_gas_and_price
+            .expect("ISTHMUS must yield Some blob_excess_gas_and_price");
+        assert_eq!(blob.excess_blob_gas, 0);
     }
 
     #[tokio::test(flavor = "multi_thread")]

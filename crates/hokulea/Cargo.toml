@@ -1,6 +1,6 @@
 [package]
 name = "kailua-hokulea"
-version = "1.2.1"
+version = "1.3.0"
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.92.0"
@@ -31,3 +31,8 @@ eigenda-cert.workspace = true
 hokulea-eigenda.workspace = true
 hokulea-proof.workspace = true
 hokulea-zkvm-verification.workspace = true
+
+[features]
+experimental = [
+    "kailua-kona/experimental"
+]

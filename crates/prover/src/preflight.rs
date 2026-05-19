@@ -26,6 +26,9 @@ use alloy_rlp::Decodable;
 use anyhow::{anyhow, bail, Context};
 use ark_ff::{BigInteger, PrimeField};
 use kailua_kona::blobs::BlobFetchRequest;
+#[cfg(feature = "experimental")]
+use kailua_kona::evm::partial::PartialExecution;
+use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::precondition::proposal::ProposalPrecondition;
 use kailua_kona::precondition::Precondition;
@@ -171,6 +174,14 @@ pub async fn fetch_precondition_data(
     }
 }
 
+#[derive(Debug)]
+pub struct PreflightResult {
+    pub l1_head_sufficient: bool,
+    pub block_executions: Vec<Execution>,
+    #[cfg(feature = "experimental")]
+    pub partial_executions: Vec<Vec<PartialExecution>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn concurrent_preflight(
     args: &ProveArgs,
@@ -178,7 +189,7 @@ pub async fn concurrent_preflight(
     l1_config: L1ChainConfig,
     op_node_provider: &OpNodeProvider,
     disk_kv_store: Option<RWLKeyValueStore>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<PreflightResult> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("concurrent_preflight"));
 
@@ -218,7 +229,12 @@ pub async fn concurrent_preflight(
     .header;
     let mut num_l2_blocks = args.kona.claimed_l2_block_number - starting_l2_block.number;
     if num_l2_blocks == 0 {
-        return Ok(true);
+        return Ok(PreflightResult {
+            l1_head_sufficient: true,
+            block_executions: vec![],
+            #[cfg(feature = "experimental")]
+            partial_executions: vec![],
+        });
     }
 
     let rollup_config_arc = Arc::new(rollup_config.clone());
@@ -465,6 +481,7 @@ pub async fn concurrent_preflight(
         }
     }
 
+    // Schedule preflight tasks
     let blocks_per_thread = num_l2_blocks / args.proving.num_concurrent_preflights;
     let mut extra_blocks = num_l2_blocks % args.proving.num_concurrent_preflights;
     let mut jobs = vec![];
@@ -511,6 +528,8 @@ pub async fn concurrent_preflight(
         );
         // queue and start new job
         let task = tokio::spawn(crate::tasks::compute_cached_proof(
+            #[cfg(feature = "experimental")]
+            None,
             args.clone(),
             rollup_config.clone(),
             l1_config.clone(),
@@ -521,6 +540,8 @@ pub async fn concurrent_preflight(
             None,
             None,
             vec![],
+            vec![],
+            #[cfg(feature = "experimental")]
             vec![],
             vec![],
             false,
@@ -558,11 +579,20 @@ pub async fn concurrent_preflight(
 
     // Await L2 preflight tasks
     let mut l1_head_sufficient = true;
+    let mut block_executions = vec![];
+    #[cfg(feature = "experimental")]
+    let mut partial_executions: Vec<Vec<PartialExecution>> = vec![];
     for (target_l2_height, job) in jobs {
         let result = job.await?;
         let claimed_l2_block_number = match result {
             Err(e) => {
-                let ProvingError::NotSeekingProof(_, _, executions, ..) = e else {
+                let ProvingError::NotSeekingProof {
+                    mut executions,
+                    #[cfg(feature = "experimental")]
+                    partials,
+                    ..
+                } = e
+                else {
                     error!("Error during preflight execution: {e:?}");
                     continue;
                 };
@@ -571,12 +601,15 @@ pub async fn concurrent_preflight(
                     l1_head_sufficient = false;
                     continue;
                 };
-                let Some(claimed_l2_block) = trace.last() else {
+                let Some(claimed_l2_block) = trace.last().map(|e| e.artifacts.header.number) else {
                     error!("L1 Head insufficient to derive L2 block beyond {target_l2_height}.");
                     l1_head_sufficient = false;
                     continue;
                 };
-                claimed_l2_block.artifacts.header.number
+                block_executions.extend(executions.pop().unwrap());
+                #[cfg(feature = "experimental")]
+                partial_executions.extend(partials);
+                claimed_l2_block
             }
             Ok((receipt, _)) => ProofJournal::from(&receipt.0).claimed_l2_block_number,
         };
@@ -589,5 +622,10 @@ pub async fn concurrent_preflight(
         };
     }
 
-    Ok(l1_head_sufficient)
+    Ok(PreflightResult {
+        l1_head_sufficient,
+        block_executions,
+        #[cfg(feature = "experimental")]
+        partial_executions,
+    })
 }

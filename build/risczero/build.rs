@@ -61,11 +61,11 @@ fn main() {
                     opts
                 };
 
-                // Forward the experimental R0VM crypto opt-in to the guest crates.
-                #[cfg(feature = "r0vm-crypto")]
+                // Forward the experimental flag
+                #[cfg(feature = "experimental")]
                 let opts = {
                     let mut opts = opts;
-                    opts.features.push(String::from("r0vm-crypto"));
+                    opts.features.push(String::from("experimental"));
                     opts
                 };
                 opts
