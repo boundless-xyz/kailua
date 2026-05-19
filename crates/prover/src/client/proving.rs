@@ -24,6 +24,8 @@ use anyhow::{anyhow, Context};
 use async_channel::Sender;
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
+#[cfg(any(feature = "eigen", feature = "experimental"))]
+use kailua_kona::boot::L1_HEAD_TXN_ONLY_SENTINEL;
 use kailua_kona::client::core::EthereumDataSourceProvider;
 use kailua_kona::client::stitching::split_executions;
 use kailua_kona::driver::CachedDriver;
@@ -113,7 +115,7 @@ where
     #[cfg(feature = "experimental")]
     match partials_cache {
         Some(partials_cache)
-            if initial_boot_info.l1_head != B256::repeat_byte(0xFF)
+            if initial_boot_info.l1_head != L1_HEAD_TXN_ONLY_SENTINEL
                 && partial_executions.is_empty() =>
         {
             let safe_head_hash = fetch_safe_head_hash(
@@ -222,7 +224,7 @@ where
                 .context("Failed to run hokulea vec witgen client.")
                 .map_err(ProvingError::OtherError)?;
             // Skip canoe proof generation for partial-execution proofs
-            let canoe_proof = if boot_info.l1_head == B256::repeat_byte(0xFF) {
+            let canoe_proof = if boot_info.l1_head == L1_HEAD_TXN_ONLY_SENTINEL {
                 None
             } else {
                 hokulea_witgen::from_boot_info_to_canoe_proof(

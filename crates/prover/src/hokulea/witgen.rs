@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256};
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_hokulea::canoe::KailuaCanoeVerifier;
-use kailua_kona::boot::StitchedBootInfo;
+use kailua_kona::boot::{StitchedBootInfo, L1_HEAD_TXN_ONLY_SENTINEL};
 use kailua_kona::driver::CachedDriver;
 #[cfg(feature = "experimental")]
 use kailua_kona::evm::partial::PartialExecution;
@@ -73,7 +73,7 @@ where
     // Instantiate verifier to populate data
     let (eigen_verifier, boot_info) = KailuaCanoeVerifier::new(eigen_oracle.clone());
     // Skip EigenDA witness validation for partial-execution proofs
-    if boot_info.l1_head != B256::repeat_byte(0xFF) {
+    if boot_info.l1_head != L1_HEAD_TXN_ONLY_SENTINEL {
         eigenda_witness_to_preloaded_provider(
             eigen_oracle,
             &boot_info,

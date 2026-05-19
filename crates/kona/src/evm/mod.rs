@@ -20,6 +20,7 @@ pub mod witness;
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use crate::boot::L1_HEAD_TXN_ONLY_SENTINEL;
     use crate::evm::cached::CachedEvmFactory;
     use crate::evm::expected::{
         apply_result_to_expected_state, canonicalize_expected_state,
@@ -1248,7 +1249,7 @@ mod tests {
             l1_config: Default::default(),
         };
         let bi = pe.boot_info(&template);
-        assert_eq!(bi.l1_head, B256::repeat_byte(0xFF));
+        assert_eq!(bi.l1_head, L1_HEAD_TXN_ONLY_SENTINEL);
         assert_eq!(bi.agreed_l2_output_root, B256::repeat_byte(0xAA));
         assert_eq!(bi.claimed_l2_output_root, B256::repeat_byte(0xAA));
         assert_eq!(bi.claimed_l2_block_number, 99);

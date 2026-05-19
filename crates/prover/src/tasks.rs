@@ -45,7 +45,10 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 #[cfg(feature = "experimental")]
-use {crate::client::native::PartialsCache, kailua_kona::evm::partial::PartialExecution};
+use {
+    crate::client::native::PartialsCache, kailua_kona::boot::L1_HEAD_TXN_ONLY_SENTINEL,
+    kailua_kona::evm::partial::PartialExecution,
+};
 
 #[derive(Clone, Debug)]
 pub struct CachedTask {
@@ -1119,7 +1122,7 @@ pub async fn compute_cached_proof(
     .map_err(ProvingError::OtherError)?;
     // insert partial execution precondition
     #[cfg(feature = "experimental")]
-    if boot.l1_head == B256::repeat_byte(0xFF) {
+    if boot.l1_head == L1_HEAD_TXN_ONLY_SENTINEL {
         if let Some(partial) = partial_executions.first().and_then(|p| p.first()) {
             updated_precondition = updated_precondition.partial(partial.precondition_hash());
             proof_journal.precondition_hash = B256::new(updated_precondition.digest().into());

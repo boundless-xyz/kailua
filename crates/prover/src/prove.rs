@@ -46,7 +46,10 @@ use tempfile::tempdir;
 use tokio::fs::remove_dir_all;
 use tracing::{error, info, warn};
 #[cfg(feature = "experimental")]
-use {crate::client::native::PartialsCache, std::sync::Arc};
+use {
+    crate::client::native::PartialsCache, kailua_kona::boot::L1_HEAD_TXN_ONLY_SENTINEL,
+    std::sync::Arc,
+};
 
 pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt>> {
     let tracer = tracer("kailua");
@@ -221,7 +224,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                 // Dispatch job
                 let job_args = ProveArgs {
                     kona: SingleChainHost {
-                        l1_head: B256::repeat_byte(0xFF),
+                        l1_head: L1_HEAD_TXN_ONLY_SENTINEL,
                         agreed_l2_head_hash: parent_hash,
                         agreed_l2_output_root: parent_hash,
                         claimed_l2_output_root: parent_hash,

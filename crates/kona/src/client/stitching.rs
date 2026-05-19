@@ -12,17 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::boot::StitchedBootInfo;
+use crate::boot::{StitchedBootInfo, L1_HEAD_EXEC_ONLY_SENTINEL, L1_HEAD_SENTINELS};
 use crate::client::core::DASourceProvider;
 use crate::client::log;
 use crate::config::config_hash;
 use crate::driver::CachedDriver;
-#[cfg(feature = "experimental")]
-use crate::evm::{partial::PartialExecution, witness::PartialExecutionWitness};
 use crate::executor::Execution;
 use crate::journal::ProofJournal;
 use crate::kona::OracleL1ChainProvider;
 use crate::precondition::Precondition;
+#[cfg(feature = "experimental")]
+use crate::{
+    boot::L1_HEAD_TXN_ONLY_SENTINEL,
+    evm::{partial::PartialExecution, witness::PartialExecutionWitness},
+};
 use alloy_primitives::{Address, B256};
 use anyhow::Context;
 use kona_derive::{BlobProvider, ChainProvider};
@@ -146,7 +149,7 @@ impl<
 
         // Short-circuit all stitching logic when partial proving
         #[cfg(feature = "experimental")]
-        if boot.l1_head == B256::repeat_byte(0xFF) {
+        if boot.l1_head == L1_HEAD_TXN_ONLY_SENTINEL {
             let proof_journal = ProofJournal::new(
                 fpvm_image_id,
                 payout_recipient_address,
@@ -370,7 +373,7 @@ pub fn stitch_executions(
 ) {
     let config_hash = config_hash(&boot.rollup_config, &boot.l1_config);
     // When running an execution-only proof, we may only have one batch validated by the kailua client
-    if boot.l1_head.is_zero() {
+    if boot.l1_head == L1_HEAD_EXEC_ONLY_SENTINEL {
         assert_eq!(1, stitched_executions.len());
         return;
     };
@@ -429,7 +432,7 @@ pub fn precompute_pe_boots(
         for partial in block_partials {
             // Create required boot info
             let stitched_boot = StitchedBootInfo {
-                l1_head: B256::repeat_byte(0xFF),
+                l1_head: L1_HEAD_TXN_ONLY_SENTINEL,
                 agreed_l2_output_root: partial.op_block_ctx.parent_hash,
                 claimed_l2_output_root: partial.op_block_ctx.parent_hash,
                 claimed_l2_block_number: partial.block_env.number.to::<u64>().saturating_sub(1),
@@ -479,7 +482,7 @@ pub fn stitch_partial_executions(
 /// integrity and creating a coherent journal that reflects the intermediate states and outputs
 /// of the bootstrapping process.
 ///
-/// NOTE: This method does not support combining execution-only proofs.
+/// NOTE: This method does not support combining non-derivation proofs.
 ///
 /// # Arguments
 ///
@@ -555,21 +558,21 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
 
     // Stitch boot info instances
     let mut l1_head_number = match l1_provider.as_mut() {
-        Some(provider) if !boot.l1_head.is_zero() && boot.l1_head != B256::repeat_byte(0xFF) => {
-            Some(
-                provider
-                    .header_by_hash(boot.l1_head)
-                    .await
-                    .context("boot header_by_hash")?
-                    .number,
-            )
-        }
+        Some(provider) if !L1_HEAD_SENTINELS.contains(&boot.l1_head) => Some(
+            provider
+                .header_by_hash(boot.l1_head)
+                .await
+                .context("boot header_by_hash")?
+                .number,
+        ),
         _ => None,
     };
     for (stitched_boot, stitched_precondition) in zip(stitched_boot_infos, stitched_preconditions) {
         // Check if stitched l1 head is in the same chain
-        if boot.l1_head.is_zero() || stitched_boot.l1_head.is_zero() {
-            unimplemented!("Stitching boot infos of execution-only proofs is not supported.");
+        if L1_HEAD_SENTINELS.contains(&boot.l1_head)
+            || L1_HEAD_SENTINELS.contains(&stitched_boot.l1_head)
+        {
+            unimplemented!("Stitching boot infos of non-derivation proofs is not supported.");
         } else if let Some(l1_provider) = l1_provider.as_mut() {
             // Retrieve the full header, which must then be verified to be from the same chain
             let stitched_l1_header = l1_provider
@@ -1243,7 +1246,7 @@ pub mod tests {
             );
 
         // Boot is unchanged through the short-circuit and journal mirrors it.
-        assert_eq!(out_boot.l1_head, B256::repeat_byte(0xFF));
+        assert_eq!(out_boot.l1_head, L1_HEAD_TXN_ONLY_SENTINEL);
         assert_eq!(journal.l1_head, boot_info.l1_head);
         assert_eq!(
             journal.agreed_l2_output_root,
@@ -1293,7 +1296,7 @@ pub mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[should_panic(expected = "execution-only proofs")]
+    #[should_panic(expected = "non-derivation proofs")]
     pub async fn test_stitch_boot_info_execution_only_panics() {
         // Exercises the `unimplemented!()` guard that rejects stitching of
         // execution-only proofs (either boot.l1_head or stitched.l1_head == 0).

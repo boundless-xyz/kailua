@@ -39,7 +39,7 @@ use tokio::task::JoinHandle;
 use tracing::info;
 #[cfg(feature = "experimental")]
 use {
-    kailua_kona::evm::partial::PartialExecution,
+    kailua_kona::boot::L1_HEAD_TXN_ONLY_SENTINEL, kailua_kona::evm::partial::PartialExecution,
     kailua_kona::evm::witness::PartialExecutionWitness, std::collections::BTreeMap,
 };
 
@@ -156,7 +156,7 @@ pub async fn run_native_client(
 
     // Precompute partial execution witness
     #[cfg(feature = "experimental")]
-    let pe_witness = if args.kona.l1_head == B256::repeat_byte(0xFF) {
+    let pe_witness = if args.kona.l1_head == L1_HEAD_TXN_ONLY_SENTINEL {
         let Some(partial) = partial_executions.pop().and_then(|mut p| p.pop()) else {
             return Err(ProvingError::OtherError(anyhow!(
                 "No partial execution to prove"

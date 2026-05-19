@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::boot::L1_HEAD_SENTINELS;
 use alloy_consensus::{Header, Receipt, ReceiptEnvelope, TxEnvelope};
 use alloy_eips::Decodable2718;
 use alloy_primitives::map::B256Map;
@@ -41,7 +42,7 @@ pub struct OracleL1ChainProvider<T: CommsClient> {
 impl<T: CommsClient> OracleL1ChainProvider<T> {
     /// Creates a new [OracleL1ChainProvider] with the given boot information and oracle client.
     pub async fn new(l1_head: B256, oracle: Arc<T>) -> Result<Self, OracleProviderError> {
-        let (headers, headers_map) = if l1_head.is_zero() || l1_head == B256::repeat_byte(0xFF) {
+        let (headers, headers_map) = if L1_HEAD_SENTINELS.contains(&l1_head) {
             Default::default()
         } else {
             // Fetch the header RLP from the oracle.

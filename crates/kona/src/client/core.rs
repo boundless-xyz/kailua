@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::boot::L1_HEAD_EXEC_ONLY_SENTINEL;
 use crate::client::log;
 use crate::driver::CachedDriver;
 use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
@@ -40,6 +41,7 @@ use std::mem::take;
 use std::sync::{Arc, Mutex};
 #[cfg(feature = "experimental")]
 use {
+    crate::boot::L1_HEAD_TXN_ONLY_SENTINEL,
     crate::evm::{
         cached::CachedEvmFactory,
         expected::capture_required_expected_state,
@@ -152,7 +154,7 @@ where
         //                     PARTIAL EXECUTION                      //
         ////////////////////////////////////////////////////////////////
         #[cfg(feature = "experimental")]
-        if boot.l1_head == B256::repeat_byte(0xFF) {
+        if boot.l1_head == L1_HEAD_TXN_ONLY_SENTINEL {
             log("PARTIAL EXECUTION");
             let PartialExecutionWitness {
                 transactions,
@@ -272,7 +274,7 @@ where
         ////////////////////////////////////////////////////////////////
         //                     EXECUTION CACHING                      //
         ////////////////////////////////////////////////////////////////
-        if boot.l1_head.is_zero() {
+        if boot.l1_head == L1_HEAD_EXEC_ONLY_SENTINEL {
             log("EXECUTION ONLY");
             let cursor =
                 new_execution_cursor(rollup_config.as_ref(), safe_head.clone(), &mut l2_provider)
@@ -835,7 +837,7 @@ pub mod tests {
         execution_cache: Vec<Execution>,
     ) -> anyhow::Result<B256> {
         // Ensure boot info triggers execution only
-        assert!(boot_info.l1_head.is_zero());
+        assert_eq!(boot_info.l1_head, L1_HEAD_EXEC_ONLY_SENTINEL);
         let execution_cache: Vec<_> = execution_cache.into_iter().map(Arc::new).collect();
         let expected_precondition_hash = exec_precondition_hash(execution_cache.as_slice());
 
@@ -889,7 +891,7 @@ pub mod tests {
         boot_info: BootInfo,
         partial_witness: PartialExecutionWitness,
     ) -> (BootInfo, Precondition) {
-        assert_eq!(boot_info.l1_head, B256::repeat_byte(0xFF));
+        assert_eq!(boot_info.l1_head, L1_HEAD_TXN_ONLY_SENTINEL);
         let oracle = Arc::new(TestOracle::new(boot_info.clone()));
         run_core_client(
             B256::ZERO,
@@ -1372,7 +1374,7 @@ pub mod tests {
     #[cfg(feature = "experimental")]
     pub fn make_pe_boot(boot_info: &BootInfo, witness: &PartialExecutionWitness) -> BootInfo {
         BootInfo {
-            l1_head: B256::repeat_byte(0xFF),
+            l1_head: L1_HEAD_TXN_ONLY_SENTINEL,
             agreed_l2_output_root: witness.op_block_ctx.parent_hash,
             claimed_l2_output_root: witness.op_block_ctx.parent_hash,
             claimed_l2_block_number: witness.block_env.number.to::<u64>().saturating_sub(1),

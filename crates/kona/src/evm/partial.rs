@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::boot::L1_HEAD_TXN_ONLY_SENTINEL;
 use crate::evm::expected::{
     apply_result_to_expected_state, canonicalize_expected_state, ExpectedStateEntry,
 };
@@ -172,7 +173,7 @@ impl PartialExecution {
 
     pub fn boot_info(&self, boot: &BootInfo) -> BootInfo {
         BootInfo {
-            l1_head: B256::repeat_byte(0xFF),
+            l1_head: L1_HEAD_TXN_ONLY_SENTINEL,
             agreed_l2_output_root: self.op_block_ctx.parent_hash,
             claimed_l2_output_root: self.op_block_ctx.parent_hash,
             claimed_l2_block_number: self.block_env.number.to::<u64>().saturating_sub(1),

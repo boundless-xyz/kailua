@@ -17,6 +17,15 @@ use crate::rkyv::primitives::B256Def;
 use alloy_primitives::B256;
 use risc0_zkvm::Receipt;
 
+/// Used to denote that [BootInfo] pertains to a partial block execution
+pub const L1_HEAD_TXN_ONLY_SENTINEL: B256 = B256::repeat_byte(0xFF);
+
+/// Used to denote that [BootInfo] pertains to execution only without derivation
+pub const L1_HEAD_EXEC_ONLY_SENTINEL: B256 = B256::ZERO;
+
+/// Used to denote absence of derivation from [BootInfo]
+pub const L1_HEAD_SENTINELS: [B256; 2] = [L1_HEAD_TXN_ONLY_SENTINEL, L1_HEAD_EXEC_ONLY_SENTINEL];
+
 /// Represents the stitched boot information, primarily containing data relevant to the safe L2 chain
 /// and associated output roots in a blockchain context.
 #[derive(

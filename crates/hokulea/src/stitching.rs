@@ -20,7 +20,7 @@ use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLa
 use hokulea_proof::eigenda_witness::EigenDAWitness;
 use hokulea_proof::preloaded_eigenda_provider::PreloadedEigenDAPreimageProvider;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
-use kailua_kona::boot::StitchedBootInfo;
+use kailua_kona::boot::{StitchedBootInfo, L1_HEAD_TXN_ONLY_SENTINEL};
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
 #[cfg(feature = "experimental")]
@@ -81,7 +81,7 @@ impl<
         let (eigen_verifier, boot) = KailuaCanoeVerifier::new(eigen_oracle.clone());
 
         // Run the stitching client with the EigenDA DASProvider
-        let preloaded_provider = if boot.l1_head == B256::repeat_byte(0xFF) {
+        let preloaded_provider = if boot.l1_head == L1_HEAD_TXN_ONLY_SENTINEL {
             PreloadedEigenDAPreimageProvider::default()
         } else {
             kona_proof::block_on(eigenda_witness_to_preloaded_provider(
