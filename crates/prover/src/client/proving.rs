@@ -113,7 +113,7 @@ where
     #[cfg(feature = "experimental")]
     match partials_cache {
         Some(partials_cache)
-            if !initial_boot_info.l1_head == B256::repeat_byte(0xFF)
+            if initial_boot_info.l1_head != B256::repeat_byte(0xFF)
                 && partial_executions.is_empty() =>
         {
             let safe_head_hash = fetch_safe_head_hash(
