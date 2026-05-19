@@ -27,7 +27,8 @@ use alloy_evm::revm::state::AccountStatus;
 use alloy_evm::revm::{Database as RevmDatabase, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::{OpEvm, OpEvmFactory, OpTxError};
-use alloy_primitives::{keccak256, Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
+use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 use std::sync::{Arc, Mutex};
 
 /// EVM wrapper that serves pre-computed `ResultAndState` entries
@@ -95,13 +96,6 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        // Compute the incoming tx's identity hash
-        let incoming_hash = tx
-            .enveloped_tx
-            .as_ref()
-            .map(|b| keccak256(b.as_ref()))
-            .expect("CachedEvm::transact_raw: OpTransaction.enveloped_tx must be populated");
-
         // Peel off any exhausted chunks
         while self
             .cache
@@ -110,6 +104,18 @@ where
         {
             self.cache.pop();
         }
+
+        // Short-circuit uncached execution
+        if self.cache.is_empty() && self.collection_target.is_none() {
+            return self.evm.transact_raw(tx);
+        }
+
+        // Compute the incoming tx's identity hash (SHA256 of the envelope)
+        let incoming_hash = tx
+            .enveloped_tx
+            .as_ref()
+            .map(|b| B256::from_slice(SHA2::hash_bytes(b.as_ref()).as_bytes()))
+            .expect("CachedEvm::transact_raw: OpTransaction.enveloped_tx must be populated");
 
         // Serve from the active chunk only if tx hashes match
         let serve_cached = self

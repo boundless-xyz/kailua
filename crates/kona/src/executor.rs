@@ -46,7 +46,8 @@ use {
         BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
     },
     alloy_op_evm::OpBlockExecutionCtx,
-    alloy_primitives::{keccak256, Bytes, U256},
+    alloy_primitives::{Bytes, U256},
+    risc0_zkvm::sha::{Impl as SHA2, Sha256},
 };
 
 /// Represents a block execution process and its results.
@@ -76,7 +77,12 @@ impl Execution {
         let transactions = self.attributes.transactions.as_deref().unwrap_or(&[]);
         let by_hash: std::collections::HashMap<B256, Bytes> = transactions
             .iter()
-            .map(|tx| (keccak256(tx.as_ref()), tx.clone()))
+            .map(|tx| {
+                (
+                    B256::from_slice(SHA2::hash_bytes(tx.as_ref()).as_bytes()),
+                    tx.clone(),
+                )
+            })
             .collect();
         tx_hashes
             .iter()

@@ -147,7 +147,10 @@ pub type TransactionResultCollector = Arc<Mutex<Vec<Vec<PartialExecutionTrace>>>
 /// Represents a proven transaction subsequence within a block.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PartialExecution {
-    /// The EIP-2718 tx hash for each entry in `results`.
+    /// Per-result transaction identity hash: SHA256 of the EIP-2718 envelope.
+    /// One entry per `results` entry, in execution order. SHA256 (not the
+    /// canonical keccak256 EIP-2718 tx hash) because the zkVM has a SHA256
+    /// accelerator; this is an internal cache key, never an on-chain tx hash.
     #[rkyv(with = rkyv::with::Map<B256Def>)]
     pub tx_hashes: Vec<B256>,
     /// Full per-tx execution results (ExecutionResult + sorted state)

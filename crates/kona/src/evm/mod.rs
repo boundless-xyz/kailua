@@ -50,9 +50,10 @@ mod tests {
     use alloy_evm::{Evm, EvmEnv, EvmFactory};
     use alloy_op_evm::block::OpBlockExecutionCtx;
     use alloy_primitives::Address;
-    use alloy_primitives::{address, keccak256, TxKind, U256};
+    use alloy_primitives::{address, TxKind, U256};
     use alloy_primitives::{Bytes, B256};
     use kona_proof::BootInfo;
+    use risc0_zkvm::sha::{Impl as SHA2, Sha256};
     use std::sync::{Arc, Mutex};
 
     // ============================================================
@@ -186,7 +187,7 @@ mod tests {
     }
 
     fn stub_chunk(block_number: u64, gas_used_markers: &[u64]) -> PartialExecution {
-        let default_tx_hash = keccak256([0x00u8]);
+        let default_tx_hash = B256::from_slice(SHA2::hash_bytes(&[0x00u8]).as_bytes());
         let block_env = BlockEnv {
             number: U256::from(block_number),
             ..Default::default()
@@ -220,7 +221,7 @@ mod tests {
             ..Default::default()
         };
         PartialExecution {
-            tx_hashes: vec![keccak256([0x00u8])],
+            tx_hashes: vec![B256::from_slice(SHA2::hash_bytes(&[0x00u8]).as_bytes())],
             results: vec![PartialResultAndState::from(ResultAndState {
                 result: ExecutionResult::Success {
                     reason: SuccessReason::Return,
@@ -366,7 +367,7 @@ mod tests {
             let factory = CachedEvmFactory::new(vec![vec![stub_chunk(1, &[42])]]);
             let (db, sender, recipient) = funded_db();
             let mut evm = factory.create_evm(db, test_env_for_block(1));
-            // Use a non-default envelope so keccak256(envelope) != default_tx_hash.
+            // Use a non-default envelope so sha256(envelope) != default_tx_hash.
             let mut tx = make_transfer(sender, recipient, U256::from(1000), 0);
             tx.enveloped_tx = Some(Bytes::from_static(&[0xFF, 0xEE]));
             let r = evm.transact_raw(tx).unwrap();
@@ -1366,7 +1367,10 @@ mod tests {
             .transactions
             .as_deref()
             .expect("gen_executions populates transactions");
-        let tx_hashes: Vec<B256> = envelopes.iter().map(|e| keccak256(e.as_ref())).collect();
+        let tx_hashes: Vec<B256> = envelopes
+            .iter()
+            .map(|e| B256::from_slice(SHA2::hash_bytes(e.as_ref()).as_bytes()))
+            .collect();
 
         let mut pe = make_partial_execution(1, &vec![1u64; tx_hashes.len()]);
         pe.tx_hashes = tx_hashes;
