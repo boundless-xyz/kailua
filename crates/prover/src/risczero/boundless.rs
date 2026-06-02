@@ -327,6 +327,14 @@ pub struct MarketProviderConfig {
         conflicts_with = "boundless_dynamic_pricing"
     )]
     pub boundless_order_min_expiry: u32,
+
+    /// Optional multiplier applied to the SDK-computed lock timeout AND overall timeout. Only valid
+    /// together with --boundless-dynamic-pricing (clap enforces this) and only applied on the
+    /// dynamic pricing path. Unset leaves the SDK-computed values unchanged; 2.0 doubles both the
+    /// lock timeout and the overall timeout, preserving the post-lock fulfillment window
+    /// proportionally (timeout stays greater than lockTimeout).
+    #[clap(long, env, required = false, requires = "boundless_dynamic_pricing")]
+    pub boundless_dynamic_pricing_timeout_modifier: Option<f64>,
 }
 
 impl MarketProviderConfig {
@@ -426,6 +434,12 @@ impl MarketProviderConfig {
         }
         if self.boundless_dynamic_pricing {
             proving_args.push(String::from("--boundless-dynamic-pricing"));
+            if let Some(modifier) = self.boundless_dynamic_pricing_timeout_modifier {
+                proving_args.extend(vec![
+                    String::from("--boundless-dynamic-pricing-timeout-modifier"),
+                    modifier.to_string(),
+                ]);
+            }
         } else {
             proving_args.extend(vec![
                 String::from("--boundless-cycle-min-wei"),
@@ -1338,7 +1352,7 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             .map_err(ProvingError::OtherError)?
     } else {
         // Dynamic pricing: SDK computes pricing from market data, gas costs, and cycle count.
-        let request = boundless_client
+        let mut request = boundless_client
             .build_request(request_params)
             .await
             .context("Client::build_request")
@@ -1353,6 +1367,22 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             request.offer.timeout,
             request.offer.lockCollateral,
         );
+
+        // Optional timeout modifier (dynamic pricing only): scale the SDK-computed lock timeout AND
+        // overall timeout by the same factor, preserving the post-lock fulfillment window
+        // proportionally (timeout stays greater than lockTimeout). Applied before retry escalation
+        // so escalation compounds on top of the lengthened base values.
+        if let Some(modifier) = market.boundless_dynamic_pricing_timeout_modifier {
+            let prev_lock_timeout = request.offer.lockTimeout;
+            let prev_timeout = request.offer.timeout;
+            request.offer.lockTimeout = (prev_lock_timeout as f64 * modifier) as u32;
+            request.offer.timeout = (prev_timeout as f64 * modifier) as u32;
+            info!(
+                "Applied dynamic-pricing timeout modifier {}: lockTimeout {}s -> {}s, timeout {}s -> {}s",
+                modifier, prev_lock_timeout, request.offer.lockTimeout, prev_timeout, request.offer.timeout,
+            );
+        }
+
         request
     };
 
