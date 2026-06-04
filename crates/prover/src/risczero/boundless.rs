@@ -336,11 +336,7 @@ pub struct MarketProviderConfig {
     #[clap(long, env, required = false, requires = "boundless_dynamic_pricing")]
     pub boundless_dynamic_pricing_timeout_modifier: Option<f64>,
 
-    /// Optional multiplier applied to the SDK-computed ramp-up period. Only valid together with
-    /// --boundless-dynamic-pricing (clap enforces this) and only applied on the dynamic pricing
-    /// path. Unset leaves the SDK-computed ramp-up unchanged; 2.0 doubles it. Set this consistently
-    /// with --boundless-dynamic-pricing-timeout-modifier so the ramp-up period stays within the
-    /// (scaled) lock timeout.
+    /// Optional multiplier applied to the SDK-computed ramp-up period (dynamic pricing only).
     #[clap(long, env, required = false, requires = "boundless_dynamic_pricing")]
     pub boundless_dynamic_pricing_ramp_up_modifier: Option<f64>,
 }
@@ -1397,9 +1393,6 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             );
         }
 
-        // Optional ramp-up modifier (dynamic pricing only): scale the SDK-computed ramp-up period.
-        // Set this consistently with the timeout modifier so the ramp-up period stays within the
-        // (scaled) lock timeout. Applied before retry escalation so escalation compounds on top.
         if let Some(modifier) = market.boundless_dynamic_pricing_ramp_up_modifier {
             let prev_ramp_up = request.offer.rampUpPeriod;
             request.offer.rampUpPeriod = (prev_ramp_up as f64 * modifier) as u32;
@@ -1654,8 +1647,6 @@ mod tests {
             .any(|s| s == "--boundless-dynamic-pricing"));
     }
 
-    /// `boundless_dynamic_pricing_ramp_up_modifier` is optional (off by default), requires dynamic
-    /// pricing, and is propagated through `to_arg_vec` when set.
     #[test]
     fn dynamic_pricing_ramp_up_modifier_parses_and_propagates() {
         let default_cfg = parse_with(&["--boundless-dynamic-pricing"]);
