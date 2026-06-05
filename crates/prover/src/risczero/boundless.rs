@@ -335,6 +335,10 @@ pub struct MarketProviderConfig {
     /// proportionally (timeout stays greater than lockTimeout).
     #[clap(long, env, required = false, requires = "boundless_dynamic_pricing")]
     pub boundless_dynamic_pricing_timeout_modifier: Option<f64>,
+
+    /// Optional multiplier applied to the SDK-computed ramp-up period (dynamic pricing only).
+    #[clap(long, env, required = false, requires = "boundless_dynamic_pricing")]
+    pub boundless_dynamic_pricing_ramp_up_modifier: Option<f64>,
 }
 
 impl MarketProviderConfig {
@@ -437,6 +441,12 @@ impl MarketProviderConfig {
             if let Some(modifier) = self.boundless_dynamic_pricing_timeout_modifier {
                 proving_args.extend(vec![
                     String::from("--boundless-dynamic-pricing-timeout-modifier"),
+                    modifier.to_string(),
+                ]);
+            }
+            if let Some(modifier) = self.boundless_dynamic_pricing_ramp_up_modifier {
+                proving_args.extend(vec![
+                    String::from("--boundless-dynamic-pricing-ramp-up-modifier"),
                     modifier.to_string(),
                 ]);
             }
@@ -1383,6 +1393,15 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             );
         }
 
+        if let Some(modifier) = market.boundless_dynamic_pricing_ramp_up_modifier {
+            let prev_ramp_up = request.offer.rampUpPeriod;
+            request.offer.rampUpPeriod = (prev_ramp_up as f64 * modifier) as u32;
+            info!(
+                "Applied dynamic-pricing ramp-up modifier {}: rampUpPeriod {}s -> {}s",
+                modifier, prev_ramp_up, request.offer.rampUpPeriod,
+            );
+        }
+
         request
     };
 
@@ -1626,5 +1645,26 @@ mod tests {
         assert!(serialized
             .iter()
             .any(|s| s == "--boundless-dynamic-pricing"));
+    }
+
+    #[test]
+    fn dynamic_pricing_ramp_up_modifier_parses_and_propagates() {
+        let default_cfg = parse_with(&["--boundless-dynamic-pricing"]);
+        assert!(default_cfg
+            .boundless_dynamic_pricing_ramp_up_modifier
+            .is_none());
+
+        let parent = parse_with(&[
+            "--boundless-dynamic-pricing",
+            "--boundless-dynamic-pricing-ramp-up-modifier",
+            "2",
+        ]);
+        assert_eq!(parent.boundless_dynamic_pricing_ramp_up_modifier, Some(2.0));
+
+        let serialized = parent.to_arg_vec(&None);
+        assert_eq!(
+            value_after(&serialized, "--boundless-dynamic-pricing-ramp-up-modifier"),
+            "2",
+        );
     }
 }
