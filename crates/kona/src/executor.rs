@@ -415,6 +415,7 @@ pub mod tests {
                 suggested_fee_recipient: Default::default(),
                 withdrawals: None,
                 parent_beacon_block_root: None,
+                slot_number: None,
             },
             transactions: None,
             no_tx_pool: None,
@@ -457,6 +458,7 @@ pub mod tests {
                             parent_beacon_block_root: Some(keccak256(format!(
                                 "parent_beacon_block_root {i}"
                             ))),
+                            slot_number: Some(i as u64),
                         },
                         transactions: Some(vec![format!("transactions {i}")
                             .as_bytes()

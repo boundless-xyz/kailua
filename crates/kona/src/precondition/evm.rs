@@ -423,7 +423,7 @@ pub mod tests {
     use super::*;
     use crate::evm::expected::ExpectedStorageEntry;
     use crate::evm::partial::{PartialAccount, PartialStateEntry, PartialStorageEntry};
-    use alloy_evm::revm::context_interface::result::ResultAndState;
+    use alloy_evm::revm::context_interface::result::{ResultAndState, ResultGas};
     use alloy_evm::revm::primitives::HashMap;
     use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmStorageSlot};
     use alloy_primitives::{Bytes, U256};
@@ -435,8 +435,7 @@ pub mod tests {
         ResultAndState {
             result: ExecutionResult::Success {
                 reason: SuccessReason::Return,
-                gas_used,
-                gas_refunded: 0,
+                gas: ResultGas::default().with_total_gas_spent(gas_used),
                 logs: vec![],
                 output: Output::Call(Bytes::new()),
             },
@@ -447,7 +446,8 @@ pub mod tests {
     fn stub_revert(gas_used: u64, output: &[u8]) -> ResultAndState<OpHaltReason> {
         ResultAndState {
             result: ExecutionResult::Revert {
-                gas_used,
+                gas: ResultGas::default().with_total_gas_spent(gas_used),
+                logs: vec![],
                 output: Bytes::copy_from_slice(output),
             },
             state: Default::default(),
@@ -456,7 +456,11 @@ pub mod tests {
 
     fn stub_halt(gas_used: u64, reason: OpHaltReason) -> ResultAndState<OpHaltReason> {
         ResultAndState {
-            result: ExecutionResult::Halt { reason, gas_used },
+            result: ExecutionResult::Halt {
+                reason,
+                gas: ResultGas::default().with_total_gas_spent(gas_used),
+                logs: vec![],
+            },
             state: Default::default(),
         }
     }

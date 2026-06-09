@@ -896,6 +896,7 @@ mod tests {
                     excess_blob_gas: 1000,
                     blob_gasprice: 42,
                 }),
+                slot_num: 7,
             },
             // Some/None: prevrandao set, no blob fields. Pushes integer fields to MAX.
             BlockEnv {
@@ -907,6 +908,7 @@ mod tests {
                 difficulty: U256::MAX,
                 prevrandao: Some(B256::ZERO),
                 blob_excess_gas_and_price: None,
+                slot_num: u64::MAX,
             },
             // None/Some: covers the MAX `blob_gasprice` u128 path through the
             // [u8; 16] big-endian encoding.
@@ -922,6 +924,7 @@ mod tests {
                     excess_blob_gas: u64::MAX,
                     blob_gasprice: u128::MAX,
                 }),
+                slot_num: 1,
             },
             // None/None: ZERO baseline.
             BlockEnv {
@@ -933,6 +936,7 @@ mod tests {
                 difficulty: U256::ZERO,
                 prevrandao: None,
                 blob_excess_gas_and_price: None,
+                slot_num: 0,
             },
         ];
         for env in &cases {
@@ -949,6 +953,7 @@ mod tests {
                 deser.blob_excess_gas_and_price,
                 env.blob_excess_gas_and_price
             );
+            assert_eq!(deser.slot_num, env.slot_num);
         }
     }
 
@@ -960,16 +965,19 @@ mod tests {
                 parent_hash: B256::repeat_byte(0xBB),
                 parent_beacon_block_root: Some(B256::repeat_byte(0xCC)),
                 extra_data: Bytes::from_static(&[1, 2, 3]),
+                post_exec_mode: PostExecMode::Disabled,
             },
             OpBlockExecutionCtx {
                 parent_hash: B256::ZERO,
                 parent_beacon_block_root: None,
                 extra_data: Bytes::new(),
+                post_exec_mode: PostExecMode::Produce,
             },
             OpBlockExecutionCtx {
                 parent_hash: B256::repeat_byte(0xFF),
                 parent_beacon_block_root: Some(B256::ZERO),
                 extra_data: Bytes::from_static(&[0; 64]),
+                post_exec_mode: PostExecMode::Disabled,
             },
         ];
         for ctx in &cases {
@@ -978,6 +986,10 @@ mod tests {
             assert_eq!(deser.parent_hash, ctx.parent_hash);
             assert_eq!(deser.parent_beacon_block_root, ctx.parent_beacon_block_root);
             assert_eq!(deser.extra_data, ctx.extra_data);
+            assert_eq!(
+                std::mem::discriminant(&deser.post_exec_mode),
+                std::mem::discriminant(&ctx.post_exec_mode)
+            );
         }
     }
 
@@ -1099,8 +1111,8 @@ mod tests {
             (CacheAccountStatus::DestroyedAgain, true),
         ];
 
-        for has_state_clear in [true, false] {
-            let mut cs = CacheState::new(has_state_clear);
+        {
+            let mut cs = CacheState::new();
             for (i, (status, has_account)) in statuses.iter().enumerate() {
                 let addr = Address::from([i as u8 + 1; 20]);
                 // Mix AccountInfo edge cases inline so the embedded
@@ -1159,7 +1171,6 @@ mod tests {
             let bytes = to_bytes_with!(CacheStateRkyv, &cs);
             let deser = from_bytes_with!(CacheStateRkyv, CacheState, &bytes);
 
-            assert_eq!(deser.has_state_clear, has_state_clear);
             assert_eq!(deser.accounts.len(), cs.accounts.len());
             assert_eq!(deser.contracts.len(), cs.contracts.len());
 
@@ -1182,12 +1193,11 @@ mod tests {
         }
 
         // Fully empty: exercises the empty-vector paths in both directions.
-        let cs = CacheState::new(false);
+        let cs = CacheState::new();
         let bytes = to_bytes_with!(CacheStateRkyv, &cs);
         let deser = from_bytes_with!(CacheStateRkyv, CacheState, &bytes);
         assert!(deser.accounts.is_empty());
         assert!(deser.contracts.is_empty());
-        assert!(!deser.has_state_clear);
     }
 
     // -- ExecutionResultRkyv --
@@ -1266,10 +1276,16 @@ mod tests {
             for output in &outputs {
                 for &count in &[0usize, 1, 3] {
                     let logs = vec![log.clone(); count];
+                    // Seed every ResultGas component so all four survive the
+                    // (total, state, refunded, floor) round-trip.
+                    let gas = ResultGas::default()
+                        .with_total_gas_spent(21_000)
+                        .with_state_gas_spent(18_000)
+                        .with_refunded(1_234)
+                        .with_floor_gas(500);
                     let r = ExecutionResult::<OpHaltReason>::Success {
                         reason,
-                        gas_used: 21_000,
-                        gas_refunded: 1_234,
+                        gas,
                         logs,
                         output: output.clone(),
                     };
@@ -1281,8 +1297,7 @@ mod tests {
                     );
                     let ExecutionResult::Success {
                         reason: deser_reason,
-                        gas_used,
-                        gas_refunded,
+                        gas,
                         logs: deser_logs,
                         output: deser_output,
                     } = deser
@@ -1290,8 +1305,10 @@ mod tests {
                         panic!("expected Success for reason={reason:?} output={output:?}");
                     };
                     assert_eq!(deser_reason, reason);
-                    assert_eq!(gas_used, 21_000);
-                    assert_eq!(gas_refunded, 1_234);
+                    assert_eq!(gas.total_gas_spent(), 21_000);
+                    assert_eq!(gas.state_gas_spent(), 18_000);
+                    assert_eq!(gas.inner_refunded(), 1_234);
+                    assert_eq!(gas.floor_gas(), 500);
                     assert_eq!(deser_logs.len(), count);
                     for got in &deser_logs {
                         assert_eq!(got.address, log.address);
@@ -1303,27 +1320,30 @@ mod tests {
             }
         }
 
-        // -- Revert -- (empty / non-empty output, ZERO and MAX gas)
-        for (gas_used, output) in [
+        // -- Revert -- (empty / non-empty output, ZERO and MAX gas, logs present)
+        for (total_gas, output) in [
             (500u64, Bytes::from_static(&[0xCA, 0xFE])),
             (0, Bytes::new()),
             (u64::MAX, Bytes::from_static(&[0xFF; 32])),
         ] {
             let r = ExecutionResult::<OpHaltReason>::Revert {
-                gas_used,
+                gas: ResultGas::default().with_total_gas_spent(total_gas),
+                logs: vec![log.clone()],
                 output: output.clone(),
             };
             let bytes = to_bytes_with!(ExecutionResultRkyv, &r);
             let deser =
                 from_bytes_with!(ExecutionResultRkyv, ExecutionResult<OpHaltReason>, &bytes);
             let ExecutionResult::Revert {
-                gas_used: g,
+                gas: g,
+                logs: revert_logs,
                 output: o,
             } = deser
             else {
                 panic!("expected Revert");
             };
-            assert_eq!(g, gas_used);
+            assert_eq!(g.total_gas_spent(), total_gas);
+            assert_eq!(revert_logs.len(), 1);
             assert_eq!(o, output);
         }
 
@@ -1331,37 +1351,43 @@ mod tests {
         for h in all_halt_reasons() {
             let r = ExecutionResult::<OpHaltReason>::Halt {
                 reason: OpHaltReason::Base(h.clone()),
-                gas_used: 2_500,
+                gas: ResultGas::default().with_total_gas_spent(2_500),
+                logs: vec![log.clone()],
             };
             let bytes = to_bytes_with!(ExecutionResultRkyv, &r);
             let deser =
                 from_bytes_with!(ExecutionResultRkyv, ExecutionResult<OpHaltReason>, &bytes);
             let ExecutionResult::Halt {
                 reason: OpHaltReason::Base(got),
-                gas_used,
+                gas,
+                logs: halt_logs,
             } = deser
             else {
                 panic!("expected Halt::Base for {h:?}");
             };
             assert_eq!(got, h, "round trip {h:?}");
-            assert_eq!(gas_used, 2_500);
+            assert_eq!(gas.total_gas_spent(), 2_500);
+            assert_eq!(halt_logs.len(), 1);
         }
 
         // -- Halt::FailedDeposit --
         let r = ExecutionResult::<OpHaltReason>::Halt {
             reason: OpHaltReason::FailedDeposit,
-            gas_used: 0,
+            gas: ResultGas::default(),
+            logs: vec![],
         };
         let bytes = to_bytes_with!(ExecutionResultRkyv, &r);
         let deser = from_bytes_with!(ExecutionResultRkyv, ExecutionResult<OpHaltReason>, &bytes);
         let ExecutionResult::Halt {
             reason: OpHaltReason::FailedDeposit,
-            gas_used,
+            gas,
+            logs: halt_logs,
         } = deser
         else {
             panic!("expected Halt::FailedDeposit");
         };
-        assert_eq!(gas_used, 0);
+        assert_eq!(gas.total_gas_spent(), 0);
+        assert!(halt_logs.is_empty());
     }
 
     // -- Panic paths for invalid discriminants --
@@ -1399,13 +1425,21 @@ mod tests {
     #[test]
     #[should_panic(expected = "invalid ExecutionResult discriminant")]
     fn execution_result_raw_panics_on_invalid_discriminant() {
-        let _ = ExecutionResultRkyv::raw((99, 0, 0, 0, vec![], None, None, None));
+        let _ = ExecutionResultRkyv::raw((99, 0, (0, 0, 0, 0), vec![], None, None, None));
     }
 
     #[test]
     #[should_panic(expected = "invalid Output discriminant")]
     fn execution_result_raw_panics_on_invalid_output_disc() {
         // Success disc with a malformed inner Output disc (only 0/1 are valid).
-        let _ = ExecutionResultRkyv::raw((0, 0, 0, 0, vec![], Some((9, vec![], None)), None, None));
+        let _ = ExecutionResultRkyv::raw((
+            0,
+            0,
+            (0, 0, 0, 0),
+            vec![],
+            Some((9, vec![], None)),
+            None,
+            None,
+        ));
     }
 }

@@ -25,6 +25,7 @@ use alloy_evm::revm::inspector::NoOpInspector;
 use alloy_evm::revm::state::AccountStatus;
 use alloy_evm::revm::{Database as RevmDatabase, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
+use alloy_op_evm::post_exec::{PostExecEvm, PostExecExecutedTx, PostExecTxContext};
 use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx, OpTxError};
 use alloy_primitives::{Address, Bytes, B256};
 use op_revm::{OpHaltReason, OpSpecId};
@@ -276,6 +277,30 @@ where
 
     fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
         self.evm.components_mut()
+    }
+}
+
+/// Forwards kona v1.5.2's post-exec per-transaction warming hooks to the inner EVM.
+///
+/// `OpBlockExecutor<E>: BlockExecutor` now requires `E: PostExecEvm`, so the
+/// [`CachedEvm`] wrapper must surface the trait. We delegate to `self.evm`
+/// (an [`OpEvm`], which implements it), mirroring the `Evm` delegation above.
+///
+/// The granular-proof path runs with [`PostExecMode::Disabled`](alloy_op_evm::PostExecMode),
+/// so these hooks are inert in practice. Correct post-exec accounting for
+/// transactions *served from cache* (where `self.evm.transact_raw` is bypassed)
+/// is part of the deferred granular-proof redesign.
+impl<E: Evm<HaltReason = OpHaltReason, Tx = OpTx> + PostExecEvm> PostExecEvm for CachedEvm<E>
+where
+    E::DB: alloy_evm::revm::Database,
+    BlockEnv: PartialEq<<E as Evm>::BlockEnv>,
+{
+    fn begin_post_exec_tx(&mut self, ctx: PostExecTxContext) {
+        self.evm.begin_post_exec_tx(ctx)
+    }
+
+    fn take_last_post_exec_tx_result(&mut self) -> PostExecExecutedTx {
+        self.evm.take_last_post_exec_tx_result()
     }
 }
 

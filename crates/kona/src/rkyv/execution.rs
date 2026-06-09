@@ -221,6 +221,8 @@ pub mod tests {
             excess_blob_gas: Some(u64::from_be_bytes([0x04; 8])),
             parent_beacon_block_root: Some(keccak256(format!("parent_beacon_block_root {number}"))),
             requests_hash: Some(keccak256(format!("requests_hash {number}"))),
+            block_access_list_hash: Some(keccak256(format!("block_access_list_hash {number}"))),
+            slot_number: Some(number),
         }
     }
 

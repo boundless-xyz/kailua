@@ -711,6 +711,7 @@ async fn run_prover(
             l2_chain_id: Some(agent.config.l2_chain_id.id()),
             rollup_config_path: None,
             l1_config_path: None,
+            data_format: Default::default(),
         },
         op_node_address: Some(sync.provider.op_node_url.clone()),
         proving,

@@ -801,6 +801,7 @@ pub type RkyvedPayloadAttributes = (
     [u8; 20],
     Option<Vec<RkyvedWithdrawal>>,
     Option<[u8; 32]>,
+    Option<u64>,
 );
 
 pub struct PayloadAttributesRkyv;
@@ -816,6 +817,7 @@ impl PayloadAttributesRkyv {
                 .as_ref()
                 .map(|v| v.iter().map(WithdrawalRkyv::rkyv).collect()),
             value.parent_beacon_block_root.as_ref().map(|r| r.0),
+            value.slot_number,
         )
     }
 
@@ -828,7 +830,7 @@ impl PayloadAttributesRkyv {
                 .3
                 .map(|v| v.into_iter().map(WithdrawalRkyv::raw).collect()),
             parent_beacon_block_root: rkyved.4.map(|v| v.into()),
-            slot_number: Default::default(),
+            slot_number: rkyved.5,
         }
     }
 }
@@ -956,6 +958,17 @@ pub type RkyvedHeaderHashes = (
     Option<[u8; 32]>,
 );
 
+/// Optional header fields introduced by post-merge upgrades, grouped into a
+/// sub-tuple so `RkyvedHeader` stays within rkyv's 13-element tuple-arity limit
+/// (mirrors how `RkyvedHeaderHashes` groups the fixed-byte fields):
+/// `(parent_beacon_block_root, requests_hash, block_access_list_hash, slot_number)`.
+pub type RkyvedHeaderExtras = (
+    Option<[u8; 32]>,
+    Option<[u8; 32]>,
+    Option<[u8; 32]>,
+    Option<u64>,
+);
+
 pub type RkyvedHeader = (
     RkyvedHeaderHashes,
     [u8; 32],
@@ -968,8 +981,7 @@ pub type RkyvedHeader = (
     Option<u64>,
     Option<u64>,
     Option<u64>,
-    Option<[u8; 32]>,
-    Option<[u8; 32]>,
+    RkyvedHeaderExtras,
 );
 
 pub struct HeaderRkyv;
@@ -998,8 +1010,12 @@ impl HeaderRkyv {
             value.base_fee_per_gas,
             value.blob_gas_used,
             value.excess_blob_gas,
-            value.parent_beacon_block_root.map(|v| v.0),
-            value.requests_hash.map(|v| v.0),
+            (
+                value.parent_beacon_block_root.map(|v| v.0),
+                value.requests_hash.map(|v| v.0),
+                value.block_access_list_hash.map(|v| v.0),
+                value.slot_number,
+            ),
         )
     }
 
@@ -1024,10 +1040,10 @@ impl HeaderRkyv {
             base_fee_per_gas: rkyved.8,
             blob_gas_used: rkyved.9,
             excess_blob_gas: rkyved.10,
-            parent_beacon_block_root: rkyved.11.map(|v| v.into()),
-            requests_hash: rkyved.12.map(|v| v.into()),
-            block_access_list_hash: Default::default(),
-            slot_number: Default::default(),
+            parent_beacon_block_root: rkyved.11 .0.map(|v| v.into()),
+            requests_hash: rkyved.11 .1.map(|v| v.into()),
+            block_access_list_hash: rkyved.11 .2.map(|v| v.into()),
+            slot_number: rkyved.11 .3,
         }
     }
 }

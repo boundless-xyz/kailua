@@ -32,11 +32,12 @@ mod tests {
         PartialStorageEntry, TransactionResultCollector,
     };
     use crate::evm::witness::{cache_results, PartialExecutionWitness};
-    use alloy_evm::op_revm::{constants::L1_BLOCK_CONTRACT, OpHaltReason, OpSpecId, OpTransaction};
     use alloy_evm::revm::context::CfgEnv;
     use alloy_evm::revm::context::{BlockEnv, TxEnv};
     use alloy_evm::revm::context_interface::result::ResultAndState;
-    use alloy_evm::revm::context_interface::result::{ExecutionResult, Output, SuccessReason};
+    use alloy_evm::revm::context_interface::result::{
+        ExecutionResult, Output, ResultGas, SuccessReason,
+    };
     use alloy_evm::revm::database::in_memory_db::InMemoryDB;
     use alloy_evm::revm::database::states::CacheAccount;
     use alloy_evm::revm::database::CacheState;
@@ -48,11 +49,12 @@ mod tests {
     use alloy_evm::revm::state::EvmStorageSlot;
     use alloy_evm::revm::DatabaseCommit;
     use alloy_evm::{Evm, EvmEnv, EvmFactory};
-    use alloy_op_evm::block::OpBlockExecutionCtx;
+    use alloy_op_evm::block::{OpBlockExecutionCtx, PostExecMode};
     use alloy_primitives::Address;
     use alloy_primitives::{address, TxKind, U256};
     use alloy_primitives::{Bytes, B256};
     use kona_proof::BootInfo;
+    use op_revm::{constants::L1_BLOCK_CONTRACT, OpHaltReason, OpSpecId, OpTransaction};
     use risc0_zkvm::sha::{Impl as SHA2, Sha256};
     use std::sync::{Arc, Mutex};
 
@@ -116,8 +118,7 @@ mod tests {
         ResultAndState {
             result: ExecutionResult::Success {
                 reason: SuccessReason::Return,
-                gas_used,
-                gas_refunded: 0,
+                gas: ResultGas::default().with_total_gas_spent(gas_used),
                 logs: vec![],
                 output: Output::Call(Bytes::new()),
             },
@@ -152,8 +153,7 @@ mod tests {
         PartialResultAndState::from(ResultAndState {
             result: ExecutionResult::Success {
                 reason: SuccessReason::Return,
-                gas_used,
-                gas_refunded: 0,
+                gas: ResultGas::default().with_total_gas_spent(gas_used),
                 logs: vec![],
                 output: Output::Call(Bytes::new()),
             },
@@ -225,8 +225,7 @@ mod tests {
             results: vec![PartialResultAndState::from(ResultAndState {
                 result: ExecutionResult::Success {
                     reason: SuccessReason::Return,
-                    gas_used,
-                    gas_refunded: 0,
+                    gas: ResultGas::default().with_total_gas_spent(gas_used),
                     logs: vec![],
                     output: Output::Call(Bytes::new()),
                 },
@@ -256,7 +255,7 @@ mod tests {
 
     fn unwrap_success_gas(r: &ExecutionResult<OpHaltReason>) -> u64 {
         match r {
-            ExecutionResult::Success { gas_used, .. } => *gas_used,
+            ExecutionResult::Success { gas, .. } => gas.total_gas_spent(),
             _ => panic!("expected ExecutionResult::Success, got {r:?}"),
         }
     }
@@ -831,8 +830,7 @@ mod tests {
             let result = PartialResultAndState::from(ResultAndState::<OpHaltReason> {
                 result: ExecutionResult::Success {
                     reason: SuccessReason::Return,
-                    gas_used: 1,
-                    gas_refunded: 0,
+                    gas: ResultGas::default().with_total_gas_spent(1),
                     logs: vec![],
                     output: Output::Call(Bytes::new()),
                 },
@@ -860,8 +858,7 @@ mod tests {
             let result = PartialResultAndState::from(ResultAndState::<OpHaltReason> {
                 result: ExecutionResult::Success {
                     reason: SuccessReason::Return,
-                    gas_used: 1,
-                    gas_refunded: 0,
+                    gas: ResultGas::default().with_total_gas_spent(1),
                     logs: vec![],
                     output: Output::Call(Bytes::new()),
                 },
@@ -904,8 +901,7 @@ mod tests {
             let result = PartialResultAndState::from(ResultAndState::<OpHaltReason> {
                 result: ExecutionResult::Success {
                     reason: SuccessReason::Return,
-                    gas_used: 1,
-                    gas_refunded: 0,
+                    gas: ResultGas::default().with_total_gas_spent(1),
                     logs: vec![],
                     output: Output::Call(Bytes::new()),
                 },
@@ -1057,8 +1053,7 @@ mod tests {
         let revm_ras = ResultAndState {
             result: ExecutionResult::Success {
                 reason: SuccessReason::Return,
-                gas_used: 50_000,
-                gas_refunded: 0,
+                gas: ResultGas::default().with_total_gas_spent(50_000),
                 logs: vec![],
                 output: Output::Call(Bytes::new()),
             },
@@ -1100,10 +1095,9 @@ mod tests {
         }
 
         match (&partial.result, &recoded.result) {
-            (
-                ExecutionResult::Success { gas_used: a, .. },
-                ExecutionResult::Success { gas_used: b, .. },
-            ) => assert_eq!(a, b),
+            (ExecutionResult::Success { gas: a, .. }, ExecutionResult::Success { gas: b, .. }) => {
+                assert_eq!(a.total_gas_spent(), b.total_gas_spent())
+            }
             _ => panic!("ExecutionResult variant changed across rkyv round-trip"),
         }
         assert_eq!(partial.state.len(), recoded.state.len());
@@ -1313,6 +1307,7 @@ mod tests {
             parent_hash: B256::repeat_byte(0xBB),
             parent_beacon_block_root: Some(B256::repeat_byte(0xCC)),
             extra_data: Bytes::from_static(&[0xDE, 0xAD, 0xBE, 0xEF]),
+            post_exec_mode: PostExecMode::Disabled,
         };
         let witness = PartialExecutionWitness {
             transactions: vec![vec![0x01, 0x02, 0x03], Vec::new(), vec![0xff; 32]],
@@ -1350,7 +1345,6 @@ mod tests {
                 .map(|b| b.original_bytes()),
             Some(code.original_bytes())
         );
-        assert_eq!(witness.cache.has_state_clear, recoded.cache.has_state_clear);
     }
 
     /// `from_preflight` extracts envelopes whose hashes match
@@ -1501,8 +1495,7 @@ mod tests {
             let result = PartialResultAndState {
                 result: ExecutionResult::Success {
                     reason: SuccessReason::Return,
-                    gas_used: 1,
-                    gas_refunded: 0,
+                    gas: ResultGas::default().with_total_gas_spent(1),
                     logs: vec![],
                     output: Output::Call(Bytes::new()),
                 },

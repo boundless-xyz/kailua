@@ -445,11 +445,9 @@ mod tests {
             batch_inbox_address: Address::ZERO,
             deposit_contract_address: Address::ZERO,
             l1_system_config_address: Address::ZERO,
-            protocol_versions_address: Address::ZERO,
             superchain_config_address: Some(Address::from([0xff; 20])),
             blobs_enabled_l1_timestamp: Some(0),
             da_challenge_address: Some(Address::from([0xff; 20])),
-            interop_message_expiry_window: 0,
             alt_da_config: Some(AltDAConfig {
                 da_challenge_address: Some(Address::from([0xff; 20])),
                 da_challenge_window: Some(0),
@@ -688,6 +686,8 @@ mod tests {
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.hardforks.jovian_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        rollup_config.hardforks.karst_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.hardforks.interop_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.hardforks.pectra_blob_schedule_time = Some(1);
@@ -698,15 +698,11 @@ mod tests {
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.l1_system_config_address = Address::from([0x01; 20]);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
-        rollup_config.protocol_versions_address = Address::from([0x01; 20]);
-        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.superchain_config_address = Some(Address::from([0x01; 20]));
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.blobs_enabled_l1_timestamp = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.da_challenge_address = Some(Address::from([0x02; 20]));
-        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
-        rollup_config.interop_message_expiry_window = 1;
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config
             .alt_da_config
@@ -802,11 +798,9 @@ mod tests {
             batch_inbox_address: Address::ZERO,
             deposit_contract_address: Address::ZERO,
             l1_system_config_address: Address::ZERO,
-            protocol_versions_address: Address::ZERO,
             superchain_config_address: Some(Address::from([0xff; 20])),
             blobs_enabled_l1_timestamp: Some(0),
             da_challenge_address: Some(Address::from([0xff; 20])),
-            interop_message_expiry_window: 0,
             alt_da_config: Some(AltDAConfig {
                 da_challenge_address: Some(Address::from([0xff; 20])),
                 da_challenge_window: Some(0),
