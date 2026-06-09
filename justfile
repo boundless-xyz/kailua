@@ -18,6 +18,8 @@ default:
 
 vendor:
   cargo vendor --manifest-path build/risczero/kona/Cargo.toml --sync build/risczero/hokulea/Cargo.toml --sync build/risczero/hana/Cargo.toml build/risczero/vendor
+  # kona-hardforks' build.rs reads op-core NUT bundles that cargo vendor omits; stage them.
+  ./scripts/stage-nut-bundles.sh
 
 build +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F eigen -F celestia --locked":
   cargo build {{ARGS}}

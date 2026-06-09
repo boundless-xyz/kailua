@@ -18,16 +18,16 @@ use crate::evm::partial::PartialExecutionTrace;
 use crate::evm::partial::{
     ActivePartialExecution, PartialExecution, PartialResultAndState, TransactionResultCollector,
 };
-use alloy_evm::op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_evm::revm::context::result::{EVMError, ResultAndState};
-use alloy_evm::revm::context::{BlockEnv, TxEnv};
+use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::inspector::NoOpInspector;
 use alloy_evm::revm::state::AccountStatus;
 use alloy_evm::revm::{Database as RevmDatabase, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
-use alloy_op_evm::{OpEvm, OpEvmFactory, OpTxError};
+use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx, OpTxError};
 use alloy_primitives::{Address, Bytes, B256};
+use op_revm::{OpHaltReason, OpSpecId};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 use std::sync::{Arc, Mutex};
 
@@ -69,7 +69,7 @@ impl<E: Evm> CachedEvm<E> {
     }
 }
 
-impl<E: Evm<HaltReason = OpHaltReason, Tx = OpTransaction<TxEnv>>> Evm for CachedEvm<E>
+impl<E: Evm<HaltReason = OpHaltReason, Tx = OpTx>> Evm for CachedEvm<E>
 where
     E::DB: alloy_evm::revm::Database,
     BlockEnv: PartialEq<<E as Evm>::BlockEnv>,
@@ -85,6 +85,10 @@ where
 
     fn block(&self) -> &Self::BlockEnv {
         self.evm.block()
+    }
+
+    fn cfg_env(&self) -> &alloy_evm::revm::context::CfgEnv<Self::Spec> {
+        self.evm.cfg_env()
     }
 
     fn chain_id(&self) -> u64 {
@@ -328,9 +332,10 @@ impl CachedEvmFactory {
 }
 
 impl EvmFactory for CachedEvmFactory {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = CachedEvm<OpEvm<DB, I, PrecompilesMap>>;
-    type Context<DB: Database> = OpContext<DB>;
-    type Tx = OpTransaction<TxEnv>;
+    type Evm<DB: Database, I: Inspector<OpEvmContext<DB>>> =
+        CachedEvm<OpEvm<DB, I, PrecompilesMap>>;
+    type Context<DB: Database> = OpEvmContext<DB>;
+    type Tx = OpTx;
     type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError, OpTxError>;
     type HaltReason = OpHaltReason;
     type Spec = OpSpecId;

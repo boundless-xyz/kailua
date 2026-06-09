@@ -36,7 +36,7 @@ copy_dir = "0.1.3"
 csv = "1.4.0"
 foundry-compilers = "0.11.0"
 futures = "0.3.31"
-gcloud-sdk = { version = "0.27.0", features = ["google-cloud-kms-v1"] }
+gcloud-sdk = { version = "0.29", default-features = false, features = ["google-cloud-kms-v1", "tls-webpki-roots"] }
 hex = "0.4.3"
 human_bytes = "0.4.3"
 humantime = "2.3.0"
@@ -70,21 +70,22 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Alloy
-alloy = { version = "1.1.2", default-features = false, features = ["json"] }
-alloy-consensus = { version = "1.1.2", default-features = false, features = ["serde"] }
-alloy-eips = { version = "1.1.2", default-features = false, features = ["kzg"] }
-alloy-evm = { version = "=0.27.2", default-features = false, features = ["op"] }
-alloy-op-evm = { version = "0.26.3", default-features = false }
-alloy-rlp = "0.3.12"
-alloy-primitives = { version = "1.4.1", default-features = false, features = ["map-hashbrown", "rkyv", "tiny-keccak"] }
-alloy-rpc-types-beacon = "1.1.2"
-alloy-rpc-types-engine = { version = "1.1.2", default-features = false }
-alloy-trie = { version = "0.9.1", default-features = false, features = ["std", "ethereum"] }
+alloy = { version = "2.0.4", default-features = false, features = ["json"] }
+alloy-consensus = { version = "2.0.4", default-features = false, features = ["serde"] }
+alloy-eips = { version = "2.0.4", default-features = false, features = ["kzg"] }
+alloy-evm = { version = "0.34.0", default-features = false }
+alloy-op-evm = { version = "0.32.0", default-features = false }
+op-revm = { version = "20.0.0", default-features = false }
+alloy-rlp = "0.3.13"
+alloy-primitives = { version = "1.5.6", default-features = false, features = ["map-hashbrown", "rkyv", "tiny-keccak"] }
+alloy-rpc-types-beacon = "2.0.4"
+alloy-rpc-types-engine = { version = "2.0.4", default-features = false }
+alloy-trie = { version = "0.9.4", default-features = false, features = ["std", "ethereum"] }
 
 # OP Alloy
-op-alloy-consensus = { version = "0.23.1", default-features = false, features = ["serde"] }
-op-alloy-rpc-types-engine = { version = "0.23.1", default-features = false, features = ["serde"] }
-op-alloy-network = { version = "0.23.1", default-features = false, features = ["serde"] }
+op-alloy-consensus = { version = "2.0.0", default-features = false, features = ["serde"] }
+op-alloy-rpc-types-engine = { version = "2.0.0", default-features = false, features = ["serde"] }
+op-alloy-network = { version = "2.0.0", default-features = false, features = ["serde"] }
 
 # Kailua
 kailua-build = { path = "build/risczero" }
@@ -98,41 +99,41 @@ kailua-rpc = { path = "crates/rpc" }
 kailua-sync = { path = "crates/sync" }
 kailua-validator = { path = "crates/validator" }
 
-# Kona git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14"
-kona-cli = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14", default-features = false }
-kona-derive = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14", default-features = false, features = ["serde"] }
-kona-driver = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
-kona-executor = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
-kona-genesis = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
-kona-host = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14", default-features = false, features = ["single"] }
-kona-mpt = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14", features = ["serde"] }
-kona-preimage = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14", features = ["serde", "rkyv", "std"] }
-kona-proof = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
-kona-protocol = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
-kona-providers-alloy = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
-kona-registry = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
-kona-std-fpvm = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
+# Kona git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2"
+kona-cli = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2", default-features = false }
+kona-derive = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2", default-features = false, features = ["serde"] }
+kona-driver = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
+kona-executor = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
+kona-genesis = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
+kona-host = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2", default-features = false, features = ["single"] }
+kona-mpt = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2", features = ["serde"] }
+kona-preimage = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2", features = ["serde", "rkyv", "std"] }
+kona-proof = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
+kona-protocol = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
+kona-providers-alloy = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
+kona-registry = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
+kona-std-fpvm = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
 
-# Hokulea git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9"
-canoe-bindings = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9" }
-canoe-provider = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9" }
-canoe-verifier = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9" }
-canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9" }
-eigenda-cert = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9" }
-hokulea-compute-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9", default-features = false }
-hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9", default-features = false }
-hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9", default-features = false }
-hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9", default-features = false }
-hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9", default-features = false }
-hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.9" }
+# Hokulea git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645"
+canoe-bindings = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645" }
+canoe-provider = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645" }
+canoe-verifier = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645" }
+canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645" }
+eigenda-cert = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645" }
+hokulea-compute-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645", default-features = false }
+hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645", default-features = false }
+hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645", default-features = false }
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645", default-features = false }
+hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645", default-features = false }
+hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", rev = "ffb0b62b6b0006683f3878617765653826d10645" }
 
-# Hana git = "https://github.com/celestiaorg/hana", rev = "96c8fe0e36288322ea51713c703b80cac4ebc024"
+# Hana git = "https://github.com/celestiaorg/hana", rev = "2ee58680ff1ca90fe41b4ea69d4281b93cd67d29"
 celestia-rpc = "0.14.0"
 celestia-types = "0.16.0"
-hana-blobstream = { git = "https://github.com/celestiaorg/hana", rev = "96c8fe0e36288322ea51713c703b80cac4ebc024", default-features = false }
-hana-celestia = { git = "https://github.com/celestiaorg/hana", rev = "96c8fe0e36288322ea51713c703b80cac4ebc024", default-features = false }
-hana-host = { git = "https://github.com/celestiaorg/hana", rev = "96c8fe0e36288322ea51713c703b80cac4ebc024", default-features = false }
-hana-oracle = { git = "https://github.com/celestiaorg/hana", rev = "96c8fe0e36288322ea51713c703b80cac4ebc024", default-features = false }
+hana-blobstream = { git = "https://github.com/celestiaorg/hana", rev = "2ee58680ff1ca90fe41b4ea69d4281b93cd67d29", default-features = false }
+hana-celestia = { git = "https://github.com/celestiaorg/hana", rev = "2ee58680ff1ca90fe41b4ea69d4281b93cd67d29", default-features = false }
+hana-host = { git = "https://github.com/celestiaorg/hana", rev = "2ee58680ff1ca90fe41b4ea69d4281b93cd67d29", default-features = false }
+hana-oracle = { git = "https://github.com/celestiaorg/hana", rev = "2ee58680ff1ca90fe41b4ea69d4281b93cd67d29", default-features = false }
 
 # Bonsai
 bonsai-sdk = { version = "1.4.1", features = ["non_blocking"] }
@@ -147,7 +148,7 @@ risc0-zkvm = { version = "3.0.5", features = ["heap-embedded-alloc", "unstable"]
 boundless-market = { version = "1.4", features = ["gcs", "s3"] }
 
 # STEEL
-risc0-steel = { git = "https://github.com/boundless-xyz/steel", tag = "v2.4.2" }
+risc0-steel = { git = "https://github.com/boundless-xyz/steel", rev = "f6fc6297c938d7acc0563337da136d034c3cb67b" }
 
 [profile.dev]
 opt-level = 3
@@ -165,16 +166,17 @@ opt-level = 3
 [patch.crates-io]
 # Duplicated by: reth-payload-primitives, reth-engine-local (reth git), rollup-boost,
 # rollup-boost-types (crates.io)
-op-alloy-rpc-types-engine = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
+op-alloy-rpc-types-engine = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
 # Duplicated by: reth-codecs, reth-db-api, reth-primitives-traits, reth-rpc-convert (reth git)
-op-alloy-consensus = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
+op-alloy-consensus = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
 # Duplicated by: reth-rpc-convert (reth git)
-op-alloy-network = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
+op-alloy-network = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
 # Duplicated by: reth-rpc-convert (reth git)
-op-alloy-rpc-types = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
+op-alloy-rpc-types = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
 # Duplicated by: alloy-evm (crates.io)
-op-alloy = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
+op-alloy = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
 # Duplicated by: alloy-evm (crates.io)
-alloy-op-hardforks = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
+alloy-op-hardforks = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
 # Duplicated by: hokulea (local path dep, its own [patch] doesn't apply)
-alloy-op-evm = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.2.14" }
+alloy-op-evm = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }
+op-revm = { git = "https://github.com/ethereum-optimism/optimism", tag = "kona-client/v1.5.2" }

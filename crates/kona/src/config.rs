@@ -204,8 +204,6 @@ pub fn rollup_config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
         rollup_config.deposit_contract_address.0.as_slice(),
         // l1_system_config_address
         rollup_config.l1_system_config_address.0.as_slice(),
-        // protocol_versions_address
-        rollup_config.protocol_versions_address.0.as_slice(),
         // superchain_config_address
         opt_byte_arr(rollup_config.superchain_config_address.map(|v| *v.0)).as_slice(),
         // blobs_enabled_l1_timestamp
@@ -217,11 +215,6 @@ pub fn rollup_config_hash(rollup_config: &RollupConfig) -> [u8; 32] {
         .as_slice(),
         // da_challenge_address
         opt_byte_arr(rollup_config.da_challenge_address.map(|v| *v.0)).as_slice(),
-        // interop_message_expiry_window
-        rollup_config
-            .interop_message_expiry_window
-            .to_be_bytes()
-            .as_slice(),
         // alt_da_config
         rollup_config
             .alt_da_config

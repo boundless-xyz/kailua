@@ -24,7 +24,7 @@ macro_rules! retry {
         $crate::retry!($crate::retry::MIN_DELAY_MS, $m, $e)
     };
     ($b:expr, $m:expr, $e:expr) => {
-        tokio_retry::Retry::spawn(
+        tokio_retry::Retry::start(
             tokio_retry::strategy::ExponentialBackoff::from_millis(2)
                 .factor($b / 2u64)
                 .max_delay(std::time::Duration::from_millis($m)),

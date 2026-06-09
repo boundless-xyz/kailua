@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use crate::rkyv::driver::{
-    sorted_by_key, BatchReaderRkyv, BatchWithInclusionBlockRkyv, BlockInfoRkyv, ChannelRkyv,
-    FrameRkyv, HeadArtifactsRkyv, IdChannelRkyv, OpAttributesWithParentRkyv, PipelineCursorRkyv,
-    SingleBatchRkyv, SpanBatchRkyv, SystemConfigRkyv,
+    sorted_by_key, BatchReaderRkyv, BatchWithInclusionBlockRkyv, BlockInfoRkyv, FrameRkyv,
+    HeadArtifactsRkyv, IdChannelRkyv, OpAttributesWithParentRkyv, OrderedChannelRkyv,
+    PipelineCursorRkyv, SingleBatchRkyv, SpanBatchRkyv, SystemConfigRkyv,
 };
 use alloy_primitives::Bytes;
 use kona_derive::{
@@ -32,7 +32,7 @@ use kona_proof::l1::{OraclePipeline, ProviderDerivationPipeline};
 use kona_proof::FlushableCache;
 use kona_protocol::{
     BatchReader, BatchWithInclusionBlock, BlockInfo, Channel, ChannelId, Frame,
-    OpAttributesWithParent, SingleBatch, SpanBatch,
+    OpAttributesWithParent, OrderedChannel, SingleBatch, SpanBatch,
 };
 use spin::RwLock;
 use std::fmt::Debug;
@@ -205,6 +205,7 @@ impl CachedAttributesQueueStage {
                 l1_cfg,
                 l2_chain_provider,
                 l1_chain_provider,
+                None,
             ),
         }
     }
@@ -524,6 +525,7 @@ impl Clone for CachedChannelReader {
                 cursor: v.cursor,
                 max_rlp_bytes_per_channel: v.max_rlp_bytes_per_channel,
                 brotli_used: v.brotli_used,
+                origin_timestamp: v.origin_timestamp,
             }),
             prev: self.prev.clone(),
         }
@@ -685,9 +687,9 @@ where
 
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelAssembler {
-    /// The current [Channel] being assembled.
-    #[rkyv(with = rkyv::with::Map<ChannelRkyv>)]
-    pub channel: Option<Channel>,
+    /// The current [OrderedChannel] being assembled.
+    #[rkyv(with = rkyv::with::Map<OrderedChannelRkyv>)]
+    pub channel: Option<OrderedChannel>,
     /// The previous stage of the derivation pipeline.
     pub prev: CachedFrameQueue,
 }

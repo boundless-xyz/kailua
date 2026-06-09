@@ -71,6 +71,7 @@ impl From<OpPayloadAttributesRkyv> for OpPayloadAttributes {
                     .as_ref()
                     .map(|wds| alloy_rlp::decode_exact(wds.as_slice()).unwrap()),
                 parent_beacon_block_root: value.parent_beacon_block_root,
+                slot_number: Default::default(),
             },
             transactions: value
                 .transactions

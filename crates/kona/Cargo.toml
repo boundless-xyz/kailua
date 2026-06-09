@@ -27,6 +27,7 @@ alloy-eips.workspace = true
 alloy-evm.workspace = true
 alloy-rlp.workspace = true
 alloy-op-evm.workspace = true
+op-revm.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-beacon.workspace = true
 alloy-rpc-types-engine.workspace = true

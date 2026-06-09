@@ -24,13 +24,13 @@ use crate::rkyv::evm::{
     OpBlockExecutionCtxRkyv,
 };
 use crate::rkyv::primitives::{AddressDef, B256Def, U256Def};
-use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context::result::{ExecutionResult, ResultAndState};
 use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmStorageSlot};
 use alloy_op_evm::OpBlockExecutionCtx;
 use alloy_primitives::{Address, B256, U256};
 use kona_proof::BootInfo;
+use op_revm::OpHaltReason;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]

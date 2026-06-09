@@ -24,8 +24,8 @@ use kona_executor::BlockBuildingOutcome;
 use kona_genesis::SystemConfig;
 use kona_protocol::{
     Batch, BatchReader, BatchWithInclusionBlock, BlockInfo, Channel, ChannelId, Frame, L2BlockInfo,
-    OpAttributesWithParent, SingleBatch, SpanBatch, SpanBatchBits, SpanBatchElement,
-    SpanBatchTransactions,
+    OpAttributesWithParent, OrderedChannel, SingleBatch, SpanBatch, SpanBatchBits,
+    SpanBatchElement, SpanBatchTransactions,
 };
 use op_alloy_consensus::OpReceiptEnvelope;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
@@ -334,7 +334,80 @@ where
     }
 }
 
-pub type RkyvedBatchReader = (Option<Vec<u8>>, Vec<u8>, usize, usize, bool);
+pub type RkyvedOrderedChannel = (
+    ChannelId,
+    RkyvedBlockInfo,
+    usize,
+    bool,
+    Vec<RkyvedFrame>,
+    RkyvedBlockInfo,
+);
+
+pub struct OrderedChannelRkyv;
+
+impl OrderedChannelRkyv {
+    pub fn rkyv(value: &OrderedChannel) -> RkyvedOrderedChannel {
+        (
+            value.id,
+            BlockInfoRkyv::rkyv(&value.open_block),
+            value.estimated_size,
+            value.closed,
+            value.inputs.iter().map(FrameRkyv::rkyv).collect(),
+            BlockInfoRkyv::rkyv(&value.highest_l1_inclusion_block),
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedOrderedChannel) -> OrderedChannel {
+        OrderedChannel {
+            id: rkyved.0,
+            open_block: BlockInfoRkyv::raw(rkyved.1),
+            estimated_size: rkyved.2,
+            closed: rkyved.3,
+            inputs: rkyved.4.into_iter().map(FrameRkyv::raw).collect(),
+            highest_l1_inclusion_block: BlockInfoRkyv::raw(rkyved.5),
+        }
+    }
+}
+
+impl ArchiveWith<OrderedChannel> for OrderedChannelRkyv {
+    type Archived = Archived<RkyvedOrderedChannel>;
+    type Resolver = Resolver<RkyvedOrderedChannel>;
+
+    fn resolve_with(field: &OrderedChannel, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = OrderedChannelRkyv::rkyv(field);
+        <RkyvedOrderedChannel as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<OrderedChannel, S> for OrderedChannelRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(
+        field: &OrderedChannel,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = OrderedChannelRkyv::rkyv(field);
+        <RkyvedOrderedChannel as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedOrderedChannel>, OrderedChannel, D> for OrderedChannelRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedOrderedChannel>,
+        deserializer: &mut D,
+    ) -> Result<OrderedChannel, D::Error> {
+        let rkyved: RkyvedOrderedChannel = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(OrderedChannelRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedBatchReader = (Option<Vec<u8>>, Vec<u8>, usize, usize, bool, u64);
 
 pub struct BatchReaderRkyv;
 
@@ -346,6 +419,7 @@ impl BatchReaderRkyv {
             value.cursor,
             value.max_rlp_bytes_per_channel,
             value.brotli_used,
+            value.origin_timestamp,
         )
     }
 
@@ -356,6 +430,7 @@ impl BatchReaderRkyv {
             cursor: rkyved.2,
             max_rlp_bytes_per_channel: rkyved.3,
             brotli_used: rkyved.4,
+            origin_timestamp: rkyved.5,
         }
     }
 }
@@ -753,6 +828,7 @@ impl PayloadAttributesRkyv {
                 .3
                 .map(|v| v.into_iter().map(WithdrawalRkyv::raw).collect()),
             parent_beacon_block_root: rkyved.4.map(|v| v.into()),
+            slot_number: Default::default(),
         }
     }
 }
@@ -950,6 +1026,8 @@ impl HeaderRkyv {
             excess_blob_gas: rkyved.10,
             parent_beacon_block_root: rkyved.11.map(|v| v.into()),
             requests_hash: rkyved.12.map(|v| v.into()),
+            block_access_list_hash: Default::default(),
+            slot_number: Default::default(),
         }
     }
 }

@@ -22,8 +22,7 @@ use eigenda_cert::AltDACommitment;
 use kona_preimage::CommsClient;
 use kona_proof::BootInfo;
 use risc0_steel::ethereum::{
-    EthChainSpec, EthEvmInput, ETH_HOLESKY_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC,
-    ETH_SEPOLIA_CHAIN_SPEC,
+    EthChainSpec, EthEvmInput, ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC, ETH_SEPOLIA_CHAIN_SPEC,
 };
 use risc0_steel::Contract;
 use std::sync::Arc;
@@ -66,7 +65,7 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
         let env = match boot.rollup_config.l1_chain_id {
             1 => evm_input.into_env(&ETH_MAINNET_CHAIN_SPEC),
             11155111 => evm_input.into_env(&ETH_SEPOLIA_CHAIN_SPEC),
-            17000 => evm_input.into_env(&ETH_HOLESKY_CHAIN_SPEC),
+            560048 => evm_input.into_env(&ETH_HOODI_CHAIN_SPEC),
             _ => evm_input.into_env(&EthChainSpec::new_single(
                 boot.rollup_config.l1_chain_id,
                 Default::default(),

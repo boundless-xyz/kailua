@@ -43,10 +43,6 @@ pub struct ValidateArgs {
     /// How many proofs to compute simultaneously
     #[clap(long, env, default_value_t = 1)]
     pub num_concurrent_provers: u64,
-    /// Optionally enables the use of `debug_executePayload` to collect the execution witness from
-    /// the execution layer.
-    #[arg(long, env, default_value_t = false)]
-    pub enable_experimental_witness_endpoint: bool,
     /// The maximum number of seconds to wait before starting to compute a fault proof. (Default 900)
     #[clap(long, env, default_value_t = 900)]
     pub max_fault_proving_delay: u64,

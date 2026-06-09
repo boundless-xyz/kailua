@@ -19,7 +19,7 @@ replace-with = "vendored-sources"
 
 [source."git+https://github.com/ethereum-optimism/optimism?tag=kona-client/v1.2.14"]
 git = "https://github.com/ethereum-optimism/optimism"
-tag = "kona-client/v1.2.14"
+tag = "kona-client/v1.5.2"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/paradigmxyz/reth?tag=v1.9.3"]

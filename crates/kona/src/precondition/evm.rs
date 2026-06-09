@@ -15,14 +15,14 @@
 use crate::evm::expected::{ExpectedAccount, ExpectedStateEntry};
 use crate::evm::partial::{PartialAccount, PartialResultAndState};
 use crate::precondition::derivation::flatten_bytes;
-use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
 use alloy_evm::revm::context_interface::result::{
-    ExecutionResult, HaltReason, OutOfGasError, Output, SuccessReason,
+    ExecutionResult, HaltReason, OutOfGasError, Output, ResultGas, SuccessReason,
 };
 use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Address, Log, B256};
+use op_revm::OpHaltReason;
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 
 /// Compute the chunk_trace commitment from the three input hashes.
@@ -255,32 +255,42 @@ fn flatten_output(output: &Output) -> Vec<u8> {
     }
 }
 
+fn flatten_result_gas(gas: &ResultGas) -> Vec<u8> {
+    [
+        gas.total_gas_spent().to_be_bytes().as_slice(),
+        gas.state_gas_spent().to_be_bytes().as_slice(),
+        gas.inner_refunded().to_be_bytes().as_slice(),
+        gas.floor_gas().to_be_bytes().as_slice(),
+    ]
+    .concat()
+}
+
 pub fn flatten_execution_result(r: &ExecutionResult<OpHaltReason>) -> Vec<u8> {
     match r {
         ExecutionResult::Success {
             reason,
-            gas_used,
-            gas_refunded,
+            gas,
             logs,
             output,
         } => [
             [0u8, success_reason_disc(reason)].as_slice(),
-            gas_used.to_be_bytes().as_slice(),
-            gas_refunded.to_be_bytes().as_slice(),
+            flatten_result_gas(gas).as_slice(),
             flatten_logs(logs).as_slice(),
             flatten_output(output).as_slice(),
         ]
         .concat(),
-        ExecutionResult::Revert { gas_used, output } => [
+        ExecutionResult::Revert { gas, logs, output } => [
             [1u8].as_slice(),
-            gas_used.to_be_bytes().as_slice(),
+            flatten_result_gas(gas).as_slice(),
+            flatten_logs(logs).as_slice(),
             flatten_bytes(output).as_slice(),
         ]
         .concat(),
-        ExecutionResult::Halt { reason, gas_used } => [
+        ExecutionResult::Halt { reason, gas, logs } => [
             [2u8].as_slice(),
             flatten_op_halt_reason(reason).as_slice(),
-            gas_used.to_be_bytes().as_slice(),
+            flatten_result_gas(gas).as_slice(),
+            flatten_logs(logs).as_slice(),
         ]
         .concat(),
     }

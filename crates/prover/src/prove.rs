@@ -162,9 +162,6 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     if !is_l1_head_sufficient {
         return Ok(None);
     }
-    // We only use executionWitness/executePayload during preflight.
-    args.kona.enable_experimental_witness_endpoint = false;
-
     // spin up proving workers
     let task_channel: AsyncChannel<Oneshot> = async_channel::unbounded();
     let mut proving_handlers = vec![];

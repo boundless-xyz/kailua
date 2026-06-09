@@ -39,14 +39,14 @@ use {
     crate::evm::partial::{PartialExecution, PartialExecutionTrace},
     alloy_consensus::BlockHeader,
     alloy_eips::eip7840::BlobParams,
-    alloy_evm::op_revm::OpSpecId,
     alloy_evm::revm::context::BlockEnv,
     alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice,
     alloy_evm::revm::primitives::eip4844::{
         BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
     },
-    alloy_op_evm::OpBlockExecutionCtx,
+    alloy_op_evm::{OpBlockExecutionCtx, PostExecMode},
     alloy_primitives::{Bytes, U256},
+    op_revm::OpSpecId,
     risc0_zkvm::sha::{Impl as SHA2, Sha256},
 };
 
@@ -110,10 +110,8 @@ impl<'a, P, H, Evm> CachedExecutor<KonaExecutor<'a, P, H, Evm>>
 where
     P: TrieDBProvider + Send + Sync + Clone + Debug,
     H: TrieHinter + Send + Sync + Clone + Debug,
-    Evm: EvmFactory<
-            Spec = alloy_evm::op_revm::OpSpecId,
-            BlockEnv = alloy_evm::revm::context::BlockEnv,
-        > + Send
+    Evm: EvmFactory<Spec = op_revm::OpSpecId, BlockEnv = alloy_evm::revm::context::BlockEnv>
+        + Send
         + Sync
         + Clone
         + Debug
@@ -121,6 +119,16 @@ where
     Evm::Tx: alloy_evm::FromTxWithEncoded<op_alloy_consensus::OpTxEnvelope>
         + alloy_evm::FromRecoveredTx<op_alloy_consensus::OpTxEnvelope>
         + alloy_op_evm::block::OpTxEnv,
+    alloy_op_evm::OpBlockExecutorFactory<
+        alloy_op_evm::block::OpAlloyReceiptBuilder,
+        RollupConfig,
+        Evm,
+    >: for<'b> alloy_evm::block::BlockExecutorFactory<
+        EvmFactory = Evm,
+        ExecutionCtx<'b> = alloy_op_evm::OpBlockExecutionCtx,
+        Transaction = op_alloy_consensus::OpTxEnvelope,
+        Receipt = op_alloy_consensus::OpReceiptEnvelope,
+    >,
 {
     pub fn new(
         execution_cache: Vec<Arc<Execution>>,
@@ -364,11 +372,13 @@ pub fn build_single_partial_for_block(
             difficulty: header.difficulty,
             prevrandao: Some(header.mix_hash),
             blob_excess_gas_and_price: expected_blob_excess_gas_and_price(parent_header, spec_id),
+            slot_num: 0,
         },
         op_block_ctx: OpBlockExecutionCtx {
             parent_hash: header.parent_hash,
             parent_beacon_block_root: header.parent_beacon_block_root,
             extra_data: header.extra_data.clone(),
+            post_exec_mode: PostExecMode::Disabled,
         },
     }
 }

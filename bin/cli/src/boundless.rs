@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use alloy::primitives::U256;
-use alloy::signers::local::PrivateKeySigner;
 use alloy::transports::http::reqwest::Url;
 use anyhow::Context;
+use boundless_market::alloy::signers::local::PrivateKeySigner;
 use boundless_market::request_builder::RequirementParams;
 use boundless_market::{Client, StandardUploader, StorageUploaderConfig};
 use kailua_kona::journal::ProofJournal;
