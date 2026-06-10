@@ -1747,17 +1747,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "delegate"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "780eb241654bf097afb00fc5f054a09b687dad862e485fdcf8399bb056565370"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5175,8 +5164,8 @@ dependencies = [
 
 [[package]]
 name = "risc0-steel"
-version = "2.4.0"
-source = "git+https://github.com/boundless-xyz/steel?rev=f6fc6297c938d7acc0563337da136d034c3cb67b#f6fc6297c938d7acc0563337da136d034c3cb67b"
+version = "3.0.0"
+source = "git+https://github.com/boundless-xyz/steel?branch=release-3.0#a632ce6589225e3cabf1d9ce5eaf3af5fccf8ccc"
 dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
@@ -5188,7 +5177,6 @@ dependencies = [
  "alloy-trie 0.8.1",
  "anyhow",
  "bincode",
- "delegate",
  "enumn",
  "revm 38.0.0",
  "serde",
