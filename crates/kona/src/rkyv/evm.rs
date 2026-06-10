@@ -281,7 +281,16 @@ type RkyvedOpBlockExecutionCtx = (B256, Option<B256>, Bytes, u8);
 
 /// Encodes [`PostExecMode`] as a single byte. `Verify` carries an embedded
 /// post-exec payload that never occurs on the proving path, so it is rejected.
-fn post_exec_mode_byte(m: &PostExecMode) -> u8 {
+///
+/// SDM future work: once kona schedules SDM (`RollupConfig::is_sdm_active` is
+/// hardcoded `false` in v1.5.2), every canonical block ctx becomes
+/// `Verify(payload)` and this panic makes partial-execution witnesses
+/// unserializable. Preferred fix: keep the payload out of the witness and
+/// reconstruct it in-guest from the block's transactions (kona parses it from
+/// them via `parse_post_exec_payload_from_transactions`), so it never enters
+/// the trust surface. See the SDM canonical note on `CachedEvm`'s
+/// `PostExecEvm` impl in `evm/cached.rs`.
+pub(crate) fn post_exec_mode_byte(m: &PostExecMode) -> u8 {
     match m {
         PostExecMode::Disabled => 0,
         PostExecMode::Produce => 1,

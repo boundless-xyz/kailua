@@ -62,7 +62,9 @@ use {
         },
         EvmFactory,
     },
-    alloy_op_evm::{block::OpAlloyReceiptBuilder, OpBlockExecutor},
+    alloy_op_evm::{
+        block::OpAlloyReceiptBuilder, post_exec::PostExecEvmFactoryAdapter, OpBlockExecutor,
+    },
     kona_executor::TrieDB,
     op_alloy_consensus::OpTxEnvelope,
 };
@@ -283,11 +285,19 @@ where
             l2_provider.set_cursor(cursor.clone());
 
             #[cfg(feature = "experimental")]
-            let mut kona_executor: KonaExecutor<'_, _, _, CachedEvmFactory> = KonaExecutor::new(
+            let mut kona_executor: KonaExecutor<
+                '_,
+                _,
+                _,
+                PostExecEvmFactoryAdapter<CachedEvmFactory>,
+            > = KonaExecutor::new(
                 rollup_config.as_ref(),
                 l2_provider.clone(),
                 l2_provider.clone(),
-                CachedEvmFactory::new_with_traces(partial_executions, partials_collector),
+                PostExecEvmFactoryAdapter::new(CachedEvmFactory::new_with_traces(
+                    partial_executions,
+                    partials_collector,
+                )),
                 None,
             );
             #[cfg(not(feature = "experimental"))]
@@ -383,12 +393,17 @@ where
             da_source_provider.new_from_parts(l1_provider.clone(), beacon, &rollup_config);
 
         #[cfg(feature = "experimental")]
-        let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, CachedEvmFactory>>::new(
+        let cached_executor = CachedExecutor::<
+            KonaExecutor<'_, _, _, PostExecEvmFactoryAdapter<CachedEvmFactory>>,
+        >::new(
             execution_cache,
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider.clone(),
-            CachedEvmFactory::new_with_traces(partial_executions, partials_collector),
+            PostExecEvmFactoryAdapter::new(CachedEvmFactory::new_with_traces(
+                partial_executions,
+                partials_collector,
+            )),
             execution_trace,
         );
         #[cfg(not(feature = "experimental"))]

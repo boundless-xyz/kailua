@@ -95,6 +95,14 @@ pub struct PartialStateEntry {
     pub account: PartialAccount,
 }
 
+/// A single transaction's execution result and (sorted) state diff.
+///
+/// SDM future work: once kona schedules SDM (`RollupConfig::is_sdm_active` is
+/// hardcoded `false` in v1.5.2), this struct must additionally carry the
+/// transaction's `PostExecExecutedTx` (per-tx warming refund) so the cached
+/// execution path can replay it, and `hash_results` must bind the new field.
+/// See the SDM canonical note on `CachedEvm`'s `PostExecEvm` impl in
+/// `evm/cached.rs`.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PartialResultAndState {
     #[rkyv(with = ExecutionResultRkyv)]

@@ -25,7 +25,9 @@ use alloy_evm::revm::inspector::NoOpInspector;
 use alloy_evm::revm::state::AccountStatus;
 use alloy_evm::revm::{Database as RevmDatabase, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
-use alloy_op_evm::post_exec::{PostExecEvm, PostExecExecutedTx, PostExecTxContext};
+use alloy_op_evm::post_exec::{
+    PostExecEvm, PostExecEvmFactoryHooks, PostExecExecutedTx, PostExecTxContext,
+};
 use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx, OpTxError};
 use alloy_primitives::{Address, Bytes, B256};
 use op_revm::{OpHaltReason, OpSpecId};
@@ -130,6 +132,10 @@ where
             .is_some_and(|expected| *expected == incoming_hash);
 
         let result = if serve_cached {
+            // SDM caveat: this branch bypasses `self.evm`, so the inner
+            // post-exec inspector never observes the tx. Inert while the mode
+            // is `Disabled` — see the `PostExecEvm` impl below for the work
+            // needed once SDM activates.
             log(&format!("CACHED {incoming_hash}"));
             let chunk = self
                 .cache
@@ -228,6 +234,9 @@ where
             // Capture result. We clone the revm result for the trait return,
             // and drain the clone into a `PartialResultAndState` (sorted Vec
             // form) for the trace buffer.
+            // SDM future work: the per-tx `PostExecExecutedTx` (warming
+            // refund) must be captured here alongside the result so the
+            // cached path can replay it — see the `PostExecEvm` impl below.
             if let (Ok(r), Some(traces), Some(expected_state)) =
                 (&result, &self.collection_target, expected_state)
             {
@@ -286,10 +295,31 @@ where
 /// [`CachedEvm`] wrapper must surface the trait. We delegate to `self.evm`
 /// (an [`OpEvm`], which implements it), mirroring the `Evm` delegation above.
 ///
-/// The granular-proof path runs with [`PostExecMode::Disabled`](alloy_op_evm::PostExecMode),
-/// so these hooks are inert in practice. Correct post-exec accounting for
-/// transactions *served from cache* (where `self.evm.transact_raw` is bypassed)
-/// is part of the deferred granular-proof redesign.
+/// # SDM future work (canonical note)
+///
+/// These hooks are inert today: kona v1.5.2 hardcodes
+/// `RollupConfig::is_sdm_active` to `false`, so the stateless builder always
+/// constructs [`PostExecMode::Disabled`](alloy_op_evm::PostExecMode) and the
+/// executor never consults them. The granular-proof path is therefore correct
+/// as-is, and any breakage from a future kona bump that schedules SDM fails
+/// closed (header/results-hash mismatch), never unsound.
+///
+/// Once a kona release activates SDM, every derived block runs
+/// `PostExecMode::Verify(payload)` and this delegation becomes WRONG for
+/// transactions *served from cache*: `transact_raw` bypasses `self.evm`, so
+/// the inner warming inspector observes nothing and
+/// `take_last_post_exec_tx_result` would report a zero refund instead of the
+/// tx's true warming savings, corrupting receipt gas accounting. Supporting
+/// SDM requires, in concert:
+/// - capturing [`PostExecExecutedTx`] per transaction at trace time and
+///   serving the cached value here when the last tx was cache-served
+///   (track a "last tx served from cache" flag on [`CachedEvm`]);
+/// - carrying that value in `PartialResultAndState` and binding it in
+///   `hash_results` (see notes in `evm/partial.rs` / `precondition/evm.rs`);
+/// - representing or reconstructing `PostExecMode::Verify`'s payload in the
+///   witness (see `post_exec_mode_byte` in `rkyv/evm.rs`);
+/// - deriving the true mode in `build_single_partial_for_block`
+///   (see `executor.rs`).
 impl<E: Evm<HaltReason = OpHaltReason, Tx = OpTx> + PostExecEvm> PostExecEvm for CachedEvm<E>
 where
     E::DB: alloy_evm::revm::Database,
@@ -394,5 +424,34 @@ impl EvmFactory for CachedEvmFactory {
             chunks,
             self.block_traces.clone(),
         )
+    }
+}
+
+/// Bridges [`CachedEvmFactory`] into kona v1.5.2's executor plumbing.
+///
+/// `OpBlockExecutorFactory<R, Spec, F>: BlockExecutorFactory` is only implemented
+/// for `F = OpEvmFactory<Tx>` or `F = PostExecEvmFactoryAdapter<F>` with
+/// `F: PostExecEvmFactoryHooks`, so [`CachedEvmFactory`] must be wrapped in
+/// [`PostExecEvmFactoryAdapter`](alloy_op_evm::post_exec::PostExecEvmFactoryAdapter)
+/// at its use sites, with this impl forwarding the per-transaction hooks to the
+/// produced [`CachedEvm`] (which delegates them to its inner [`OpEvm`]).
+///
+/// Correct hook behavior for cache-served transactions under SDM is deferred —
+/// see the SDM canonical note on [`CachedEvm`]'s `PostExecEvm` impl above.
+impl PostExecEvmFactoryHooks for CachedEvmFactory {
+    fn begin_post_exec_tx<DB, I>(evm: &mut Self::Evm<DB, I>, ctx: PostExecTxContext)
+    where
+        DB: Database,
+        I: Inspector<Self::Context<DB>>,
+    {
+        evm.begin_post_exec_tx(ctx)
+    }
+
+    fn take_last_post_exec_tx_result<DB, I>(evm: &mut Self::Evm<DB, I>) -> PostExecExecutedTx
+    where
+        DB: Database,
+        I: Inspector<Self::Context<DB>>,
+    {
+        evm.take_last_post_exec_tx_result()
     }
 }

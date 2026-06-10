@@ -378,6 +378,12 @@ pub fn build_single_partial_for_block(
             parent_hash: header.parent_hash,
             parent_beacon_block_root: header.parent_beacon_block_root,
             extra_data: header.extra_data.clone(),
+            // Valid while kona hardcodes `RollupConfig::is_sdm_active` to
+            // `false` (v1.5.2). SDM future work: derive the true mode the way
+            // kona's stateless builder does (`Verify` when SDM is active and
+            // the block's transactions embed a post-exec payload), or the
+            // partial re-execution diverges from canonical gas accounting.
+            // See the SDM canonical note in `evm/cached.rs`.
             post_exec_mode: PostExecMode::Disabled,
         },
     }

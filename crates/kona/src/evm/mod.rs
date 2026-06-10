@@ -47,9 +47,11 @@ mod tests {
     use alloy_evm::revm::state::AccountStatus;
     use alloy_evm::revm::state::Bytecode;
     use alloy_evm::revm::state::EvmStorageSlot;
+    use alloy_evm::revm::state::{EvmState, EvmStorage};
     use alloy_evm::revm::DatabaseCommit;
     use alloy_evm::{Evm, EvmEnv, EvmFactory};
     use alloy_op_evm::block::{OpBlockExecutionCtx, PostExecMode};
+    use alloy_op_evm::OpTx;
     use alloy_primitives::Address;
     use alloy_primitives::{address, TxKind, U256};
     use alloy_primitives::{Bytes, B256};
@@ -73,13 +75,8 @@ mod tests {
         EvmEnv { block_env, cfg_env }
     }
 
-    fn make_transfer(
-        caller: Address,
-        to: Address,
-        value: U256,
-        nonce: u64,
-    ) -> OpTransaction<TxEnv> {
-        OpTransaction {
+    fn make_transfer(caller: Address, to: Address, value: U256, nonce: u64) -> OpTx {
+        OpTx(OpTransaction {
             base: TxEnv {
                 caller,
                 kind: TxKind::Call(to),
@@ -90,16 +87,13 @@ mod tests {
                 ..Default::default()
             },
             ..Default::default()
-        }
+        })
     }
 
     /// `make_transfer` with a custom envelope (or `None` to drive the
     /// missing-envelope panic invariant).
-    fn make_transfer_with_envelope(
-        envelope: Option<Bytes>,
-        caller: Address,
-    ) -> OpTransaction<TxEnv> {
-        OpTransaction {
+    fn make_transfer_with_envelope(envelope: Option<Bytes>, caller: Address) -> OpTx {
+        OpTx(OpTransaction {
             base: TxEnv {
                 caller,
                 kind: TxKind::Call(Address::ZERO),
@@ -111,7 +105,7 @@ mod tests {
             },
             enveloped_tx: envelope,
             ..Default::default()
-        }
+        })
     }
 
     fn stub_result_and_state(gas_used: u64) -> ResultAndState<OpHaltReason> {
@@ -132,7 +126,7 @@ mod tests {
         original_value: U256,
         present_value: U256,
     ) -> PartialResultAndState {
-        let mut storage: RevmHashMap<U256, EvmStorageSlot> = Default::default();
+        let mut storage: EvmStorage = Default::default();
         storage.insert(
             slot,
             EvmStorageSlot::new_changed(original_value, present_value, 0),
@@ -464,7 +458,7 @@ mod tests {
     fn cached_chunk_storage_prestate_mismatch_panics() {
         // Chunk's expected_state matches DB (all slots = 0), but the
         // result claims a per-slot original_value of 99 — divergent.
-        let mut storage: RevmHashMap<U256, EvmStorageSlot> = Default::default();
+        let mut storage: EvmStorage = Default::default();
         storage.insert(
             EXPECTED_STORAGE_SLOTS[0],
             EvmStorageSlot::new_changed(U256::from(99), U256::from(100), 0),
@@ -951,7 +945,7 @@ mod tests {
             code: None,
         };
         // Insert in reverse-sorted order to exercise the sort.
-        let mut storage: RevmHashMap<U256, EvmStorageSlot> = Default::default();
+        let mut storage: EvmStorage = Default::default();
         storage.insert(
             U256::from(42),
             EvmStorageSlot::new_changed(U256::ZERO, U256::from(99), 0),
@@ -1005,7 +999,7 @@ mod tests {
     #[test]
     fn partial_result_and_state_rkyv_round_trip() {
         let make_account = |seed: u8| {
-            let mut storage: RevmHashMap<U256, EvmStorageSlot> = Default::default();
+            let mut storage: EvmStorage = Default::default();
             storage.insert(
                 U256::from(2u64),
                 EvmStorageSlot::new_changed(U256::ZERO, U256::from(seed as u64 + 100), 0),
@@ -1035,7 +1029,7 @@ mod tests {
             }
         };
 
-        let mut state: RevmHashMap<Address, Account> = Default::default();
+        let mut state: EvmState = Default::default();
         // Insert out of address order to verify the sort.
         state.insert(
             address!("0xCCCC000000000000000000000000000000000000"),

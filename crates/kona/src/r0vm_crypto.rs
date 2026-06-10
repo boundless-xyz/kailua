@@ -53,7 +53,7 @@ impl alloy_evm::revm::precompile::Crypto for R0vmCrypto {
         base: &[u8],
         exp: &[u8],
         modulus: &[u8],
-    ) -> Result<Vec<u8>, alloy_evm::revm::precompile::PrecompileError> {
+    ) -> Result<Vec<u8>, alloy_evm::revm::precompile::PrecompileHalt> {
         use alloy_evm::revm::precompile::{Crypto, DefaultCrypto};
         match risc0_crypto_evm::modexp(base, exp, modulus) {
             Some(out) => Ok(out),
@@ -66,9 +66,9 @@ impl alloy_evm::revm::precompile::Crypto for R0vmCrypto {
         &self,
         p1: &[u8],
         p2: &[u8],
-    ) -> Result<[u8; 64], alloy_evm::revm::precompile::PrecompileError> {
+    ) -> Result<[u8; 64], alloy_evm::revm::precompile::PrecompileHalt> {
         risc0_crypto_evm::bn254_g1_add(p1, p2)
-            .ok_or(alloy_evm::revm::precompile::PrecompileError::Bn254AffineGFailedToCreate)
+            .ok_or(alloy_evm::revm::precompile::PrecompileHalt::Bn254AffineGFailedToCreate)
     }
 
     #[inline]
@@ -76,9 +76,9 @@ impl alloy_evm::revm::precompile::Crypto for R0vmCrypto {
         &self,
         point: &[u8],
         scalar: &[u8],
-    ) -> Result<[u8; 64], alloy_evm::revm::precompile::PrecompileError> {
+    ) -> Result<[u8; 64], alloy_evm::revm::precompile::PrecompileHalt> {
         risc0_crypto_evm::bn254_g1_mul(point, scalar)
-            .ok_or(alloy_evm::revm::precompile::PrecompileError::Bn254AffineGFailedToCreate)
+            .ok_or(alloy_evm::revm::precompile::PrecompileHalt::Bn254AffineGFailedToCreate)
     }
 
     #[inline]
@@ -92,9 +92,9 @@ impl alloy_evm::revm::precompile::Crypto for R0vmCrypto {
         sig: &[u8; 64],
         recid: u8,
         msg: &[u8; 32],
-    ) -> Result<[u8; 32], alloy_evm::revm::precompile::PrecompileError> {
+    ) -> Result<[u8; 32], alloy_evm::revm::precompile::PrecompileHalt> {
         risc0_crypto_evm::secp256k1_ecrecover(sig, recid, msg)
             .map(|addr| addr.into_word().0)
-            .ok_or(alloy_evm::revm::precompile::PrecompileError::Secp256k1RecoverFailed)
+            .ok_or(alloy_evm::revm::precompile::PrecompileHalt::Secp256k1RecoverFailed)
     }
 }
