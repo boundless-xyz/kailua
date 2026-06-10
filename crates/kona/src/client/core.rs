@@ -536,6 +536,12 @@ where
         )
         .await?;
 
+    if output_preimage[..32] != [0u8; 32] {
+        return Err(OracleProviderError::UnknownOutputVersion(B256::from_slice(
+            &output_preimage[..32],
+        )));
+    }
+
     output_preimage[96..128]
         .try_into()
         .map_err(OracleProviderError::SliceConversion)
