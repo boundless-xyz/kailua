@@ -77,7 +77,7 @@ clippy-kona:
   cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
 
 coverage +ARGS="":
-  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona -F experimental --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
+  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
 #  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona --branch --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
 
 coverage-open: (coverage "--open")

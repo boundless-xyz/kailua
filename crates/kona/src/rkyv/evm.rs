@@ -1451,4 +1451,16 @@ mod tests {
             None,
         ));
     }
+
+    #[test]
+    #[should_panic(expected = "PostExecMode::Verify is unsupported")]
+    fn post_exec_mode_byte_panics_on_verify() {
+        let _ = post_exec_mode_byte(&PostExecMode::Verify(Default::default()));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid PostExecMode byte")]
+    fn post_exec_mode_from_byte_panics_on_invalid() {
+        let _ = post_exec_mode_from_byte(99);
+    }
 }

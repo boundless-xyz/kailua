@@ -1326,3 +1326,66 @@ where
         Ok(IdChannelRkyv::raw(rkyved))
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::{from_bytes_with, to_bytes_with};
+    use alloy_primitives::B256;
+
+    fn test_block_info(number: u64) -> BlockInfo {
+        BlockInfo {
+            hash: B256::repeat_byte(0x11),
+            number,
+            parent_hash: B256::repeat_byte(0x22),
+            timestamp: 1700000000 + number,
+        }
+    }
+
+    fn test_frame(number: u16, is_last: bool) -> Frame {
+        Frame {
+            id: [0xab; 16],
+            number,
+            data: vec![number as u8; 8],
+            is_last,
+        }
+    }
+
+    fn create_test_channel() -> Channel {
+        Channel {
+            id: [0xab; 16],
+            open_block: test_block_info(100),
+            estimated_size: 420,
+            closed: true,
+            highest_frame_number: 1,
+            last_frame_number: 1,
+            inputs: [(0, test_frame(0, false)), (1, test_frame(1, true))]
+                .into_iter()
+                .collect(),
+            highest_l1_inclusion_block: test_block_info(101),
+        }
+    }
+
+    #[test]
+    fn test_channel_rkyv_roundtrip() {
+        let original = create_test_channel();
+        let bytes = to_bytes_with!(ChannelRkyv, &original);
+        let deserialized = from_bytes_with!(ChannelRkyv, Channel, &bytes);
+        // Channel lacks PartialEq; compare canonical rkyved tuples instead.
+        assert_eq!(
+            ChannelRkyv::rkyv(&original),
+            ChannelRkyv::rkyv(&deserialized)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Bad Batch rkyv.")]
+    fn test_batch_with_inclusion_block_raw_rejects_batchless_tuple() {
+        let _ = BatchWithInclusionBlockRkyv::raw((
+            BlockInfoRkyv::rkyv(&test_block_info(1)),
+            None,
+            None,
+        ));
+    }
+}
