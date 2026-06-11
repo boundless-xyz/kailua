@@ -169,6 +169,9 @@ jobs:
           version: v1.5.1
       - name: vendor fpvm sources
         run: cargo vendor --manifest-path build/risczero/kona/Cargo.toml --sync build/risczero/hokulea/Cargo.toml --sync build/risczero/hana/Cargo.toml build/risczero/vendor
+      - name: stage nut bundles
+        # kona-hardforks' build.rs reads op-core NUT bundles that cargo vendor omits
+        run: ./scripts/stage-nut-bundles.sh
       - name: cargo test kailua
         run: cargo test --locked --workspace -F devnet -F prove -F rebuild-fpvm -F experimental -- --test-threads 1
 
@@ -252,6 +255,9 @@ jobs:
           version: v1.5.1
       - name: vendor fpvm sources
         run: cargo vendor --manifest-path build/risczero/kona/Cargo.toml --sync build/risczero/hokulea/Cargo.toml --sync build/risczero/hana/Cargo.toml build/risczero/vendor
+      - name: stage nut bundles
+        # kona-hardforks' build.rs reads op-core NUT bundles that cargo vendor omits
+        run: ./scripts/stage-nut-bundles.sh
       - name: cargo test kailua-hokulea
         run: cargo test --locked -p kailua-cli -F eigen -F devnet -F prove -F rebuild-fpvm -F experimental -- --test-threads 1
 

@@ -148,7 +148,7 @@ risc0-zkvm = { version = "3.0.5", features = ["heap-embedded-alloc", "unstable"]
 boundless-market = { version = "1.4", features = ["gcs", "s3"] }
 
 # STEEL
-risc0-steel = { git = "https://github.com/boundless-xyz/steel", branch = "release-3.0" }
+risc0-steel = { git = "https://github.com/boundless-xyz/steel", tag = "v3.0.0" }
 
 [profile.dev]
 opt-level = 3
