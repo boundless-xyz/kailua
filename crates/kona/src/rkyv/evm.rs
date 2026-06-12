@@ -19,7 +19,7 @@ use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
 use alloy_evm::revm::database::states::{CacheAccount, PlainAccount};
 use alloy_evm::revm::database::{AccountStatus as CacheAccountStatus, CacheState};
 use alloy_evm::revm::state::{AccountInfo, Bytecode};
-use alloy_op_evm::block::OpBlockExecutionCtx;
+use alloy_op_evm::block::{OpBlockExecutionCtx, PostExecMode};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use rkyv::rancor::Fallible;
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
@@ -35,8 +35,8 @@ type RkyvedPlainAccount = (RkyvedAccountInfo, Vec<([u8; 32], [u8; 32])>);
 /// `CacheAccount` whose `account` field is `None` (e.g. `LoadedNotExisting`).
 type RkyvedCacheAccount = ([u8; 20], Option<RkyvedPlainAccount>, u8);
 
-/// `(sorted_accounts, sorted_contracts, has_state_clear)`.
-pub type RkyvedCacheState = (Vec<RkyvedCacheAccount>, Vec<([u8; 32], Vec<u8>)>, bool);
+/// `(sorted_accounts, sorted_contracts)`.
+pub type RkyvedCacheState = (Vec<RkyvedCacheAccount>, Vec<([u8; 32], Vec<u8>)>);
 
 /// Encodes [`CacheAccountStatus`] as a single canonical byte for rkyv.
 fn cache_account_status_byte(s: &CacheAccountStatus) -> u8 {
@@ -98,11 +98,11 @@ impl CacheStateRkyv {
             .map(|(hash, bytecode)| (hash.0, bytecode.original_bytes().to_vec()))
             .collect();
 
-        (accounts, contracts, cs.has_state_clear)
+        (accounts, contracts)
     }
 
     pub fn raw(rkyved: RkyvedCacheState) -> CacheState {
-        let (accounts, contracts, has_state_clear) = rkyved;
+        let (accounts, contracts) = rkyved;
 
         let accounts = accounts
             .into_iter()
@@ -132,7 +132,6 @@ impl CacheStateRkyv {
         CacheState {
             accounts,
             contracts,
-            has_state_clear,
         }
     }
 }
@@ -185,7 +184,7 @@ pub struct RkyvedBlobGasAndPrice {
     pub blob_gasprice: [u8; 16],
 }
 
-/// (number, beneficiary, timestamp, gas_limit, basefee, difficulty, prevrandao, blob_excess_gas_and_price)
+/// (number, beneficiary, timestamp, gas_limit, basefee, difficulty, prevrandao, blob_excess_gas_and_price, slot_num)
 type RkyvedBlockEnv = (
     U256,
     Address,
@@ -195,6 +194,7 @@ type RkyvedBlockEnv = (
     U256,
     Option<B256>,
     Option<RkyvedBlobGasAndPrice>,
+    u64,
 );
 
 /// rkyv wrapper for revm's [`BlockEnv`].
@@ -216,6 +216,7 @@ impl BlockEnvRkyv {
                     excess_blob_gas: b.excess_blob_gas,
                     blob_gasprice: b.blob_gasprice.to_be_bytes(),
                 }),
+            env.slot_num,
         )
     }
 
@@ -232,6 +233,7 @@ impl BlockEnvRkyv {
                 excess_blob_gas: b.excess_blob_gas,
                 blob_gasprice: u128::from_be_bytes(b.blob_gasprice),
             }),
+            slot_num: r.8,
         }
     }
 }
@@ -273,8 +275,38 @@ where
 
 // -- OpBlockExecutionCtxRkyv --
 
-/// (parent_hash, parent_beacon_block_root, extra_data)
-type RkyvedOpBlockExecutionCtx = (B256, Option<B256>, Bytes);
+/// (parent_hash, parent_beacon_block_root, extra_data, post_exec_mode_disc)
+/// post_exec_mode_disc: 0=Disabled, 1=Produce. `Verify` is unsupported in the witness.
+type RkyvedOpBlockExecutionCtx = (B256, Option<B256>, Bytes, u8);
+
+/// Encodes [`PostExecMode`] as a single byte. `Verify` carries an embedded
+/// post-exec payload that never occurs on the proving path, so it is rejected.
+///
+/// SDM future work: once kona schedules SDM (`RollupConfig::is_sdm_active` is
+/// hardcoded `false` in v1.5.2), every canonical block ctx becomes
+/// `Verify(payload)` and this panic makes partial-execution witnesses
+/// unserializable. Preferred fix: keep the payload out of the witness and
+/// reconstruct it in-guest from the block's transactions (kona parses it from
+/// them via `parse_post_exec_payload_from_transactions`), so it never enters
+/// the trust surface. See the SDM canonical note on `CachedEvm`'s
+/// `PostExecEvm` impl in `evm/cached.rs`.
+pub(crate) fn post_exec_mode_byte(m: &PostExecMode) -> u8 {
+    match m {
+        PostExecMode::Disabled => 0,
+        PostExecMode::Produce => 1,
+        PostExecMode::Verify(_) => {
+            panic!("PostExecMode::Verify is unsupported in the execution witness")
+        }
+    }
+}
+
+fn post_exec_mode_from_byte(b: u8) -> PostExecMode {
+    match b {
+        0 => PostExecMode::Disabled,
+        1 => PostExecMode::Produce,
+        _ => panic!("invalid PostExecMode byte: {b}"),
+    }
+}
 
 /// rkyv wrapper for [`OpBlockExecutionCtx`].
 ///
@@ -288,6 +320,7 @@ impl OpBlockExecutionCtxRkyv {
             ctx.parent_hash,
             ctx.parent_beacon_block_root,
             ctx.extra_data.clone(),
+            post_exec_mode_byte(&ctx.post_exec_mode),
         )
     }
 
@@ -296,6 +329,7 @@ impl OpBlockExecutionCtxRkyv {
             parent_hash: r.0,
             parent_beacon_block_root: r.1,
             extra_data: r.2,
+            post_exec_mode: post_exec_mode_from_byte(r.3),
         }
     }
 }
@@ -346,12 +380,12 @@ where
 
 // -- ResultAndStateRkyv, ExecutionResultRkyv, EvmStateRkyv, AccountRkyv --
 
-use alloy_evm::op_revm::OpHaltReason;
 use alloy_evm::revm::context_interface::result::{
-    ExecutionResult, HaltReason, OutOfGasError, Output, SuccessReason,
+    ExecutionResult, HaltReason, OutOfGasError, Output, ResultGas, SuccessReason,
 };
 use alloy_evm::revm::state::{AccountStatus, EvmStorageSlot};
 use alloy_primitives::Log;
+use op_revm::OpHaltReason;
 
 // -- Enum encoding helpers (SuccessReason, OutOfGasError, HaltReason, OpHaltReason) --
 
@@ -637,13 +671,56 @@ where
 type RkyvedLogEntry = ([u8; 20], Vec<[u8; 32]>, Vec<u8>);
 type RkyvedOutput = (u8, Vec<u8>, Option<[u8; 20]>);
 
-/// `(disc, success_reason, gas_used, gas_refunded, logs, output, revert_output, halt_reason)`.
-/// disc: 0=Success, 1=Revert, 2=Halt.
+/// revm's [`ResultGas`] as `(total_gas_spent, state_gas_spent, refunded, floor_gas)`.
+type RkyvedResultGas = (u64, u64, u64, u64);
+
+fn result_gas_rkyv(g: &ResultGas) -> RkyvedResultGas {
+    (
+        g.total_gas_spent(),
+        g.state_gas_spent(),
+        g.inner_refunded(),
+        g.floor_gas(),
+    )
+}
+
+fn result_gas_raw(r: RkyvedResultGas) -> ResultGas {
+    ResultGas::default()
+        .with_total_gas_spent(r.0)
+        .with_state_gas_spent(r.1)
+        .with_refunded(r.2)
+        .with_floor_gas(r.3)
+}
+
+fn logs_rkyv(logs: &[Log]) -> Vec<RkyvedLogEntry> {
+    logs.iter()
+        .map(|log| {
+            (
+                *log.address.0,
+                log.data.topics().iter().map(|t| t.0).collect(),
+                log.data.data.to_vec(),
+            )
+        })
+        .collect()
+}
+
+fn logs_raw(logs: Vec<RkyvedLogEntry>) -> Vec<Log> {
+    logs.into_iter()
+        .map(|(addr, topics, data)| {
+            Log::new_unchecked(
+                Address::from(addr),
+                topics.into_iter().map(B256::new).collect(),
+                Bytes::from(data),
+            )
+        })
+        .collect()
+}
+
+/// `(disc, success_reason, gas, logs, output, revert_output, halt_reason)`.
+/// disc: 0=Success, 1=Revert, 2=Halt. `logs` is present for every variant.
 type RkyvedExecutionResult = (
     u8,
     u8,
-    u64,
-    u64,
+    RkyvedResultGas,
     Vec<RkyvedLogEntry>,
     Option<RkyvedOutput>,
     Option<Vec<u8>>,
@@ -658,21 +735,10 @@ impl ExecutionResultRkyv {
         match r {
             ExecutionResult::Success {
                 reason,
-                gas_used,
-                gas_refunded,
+                gas,
                 logs,
                 output,
             } => {
-                let rkyved_logs = logs
-                    .iter()
-                    .map(|log| {
-                        (
-                            *log.address.0,
-                            log.data.topics().iter().map(|t| t.0).collect(),
-                            log.data.data.to_vec(),
-                        )
-                    })
-                    .collect();
                 let rkyved_output = match output {
                     Output::Call(data) => (0, data.to_vec(), None),
                     Output::Create(data, addr) => (1, data.to_vec(), addr.map(|a| *a.0)),
@@ -680,30 +746,27 @@ impl ExecutionResultRkyv {
                 (
                     0,
                     success_reason_byte(reason),
-                    *gas_used,
-                    *gas_refunded,
-                    rkyved_logs,
+                    result_gas_rkyv(gas),
+                    logs_rkyv(logs),
                     Some(rkyved_output),
                     None,
                     None,
                 )
             }
-            ExecutionResult::Revert { gas_used, output } => (
+            ExecutionResult::Revert { gas, logs, output } => (
                 1,
                 0,
-                *gas_used,
-                0,
-                vec![],
+                result_gas_rkyv(gas),
+                logs_rkyv(logs),
                 None,
                 Some(output.to_vec()),
                 None,
             ),
-            ExecutionResult::Halt { reason, gas_used } => (
+            ExecutionResult::Halt { reason, gas, logs } => (
                 2,
                 0,
-                *gas_used,
-                0,
-                vec![],
+                result_gas_rkyv(gas),
+                logs_rkyv(logs),
                 None,
                 None,
                 Some(op_halt_reason_rkyv(reason)),
@@ -714,17 +777,7 @@ impl ExecutionResultRkyv {
     pub fn raw(r: RkyvedExecutionResult) -> ExecutionResult<OpHaltReason> {
         match r.0 {
             0 => {
-                let logs =
-                    r.4.into_iter()
-                        .map(|(addr, topics, data)| {
-                            Log::new_unchecked(
-                                Address::from(addr),
-                                topics.into_iter().map(B256::new).collect(),
-                                Bytes::from(data),
-                            )
-                        })
-                        .collect();
-                let (disc, data, addr) = r.5.unwrap();
+                let (disc, data, addr) = r.4.unwrap();
                 let output = match disc {
                     0 => Output::Call(Bytes::from(data)),
                     1 => Output::Create(Bytes::from(data), addr.map(Address::from)),
@@ -732,19 +785,20 @@ impl ExecutionResultRkyv {
                 };
                 ExecutionResult::Success {
                     reason: success_reason_from_byte(r.1),
-                    gas_used: r.2,
-                    gas_refunded: r.3,
-                    logs,
+                    gas: result_gas_raw(r.2),
+                    logs: logs_raw(r.3),
                     output,
                 }
             }
             1 => ExecutionResult::Revert {
-                gas_used: r.2,
-                output: Bytes::from(r.6.unwrap()),
+                gas: result_gas_raw(r.2),
+                logs: logs_raw(r.3),
+                output: Bytes::from(r.5.unwrap()),
             },
             2 => ExecutionResult::Halt {
-                reason: op_halt_reason_raw(r.7.unwrap()),
-                gas_used: r.2,
+                reason: op_halt_reason_raw(r.6.unwrap()),
+                gas: result_gas_raw(r.2),
+                logs: logs_raw(r.3),
             },
             _ => panic!("invalid ExecutionResult discriminant: {}", r.0),
         }
@@ -851,6 +905,7 @@ mod tests {
                     excess_blob_gas: 1000,
                     blob_gasprice: 42,
                 }),
+                slot_num: 7,
             },
             // Some/None: prevrandao set, no blob fields. Pushes integer fields to MAX.
             BlockEnv {
@@ -862,6 +917,7 @@ mod tests {
                 difficulty: U256::MAX,
                 prevrandao: Some(B256::ZERO),
                 blob_excess_gas_and_price: None,
+                slot_num: u64::MAX,
             },
             // None/Some: covers the MAX `blob_gasprice` u128 path through the
             // [u8; 16] big-endian encoding.
@@ -877,6 +933,7 @@ mod tests {
                     excess_blob_gas: u64::MAX,
                     blob_gasprice: u128::MAX,
                 }),
+                slot_num: 1,
             },
             // None/None: ZERO baseline.
             BlockEnv {
@@ -888,6 +945,7 @@ mod tests {
                 difficulty: U256::ZERO,
                 prevrandao: None,
                 blob_excess_gas_and_price: None,
+                slot_num: 0,
             },
         ];
         for env in &cases {
@@ -904,6 +962,7 @@ mod tests {
                 deser.blob_excess_gas_and_price,
                 env.blob_excess_gas_and_price
             );
+            assert_eq!(deser.slot_num, env.slot_num);
         }
     }
 
@@ -915,16 +974,19 @@ mod tests {
                 parent_hash: B256::repeat_byte(0xBB),
                 parent_beacon_block_root: Some(B256::repeat_byte(0xCC)),
                 extra_data: Bytes::from_static(&[1, 2, 3]),
+                post_exec_mode: PostExecMode::Disabled,
             },
             OpBlockExecutionCtx {
                 parent_hash: B256::ZERO,
                 parent_beacon_block_root: None,
                 extra_data: Bytes::new(),
+                post_exec_mode: PostExecMode::Produce,
             },
             OpBlockExecutionCtx {
                 parent_hash: B256::repeat_byte(0xFF),
                 parent_beacon_block_root: Some(B256::ZERO),
                 extra_data: Bytes::from_static(&[0; 64]),
+                post_exec_mode: PostExecMode::Disabled,
             },
         ];
         for ctx in &cases {
@@ -933,6 +995,10 @@ mod tests {
             assert_eq!(deser.parent_hash, ctx.parent_hash);
             assert_eq!(deser.parent_beacon_block_root, ctx.parent_beacon_block_root);
             assert_eq!(deser.extra_data, ctx.extra_data);
+            assert_eq!(
+                std::mem::discriminant(&deser.post_exec_mode),
+                std::mem::discriminant(&ctx.post_exec_mode)
+            );
         }
     }
 
@@ -1054,8 +1120,8 @@ mod tests {
             (CacheAccountStatus::DestroyedAgain, true),
         ];
 
-        for has_state_clear in [true, false] {
-            let mut cs = CacheState::new(has_state_clear);
+        {
+            let mut cs = CacheState::new();
             for (i, (status, has_account)) in statuses.iter().enumerate() {
                 let addr = Address::from([i as u8 + 1; 20]);
                 // Mix AccountInfo edge cases inline so the embedded
@@ -1114,7 +1180,6 @@ mod tests {
             let bytes = to_bytes_with!(CacheStateRkyv, &cs);
             let deser = from_bytes_with!(CacheStateRkyv, CacheState, &bytes);
 
-            assert_eq!(deser.has_state_clear, has_state_clear);
             assert_eq!(deser.accounts.len(), cs.accounts.len());
             assert_eq!(deser.contracts.len(), cs.contracts.len());
 
@@ -1137,12 +1202,11 @@ mod tests {
         }
 
         // Fully empty: exercises the empty-vector paths in both directions.
-        let cs = CacheState::new(false);
+        let cs = CacheState::new();
         let bytes = to_bytes_with!(CacheStateRkyv, &cs);
         let deser = from_bytes_with!(CacheStateRkyv, CacheState, &bytes);
         assert!(deser.accounts.is_empty());
         assert!(deser.contracts.is_empty());
-        assert!(!deser.has_state_clear);
     }
 
     // -- ExecutionResultRkyv --
@@ -1221,10 +1285,16 @@ mod tests {
             for output in &outputs {
                 for &count in &[0usize, 1, 3] {
                     let logs = vec![log.clone(); count];
+                    // Seed every ResultGas component so all four survive the
+                    // (total, state, refunded, floor) round-trip.
+                    let gas = ResultGas::default()
+                        .with_total_gas_spent(21_000)
+                        .with_state_gas_spent(18_000)
+                        .with_refunded(1_234)
+                        .with_floor_gas(500);
                     let r = ExecutionResult::<OpHaltReason>::Success {
                         reason,
-                        gas_used: 21_000,
-                        gas_refunded: 1_234,
+                        gas,
                         logs,
                         output: output.clone(),
                     };
@@ -1236,8 +1306,7 @@ mod tests {
                     );
                     let ExecutionResult::Success {
                         reason: deser_reason,
-                        gas_used,
-                        gas_refunded,
+                        gas,
                         logs: deser_logs,
                         output: deser_output,
                     } = deser
@@ -1245,8 +1314,10 @@ mod tests {
                         panic!("expected Success for reason={reason:?} output={output:?}");
                     };
                     assert_eq!(deser_reason, reason);
-                    assert_eq!(gas_used, 21_000);
-                    assert_eq!(gas_refunded, 1_234);
+                    assert_eq!(gas.total_gas_spent(), 21_000);
+                    assert_eq!(gas.state_gas_spent(), 18_000);
+                    assert_eq!(gas.inner_refunded(), 1_234);
+                    assert_eq!(gas.floor_gas(), 500);
                     assert_eq!(deser_logs.len(), count);
                     for got in &deser_logs {
                         assert_eq!(got.address, log.address);
@@ -1258,27 +1329,30 @@ mod tests {
             }
         }
 
-        // -- Revert -- (empty / non-empty output, ZERO and MAX gas)
-        for (gas_used, output) in [
+        // -- Revert -- (empty / non-empty output, ZERO and MAX gas, logs present)
+        for (total_gas, output) in [
             (500u64, Bytes::from_static(&[0xCA, 0xFE])),
             (0, Bytes::new()),
             (u64::MAX, Bytes::from_static(&[0xFF; 32])),
         ] {
             let r = ExecutionResult::<OpHaltReason>::Revert {
-                gas_used,
+                gas: ResultGas::default().with_total_gas_spent(total_gas),
+                logs: vec![log.clone()],
                 output: output.clone(),
             };
             let bytes = to_bytes_with!(ExecutionResultRkyv, &r);
             let deser =
                 from_bytes_with!(ExecutionResultRkyv, ExecutionResult<OpHaltReason>, &bytes);
             let ExecutionResult::Revert {
-                gas_used: g,
+                gas: g,
+                logs: revert_logs,
                 output: o,
             } = deser
             else {
                 panic!("expected Revert");
             };
-            assert_eq!(g, gas_used);
+            assert_eq!(g.total_gas_spent(), total_gas);
+            assert_eq!(revert_logs.len(), 1);
             assert_eq!(o, output);
         }
 
@@ -1286,37 +1360,43 @@ mod tests {
         for h in all_halt_reasons() {
             let r = ExecutionResult::<OpHaltReason>::Halt {
                 reason: OpHaltReason::Base(h.clone()),
-                gas_used: 2_500,
+                gas: ResultGas::default().with_total_gas_spent(2_500),
+                logs: vec![log.clone()],
             };
             let bytes = to_bytes_with!(ExecutionResultRkyv, &r);
             let deser =
                 from_bytes_with!(ExecutionResultRkyv, ExecutionResult<OpHaltReason>, &bytes);
             let ExecutionResult::Halt {
                 reason: OpHaltReason::Base(got),
-                gas_used,
+                gas,
+                logs: halt_logs,
             } = deser
             else {
                 panic!("expected Halt::Base for {h:?}");
             };
             assert_eq!(got, h, "round trip {h:?}");
-            assert_eq!(gas_used, 2_500);
+            assert_eq!(gas.total_gas_spent(), 2_500);
+            assert_eq!(halt_logs.len(), 1);
         }
 
         // -- Halt::FailedDeposit --
         let r = ExecutionResult::<OpHaltReason>::Halt {
             reason: OpHaltReason::FailedDeposit,
-            gas_used: 0,
+            gas: ResultGas::default(),
+            logs: vec![],
         };
         let bytes = to_bytes_with!(ExecutionResultRkyv, &r);
         let deser = from_bytes_with!(ExecutionResultRkyv, ExecutionResult<OpHaltReason>, &bytes);
         let ExecutionResult::Halt {
             reason: OpHaltReason::FailedDeposit,
-            gas_used,
+            gas,
+            logs: halt_logs,
         } = deser
         else {
             panic!("expected Halt::FailedDeposit");
         };
-        assert_eq!(gas_used, 0);
+        assert_eq!(gas.total_gas_spent(), 0);
+        assert!(halt_logs.is_empty());
     }
 
     // -- Panic paths for invalid discriminants --
@@ -1354,13 +1434,33 @@ mod tests {
     #[test]
     #[should_panic(expected = "invalid ExecutionResult discriminant")]
     fn execution_result_raw_panics_on_invalid_discriminant() {
-        let _ = ExecutionResultRkyv::raw((99, 0, 0, 0, vec![], None, None, None));
+        let _ = ExecutionResultRkyv::raw((99, 0, (0, 0, 0, 0), vec![], None, None, None));
     }
 
     #[test]
     #[should_panic(expected = "invalid Output discriminant")]
     fn execution_result_raw_panics_on_invalid_output_disc() {
         // Success disc with a malformed inner Output disc (only 0/1 are valid).
-        let _ = ExecutionResultRkyv::raw((0, 0, 0, 0, vec![], Some((9, vec![], None)), None, None));
+        let _ = ExecutionResultRkyv::raw((
+            0,
+            0,
+            (0, 0, 0, 0),
+            vec![],
+            Some((9, vec![], None)),
+            None,
+            None,
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "PostExecMode::Verify is unsupported")]
+    fn post_exec_mode_byte_panics_on_verify() {
+        let _ = post_exec_mode_byte(&PostExecMode::Verify(Default::default()));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid PostExecMode byte")]
+    fn post_exec_mode_from_byte_panics_on_invalid() {
+        let _ = post_exec_mode_from_byte(99);
     }
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy::consensus::Blob;
+use alloy::consensus::{Blob, BlobTransactionSidecarVariant};
 use alloy::network::{Ethereum, TransactionBuilder4844};
 use alloy::primitives::Address;
 use alloy::providers::Provider;
@@ -87,7 +87,9 @@ async fn publish_cell_proofs_txn() {
     let transaction = proposer_provider
         .transaction_request()
         .to(Address::ZERO)
-        .with_blob_sidecar(blob_sidecar(vec![Blob::new([0x01; 131072])]).expect("blob_sidecar"));
+        .with_blob_sidecar(BlobTransactionSidecarVariant::Eip4844(
+            blob_sidecar(vec![Blob::new([0x01; 131072])]).expect("blob_sidecar"),
+        ));
 
     // wait for transaction submission
     // Publish transaction

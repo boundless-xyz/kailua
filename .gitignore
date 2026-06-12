@@ -10,6 +10,8 @@ cache
 out
 *.txt
 *.log
+# RocksDB WALs in testdata hold live preimages until flushed; never drop them silently
+!crates/kona/testdata/*.log
 optimism/
 op/
 *.out

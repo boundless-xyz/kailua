@@ -62,7 +62,9 @@ use {
         },
         EvmFactory,
     },
-    alloy_op_evm::{block::OpAlloyReceiptBuilder, OpBlockExecutor},
+    alloy_op_evm::{
+        block::OpAlloyReceiptBuilder, post_exec::PostExecEvmFactoryAdapter, OpBlockExecutor,
+    },
     kona_executor::TrieDB,
     op_alloy_consensus::OpTxEnvelope,
 };
@@ -283,11 +285,19 @@ where
             l2_provider.set_cursor(cursor.clone());
 
             #[cfg(feature = "experimental")]
-            let mut kona_executor: KonaExecutor<'_, _, _, CachedEvmFactory> = KonaExecutor::new(
+            let mut kona_executor: KonaExecutor<
+                '_,
+                _,
+                _,
+                PostExecEvmFactoryAdapter<CachedEvmFactory>,
+            > = KonaExecutor::new(
                 rollup_config.as_ref(),
                 l2_provider.clone(),
                 l2_provider.clone(),
-                CachedEvmFactory::new_with_traces(partial_executions, partials_collector),
+                PostExecEvmFactoryAdapter::new(CachedEvmFactory::new_with_traces(
+                    partial_executions,
+                    partials_collector,
+                )),
                 None,
             );
             #[cfg(not(feature = "experimental"))]
@@ -383,12 +393,17 @@ where
             da_source_provider.new_from_parts(l1_provider.clone(), beacon, &rollup_config);
 
         #[cfg(feature = "experimental")]
-        let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, CachedEvmFactory>>::new(
+        let cached_executor = CachedExecutor::<
+            KonaExecutor<'_, _, _, PostExecEvmFactoryAdapter<CachedEvmFactory>>,
+        >::new(
             execution_cache,
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider.clone(),
-            CachedEvmFactory::new_with_traces(partial_executions, partials_collector),
+            PostExecEvmFactoryAdapter::new(CachedEvmFactory::new_with_traces(
+                partial_executions,
+                partials_collector,
+            )),
             execution_trace,
         );
         #[cfg(not(feature = "experimental"))]
@@ -416,6 +431,7 @@ where
                         da_provider,
                         l1_provider.clone(),
                         l2_provider.clone(),
+                        None,
                     )
                     .await
                     .context("OraclePipeline::new")?,
@@ -534,6 +550,12 @@ where
             output_preimage.as_mut(),
         )
         .await?;
+
+    if output_preimage[..32] != [0u8; 32] {
+        return Err(OracleProviderError::UnknownOutputVersion(B256::from_slice(
+            &output_preimage[..32],
+        )));
+    }
 
     output_preimage[96..128]
         .try_into()
@@ -1382,5 +1404,29 @@ pub mod tests {
             rollup_config: boot_info.rollup_config.clone(),
             l1_config: boot_info.l1_config.clone(),
         }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_safe_head_hash_unknown_output_version() {
+        use crate::oracle::vec::VecOracle;
+        use crate::oracle::WitnessOracle;
+
+        // A non-zero version prefix must be rejected as an unknown output root version.
+        let mut preimage = vec![0u8; 128];
+        preimage[0] = 1;
+        let output_root = alloy_primitives::keccak256(&preimage);
+
+        let mut oracle = VecOracle::default();
+        oracle.insert_preimage(PreimageKey::new_keccak256(output_root.0), preimage);
+
+        let mut expected_version = B256::ZERO;
+        expected_version.0[0] = 1;
+        let err = fetch_safe_head_hash(&oracle, output_root)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            OracleProviderError::UnknownOutputVersion(version) if version == expected_version
+        ));
     }
 }

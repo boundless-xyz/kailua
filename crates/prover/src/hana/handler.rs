@@ -26,7 +26,7 @@ use kona_host::{HintHandler, OnlineHostBackendCfg, SharedKeyValueStore};
 use kona_preimage::{PreimageKey, PreimageKeyType};
 use kona_proof::Hint;
 use risc0_steel::ethereum::{
-    EthChainSpec, EthEvmEnv, EthEvmFactory, ETH_HOLESKY_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC,
+    EthChainSpec, EthEvmEnv, EthEvmFactory, ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC,
     ETH_SEPOLIA_CHAIN_SPEC,
 };
 use risc0_steel::{Contract, EvmInput};
@@ -61,7 +61,7 @@ impl HanaHintHandler {
         let chain_spec = match chain_id {
             1 => ETH_MAINNET_CHAIN_SPEC.clone(),
             11155111 => ETH_SEPOLIA_CHAIN_SPEC.clone(),
-            17000 => ETH_HOLESKY_CHAIN_SPEC.clone(),
+            560048 => ETH_HOODI_CHAIN_SPEC.clone(),
             _ => EthChainSpec::new_single(chain_id, Default::default()),
         };
         let mut env = EthEvmEnv::builder()

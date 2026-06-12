@@ -1031,7 +1031,7 @@ pub fn create_cached_execution_task(
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_cached_proof(
     #[cfg(feature = "experimental")] partials_cache: Option<Arc<PartialsCache>>,
-    mut args: ProveArgs,
+    args: ProveArgs,
     rollup_config: RollupConfig,
     l1_config: L1ChainConfig,
     disk_kv_store: Option<RWLKeyValueStore>,
@@ -1159,10 +1159,7 @@ pub async fn compute_cached_proof(
         }
 
         // preflight
-        if args.kona.enable_experimental_witness_endpoint
-            && !args.kona.is_offline()
-            && args.op_node_address.is_some()
-        {
+        if !args.kona.is_offline() && args.op_node_address.is_some() {
             let l2_provider = args
                 .kona
                 .l2_node_address
@@ -1186,19 +1183,14 @@ pub async fn compute_cached_proof(
                     ))
                 })
                 .unwrap();
-            if crate::client::payload::run_payload_client(
+            crate::client::payload::run_payload_client(
                 boot.clone(),
                 l2_provider,
                 op_node_provider,
                 disk_kv_store.clone(),
             )
             .await
-            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-            {
-                // If we have used debug_executionWitness sucessfully then don't use Kona's
-                // debug_executePayload logic as it doesn't have caching
-                args.kona.enable_experimental_witness_endpoint = false;
-            }
+            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
         }
 
         // generate a proof using the kailua client and kona server

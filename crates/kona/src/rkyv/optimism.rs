@@ -30,6 +30,7 @@ pub struct OpPayloadAttributesRkyv {
     pub withdrawals: Option<Vec<u8>>,
     #[rkyv(with = rkyv::with::Map<B256Def>)]
     pub parent_beacon_block_root: Option<B256>,
+    pub slot_number: Option<u64>,
     pub transactions: Option<Vec<u8>>,
     pub no_tx_pool: Option<bool>,
     pub gas_limit: Option<u64>,
@@ -50,6 +51,7 @@ impl From<&OpPayloadAttributes> for OpPayloadAttributesRkyv {
                 .as_ref()
                 .map(alloy_rlp::encode),
             parent_beacon_block_root: value.payload_attributes.parent_beacon_block_root,
+            slot_number: value.payload_attributes.slot_number,
             transactions: value.transactions.as_ref().map(alloy_rlp::encode),
             no_tx_pool: value.no_tx_pool,
             gas_limit: value.gas_limit,
@@ -71,6 +73,7 @@ impl From<OpPayloadAttributesRkyv> for OpPayloadAttributes {
                     .as_ref()
                     .map(|wds| alloy_rlp::decode_exact(wds.as_slice()).unwrap()),
                 parent_beacon_block_root: value.parent_beacon_block_root,
+                slot_number: value.slot_number,
             },
             transactions: value
                 .transactions
@@ -161,6 +164,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
+                slot_number: Some(7),
             },
             transactions: Some(vec![bytes!("0xabcdef"), bytes!("0x123456")]),
             no_tx_pool: Some(true),

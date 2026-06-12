@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use crate::rkyv::driver::{
-    sorted_by_key, BatchReaderRkyv, BatchWithInclusionBlockRkyv, BlockInfoRkyv, ChannelRkyv,
-    FrameRkyv, HeadArtifactsRkyv, IdChannelRkyv, OpAttributesWithParentRkyv, PipelineCursorRkyv,
-    SingleBatchRkyv, SpanBatchRkyv, SystemConfigRkyv,
+    sorted_by_key, BatchReaderRkyv, BatchWithInclusionBlockRkyv, BlockInfoRkyv, FrameRkyv,
+    HeadArtifactsRkyv, IdChannelRkyv, OpAttributesWithParentRkyv, OrderedChannelRkyv,
+    PipelineCursorRkyv, SingleBatchRkyv, SpanBatchRkyv, SystemConfigRkyv,
 };
 use alloy_primitives::Bytes;
 use kona_derive::{
@@ -32,7 +32,7 @@ use kona_proof::l1::{OraclePipeline, ProviderDerivationPipeline};
 use kona_proof::FlushableCache;
 use kona_protocol::{
     BatchReader, BatchWithInclusionBlock, BlockInfo, Channel, ChannelId, Frame,
-    OpAttributesWithParent, SingleBatch, SpanBatch,
+    OpAttributesWithParent, OrderedChannel, SingleBatch, SpanBatch,
 };
 use spin::RwLock;
 use std::fmt::Debug;
@@ -205,6 +205,7 @@ impl CachedAttributesQueueStage {
                 l1_cfg,
                 l2_chain_provider,
                 l1_chain_provider,
+                None,
             ),
         }
     }
@@ -524,6 +525,7 @@ impl Clone for CachedChannelReader {
                 cursor: v.cursor,
                 max_rlp_bytes_per_channel: v.max_rlp_bytes_per_channel,
                 brotli_used: v.brotli_used,
+                origin_timestamp: v.origin_timestamp,
             }),
             prev: self.prev.clone(),
         }
@@ -685,9 +687,9 @@ where
 
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelAssembler {
-    /// The current [Channel] being assembled.
-    #[rkyv(with = rkyv::with::Map<ChannelRkyv>)]
-    pub channel: Option<Channel>,
+    /// The current [OrderedChannel] being assembled.
+    #[rkyv(with = rkyv::with::Map<OrderedChannelRkyv>)]
+    pub channel: Option<OrderedChannel>,
     /// The previous stage of the derivation pipeline.
     pub prev: CachedFrameQueue,
 }
@@ -1335,6 +1337,17 @@ pub mod tests {
         }
     }
 
+    pub fn gen_ordered_channel() -> OrderedChannel {
+        OrderedChannel {
+            id: gen_channel_id(),
+            open_block: gen_block_info(),
+            estimated_size: gen_usize(),
+            closed: true,
+            inputs: vec![gen_frame(), gen_frame(), gen_frame()],
+            highest_l1_inclusion_block: gen_block_info(),
+        }
+    }
+
     pub fn gen_pipeline_cursor() -> PipelineCursor {
         PipelineCursor {
             capacity: gen_usize(),
@@ -1371,6 +1384,7 @@ pub mod tests {
                             suggested_fee_recipient: gen_addr(),
                             withdrawals: Some(vec![gen_withdrawal(), gen_withdrawal()]),
                             parent_beacon_block_root: Some(gen_b256()),
+                            slot_number: Some(gen_u64()),
                         },
                         transactions: Some(vec![
                             gen_b256().to_vec().into(),
@@ -1449,6 +1463,7 @@ pub mod tests {
                     cursor: gen_usize(),
                     max_rlp_bytes_per_channel: gen_usize(),
                     brotli_used: gen_u64().is_multiple_of(2),
+                    origin_timestamp: gen_u64(),
                 }),
                 prev: channel_provider,
             },
@@ -1481,7 +1496,7 @@ pub mod tests {
         println!("ChannelAssembler");
         check_driver_channel_provider(CachedChannelProvider::ChannelAssembler(
             CachedChannelAssembler {
-                channel: Some(gen_channel()),
+                channel: Some(gen_ordered_channel()),
                 prev: gen_frame_queue(),
             },
         ))

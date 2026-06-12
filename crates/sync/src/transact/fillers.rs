@@ -24,7 +24,7 @@ use alloy::providers::{Provider, SendableTx};
 use alloy::transports::{RpcError, TransportResult};
 use async_trait::async_trait;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct PremiumExecGasFiller {
     pub inner: GasFiller,
     pub premium: u128,

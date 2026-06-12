@@ -15,13 +15,13 @@
 use crate::evm::partial::PartialResultAndState;
 use crate::rkyv::evm::AccountInfoRkyv;
 use crate::rkyv::primitives::{AddressDef, U256Def};
-use alloy_evm::op_revm::constants::{
-    ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT,
-    L1_BLOCK_CONTRACT, L1_OVERHEAD_SLOT, L1_SCALAR_SLOT, OPERATOR_FEE_SCALARS_SLOT,
-};
 use alloy_evm::revm::state::{AccountInfo, AccountStatus};
 use alloy_evm::revm::Database as RevmDatabase;
 use alloy_primitives::{Address, U256};
+use op_revm::constants::{
+    ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT,
+    L1_BLOCK_CONTRACT, L1_OVERHEAD_SLOT, L1_SCALAR_SLOT, OPERATOR_FEE_SCALARS_SLOT,
+};
 use std::collections::BTreeMap;
 use std::mem::take;
 

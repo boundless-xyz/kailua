@@ -22,7 +22,7 @@ use canoe_provider::{CanoeInput, CanoeProvider, CertVerifierCall};
 use kailua_sync::retry_res_timeout;
 use risc0_steel::alloy::providers::ProviderBuilder;
 use risc0_steel::ethereum::{
-    EthChainSpec, EthEvmEnv, EthEvmInput, ETH_HOLESKY_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC,
+    EthChainSpec, EthEvmEnv, EthEvmInput, ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC,
     ETH_SEPOLIA_CHAIN_SPEC,
 };
 use risc0_steel::host::BlockNumberOrTag;
@@ -70,7 +70,7 @@ impl KailuaCanoeSteelProvider {
         let chain_spec = match l1_chain_id {
             1 => ETH_MAINNET_CHAIN_SPEC.clone(),
             11155111 => ETH_SEPOLIA_CHAIN_SPEC.clone(),
-            17000 => ETH_HOLESKY_CHAIN_SPEC.clone(),
+            560048 => ETH_HOODI_CHAIN_SPEC.clone(),
             _ => EthChainSpec::new_single(l1_chain_id, Default::default()),
         };
 

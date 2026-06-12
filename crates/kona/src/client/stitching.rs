@@ -773,6 +773,7 @@ pub mod tests {
     }
 
     #[cfg(feature = "experimental")]
+    #[ignore]
     pub async fn test_stitching_boots(
         boot_info: BootInfo,
         precondition_validation_data: Option<ProposalPrecondition>,

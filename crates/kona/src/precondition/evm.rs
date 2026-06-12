@@ -15,14 +15,15 @@
 use crate::evm::expected::{ExpectedAccount, ExpectedStateEntry};
 use crate::evm::partial::{PartialAccount, PartialResultAndState};
 use crate::precondition::derivation::flatten_bytes;
-use alloy_evm::op_revm::OpHaltReason;
+use crate::rkyv::evm::post_exec_mode_byte;
 use alloy_evm::revm::context::BlockEnv;
 use alloy_evm::revm::context_interface::block::BlobExcessGasAndPrice;
 use alloy_evm::revm::context_interface::result::{
-    ExecutionResult, HaltReason, OutOfGasError, Output, SuccessReason,
+    ExecutionResult, HaltReason, OutOfGasError, Output, ResultGas, SuccessReason,
 };
 use alloy_op_evm::block::OpBlockExecutionCtx;
 use alloy_primitives::{Address, Log, B256};
+use op_revm::OpHaltReason;
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 
 /// Compute the chunk_trace commitment from the three input hashes.
@@ -69,6 +70,11 @@ pub fn hash_block_ctx(block_env: &BlockEnv, op_block_ctx: &OpBlockExecutionCtx) 
 /// per-account storage must likewise be sorted by slot. Both are walked in
 /// iteration order without further sorting, so the byte output is stable for
 /// any input that satisfies these invariants.
+///
+/// SDM future work: when `PartialResultAndState` gains the per-tx
+/// `PostExecExecutedTx` (see its doc in `evm/partial.rs`), it must be bound
+/// into this digest — an unbound field would let two executions differing in
+/// post-exec refunds share a commitment.
 pub fn hash_results(tx_hashes: &[B256], results: &[PartialResultAndState]) -> B256 {
     assert_eq!(
         tx_hashes.len(),
@@ -119,6 +125,7 @@ pub fn flatten_block_env(block_env: &BlockEnv) -> Vec<u8> {
         block_env.difficulty.to_be_bytes::<32>().as_slice(),
         flatten_opt_prevrandao(block_env.prevrandao.as_ref()).as_slice(),
         flatten_opt_blob_excess(block_env.blob_excess_gas_and_price.as_ref()).as_slice(),
+        block_env.slot_num.to_be_bytes().as_slice(),
     ]
     .concat()
 }
@@ -128,6 +135,11 @@ pub fn flatten_op_block_execution_ctx(ctx: &OpBlockExecutionCtx) -> Vec<u8> {
         ctx.parent_hash.as_slice(),
         flatten_opt_prevrandao(ctx.parent_beacon_block_root.as_ref()).as_slice(),
         flatten_bytes(&ctx.extra_data).as_slice(),
+        // Binds the mode discriminant only; `Verify`'s embedded payload is
+        // rejected upstream by `post_exec_mode_byte`. SDM future work: bind
+        // the payload too, or reconstruct it in-guest from the block's
+        // transactions (see `post_exec_mode_byte` in `rkyv/evm.rs`).
+        [post_exec_mode_byte(&ctx.post_exec_mode)].as_slice(),
     ]
     .concat()
 }
@@ -255,32 +267,42 @@ fn flatten_output(output: &Output) -> Vec<u8> {
     }
 }
 
+fn flatten_result_gas(gas: &ResultGas) -> Vec<u8> {
+    [
+        gas.total_gas_spent().to_be_bytes().as_slice(),
+        gas.state_gas_spent().to_be_bytes().as_slice(),
+        gas.inner_refunded().to_be_bytes().as_slice(),
+        gas.floor_gas().to_be_bytes().as_slice(),
+    ]
+    .concat()
+}
+
 pub fn flatten_execution_result(r: &ExecutionResult<OpHaltReason>) -> Vec<u8> {
     match r {
         ExecutionResult::Success {
             reason,
-            gas_used,
-            gas_refunded,
+            gas,
             logs,
             output,
         } => [
             [0u8, success_reason_disc(reason)].as_slice(),
-            gas_used.to_be_bytes().as_slice(),
-            gas_refunded.to_be_bytes().as_slice(),
+            flatten_result_gas(gas).as_slice(),
             flatten_logs(logs).as_slice(),
             flatten_output(output).as_slice(),
         ]
         .concat(),
-        ExecutionResult::Revert { gas_used, output } => [
+        ExecutionResult::Revert { gas, logs, output } => [
             [1u8].as_slice(),
-            gas_used.to_be_bytes().as_slice(),
+            flatten_result_gas(gas).as_slice(),
+            flatten_logs(logs).as_slice(),
             flatten_bytes(output).as_slice(),
         ]
         .concat(),
-        ExecutionResult::Halt { reason, gas_used } => [
+        ExecutionResult::Halt { reason, gas, logs } => [
             [2u8].as_slice(),
             flatten_op_halt_reason(reason).as_slice(),
-            gas_used.to_be_bytes().as_slice(),
+            flatten_result_gas(gas).as_slice(),
+            flatten_logs(logs).as_slice(),
         ]
         .concat(),
     }
@@ -413,9 +435,9 @@ pub mod tests {
     use super::*;
     use crate::evm::expected::ExpectedStorageEntry;
     use crate::evm::partial::{PartialAccount, PartialStateEntry, PartialStorageEntry};
-    use alloy_evm::revm::context_interface::result::ResultAndState;
-    use alloy_evm::revm::primitives::HashMap;
-    use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmStorageSlot};
+    use alloy_evm::revm::context_interface::result::{ResultAndState, ResultGas};
+    use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmStorage, EvmStorageSlot};
+    use alloy_op_evm::block::PostExecMode;
     use alloy_primitives::{Bytes, U256};
     use risc0_zkvm::sha::Digestible;
 
@@ -425,8 +447,7 @@ pub mod tests {
         ResultAndState {
             result: ExecutionResult::Success {
                 reason: SuccessReason::Return,
-                gas_used,
-                gas_refunded: 0,
+                gas: ResultGas::default().with_total_gas_spent(gas_used),
                 logs: vec![],
                 output: Output::Call(Bytes::new()),
             },
@@ -437,7 +458,8 @@ pub mod tests {
     fn stub_revert(gas_used: u64, output: &[u8]) -> ResultAndState<OpHaltReason> {
         ResultAndState {
             result: ExecutionResult::Revert {
-                gas_used,
+                gas: ResultGas::default().with_total_gas_spent(gas_used),
+                logs: vec![],
                 output: Bytes::copy_from_slice(output),
             },
             state: Default::default(),
@@ -446,7 +468,11 @@ pub mod tests {
 
     fn stub_halt(gas_used: u64, reason: OpHaltReason) -> ResultAndState<OpHaltReason> {
         ResultAndState {
-            result: ExecutionResult::Halt { reason, gas_used },
+            result: ExecutionResult::Halt {
+                reason,
+                gas: ResultGas::default().with_total_gas_spent(gas_used),
+                logs: vec![],
+            },
             state: Default::default(),
         }
     }
@@ -507,7 +533,7 @@ pub mod tests {
         status: AccountStatus,
         storage_entries: &[(U256, U256, U256)], // (slot, original, present)
     ) -> Account {
-        let mut storage: HashMap<U256, EvmStorageSlot> = Default::default();
+        let mut storage: EvmStorage = Default::default();
         for (slot, original, present) in storage_entries {
             storage.insert(*slot, EvmStorageSlot::new_changed(*original, *present, 0));
         }
@@ -607,12 +633,14 @@ pub mod tests {
                     difficulty: U256::ZERO,
                     prevrandao,
                     blob_excess_gas_and_price: blob_excess,
+                    slot_num: 0,
                 }
             };
         let make_ctx = |parent_beacon_block_root: Option<B256>, extra: &[u8]| OpBlockExecutionCtx {
             parent_hash: B256::repeat_byte(0xBB),
             parent_beacon_block_root,
             extra_data: Bytes::copy_from_slice(extra),
+            post_exec_mode: PostExecMode::Disabled,
         };
 
         // 8 distinct configurations across all option combos × extra_data sizes.
@@ -695,6 +723,9 @@ pub mod tests {
         perturb("blob.blob_gasprice", &|b, _| {
             b.blob_excess_gas_and_price.as_mut().unwrap().blob_gasprice ^= 1;
         });
+        perturb("slot_num", &|b, _| {
+            b.slot_num += 1;
+        });
 
         // OpBlockExecutionCtx fields
         perturb("parent_hash", &|_, c| {
@@ -705,6 +736,9 @@ pub mod tests {
         });
         perturb("extra_data", &|_, c| {
             c.extra_data = Bytes::from_static(b"different");
+        });
+        perturb("post_exec_mode", &|_, c| {
+            c.post_exec_mode = PostExecMode::Produce;
         });
     }
 
@@ -789,12 +823,12 @@ pub mod tests {
             ),
         );
         let mut s_ref0 = stub_success(21_000);
-        if let ExecutionResult::Success { gas_refunded, .. } = &mut s_ref0.result {
-            *gas_refunded = 0;
+        if let ExecutionResult::Success { gas, .. } = &mut s_ref0.result {
+            gas.set_refunded(0);
         }
         let mut s_ref1 = stub_success(21_000);
-        if let ExecutionResult::Success { gas_refunded, .. } = &mut s_ref1.result {
-            *gas_refunded = 1;
+        if let ExecutionResult::Success { gas, .. } = &mut s_ref1.result {
+            gas.set_refunded(1);
         }
         assert_ne!(
             hash_results(&[B256::ZERO], &[PartialResultAndState::from(s_ref0)]),

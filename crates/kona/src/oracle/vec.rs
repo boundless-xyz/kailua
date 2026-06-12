@@ -341,7 +341,13 @@ impl PreimageOracleClient for VecOracle {
     /// - On non-`zkvm` targets: Panics when the preimages vector is depleted.
     async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
         let mut preimages = self.preimages.lock().unwrap();
-        let mut queue = QUEUE.lock().unwrap();
+        let mut queue = QUEUE.lock().unwrap_or_else(|poisoned| {
+            // restore the empty-queue invariant when needed (relevant for concurrent testing only)
+            QUEUE.clear_poison();
+            let mut queue = poisoned.into_inner();
+            queue.clear();
+            queue
+        });
         // handle variations in memory access operations due to hashmap usages
         loop {
             if preimages.is_empty() {
@@ -463,7 +469,6 @@ pub mod tests {
     use std::collections::HashSet;
 
     pub fn prepare_vec_oracle(value_count: usize, copies: usize) -> (VecOracle, Vec<Vec<u8>>) {
-        QUEUE.clear_poison();
         let mut oracle = VecOracle::default();
         assert_eq!(oracle.preimage_count(), 0);
 
@@ -759,9 +764,12 @@ pub mod tests {
             .0;
         exhaust_vec_oracle(1, oracle.clone(), values).await;
         assert!(std::panic::catch_unwind(|| block_on(oracle.get(only_key))).is_err());
-        // clear position state
+        // the panic above poisons the per-oracle preimages lock
         assert!(oracle.preimages.is_poisoned());
-        QUEUE.clear_poison();
+        // the next lookup recovers the global queue from the poisoned state
+        let (mut oracle, values) = prepare_vec_oracle(1, 1);
+        oracle.finalize_preimages(usize::MAX, true);
+        exhaust_vec_oracle(1, oracle, values).await;
     }
 
     #[tokio::test]

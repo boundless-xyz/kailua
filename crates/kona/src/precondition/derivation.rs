@@ -29,7 +29,7 @@ use kona_driver::PipelineCursor;
 use kona_executor::BlockBuildingOutcome;
 use kona_protocol::{
     Batch, BatchWithInclusionBlock, BlockInfo, Channel, Frame, L2BlockInfo, OpAttributesWithParent,
-    SingleBatch, SpanBatch, SpanBatchElement, SpanBatchTransactions,
+    OrderedChannel, SingleBatch, SpanBatch, SpanBatchElement, SpanBatchTransactions,
 };
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use risc0_zkvm::sha::{Digestible, Impl as SHA2, Sha256};
@@ -411,6 +411,24 @@ pub fn flatten_channel(channel: &Channel) -> Vec<u8> {
     .concat()
 }
 
+pub fn flatten_ordered_channel(channel: &OrderedChannel) -> Vec<u8> {
+    let inputs = channel
+        .inputs
+        .iter()
+        .map(flatten_frame)
+        .collect::<Vec<_>>()
+        .concat();
+    [
+        channel.id.as_slice(),
+        flatten_block_info(&channel.open_block).as_slice(),
+        (channel.estimated_size as u64).to_be_bytes().as_slice(),
+        &[channel.closed as u8],
+        inputs.as_slice(),
+        flatten_block_info(&channel.highest_l1_inclusion_block).as_slice(),
+    ]
+    .concat()
+}
+
 pub fn flatten_frame(frame: &Frame) -> Vec<u8> {
     [
         &frame.id,
@@ -638,7 +656,7 @@ impl Digestible for CachedChannelAssembler {
             &[0x04],
             self.channel
                 .as_ref()
-                .map(flatten_channel)
+                .map(flatten_ordered_channel)
                 .unwrap_or_default()
                 .as_slice(),
             self.prev.digest().as_bytes(),

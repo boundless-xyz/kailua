@@ -24,8 +24,8 @@ use kona_executor::BlockBuildingOutcome;
 use kona_genesis::SystemConfig;
 use kona_protocol::{
     Batch, BatchReader, BatchWithInclusionBlock, BlockInfo, Channel, ChannelId, Frame, L2BlockInfo,
-    OpAttributesWithParent, SingleBatch, SpanBatch, SpanBatchBits, SpanBatchElement,
-    SpanBatchTransactions,
+    OpAttributesWithParent, OrderedChannel, SingleBatch, SpanBatch, SpanBatchBits,
+    SpanBatchElement, SpanBatchTransactions,
 };
 use op_alloy_consensus::OpReceiptEnvelope;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
@@ -334,7 +334,80 @@ where
     }
 }
 
-pub type RkyvedBatchReader = (Option<Vec<u8>>, Vec<u8>, usize, usize, bool);
+pub type RkyvedOrderedChannel = (
+    ChannelId,
+    RkyvedBlockInfo,
+    usize,
+    bool,
+    Vec<RkyvedFrame>,
+    RkyvedBlockInfo,
+);
+
+pub struct OrderedChannelRkyv;
+
+impl OrderedChannelRkyv {
+    pub fn rkyv(value: &OrderedChannel) -> RkyvedOrderedChannel {
+        (
+            value.id,
+            BlockInfoRkyv::rkyv(&value.open_block),
+            value.estimated_size,
+            value.closed,
+            value.inputs.iter().map(FrameRkyv::rkyv).collect(),
+            BlockInfoRkyv::rkyv(&value.highest_l1_inclusion_block),
+        )
+    }
+
+    pub fn raw(rkyved: RkyvedOrderedChannel) -> OrderedChannel {
+        OrderedChannel {
+            id: rkyved.0,
+            open_block: BlockInfoRkyv::raw(rkyved.1),
+            estimated_size: rkyved.2,
+            closed: rkyved.3,
+            inputs: rkyved.4.into_iter().map(FrameRkyv::raw).collect(),
+            highest_l1_inclusion_block: BlockInfoRkyv::raw(rkyved.5),
+        }
+    }
+}
+
+impl ArchiveWith<OrderedChannel> for OrderedChannelRkyv {
+    type Archived = Archived<RkyvedOrderedChannel>;
+    type Resolver = Resolver<RkyvedOrderedChannel>;
+
+    fn resolve_with(field: &OrderedChannel, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        let rkyved = OrderedChannelRkyv::rkyv(field);
+        <RkyvedOrderedChannel as Archive>::resolve(&rkyved, resolver, out);
+    }
+}
+
+impl<S> SerializeWith<OrderedChannel, S> for OrderedChannelRkyv
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    <S as Fallible>::Error: Source,
+{
+    fn serialize_with(
+        field: &OrderedChannel,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let rkyved = OrderedChannelRkyv::rkyv(field);
+        <RkyvedOrderedChannel as rkyv::Serialize<S>>::serialize(&rkyved, serializer)
+    }
+}
+
+impl<D> DeserializeWith<Archived<RkyvedOrderedChannel>, OrderedChannel, D> for OrderedChannelRkyv
+where
+    D: Fallible + ?Sized,
+    <D as Fallible>::Error: Source,
+{
+    fn deserialize_with(
+        field: &Archived<RkyvedOrderedChannel>,
+        deserializer: &mut D,
+    ) -> Result<OrderedChannel, D::Error> {
+        let rkyved: RkyvedOrderedChannel = rkyv::Deserialize::deserialize(field, deserializer)?;
+        Ok(OrderedChannelRkyv::raw(rkyved))
+    }
+}
+
+pub type RkyvedBatchReader = (Option<Vec<u8>>, Vec<u8>, usize, usize, bool, u64);
 
 pub struct BatchReaderRkyv;
 
@@ -346,6 +419,7 @@ impl BatchReaderRkyv {
             value.cursor,
             value.max_rlp_bytes_per_channel,
             value.brotli_used,
+            value.origin_timestamp,
         )
     }
 
@@ -356,6 +430,7 @@ impl BatchReaderRkyv {
             cursor: rkyved.2,
             max_rlp_bytes_per_channel: rkyved.3,
             brotli_used: rkyved.4,
+            origin_timestamp: rkyved.5,
         }
     }
 }
@@ -726,6 +801,7 @@ pub type RkyvedPayloadAttributes = (
     [u8; 20],
     Option<Vec<RkyvedWithdrawal>>,
     Option<[u8; 32]>,
+    Option<u64>,
 );
 
 pub struct PayloadAttributesRkyv;
@@ -741,6 +817,7 @@ impl PayloadAttributesRkyv {
                 .as_ref()
                 .map(|v| v.iter().map(WithdrawalRkyv::rkyv).collect()),
             value.parent_beacon_block_root.as_ref().map(|r| r.0),
+            value.slot_number,
         )
     }
 
@@ -753,6 +830,7 @@ impl PayloadAttributesRkyv {
                 .3
                 .map(|v| v.into_iter().map(WithdrawalRkyv::raw).collect()),
             parent_beacon_block_root: rkyved.4.map(|v| v.into()),
+            slot_number: rkyved.5,
         }
     }
 }
@@ -880,6 +958,17 @@ pub type RkyvedHeaderHashes = (
     Option<[u8; 32]>,
 );
 
+/// Optional header fields introduced by post-merge upgrades, grouped into a
+/// sub-tuple so `RkyvedHeader` stays within rkyv's 13-element tuple-arity limit
+/// (mirrors how `RkyvedHeaderHashes` groups the fixed-byte fields):
+/// `(parent_beacon_block_root, requests_hash, block_access_list_hash, slot_number)`.
+pub type RkyvedHeaderExtras = (
+    Option<[u8; 32]>,
+    Option<[u8; 32]>,
+    Option<[u8; 32]>,
+    Option<u64>,
+);
+
 pub type RkyvedHeader = (
     RkyvedHeaderHashes,
     [u8; 32],
@@ -892,8 +981,7 @@ pub type RkyvedHeader = (
     Option<u64>,
     Option<u64>,
     Option<u64>,
-    Option<[u8; 32]>,
-    Option<[u8; 32]>,
+    RkyvedHeaderExtras,
 );
 
 pub struct HeaderRkyv;
@@ -922,8 +1010,12 @@ impl HeaderRkyv {
             value.base_fee_per_gas,
             value.blob_gas_used,
             value.excess_blob_gas,
-            value.parent_beacon_block_root.map(|v| v.0),
-            value.requests_hash.map(|v| v.0),
+            (
+                value.parent_beacon_block_root.map(|v| v.0),
+                value.requests_hash.map(|v| v.0),
+                value.block_access_list_hash.map(|v| v.0),
+                value.slot_number,
+            ),
         )
     }
 
@@ -948,8 +1040,10 @@ impl HeaderRkyv {
             base_fee_per_gas: rkyved.8,
             blob_gas_used: rkyved.9,
             excess_blob_gas: rkyved.10,
-            parent_beacon_block_root: rkyved.11.map(|v| v.into()),
-            requests_hash: rkyved.12.map(|v| v.into()),
+            parent_beacon_block_root: rkyved.11 .0.map(|v| v.into()),
+            requests_hash: rkyved.11 .1.map(|v| v.into()),
+            block_access_list_hash: rkyved.11 .2.map(|v| v.into()),
+            slot_number: rkyved.11 .3,
         }
     }
 }
@@ -1230,5 +1324,68 @@ where
     ) -> Result<IdChannel, D::Error> {
         let rkyved: RkyvedIdChannel = rkyv::Deserialize::deserialize(field, deserializer)?;
         Ok(IdChannelRkyv::raw(rkyved))
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::{from_bytes_with, to_bytes_with};
+    use alloy_primitives::B256;
+
+    fn test_block_info(number: u64) -> BlockInfo {
+        BlockInfo {
+            hash: B256::repeat_byte(0x11),
+            number,
+            parent_hash: B256::repeat_byte(0x22),
+            timestamp: 1700000000 + number,
+        }
+    }
+
+    fn test_frame(number: u16, is_last: bool) -> Frame {
+        Frame {
+            id: [0xab; 16],
+            number,
+            data: vec![number as u8; 8],
+            is_last,
+        }
+    }
+
+    fn create_test_channel() -> Channel {
+        Channel {
+            id: [0xab; 16],
+            open_block: test_block_info(100),
+            estimated_size: 420,
+            closed: true,
+            highest_frame_number: 1,
+            last_frame_number: 1,
+            inputs: [(0, test_frame(0, false)), (1, test_frame(1, true))]
+                .into_iter()
+                .collect(),
+            highest_l1_inclusion_block: test_block_info(101),
+        }
+    }
+
+    #[test]
+    fn test_channel_rkyv_roundtrip() {
+        let original = create_test_channel();
+        let bytes = to_bytes_with!(ChannelRkyv, &original);
+        let deserialized = from_bytes_with!(ChannelRkyv, Channel, &bytes);
+        // Channel lacks PartialEq; compare canonical rkyved tuples instead.
+        assert_eq!(
+            ChannelRkyv::rkyv(&original),
+            ChannelRkyv::rkyv(&deserialized)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Bad Batch rkyv.")]
+    fn test_batch_with_inclusion_block_raw_rejects_batchless_tuple() {
+        let _ = BatchWithInclusionBlockRkyv::raw((
+            BlockInfoRkyv::rkyv(&test_block_info(1)),
+            None,
+            None,
+        ));
     }
 }

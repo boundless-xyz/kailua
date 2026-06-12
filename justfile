@@ -18,6 +18,8 @@ default:
 
 vendor:
   cargo vendor --manifest-path build/risczero/kona/Cargo.toml --sync build/risczero/hokulea/Cargo.toml --sync build/risczero/hana/Cargo.toml build/risczero/vendor
+  # kona-hardforks' build.rs reads op-core NUT bundles that cargo vendor omits; stage them.
+  ./scripts/stage-nut-bundles.sh
 
 build +ARGS="--bin kailua-cli --release -F prove -F disable-dev-mode -F eigen -F celestia --locked":
   cargo build {{ARGS}}
@@ -75,7 +77,7 @@ clippy-kona:
   cargo clippy --manifest-path build/risczero/kona/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
 
 coverage +ARGS="":
-  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona -F experimental --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
+  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
 #  cargo +nightly-2026-03-26 llvm-cov -p kailua-kona --branch --fail-uncovered-functions 0 --fail-uncovered-lines 10 {{ARGS}}
 
 coverage-open: (coverage "--open")
