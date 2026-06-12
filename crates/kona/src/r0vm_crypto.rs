@@ -54,7 +54,7 @@ impl alloy_evm::revm::precompile::Crypto for R0vmCrypto {
         exp: &[u8],
         modulus: &[u8],
     ) -> Result<Vec<u8>, alloy_evm::revm::precompile::PrecompileHalt> {
-        use alloy_evm::revm::precompile::{Crypto, DefaultCrypto};
+        use alloy_evm::revm::precompile::DefaultCrypto;
         match risc0_crypto_evm::modexp(base, exp, modulus) {
             Some(out) => Ok(out),
             None => DefaultCrypto.modexp(base, exp, modulus),
