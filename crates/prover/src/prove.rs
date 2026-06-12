@@ -116,24 +116,24 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         );
     }
 
-    // preload precondition data into KV store
-    let (proposal_precondition_hash, proposal_data_hash) = match fetch_precondition_data(&args)
-        .await
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-    {
-        Some(data) => {
-            let precondition_validation_data_hash = data.hash();
-            set_var(
-                "PRECONDITION_VALIDATION_DATA_HASH",
-                precondition_validation_data_hash.to_string(),
-            );
-            (data.precondition_hash(), precondition_validation_data_hash)
-        }
-        None => (B256::ZERO, B256::ZERO),
-    };
-
     // create concurrent db
     let disk_kv_store = create_disk_kv_store(&args.kona);
+    // preload precondition data into KV store
+    let (proposal_precondition_hash, proposal_data_hash) =
+        match fetch_precondition_data(&args, disk_kv_store.as_ref())
+            .await
+            .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+        {
+            Some(data) => {
+                let precondition_validation_data_hash = data.hash();
+                set_var(
+                    "PRECONDITION_VALIDATION_DATA_HASH",
+                    precondition_validation_data_hash.to_string(),
+                );
+                (data.precondition_hash(), precondition_validation_data_hash)
+            }
+            None => (B256::ZERO, B256::ZERO),
+        };
     // perform preflight
     if args.proving.num_concurrent_preflights == 0 {
         args.proving.num_concurrent_preflights = 1;

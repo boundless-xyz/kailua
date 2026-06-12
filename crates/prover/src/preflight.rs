@@ -109,6 +109,7 @@ pub async fn get_blob_fetch_request(
 
 pub async fn fetch_precondition_data(
     cfg: &ProveArgs,
+    disk_kv_store: Option<&RWLKeyValueStore>,
 ) -> anyhow::Result<Option<ProposalPrecondition>> {
     // Determine precondition hash
     let hash_arguments = [
@@ -156,13 +157,18 @@ pub async fn fetch_precondition_data(
             bail!("Too many precondition_params values provided");
         };
 
-        let kv_store = cfg.kona.create_key_value_store()?;
-        let mut store = kv_store.write().await;
         let hash = precondition_validation_data.hash();
-        store.set(
-            PreimageKey::new(*hash, PreimageKeyType::Sha256).into(),
-            precondition_validation_data.to_vec(),
-        )?;
+        if let Some(disk_kv_store) = disk_kv_store {
+            let mut store = disk_kv_store.clone();
+            store.set(
+                PreimageKey::new(*hash, PreimageKeyType::Sha256).into(),
+                precondition_validation_data.to_vec(),
+            )?;
+        } else {
+            warn!(
+                "No data directory; precondition data preimage is unavailable to client oracles."
+            );
+        }
         set_var("PRECONDITION_VALIDATION_DATA_HASH", hash.to_string());
         info!("Precondition data hash: {hash}");
         Ok(Some(precondition_validation_data))
