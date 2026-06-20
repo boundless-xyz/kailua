@@ -61,7 +61,7 @@ You can test out Kailua's validity proving on a running chain through the follow
     * Compiles a release build of Kailua
 2. `just demo [BLOCKS_PER_PROOF] [L1_RPC] [BEACON_RPC] [L2_RPC] [OP_NODE_RPC]:`
     * Runs the release build against the target chain endpoints.
-    * See [here](validator.md#delegated-proof-generation) for advanced proving configuration
+    * See [here](book/src/validator.md#delegated-proof-generation) for advanced proving configuration
 
 ## Local Devnet
 
