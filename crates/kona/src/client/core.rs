@@ -290,6 +290,7 @@ where
                 _,
                 _,
                 PostExecEvmFactoryAdapter<CachedEvmFactory>,
+                _,
             > = KonaExecutor::new(
                 rollup_config.as_ref(),
                 l2_provider.clone(),
@@ -298,14 +299,16 @@ where
                     partial_executions,
                     partials_collector,
                 )),
+                alloy_op_evm::block::OpAlloyReceiptBuilder::default(),
                 None,
             );
             #[cfg(not(feature = "experimental"))]
-            let mut kona_executor: KonaExecutor<'_, _, _, OpEvmFactory> = KonaExecutor::new(
+            let mut kona_executor: KonaExecutor<'_, _, _, OpEvmFactory, _> = KonaExecutor::new(
                 rollup_config.as_ref(),
                 l2_provider.clone(),
                 l2_provider.clone(),
                 OpEvmFactory::default(),
+                alloy_op_evm::block::OpAlloyReceiptBuilder::default(),
                 None,
             );
             kona_executor.update_safe_head(safe_head);
@@ -394,7 +397,7 @@ where
 
         #[cfg(feature = "experimental")]
         let cached_executor = CachedExecutor::<
-            KonaExecutor<'_, _, _, PostExecEvmFactoryAdapter<CachedEvmFactory>>,
+            KonaExecutor<'_, _, _, PostExecEvmFactoryAdapter<CachedEvmFactory>, _>,
         >::new(
             execution_cache,
             rollup_config.as_ref(),
@@ -407,7 +410,7 @@ where
             execution_trace,
         );
         #[cfg(not(feature = "experimental"))]
-        let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, OpEvmFactory>>::new(
+        let cached_executor = CachedExecutor::<KonaExecutor<'_, _, _, OpEvmFactory, _>>::new(
             execution_cache,
             rollup_config.as_ref(),
             l2_provider.clone(),

@@ -234,7 +234,7 @@ pub async fn start_server<
         )
     } else {
         let backend = OnlineHostBackend::new(backend, kv_store.clone(), providers, handler)
-            .with_proactive_hint(proactive_hint);
+            .with_high_level_hint(proactive_hint);
 
         task::spawn(
             PreimageServer::new(

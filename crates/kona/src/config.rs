@@ -156,7 +156,7 @@ pub fn hard_fork_config_hash(hard_fork_config: &HardForkConfig) -> [u8; 32] {
         opt_byte_arr(hard_fork_config.isthmus_time.map(|v| v.to_be_bytes())).as_slice(),
         opt_byte_arr(hard_fork_config.jovian_time.map(|v| v.to_be_bytes())).as_slice(),
         opt_byte_arr(hard_fork_config.karst_time.map(|v| v.to_be_bytes())).as_slice(),
-        opt_byte_arr(hard_fork_config.interop_time.map(|v| v.to_be_bytes())).as_slice(),
+        opt_byte_arr(hard_fork_config.lagoon_time.map(|v| v.to_be_bytes())).as_slice(),
     ]
     .concat();
     let digest = SHA2::hash_bytes(hard_fork_config_bytes.as_slice());
@@ -438,7 +438,7 @@ mod tests {
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
                 jovian_time: Some(0),
-                interop_time: Some(0),
+                lagoon_time: Some(0),
                 pectra_blob_schedule_time: Some(0),
                 karst_time: Some(0),
             },
@@ -688,7 +688,7 @@ mod tests {
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.hardforks.karst_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
-        rollup_config.hardforks.interop_time = Some(1);
+        rollup_config.hardforks.lagoon_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         rollup_config.hardforks.pectra_blob_schedule_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
@@ -791,7 +791,7 @@ mod tests {
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
                 jovian_time: Some(0),
-                interop_time: Some(0),
+                lagoon_time: Some(0),
                 pectra_blob_schedule_time: Some(0),
                 karst_time: Some(0),
             },
@@ -893,7 +893,7 @@ mod tests {
         });
 
         test_config_hash_ok(&rollup_config, &l1_config, |r, _| {
-            r.hardforks.interop_time = Some(u64::MAX)
+            r.hardforks.lagoon_time = Some(u64::MAX)
         });
 
         test_config_hash_ok(&rollup_config, &l1_config, |r, _| {

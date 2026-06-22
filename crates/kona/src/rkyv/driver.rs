@@ -1088,14 +1088,14 @@ pub type RkyvedBlockBuildingOutcome = (RkyvedHeader, RkyvedOPBlockExecutionResul
 pub struct BlockBuildingOutcomeRkyv;
 
 impl BlockBuildingOutcomeRkyv {
-    pub fn rkyv(value: &BlockBuildingOutcome) -> RkyvedBlockBuildingOutcome {
+    pub fn rkyv(value: &BlockBuildingOutcome<OpReceiptEnvelope>) -> RkyvedBlockBuildingOutcome {
         (
             HeaderRkyv::rkyv(value.header.as_ref()),
             OPBlockExecutionResultRkyv::rkyv(&value.execution_result),
         )
     }
 
-    pub fn raw(rkyved: RkyvedBlockBuildingOutcome) -> BlockBuildingOutcome {
+    pub fn raw(rkyved: RkyvedBlockBuildingOutcome) -> BlockBuildingOutcome<OpReceiptEnvelope> {
         BlockBuildingOutcome {
             header: HeaderRkyv::raw(rkyved.0).seal_slow(),
             execution_result: OPBlockExecutionResultRkyv::raw(rkyved.1),
@@ -1103,7 +1103,7 @@ impl BlockBuildingOutcomeRkyv {
     }
 }
 
-pub type HeadArtifacts = (BlockBuildingOutcome, Vec<Bytes>);
+pub type HeadArtifacts = (BlockBuildingOutcome<OpReceiptEnvelope>, Vec<Bytes>);
 pub type RkyvedHeadArtifacts = (RkyvedBlockBuildingOutcome, Vec<Vec<u8>>);
 
 pub struct HeadArtifactsRkyv;
