@@ -313,6 +313,7 @@ pub fn l1_config_hash(l1_config: &L1ChainConfig) -> [u8; 32] {
         opt_byte_arr(l1_config.cancun_time.map(|t| t.to_be_bytes())).as_slice(),
         opt_byte_arr(l1_config.prague_time.map(|t| t.to_be_bytes())).as_slice(),
         opt_byte_arr(l1_config.osaka_time.map(|t| t.to_be_bytes())).as_slice(),
+        opt_byte_arr(l1_config.amsterdam_time.map(|t| t.to_be_bytes())).as_slice(),
         opt_byte_arr(l1_config.bpo1_time.map(|t| t.to_be_bytes())).as_slice(),
         opt_byte_arr(l1_config.bpo2_time.map(|t| t.to_be_bytes())).as_slice(),
         opt_byte_arr(l1_config.bpo3_time.map(|t| t.to_be_bytes())).as_slice(),
@@ -504,6 +505,8 @@ mod tests {
         l1_config.prague_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         l1_config.osaka_time = Some(1);
+        assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
+        l1_config.amsterdam_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
         l1_config.bpo1_time = Some(1);
         assert!(hashes.insert(config_hash(&rollup_config, &l1_config)));
@@ -817,6 +820,9 @@ mod tests {
         });
         test_config_hash_ok(&rollup_config, &l1_config, |_, c| {
             c.osaka_time = Some(u64::MAX)
+        });
+        test_config_hash_ok(&rollup_config, &l1_config, |_, c| {
+            c.amsterdam_time = Some(u64::MAX)
         });
 
         // Rollup config safety
