@@ -26,7 +26,7 @@ use alloy_evm::revm::state::AccountStatus;
 use alloy_evm::revm::{Database as RevmDatabase, Inspector};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::post_exec::{
-    PostExecEvm, PostExecEvmFactoryHooks, PostExecExecutedTx, PostExecTxContext,
+    PostExecEvm, PostExecEvmFactoryHooks, PostExecExecutedTx, PostExecTxContext, WarmingState,
 };
 use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx, OpTxError};
 use alloy_primitives::{Address, Bytes, B256};
@@ -332,6 +332,14 @@ where
     fn take_last_post_exec_tx_result(&mut self) -> PostExecExecutedTx {
         self.evm.take_last_post_exec_tx_result()
     }
+
+    fn warming_state(&self) -> WarmingState {
+        self.evm.warming_state()
+    }
+
+    fn seed_warming_state(&mut self, state: WarmingState) {
+        self.evm.seed_warming_state(state)
+    }
 }
 
 /// Factory that wraps `OpEvmFactory` and dispenses [`CachedEvm`] instances seeded with
@@ -453,5 +461,21 @@ impl PostExecEvmFactoryHooks for CachedEvmFactory {
         I: Inspector<Self::Context<DB>>,
     {
         evm.take_last_post_exec_tx_result()
+    }
+
+    fn warming_state<DB, I>(evm: &Self::Evm<DB, I>) -> WarmingState
+    where
+        DB: Database,
+        I: Inspector<Self::Context<DB>>,
+    {
+        evm.warming_state()
+    }
+
+    fn seed_warming_state<DB, I>(evm: &mut Self::Evm<DB, I>, state: WarmingState)
+    where
+        DB: Database,
+        I: Inspector<Self::Context<DB>>,
+    {
+        evm.seed_warming_state(state)
     }
 }

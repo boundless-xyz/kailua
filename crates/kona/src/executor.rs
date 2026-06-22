@@ -18,6 +18,7 @@ use crate::rkyv::optimism::OpPayloadAttributesRkyv;
 use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
 use alloy_evm::EvmFactory;
+use alloy_op_evm::block::OpAlloyReceiptBuilder;
 use alloy_primitives::{Sealed, B256};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
@@ -30,6 +31,7 @@ use kona_proof::executor::KonaExecutor;
 use kona_proof::l2::OracleL2ChainProvider;
 use kona_proof::FlushableCache;
 use kona_protocol::{BatchValidationProvider, BlockInfo};
+use op_alloy_consensus::OpReceiptEnvelope;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use spin::RwLock;
 use std::fmt::Debug;
@@ -65,7 +67,7 @@ pub struct Execution {
     pub attributes: OpPayloadAttributes,
     /// Output block from execution
     #[rkyv(with = BlockBuildingOutcomeRkyv)]
-    pub artifacts: BlockBuildingOutcome,
+    pub artifacts: BlockBuildingOutcome<OpReceiptEnvelope>,
     /// Output root after execution
     #[rkyv(with = B256Def)]
     pub claimed_output: B256,
@@ -106,7 +108,7 @@ pub struct CachedExecutor<E: Executor + Send + Sync + Debug> {
     pub collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
 }
 
-impl<'a, P, H, Evm> CachedExecutor<KonaExecutor<'a, P, H, Evm>>
+impl<'a, P, H, Evm> CachedExecutor<KonaExecutor<'a, P, H, Evm, OpAlloyReceiptBuilder>>
 where
     P: TrieDBProvider + Send + Sync + Clone + Debug,
     H: TrieHinter + Send + Sync + Clone + Debug,
@@ -137,7 +139,7 @@ where
         trie_hinter: H,
         evm_factory: Evm,
         collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
-    ) -> CachedExecutor<KonaExecutor<'a, P, H, Evm>> {
+    ) -> CachedExecutor<KonaExecutor<'a, P, H, Evm, OpAlloyReceiptBuilder>> {
         CachedExecutor {
             cache: {
                 // The cache elements will be popped from first to last
@@ -150,6 +152,7 @@ where
                 trie_provider,
                 trie_hinter,
                 evm_factory,
+                OpAlloyReceiptBuilder::default(),
                 None,
             ),
             collection_target,
@@ -169,8 +172,11 @@ impl<E: Executor + Send + Sync + Debug> Drop for CachedExecutor<E> {
 }
 
 #[async_trait]
-impl<E: Executor + Send + Sync + Debug> Executor for CachedExecutor<E> {
+impl<E: Executor<Receipt = OpReceiptEnvelope> + Send + Sync + Debug> Executor
+    for CachedExecutor<E>
+{
     type Error = <E as Executor>::Error;
+    type Receipt = OpReceiptEnvelope;
 
     /// An asynchronous function that waits until the executor is ready.
     ///
@@ -243,7 +249,7 @@ impl<E: Executor + Send + Sync + Debug> Executor for CachedExecutor<E> {
     async fn execute_payload(
         &mut self,
         attributes: OpPayloadAttributes,
-    ) -> Result<BlockBuildingOutcome, Self::Error> {
+    ) -> Result<BlockBuildingOutcome<OpReceiptEnvelope>, Self::Error> {
         let agreed_output = self.compute_output_root()?;
         if self
             .cache
@@ -484,13 +490,14 @@ pub mod tests {
 
     #[derive(Clone, Debug)]
     pub struct TestExecutor {
-        pub outcomes: Vec<BlockBuildingOutcome>,
+        pub outcomes: Vec<BlockBuildingOutcome<OpReceiptEnvelope>>,
         pub output_roots: Vec<B256>,
     }
 
     #[async_trait]
     impl Executor for TestExecutor {
         type Error = kona_executor::ExecutorError;
+        type Receipt = OpReceiptEnvelope;
 
         async fn wait_until_ready(&mut self) {}
 
@@ -499,7 +506,7 @@ pub mod tests {
         async fn execute_payload(
             &mut self,
             _attributes: OpPayloadAttributes,
-        ) -> Result<BlockBuildingOutcome, Self::Error> {
+        ) -> Result<BlockBuildingOutcome<OpReceiptEnvelope>, Self::Error> {
             self.outcomes
                 .pop()
                 .ok_or(kona_executor::ExecutorError::MissingExecutor)

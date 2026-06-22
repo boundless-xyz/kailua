@@ -3,28 +3,28 @@ paths = ["./kona", "./hokulea", "./hana"]
 [term]
 color = "always"
 
-[source."git+https://github.com/Layr-Labs/hokulea?tag=hokulea-client/v1.1.9"]
+[source."git+https://github.com/Layr-Labs/hokulea?tag=hokulea-client/v1.2.1"]
 git = "https://github.com/Layr-Labs/hokulea"
-tag = "hokulea-client/v1.1.9"
+tag = "hokulea-client/v1.2.1"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/Layr-Labs/rust-kzg-bn254.git"]
 git = "https://github.com/Layr-Labs/rust-kzg-bn254.git"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/celestiaorg/hana?rev=96c8fe0e36288322ea51713c703b80cac4ebc024"]
+[source."git+https://github.com/celestiaorg/hana?rev=2401496ab640bb0d92944c2672a4806ec11b84e4"]
 git = "https://github.com/celestiaorg/hana"
-rev = "96c8fe0e36288322ea51713c703b80cac4ebc024"
+rev = "2401496ab640bb0d92944c2672a4806ec11b84e4"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/ethereum-optimism/optimism?tag=kona-client/v1.2.14"]
+[source."git+https://github.com/ethereum-optimism/optimism?tag=kona-client/v1.6.0"]
 git = "https://github.com/ethereum-optimism/optimism"
-tag = "kona-client/v1.5.2"
+tag = "kona-client/v1.6.0"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/paradigmxyz/reth?tag=v1.9.3"]
+[source."git+https://github.com/paradigmxyz/reth?tag=v2.2.0"]
 git = "https://github.com/paradigmxyz/reth"
-tag = "v1.9.3"
+tag = "v2.2.0"
 replace-with = "vendored-sources"
 
 [source.vendored-sources]

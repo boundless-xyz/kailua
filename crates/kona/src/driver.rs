@@ -34,6 +34,7 @@ use kona_protocol::{
     BatchReader, BatchWithInclusionBlock, BlockInfo, Channel, ChannelId, Frame,
     OpAttributesWithParent, OrderedChannel, SingleBatch, SpanBatch,
 };
+use op_alloy_consensus::OpReceiptEnvelope;
 use spin::RwLock;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -48,7 +49,7 @@ pub struct CachedDriver {
     pub cursor: PipelineCursor,
     /// The safe head's execution artifacts + Transactions
     #[rkyv(with = rkyv::with::Map<HeadArtifactsRkyv>)]
-    pub safe_head_artifacts: Option<(BlockBuildingOutcome, Vec<Bytes>)>,
+    pub safe_head_artifacts: Option<(BlockBuildingOutcome<OpReceiptEnvelope>, Vec<Bytes>)>,
     /// A pipeline abstraction.
     pub pipeline: CachedDerivationPipeline,
 }
@@ -67,7 +68,7 @@ impl CachedDriver {
         l2_chain_provider: L2,
     ) -> KonaDriver<E, O, L1, L2, DA>
     where
-        E: Executor + Send + Sync + Debug,
+        E: Executor<Receipt = OpReceiptEnvelope> + Send + Sync + Debug,
         O: CommsClient + FlushableCache + Send + Sync + Debug,
         L1: ChainProvider + Send + Sync + Debug + Clone,
         L2: L2ChainProvider + Send + Sync + Debug + Clone,
@@ -97,7 +98,7 @@ impl CachedDriver {
 
 impl<E, O, L1, L2, DA> From<KonaDriver<E, O, L1, L2, DA>> for CachedDriver
 where
-    E: Executor + Send + Sync + Debug,
+    E: Executor<Receipt = OpReceiptEnvelope> + Send + Sync + Debug,
     O: CommsClient + FlushableCache + Send + Sync + Debug,
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
@@ -863,7 +864,6 @@ pub mod tests {
     use crate::kona::OracleL1ChainProvider;
     use crate::precondition::Precondition;
     use crate::rkyv::execution::tests::{gen_execution_outcomes, gen_header};
-    use alloy_consensus::TxType;
     use alloy_eips::eip4895::Withdrawal;
     use alloy_eips::BlockNumHash;
     use alloy_op_evm::OpEvmFactory;
@@ -882,6 +882,7 @@ pub mod tests {
         SpanBatchTransactions,
     };
     use lazy_static::lazy_static;
+    use op_alloy_consensus::OpTxType;
     use op_alloy_rpc_types_engine::OpPayloadAttributes;
     use risc0_zkvm::sha::Digestible;
     use std::collections::hash_map::Entry;
@@ -925,11 +926,12 @@ pub mod tests {
             rollup_config.as_ref(),
         );
         let kona_driver = decoded_driver.uncache(
-            KonaExecutor::<_, _, OpEvmFactory>::new(
+            KonaExecutor::<_, _, OpEvmFactory, _>::new(
                 &boot_info.rollup_config,
                 l2_provider.clone(),
                 l2_provider.clone(),
                 OpEvmFactory::default(),
+                alloy_op_evm::block::OpAlloyReceiptBuilder::default(),
                 None,
             ),
             rollup_config.clone(),
@@ -1274,7 +1276,7 @@ pub mod tests {
                 tx_tos: vec![gen_addr()],
                 tx_data: vec![[*gen_b256()].concat()],
                 protected_bits: SpanBatchBits([*gen_addr()].concat()),
-                tx_types: vec![TxType::Eip1559],
+                tx_types: vec![OpTxType::Eip1559],
                 legacy_tx_count: gen_u64(),
             },
         }

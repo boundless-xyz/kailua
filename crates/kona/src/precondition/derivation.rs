@@ -31,6 +31,7 @@ use kona_protocol::{
     Batch, BatchWithInclusionBlock, BlockInfo, Channel, Frame, L2BlockInfo, OpAttributesWithParent,
     OrderedChannel, SingleBatch, SpanBatch, SpanBatchElement, SpanBatchTransactions,
 };
+use op_alloy_consensus::OpReceiptEnvelope;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use risc0_zkvm::sha::{Digestible, Impl as SHA2, Sha256};
 use risc0_zkvm::Digest;
@@ -85,7 +86,9 @@ pub fn flatten_pipeline_cursor(pipeline_cursor: &PipelineCursor) -> Vec<u8> {
     .concat()
 }
 
-pub fn flatten_safe_head_artifacts(artifacts: &(BlockBuildingOutcome, Vec<Bytes>)) -> Vec<u8> {
+pub fn flatten_safe_head_artifacts(
+    artifacts: &(BlockBuildingOutcome<OpReceiptEnvelope>, Vec<Bytes>),
+) -> Vec<u8> {
     [
         flatten_block_build_outcome(&artifacts.0).as_slice(),
         (artifacts.1.len() as u64).to_be_bytes().as_slice(),
@@ -100,7 +103,7 @@ pub fn flatten_safe_head_artifacts(artifacts: &(BlockBuildingOutcome, Vec<Bytes>
     .concat()
 }
 
-pub fn flatten_block_build_outcome(outcome: &BlockBuildingOutcome) -> Vec<u8> {
+pub fn flatten_block_build_outcome(outcome: &BlockBuildingOutcome<OpReceiptEnvelope>) -> Vec<u8> {
     [
         outcome.header.hash_slow().as_slice(),
         (outcome.execution_result.receipts.len() as u64)

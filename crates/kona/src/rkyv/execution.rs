@@ -24,12 +24,12 @@ use rkyv::{Archive, Archived, Place, Resolver};
 
 pub struct BlockBuildingOutcomeRkyv;
 
-impl ArchiveWith<BlockBuildingOutcome> for BlockBuildingOutcomeRkyv {
+impl ArchiveWith<BlockBuildingOutcome<OpReceiptEnvelope>> for BlockBuildingOutcomeRkyv {
     type Archived = Archived<(Vec<u8>, Vec<u8>)>;
     type Resolver = Resolver<(Vec<u8>, Vec<u8>)>;
 
     fn resolve_with(
-        field: &BlockBuildingOutcome,
+        field: &BlockBuildingOutcome<OpReceiptEnvelope>,
         resolver: Self::Resolver,
         out: Place<Self::Archived>,
     ) {
@@ -45,13 +45,13 @@ impl ArchiveWith<BlockBuildingOutcome> for BlockBuildingOutcomeRkyv {
     }
 }
 
-impl<S> SerializeWith<BlockBuildingOutcome, S> for BlockBuildingOutcomeRkyv
+impl<S> SerializeWith<BlockBuildingOutcome<OpReceiptEnvelope>, S> for BlockBuildingOutcomeRkyv
 where
     S: Fallible + rkyv::ser::Allocator + rkyv::ser::Writer + ?Sized,
     <S as Fallible>::Error: rkyv::rancor::Source,
 {
     fn serialize_with(
-        field: &BlockBuildingOutcome,
+        field: &BlockBuildingOutcome<OpReceiptEnvelope>,
         serializer: &mut S,
     ) -> Result<Self::Resolver, S::Error> {
         let header = alloy_rlp::encode(field.header.clone().unseal());
@@ -66,7 +66,8 @@ where
     }
 }
 
-impl<D: Fallible> DeserializeWith<Archived<(Vec<u8>, Vec<u8>)>, BlockBuildingOutcome, D>
+impl<D: Fallible>
+    DeserializeWith<Archived<(Vec<u8>, Vec<u8>)>, BlockBuildingOutcome<OpReceiptEnvelope>, D>
     for BlockBuildingOutcomeRkyv
 where
     D: Fallible + ?Sized,
@@ -75,7 +76,7 @@ where
     fn deserialize_with(
         field: &Archived<(Vec<u8>, Vec<u8>)>,
         deserializer: &mut D,
-    ) -> Result<BlockBuildingOutcome, D::Error> {
+    ) -> Result<BlockBuildingOutcome<OpReceiptEnvelope>, D::Error> {
         let field: (Vec<u8>, Vec<u8>) = rkyv::Deserialize::deserialize(field, deserializer)?;
         let header = alloy_rlp::decode_exact::<Header>(field.0.as_slice())
             .unwrap()
@@ -226,7 +227,7 @@ pub mod tests {
         }
     }
 
-    pub fn gen_execution_outcomes(count: usize) -> Vec<BlockBuildingOutcome> {
+    pub fn gen_execution_outcomes(count: usize) -> Vec<BlockBuildingOutcome<OpReceiptEnvelope>> {
         gen_execution_results(count)
             .into_iter()
             .enumerate()
@@ -241,8 +242,11 @@ pub mod tests {
     fn test_block_building_outcome_rkyv() {
         for outcome in gen_execution_outcomes(128) {
             let serialized = to_bytes_with!(BlockBuildingOutcomeRkyv, &outcome);
-            let deserialized =
-                from_bytes_with!(BlockBuildingOutcomeRkyv, BlockBuildingOutcome, &serialized);
+            let deserialized = from_bytes_with!(
+                BlockBuildingOutcomeRkyv,
+                BlockBuildingOutcome<OpReceiptEnvelope>,
+                &serialized
+            );
 
             assert_eq!(outcome.header, deserialized.header);
             assert_eq!(
