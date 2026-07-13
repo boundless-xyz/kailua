@@ -19,6 +19,10 @@
 //! node), that loop re-sends the same request as fast as the network round trip allows and can
 //! flood the RPC provider. Sleeping in the error path here paces that loop without requiring
 //! kona changes: the loop cannot start the next attempt until `fetch_hint` returns.
+//!
+//! JSON-RPC "method not found" failures are exempt from the delay. kona retries the retained
+//! high-level hint before every fine-grained fetch and relies on it failing fast on nodes that
+//! do not implement the method, so those failures are part of normal operation.
 
 use alloy_primitives::{keccak256, B256};
 use anyhow::Result;
@@ -65,6 +69,17 @@ fn backoff_delay(consecutive_failures: u32) -> Duration {
         .unwrap_or(MAX_DELAY_MS)
         .min(MAX_DELAY_MS);
     Duration::from_millis(millis)
+}
+
+/// Returns true for JSON-RPC "method not found" responses (code -32601 and the message
+/// variants used by common execution clients). Retrying these cannot succeed and delaying
+/// them stalls kona's high-level-hint fallthrough, so they must pass through undelayed.
+fn is_method_unavailable(err: &anyhow::Error) -> bool {
+    let text = format!("{err:#}").to_lowercase();
+    text.contains("-32601")
+        || text.contains("method not found")
+        || text.contains("does not exist/is not available")
+        || text.contains("unsupported method")
 }
 
 fn record_failure(map: &mut FailureMap, key: (u64, B256), now: Instant) -> (u32, Duration) {
@@ -115,6 +130,9 @@ where
                 Ok(())
             }
             Err(err) => {
+                if is_method_unavailable(&err) {
+                    return Err(err);
+                }
                 let (attempts, delay) = record_failure(
                     &mut FAILURES.lock().unwrap_or_else(PoisonError::into_inner),
                     key,
@@ -207,6 +225,25 @@ mod tests {
         assert_eq!(hint_key(&1u8, b"data"), hint_key(&1u8, b"data"));
     }
 
+    #[test]
+    fn method_unavailable_detection() {
+        // op-geth wording, as returned by the devnet node for debug_executePayload.
+        assert!(is_method_unavailable(&anyhow!(
+            "server returned an error response: error code -32601: \
+             the method debug_executePayload does not exist/is not available"
+        )));
+        // reth wording.
+        assert!(is_method_unavailable(&anyhow!("Method not found")));
+        // Detection must see through anyhow context chains.
+        assert!(is_method_unavailable(
+            &anyhow!("error code -32601").context("debug_executePayload failed")
+        ));
+        assert!(!is_method_unavailable(&anyhow!(
+            "server returned an error response: error code -32001: block not found"
+        )));
+        assert!(!is_method_unavailable(&anyhow!("HTTP error 429")));
+    }
+
     #[derive(Clone, PartialEq, Eq, Hash, Debug)]
     struct TestHint;
 
@@ -241,6 +278,24 @@ mod tests {
         }
     }
 
+    struct MethodUnavailableHandler;
+
+    #[async_trait]
+    impl HintHandler for MethodUnavailableHandler {
+        type Cfg = TestCfg;
+
+        async fn fetch_hint(
+            _hint: Hint<TestHint>,
+            _cfg: &TestCfg,
+            _providers: &(),
+            _kv: SharedKeyValueStore,
+        ) -> Result<()> {
+            Err(anyhow!(
+                "error code -32601: the method debug_executePayload does not exist/is not available"
+            ))
+        }
+    }
+
     struct SucceedingHandler;
 
     #[async_trait]
@@ -266,6 +321,27 @@ mod tests {
 
     fn test_kv() -> SharedKeyValueStore {
         Arc::new(RwLock::new(MemoryKeyValueStore::default()))
+    }
+
+    #[tokio::test]
+    async fn method_unavailable_passes_through_undelayed() {
+        let data: &[u8] = b"method_unavailable_passes_through_undelayed";
+        let key = hint_key(&TestHint, data);
+
+        let started = Instant::now();
+        BackoffWrapper::<MethodUnavailableHandler, TestCfg>::fetch_hint(
+            test_hint(data),
+            &TestCfg,
+            &(),
+            test_kv(),
+        )
+        .await
+        .unwrap_err();
+        assert!(started.elapsed() < Duration::from_millis(MIN_DELAY_MS));
+        assert!(!FAILURES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(&key));
     }
 
     #[tokio::test]
