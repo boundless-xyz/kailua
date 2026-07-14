@@ -73,10 +73,21 @@ pub async fn run_payload_client(
                 .await
             {
                 Ok(witness) => break witness,
-                Err(err) => error!(
-                    "Failed to fetch payload for {} (Retry)\n{err:?}.",
-                    boot_info.claimed_l2_block_number + 1,
-                ),
+                Err(err) => {
+                    // A missing method never recovers by retrying; this also covers the
+                    // method being blocklisted via --blocked-rpc-methods.
+                    let err = anyhow!(err);
+                    if crate::hint_backoff::is_method_unavailable(&err) {
+                        error!(
+                            "debug_executionWitness unavailable, skipping payload preflight: {err:#}"
+                        );
+                        return Ok(false);
+                    }
+                    error!(
+                        "Failed to fetch payload for {} (Retry)\n{err:?}.",
+                        boot_info.claimed_l2_block_number + 1,
+                    )
+                }
             };
         };
 
