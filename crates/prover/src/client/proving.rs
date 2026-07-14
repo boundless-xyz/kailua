@@ -27,7 +27,7 @@ use kailua_kona::boot::StitchedBootInfo;
 #[cfg(feature = "eigen")]
 use kailua_kona::boot::L1_HEAD_SENTINELS;
 #[cfg(feature = "experimental")]
-use kailua_kona::boot::L1_HEAD_TXN_ONLY_SENTINEL;
+use kailua_kona::boot::{L1_HEAD_EXEC_ONLY_SENTINEL, L1_HEAD_TXN_ONLY_SENTINEL};
 use kailua_kona::client::core::EthereumDataSourceProvider;
 use kailua_kona::client::stitching::split_executions;
 use kailua_kona::driver::CachedDriver;
@@ -57,6 +57,7 @@ use {
     kailua_kona::journal::ProofJournal,
     kona_executor::TrieDBProvider,
     kona_proof::l2::OracleL2ChainProvider,
+    std::collections::BTreeSet,
     std::convert::identity,
     std::path::Path,
 };
@@ -132,14 +133,34 @@ where
                 preimage_oracle.clone(),
             );
             let image_id = bytemuck::cast::<_, [u8; 32]>(proving.image_id());
+            // In derivation mode, blocks covered by stitched executions are
+            // served from the execution cache without block building, so the
+            // guest consumes no partials for them.
+            let cached_blocks = if initial_boot_info.l1_head != L1_HEAD_EXEC_ONLY_SENTINEL {
+                stitched_executions
+                    .iter()
+                    .flatten()
+                    .map(|execution| execution.artifacts.header.number)
+                    .collect::<BTreeSet<_>>()
+            } else {
+                BTreeSet::new()
+            };
             // insert all cached partials in order
             let start = l2_provider
                 .header_by_hash(safe_head_hash)
                 .context("l2_provider.header_by_hash")?
                 .number;
-            for (parent_block_no, block_partials) in
-                partials_cache.range(start..initial_boot_info.claimed_l2_block_number)
-            {
+            // The guest pops one chunk list per block it builds, so every
+            // built block must push an entry to keep later chunks aligned.
+            for block_no in (start + 1)..=initial_boot_info.claimed_l2_block_number {
+                if cached_blocks.contains(&block_no) {
+                    continue;
+                }
+                let parent_block_no = block_no - 1;
+                let block_partials = partials_cache
+                    .get(&parent_block_no)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
                 let mut results = Vec::with_capacity(block_partials.len());
                 for partial in block_partials {
                     // Derive expected proof file name
@@ -168,10 +189,8 @@ where
                         }
                     }
                 }
-                // Push partials
-                if !results.is_empty() {
-                    partial_executions.push(results);
-                }
+                // Push partials (empty entries preserve positional alignment)
+                partial_executions.push(results);
             }
             info!(
                 "Loaded {} partial executions for blocks {} to {}.",
