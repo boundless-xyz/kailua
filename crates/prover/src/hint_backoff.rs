@@ -74,7 +74,7 @@ fn backoff_delay(consecutive_failures: u32) -> Duration {
 /// Returns true for JSON-RPC "method not found" responses (code -32601 and the message
 /// variants used by common execution clients). Retrying these cannot succeed and delaying
 /// them stalls kona's high-level-hint fallthrough, so they must pass through undelayed.
-fn is_method_unavailable(err: &anyhow::Error) -> bool {
+pub(crate) fn is_method_unavailable(err: &anyhow::Error) -> bool {
     let text = format!("{err:#}").to_lowercase();
     text.contains("-32601")
         || text.contains("method not found")

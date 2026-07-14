@@ -32,7 +32,25 @@ use kona_proof::l1::ROOTS_OF_UNITY;
 use kona_proof::{Hint, HintType};
 use reqwest::Client;
 use std::marker::PhantomData;
+use std::sync::OnceLock;
 use tracing::warn;
+
+/// Returns true when payload witness fetching is disabled via the
+/// KAILUA_DISABLE_PAYLOAD_WITNESS environment variable. Both server-side witness paths
+/// (`debug_executionWitness` prefetch and `debug_executePayload` hint fallback) are heavy
+/// calls that can degrade RPC provider backends; disabling them makes the client derive
+/// through fine-grained hints instead, the same path used when a node does not implement
+/// the methods. Read once and cached for the process lifetime.
+pub fn payload_witness_disabled() -> bool {
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| is_truthy(std::env::var("KAILUA_DISABLE_PAYLOAD_WITNESS").ok()))
+}
+
+fn is_truthy(value: Option<String>) -> bool {
+    value
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+}
 
 #[derive(Debug, Clone, Copy)]
 struct ParsedBlobHint {
@@ -75,6 +93,10 @@ pub trait BlobFallbackAdapter: OnlineHostBackendCfg {
     /// Returns true when the outer hint type represents a standard L1 blob hint.
     fn is_l1_blob_hint(ty: &Self::HintType) -> bool;
 
+    /// Returns true when the outer hint type requests an L2 payload witness, which the
+    /// inner handler serves via `debug_executePayload`.
+    fn is_l2_payload_witness_hint(ty: &Self::HintType) -> bool;
+
     /// Returns the underlying single-chain config used for beacon blob fetching.
     fn single_chain_cfg(cfg: &Self) -> &SingleChainHost;
 
@@ -108,6 +130,15 @@ where
         providers: &<Self::Cfg as OnlineHostBackendCfg>::Providers,
         kv: SharedKeyValueStore,
     ) -> Result<()> {
+        if Cfg::is_l2_payload_witness_hint(&hint.ty) && payload_witness_disabled() {
+            // Mimic an unsupported-method response without contacting the RPC: kona's
+            // backend falls through to fine-grained hints, and the retry pacing wrapper
+            // recognizes the message as method-unavailable and applies no delay.
+            return Err(anyhow!(
+                "payload witness disabled: the method debug_executePayload does not exist/is not available"
+            ));
+        }
+
         if !Cfg::is_l1_blob_hint(&hint.ty) {
             return Inner::fetch_hint(hint, cfg, providers, kv).await;
         }
@@ -141,6 +172,10 @@ impl BlobFallbackAdapter for SingleChainHost {
         *ty == HintType::L1Blob
     }
 
+    fn is_l2_payload_witness_hint(ty: &Self::HintType) -> bool {
+        *ty == HintType::L2PayloadWitness
+    }
+
     fn single_chain_cfg(cfg: &Self) -> &SingleChainHost {
         cfg
     }
@@ -159,6 +194,13 @@ impl BlobFallbackAdapter for hokulea_host_bin::cfg::SingleChainHostWithEigenDA {
         )
     }
 
+    fn is_l2_payload_witness_hint(ty: &Self::HintType) -> bool {
+        matches!(
+            ty,
+            hokulea_proof::hint::ExtendedHintType::Original(HintType::L2PayloadWitness)
+        )
+    }
+
     fn single_chain_cfg(cfg: &Self) -> &SingleChainHost {
         &cfg.kona_cfg
     }
@@ -174,6 +216,13 @@ impl BlobFallbackAdapter for hana_host::celestia::CelestiaChainHost {
         matches!(
             ty,
             hana_oracle::hint::HintWrapper::Standard(HintType::L1Blob)
+        )
+    }
+
+    fn is_l2_payload_witness_hint(ty: &Self::HintType) -> bool {
+        matches!(
+            ty,
+            hana_oracle::hint::HintWrapper::Standard(HintType::L2PayloadWitness)
         )
     }
 
@@ -365,6 +414,42 @@ mod tests {
         sidecar.index = index;
         let hash = B256::from(sidecar.to_kzg_versioned_hash());
         (sidecar, hash)
+    }
+
+    #[test]
+    fn payload_witness_flag_parsing() {
+        assert!(is_truthy(Some("1".into())));
+        assert!(is_truthy(Some("true".into())));
+        assert!(is_truthy(Some(" TRUE ".into())));
+        assert!(is_truthy(Some("yes".into())));
+        assert!(!is_truthy(Some("0".into())));
+        assert!(!is_truthy(Some("false".into())));
+        assert!(!is_truthy(Some("".into())));
+        assert!(!is_truthy(None));
+    }
+
+    #[test]
+    fn payload_witness_hint_detection() {
+        assert!(SingleChainHost::is_l2_payload_witness_hint(
+            &HintType::L2PayloadWitness
+        ));
+        assert!(!SingleChainHost::is_l2_payload_witness_hint(
+            &HintType::L1Blob
+        ));
+        assert!(!SingleChainHost::is_l1_blob_hint(
+            &HintType::L2PayloadWitness
+        ));
+    }
+
+    #[test]
+    fn suppression_error_is_exempt_from_retry_delay() {
+        // The synthesized error must be classified as method-unavailable so the
+        // backoff wrapper passes it through without sleeping; kona then falls
+        // through to fine-grained hints at full speed.
+        let err = anyhow!(
+            "payload witness disabled: the method debug_executePayload does not exist/is not available"
+        );
+        assert!(crate::hint_backoff::is_method_unavailable(&err));
     }
 
     #[test]
