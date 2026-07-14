@@ -1159,10 +1159,7 @@ pub async fn compute_cached_proof(
         }
 
         // preflight
-        if !args.kona.is_offline()
-            && args.op_node_address.is_some()
-            && !crate::hint_handler::payload_witness_disabled()
-        {
+        if !args.kona.is_offline() && args.op_node_address.is_some() {
             let l2_provider = args
                 .kona
                 .l2_node_address

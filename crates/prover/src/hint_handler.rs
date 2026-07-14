@@ -35,15 +35,19 @@ use std::marker::PhantomData;
 use std::sync::OnceLock;
 use tracing::warn;
 
-/// Returns true when payload witness fetching is disabled via the
-/// KAILUA_DISABLE_PAYLOAD_WITNESS environment variable. Both server-side witness paths
-/// (`debug_executionWitness` prefetch and `debug_executePayload` hint fallback) are heavy
-/// calls that can degrade RPC provider backends; disabling them makes the client derive
-/// through fine-grained hints instead, the same path used when a node does not implement
-/// the methods. Read once and cached for the process lifetime.
-pub fn payload_witness_disabled() -> bool {
+/// Returns true when serving L2 payload witness hints via `debug_executePayload` is
+/// disabled through the KAILUA_DISABLE_EXECUTE_PAYLOAD environment variable.
+///
+/// Unlike the `debug_executionWitness` prefetch (one cached call per block, unaffected by
+/// this flag), the `debug_executePayload` hint fallback is uncached: the backend retries
+/// the retained hint on every preimage fetch, so a provider can be asked to re-execute the
+/// same payload repeatedly. Earlier releases disabled this path outright after a successful
+/// witness prefetch for exactly that reason. With the flag set, payload witness hints that
+/// miss the prefetched store fall through to fine-grained hints instead of reaching the RPC.
+/// Read once and cached for the process lifetime.
+pub fn execute_payload_disabled() -> bool {
     static DISABLED: OnceLock<bool> = OnceLock::new();
-    *DISABLED.get_or_init(|| is_truthy(std::env::var("KAILUA_DISABLE_PAYLOAD_WITNESS").ok()))
+    *DISABLED.get_or_init(|| is_truthy(std::env::var("KAILUA_DISABLE_EXECUTE_PAYLOAD").ok()))
 }
 
 fn is_truthy(value: Option<String>) -> bool {
@@ -130,12 +134,12 @@ where
         providers: &<Self::Cfg as OnlineHostBackendCfg>::Providers,
         kv: SharedKeyValueStore,
     ) -> Result<()> {
-        if Cfg::is_l2_payload_witness_hint(&hint.ty) && payload_witness_disabled() {
+        if Cfg::is_l2_payload_witness_hint(&hint.ty) && execute_payload_disabled() {
             // Mimic an unsupported-method response without contacting the RPC: kona's
             // backend falls through to fine-grained hints, and the retry pacing wrapper
             // recognizes the message as method-unavailable and applies no delay.
             return Err(anyhow!(
-                "payload witness disabled: the method debug_executePayload does not exist/is not available"
+                "execute payload disabled: the method debug_executePayload does not exist/is not available"
             ));
         }
 
@@ -417,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn payload_witness_flag_parsing() {
+    fn execute_payload_flag_parsing() {
         assert!(is_truthy(Some("1".into())));
         assert!(is_truthy(Some("true".into())));
         assert!(is_truthy(Some(" TRUE ".into())));
@@ -447,7 +451,7 @@ mod tests {
         // backoff wrapper passes it through without sleeping; kona then falls
         // through to fine-grained hints at full speed.
         let err = anyhow!(
-            "payload witness disabled: the method debug_executePayload does not exist/is not available"
+            "execute payload disabled: the method debug_executePayload does not exist/is not available"
         );
         assert!(crate::hint_backoff::is_method_unavailable(&err));
     }
