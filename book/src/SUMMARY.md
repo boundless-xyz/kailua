@@ -24,8 +24,8 @@
 - [Dependency Upgrades](./dependency-upgrades.md)
 
 # Specification
-- [Sequencing]()
-- [Validating]()
+- [Sequencing](./sequencing.md)
+- [Validating](./validating.md)
 
 # Implementation
 - [Prover]()
