@@ -39,6 +39,7 @@ pub mod profiling;
 pub mod proof;
 pub mod prove;
 pub mod risczero;
+pub mod rpc;
 pub mod tasks;
 
 #[derive(Debug, thiserror::Error)]

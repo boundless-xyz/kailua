@@ -1159,30 +1159,25 @@ pub async fn compute_cached_proof(
         }
 
         // preflight
-        if !args.kona.is_offline() && args.op_node_address.is_some() {
-            let l2_provider = args
-                .kona
-                .l2_node_address
-                .as_ref()
-                .map(|addr| {
-                    RootProvider::new_http(
-                        addr.as_str()
-                            .try_into()
-                            .expect("Failed to parse l2_node_address"),
-                    )
-                })
-                .unwrap();
-            let op_node_provider = args
-                .op_node_address
-                .as_ref()
-                .map(|addr| {
-                    OpNodeProvider(RootProvider::new_http(
-                        addr.as_str()
-                            .try_into()
-                            .expect("Failed to parse op_node_address"),
-                    ))
-                })
-                .unwrap();
+        if let Some(op_node_address) = args
+            .op_node_address
+            .as_ref()
+            .filter(|_| !args.kona.is_offline())
+        {
+            // Route through ProveArgs::rpc_client so --blocked-rpc-methods applies here too.
+            let l2_provider = RootProvider::new(
+                args.rpc_client(
+                    args.kona
+                        .l2_node_address
+                        .as_ref()
+                        .expect("l2_node_address is required"),
+                )
+                .expect("Failed to parse l2_node_address"),
+            );
+            let op_node_provider = OpNodeProvider(RootProvider::new(
+                args.rpc_client(op_node_address)
+                    .expect("Failed to parse op_node_address"),
+            ));
             crate::client::payload::run_payload_client(
                 boot.clone(),
                 l2_provider,

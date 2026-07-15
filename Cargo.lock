@@ -111,6 +111,7 @@ dependencies = [
  "alloy-core",
  "alloy-eips 2.0.5",
  "alloy-genesis 2.0.5",
+ "alloy-json-rpc 2.0.5",
  "alloy-network 2.0.5",
  "alloy-provider 2.0.5",
  "alloy-pubsub",
@@ -7367,6 +7368,7 @@ dependencies = [
  "thousands",
  "tokio",
  "tokio-retry",
+ "tower 0.5.3",
  "tracing",
  "url",
 ]

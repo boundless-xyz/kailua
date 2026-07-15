@@ -20,9 +20,10 @@
 //! flood the RPC provider. Sleeping in the error path here paces that loop without requiring
 //! kona changes: the loop cannot start the next attempt until `fetch_hint` returns.
 //!
-//! JSON-RPC "method not found" failures are exempt from the delay. kona retries the retained
-//! high-level hint before every fine-grained fetch and relies on it failing fast on nodes that
-//! do not implement the method, so those failures are part of normal operation.
+//! Errors from a method blocked via `--blocked-rpc-methods` are exempt from the delay: they
+//! can never succeed, so kona should fall through to fine-grained hints without pacing. A
+//! generic "method not found" is not exempt, since behind a load balancer it can recover on
+//! retry (see [is_method_blacklisted]).
 
 use alloy_primitives::{keccak256, B256};
 use anyhow::Result;
@@ -71,15 +72,15 @@ fn backoff_delay(consecutive_failures: u32) -> Duration {
     Duration::from_millis(millis)
 }
 
-/// Returns true for JSON-RPC "method not found" responses (code -32601 and the message
-/// variants used by common execution clients). Retrying these cannot succeed and delaying
-/// them stalls kona's high-level-hint fallthrough, so they must pass through undelayed.
-fn is_method_unavailable(err: &anyhow::Error) -> bool {
-    let text = format!("{err:#}").to_lowercase();
-    text.contains("-32601")
-        || text.contains("method not found")
-        || text.contains("does not exist/is not available")
-        || text.contains("unsupported method")
+/// Returns true for an error from a method blocked locally by `--blocked-rpc-methods`.
+///
+/// A blocked method can never succeed, so callers give up (skip retries and backoff delay)
+/// on it. A generic "method not found" from the provider is deliberately not matched: behind
+/// a load balancer it can be transient and recover on a later attempt, so it stays on the
+/// normal retry path. To fast-path a method a node genuinely lacks, add it to
+/// `--blocked-rpc-methods`.
+pub(crate) fn is_method_blacklisted(err: &anyhow::Error) -> bool {
+    format!("{err:#}").contains(crate::rpc::BLOCKED_METHOD_MARKER)
 }
 
 fn record_failure(map: &mut FailureMap, key: (u64, B256), now: Instant) -> (u32, Duration) {
@@ -130,7 +131,9 @@ where
                 Ok(())
             }
             Err(err) => {
-                if is_method_unavailable(&err) {
+                if is_method_blacklisted(&err) {
+                    // Intentionally blocked; retrying cannot help, so return without delay
+                    // and let kona fall through to fine-grained hints.
                     return Err(err);
                 }
                 let (attempts, delay) = record_failure(
@@ -226,22 +229,22 @@ mod tests {
     }
 
     #[test]
-    fn method_unavailable_detection() {
-        // op-geth wording, as returned by the devnet node for debug_executePayload.
-        assert!(is_method_unavailable(&anyhow!(
-            "server returned an error response: error code -32601: \
-             the method debug_executePayload does not exist/is not available"
-        )));
-        // reth wording.
-        assert!(is_method_unavailable(&anyhow!("Method not found")));
-        // Detection must see through anyhow context chains.
-        assert!(is_method_unavailable(
-            &anyhow!("error code -32601").context("debug_executePayload failed")
+    fn method_blacklisted_detection() {
+        // The middleware marker is classified as blacklisted, through anyhow context chains.
+        let blocked = anyhow!(
+            "error code -32601: the method debug_executePayload is {}",
+            crate::rpc::BLOCKED_METHOD_MARKER
+        );
+        assert!(is_method_blacklisted(&blocked));
+        assert!(is_method_blacklisted(
+            &blocked.context("debug_executePayload failed")
         ));
-        assert!(!is_method_unavailable(&anyhow!(
-            "server returned an error response: error code -32001: block not found"
+        // A generic method-not-found is NOT blacklisted: it may recover across a
+        // load-balanced pool, so retry loops must keep trying.
+        assert!(!is_method_blacklisted(&anyhow!(
+            "error code -32601: the method debug_executePayload does not exist/is not available"
         )));
-        assert!(!is_method_unavailable(&anyhow!("HTTP error 429")));
+        assert!(!is_method_blacklisted(&anyhow!("HTTP error 429")));
     }
 
     #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -278,10 +281,10 @@ mod tests {
         }
     }
 
-    struct MethodUnavailableHandler;
+    struct BlacklistedHandler;
 
     #[async_trait]
-    impl HintHandler for MethodUnavailableHandler {
+    impl HintHandler for BlacklistedHandler {
         type Cfg = TestCfg;
 
         async fn fetch_hint(
@@ -291,7 +294,8 @@ mod tests {
             _kv: SharedKeyValueStore,
         ) -> Result<()> {
             Err(anyhow!(
-                "error code -32601: the method debug_executePayload does not exist/is not available"
+                "error code -32601: the method debug_executePayload is {}",
+                crate::rpc::BLOCKED_METHOD_MARKER
             ))
         }
     }
@@ -324,12 +328,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn method_unavailable_passes_through_undelayed() {
-        let data: &[u8] = b"method_unavailable_passes_through_undelayed";
+    async fn blacklisted_method_passes_through_undelayed() {
+        let data: &[u8] = b"blacklisted_method_passes_through_undelayed";
         let key = hint_key(&TestHint, data);
 
         let started = Instant::now();
-        BackoffWrapper::<MethodUnavailableHandler, TestCfg>::fetch_hint(
+        BackoffWrapper::<BlacklistedHandler, TestCfg>::fetch_hint(
             test_hint(data),
             &TestCfg,
             &(),
