@@ -625,6 +625,9 @@ fn base_proving_args(max_witness_size: usize) -> ProvingArgs {
         skip_derivation_proof: false,
         skip_await_proof: false,
         clear_cache_data: true,
+        // Mirror the production config: block debug_executePayload so the payload witness
+        // hint falls through to fine-grained hints locally, without calling the node.
+        blocked_rpc_methods: vec!["debug_executePayload".to_string()],
         #[cfg(feature = "eigen")]
         hokulea: Default::default(),
         #[cfg(feature = "celestia")]

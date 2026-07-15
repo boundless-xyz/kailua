@@ -74,12 +74,14 @@ pub async fn run_payload_client(
             {
                 Ok(witness) => break witness,
                 Err(err) => {
-                    // A missing method never recovers by retrying; this also covers the
-                    // method being blocklisted via --blocked-rpc-methods.
+                    // Give up only when the method is intentionally blocked via
+                    // --blocked-rpc-methods: that can never succeed. A generic "method not
+                    // found" may recover on retry across a load-balanced provider pool, so we
+                    // keep retrying as before.
                     let err = anyhow!(err);
-                    if crate::hint_backoff::is_method_unavailable(&err) {
+                    if crate::hint_backoff::is_method_blacklisted(&err) {
                         error!(
-                            "debug_executionWitness unavailable, skipping payload preflight: {err:#}"
+                            "debug_executionWitness blocked, skipping payload preflight: {err:#}"
                         );
                         return Ok(false);
                     }

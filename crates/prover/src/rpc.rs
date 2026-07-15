@@ -14,12 +14,12 @@
 
 //! Transport layer that answers blocklisted RPC methods locally instead of sending them.
 //!
-//! Blocked methods receive a standard JSON-RPC "method not found" error (-32601), the same
-//! response a node that does not implement the method would return. Callers with an existing
-//! unsupported-method fallback (such as kona's payload witness hint falling through to
-//! fine-grained hints) then take that path without the request ever reaching the provider.
-//! The error message matches [crate::hint_backoff::is_method_unavailable], so the retry
-//! pacing wrapper applies no delay to these responses.
+//! Blocked methods receive a JSON-RPC "method not found" error (-32601) carrying
+//! [BLOCKED_METHOD_MARKER], without the request ever reaching the provider. Callers with an
+//! existing unsupported-method fallback (such as kona's payload witness hint falling through
+//! to fine-grained hints) then take that path. The marker lets retry loops distinguish an
+//! intentional, permanent block (give up, via [crate::hint_backoff::is_method_blacklisted])
+//! from a generic "method not found" that might recover across a load-balanced pool (retry).
 
 use alloy::rpc::json_rpc::{
     ErrorPayload, RequestPacket, Response, ResponsePacket, ResponsePayload,
@@ -32,6 +32,12 @@ use tower::{Layer, Service};
 
 /// JSON-RPC error code for a method that does not exist.
 const METHOD_NOT_FOUND: i64 = -32601;
+
+/// Substring embedded in the error message for a blocklisted method. Unlike a generic
+/// "method not found" (which can vary across a load-balanced provider pool and may recover
+/// on retry), this marks an intentional, permanent local block, so callers key on it to
+/// stop retrying. See [crate::hint_backoff::is_method_blacklisted].
+pub(crate) const BLOCKED_METHOD_MARKER: &str = "blocked by --blocked-rpc-methods";
 
 /// Tower layer that installs [BlockedMethodsService] over a transport.
 #[derive(Clone, Debug)]
@@ -65,16 +71,12 @@ pub struct BlockedMethodsService<S> {
     blocked: Arc<HashSet<String>>,
 }
 
-fn method_not_found(request: &alloy::rpc::json_rpc::SerializedRequest) -> Response {
+fn blocked_response(request: &alloy::rpc::json_rpc::SerializedRequest) -> Response {
     Response {
         id: request.id().clone(),
         payload: ResponsePayload::Failure(ErrorPayload {
             code: METHOD_NOT_FOUND,
-            message: format!(
-                "the method {} does not exist/is not available",
-                request.method()
-            )
-            .into(),
+            message: format!("the method {} is {BLOCKED_METHOD_MARKER}", request.method()).into(),
             data: None,
         }),
     }
@@ -100,7 +102,7 @@ where
     fn call(&mut self, request: RequestPacket) -> Self::Future {
         match request {
             RequestPacket::Single(req) if self.blocked.contains(req.method()) => {
-                let response = method_not_found(&req);
+                let response = blocked_response(&req);
                 Box::pin(async move { Ok(ResponsePacket::Single(response)) })
             }
             RequestPacket::Batch(requests) => {
@@ -111,7 +113,7 @@ where
                     // Nothing to block; forward the whole batch untouched.
                     return Box::pin(self.inner.call(RequestPacket::Batch(allowed)));
                 }
-                let mut local: Vec<Response> = blocked.iter().map(method_not_found).collect();
+                let mut local: Vec<Response> = blocked.iter().map(blocked_response).collect();
                 if allowed.is_empty() {
                     return Box::pin(async move { Ok(ResponsePacket::Batch(local)) });
                 }
@@ -135,6 +137,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::rpc::client::ClientBuilder;
     use alloy::rpc::json_rpc::{Id, Request, SerializedRequest};
     use serde_json::value::RawValue;
     use std::sync::Mutex;
@@ -168,7 +171,7 @@ mod tests {
                 .map(|req| Response {
                     id: req.id().clone(),
                     payload: ResponsePayload::Success(
-                        RawValue::from_string("\"0x1\"".into()).unwrap().into(),
+                        RawValue::from_string("\"0x1\"".into()).unwrap(),
                     ),
                 })
                 .collect();
@@ -202,7 +205,7 @@ mod tests {
             panic!("expected failure payload")
         };
         assert_eq!(err.code, -32601);
-        assert!(err.message.contains("does not exist/is not available"));
+        assert!(err.message.contains(BLOCKED_METHOD_MARKER));
         assert!(
             mock.calls.lock().unwrap().is_empty(),
             "inner must not be called"
@@ -270,19 +273,22 @@ mod tests {
         assert!(mock.calls.lock().unwrap().is_empty());
     }
 
-    #[test]
-    fn local_error_is_exempt_from_retry_delay() {
-        // The synthesized message must be classified as method-unavailable so the retry
-        // pacing wrapper passes it through without sleeping.
-        let response = method_not_found(&request("debug_executePayload", 1));
-        let ResponsePayload::Failure(err) = response.payload else {
-            panic!("expected failure payload")
-        };
-        let err = anyhow::anyhow!(
-            "server returned an error response: error code {}: {}",
-            err.code,
-            err.message
-        );
-        assert!(crate::hint_backoff::is_method_unavailable(&err));
+    #[tokio::test]
+    async fn blocked_method_through_rpc_client_is_detected() {
+        // Full path: a blocked method routed through a real RpcClient must surface an error
+        // that is_method_blacklisted recognizes. The transport points at an unreachable port,
+        // so a passing test also proves the layer short-circuits before dialing.
+        let client = ClientBuilder::default()
+            .layer(BlockedMethodsLayer::new([
+                "debug_executePayload".to_string()
+            ]))
+            .http("http://127.0.0.1:1/".parse().unwrap());
+        let err = client
+            .request::<_, serde_json::Value>("debug_executePayload", (1u64,))
+            .await
+            .expect_err("blocked method must error");
+        assert!(crate::hint_backoff::is_method_blacklisted(
+            &anyhow::anyhow!(err)
+        ));
     }
 }

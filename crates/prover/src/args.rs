@@ -23,8 +23,6 @@ use kailua_sync::args::{parse_address, parse_b256};
 use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::telemetry::TelemetryArgs;
 use kona_host::single::{SingleChainHostError, SingleChainProviders};
-use kona_providers_alloy::{OnlineBeaconClient, OnlineBlobProvider};
-use op_alloy_network::Optimism;
 use std::cmp::Ordering;
 use std::panic::AssertUnwindSafe;
 use tracing::error;
@@ -253,45 +251,27 @@ impl ProveArgs {
     }
 
     pub async fn create_providers(&self) -> Result<SingleChainProviders, SingleChainHostError> {
-        if !self.proving.blocked_rpc_methods.is_empty() {
-            // Build the providers with the blocked-methods layer on the RPC clients. Mirrors
-            // kona's SingleChainHost::create_providers, which offers no layering hook.
-            let l1_provider = RootProvider::new(
-                self.rpc_client(
-                    self.kona
-                        .l1_node_address
-                        .as_ref()
-                        .ok_or(SingleChainHostError::Other("Provider must be set"))?,
-                )?,
-            );
-            let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
-                self.kona
-                    .l1_beacon_address
-                    .clone()
-                    .ok_or(SingleChainHostError::Other("Beacon API URL must be set"))?,
-            ))
-            .await;
-            let l2_provider = RootProvider::<Optimism>::new(
-                self.rpc_client(
-                    self.kona
-                        .l2_node_address
-                        .as_ref()
-                        .ok_or(SingleChainHostError::Other("L2 node address must be set"))?,
-                )?,
-            );
-            return Ok(SingleChainProviders {
-                l1: l1_provider,
-                blobs: blob_provider,
-                l2: l2_provider,
-            });
-        }
-        AssertUnwindSafe(self.kona.clone().create_providers())
+        let mut providers = AssertUnwindSafe(self.kona.clone().create_providers())
             .catch_unwind()
             .await
             .unwrap_or_else(|err| {
                 error!("kona::create_providers panicked: {err:?}");
                 Err(SingleChainHostError::Other("create_providers panicked"))
-            })
+            })?;
+        // Re-wrap the L2 provider so `--blocked-rpc-methods` applies to it. The blockable
+        // methods (debug_executePayload, debug_executionWitness) are all served by the L2
+        // provider, so leaving the L1 and beacon providers as kona built them is sufficient.
+        // kona exposes no hook to layer the client during construction, so its L2 provider is
+        // discarded here; that is cheap because an HTTP `RootProvider` connects lazily.
+        if !self.proving.blocked_rpc_methods.is_empty() {
+            let l2_address = self
+                .kona
+                .l2_node_address
+                .as_ref()
+                .ok_or(SingleChainHostError::Other("L2 node address must be set"))?;
+            providers.l2 = RootProvider::new(self.rpc_client(l2_address)?);
+        }
+        Ok(providers)
     }
 
     pub fn to_arg_vec(&self) -> Vec<String> {
