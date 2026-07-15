@@ -20,6 +20,9 @@
   - [Validator](./validator.md)
   - [RPC](./rpc.md)
 
+# Maintenance
+- [Dependency Upgrades](./dependency-upgrades.md)
+
 # Specification
 - [Sequencing]()
 - [Validating]()
