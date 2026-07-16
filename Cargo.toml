@@ -5,6 +5,7 @@ license = "Apache-2.0"
 rust-version = "1.92.0"
 authors = ["hashcashier"]
 homepage = "https://boundless-xyz.github.io/kailua/"
+documentation = "https://boundless-xyz.github.io/kailua/"
 repository = "https://github.com/boundless-xyz/kailua"
 keywords = ["zkvm", "ethereum", "optimism", "fault", "proof"]
 categories = ["cryptography", "cryptography::cryptocurrencies"]
