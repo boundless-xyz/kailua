@@ -83,6 +83,10 @@ clippy:
   cargo clippy --manifest-path build/risczero/hokulea/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
   cargo clippy --manifest-path build/risczero/hana/Cargo.toml --locked --workspace --all --all-targets -- -D warnings
 
+# Check that all first-party source files carry the expected license header
+license-check:
+  ./scripts/check-license-headers.sh
+
 # Lint the host and the kona guest workspace only, denying warnings
 clippy-kona:
   RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked -- -D warnings

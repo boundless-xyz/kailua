@@ -45,6 +45,8 @@ The workspace's cargo features:
 
 `just fmt` and `just clippy` must pass before submitting a pull request.
 Together they cover the host workspace, all three guest workspaces, and the Solidity contracts, with warnings denied.
+New source files must start with the standard copyright and license header; `just license-check` (or
+`scripts/check-license-headers.sh`) verifies this.
 
 ## Local Devnet
 
@@ -73,6 +75,7 @@ Operator-facing flags and commands belong in the relevant book chapter; see `boo
 Every pull request runs (`.github/workflows/ci.yml`):
 
 * `cargo fmt` and `cargo clippy` over the host and all guest workspaces,
+* the license header check (`scripts/check-license-headers.sh`),
 * the Rust test suite, including an end-to-end devnet run via Kurtosis (plus an EigenDA variant),
 * `kailua-kona` coverage via `cargo-llvm-cov` on the pinned nightly,
 * `forge fmt`, `forge test`, and `forge coverage` for the contracts.
