@@ -40,6 +40,13 @@ import {
     ClockNotExpired
 } from "@optimism/src/dispute/lib/Errors.sol";
 
+/// @title KailuaGame
+/// @notice A single Kailua sequencing proposal, covering a fixed number of L2 blocks past its parent proposal.
+///         Intermediate output roots are committed to via EIP-4844 blobs at creation time. The proposal resolves
+///         optimistically once its challenge period lapses, or eagerly through a validity proof, provided it is the
+///         surviving child of its parent's tournament.
+/// @dev Installed as the game implementation in the `DisputeGameFactory`; instances are CWIA clones created through
+///      `KailuaTreasury.propose`.
 contract KailuaGame is KailuaTournament {
     /// @notice Semantic version.
     /// @custom:semver 1.2.0
@@ -58,6 +65,10 @@ contract KailuaGame is KailuaTournament {
     /// @notice The time between l2 blocks
     uint256 public immutable L2_BLOCK_TIME;
 
+    /// @param _kailuaTreasury The treasury contract; the remaining tournament parameters are copied from it
+    /// @param _genesisTimeStamp The timestamp of the genesis L2 block
+    /// @param _l2BlockTime The time between consecutive L2 blocks
+    /// @param _maxClockDuration The duration after which an unchallenged proposal may resolve
     constructor(
         KailuaTreasury _kailuaTreasury,
         uint256 _genesisTimeStamp,
@@ -82,6 +93,12 @@ contract KailuaGame is KailuaTournament {
     // IInitializable implementation
     // ------------------------------
 
+    /// @notice Initializes the proposal
+    /// @dev Validates the proposal on intake: the calldata must have the exact expected shape, the duplication
+    ///      counter must increase monotonically, the claimed block height must extend the parent by exactly
+    ///      `PROPOSAL_OUTPUT_COUNT * OUTPUT_BLOCK_SPAN` blocks, all proposal blobs must be present, the parent must
+    ///      be a known proposal without a fault proof against this proposal's signature, and the minimum creation
+    ///      time must have passed.
     function initialize() external payable override {
         super.initializeInternal();
 
@@ -153,12 +170,18 @@ contract KailuaGame is KailuaTournament {
     // IDisputeGame implementation
     // ------------------------------
 
+    /// @notice Returns the extra data supplied to the dispute game contract by the creator
+    /// @return extraData_ The packed `l2BlockNumber`, `parentGameIndex`, and `duplicationCounter`
     function extraData() external pure returns (bytes memory extraData_) {
         // The extra data starts at the second word within the cwia calldata and
         // is 24 bytes long.
         extraData_ = _getArgBytes(0x54, 0x18);
     }
 
+    /// @notice Resolves the game
+    /// @dev Resolvable only in favor of the defender, once the parent proposal has resolved, this proposal has been
+    ///      proven valid or has outlived its challenge period, and it is the sole survivor of the parent's tournament
+    /// @return status_ The resolved status of the game (`DEFENDER_WINS`)
     function resolve() external returns (GameStatus status_) {
         // INVARIANT: Resolution cannot occur unless the game is currently in progress.
         if (status != GameStatus.IN_PROGRESS) {
@@ -200,11 +223,13 @@ contract KailuaGame is KailuaTournament {
     // ------------------------------
 
     /// @notice The index of the parent game in the `DisputeGameFactory`.
+    /// @return parentGameIndex_ The factory index embedded in the clone's immutable arguments
     function parentGameIndex() public pure returns (uint64 parentGameIndex_) {
         parentGameIndex_ = _getArgUint64(0x5C);
     }
 
     /// @notice The number of duplicate proposals preceeding this one.
+    /// @return duplicationCounter_ The duplication counter embedded in the clone's immutable arguments
     function duplicationCounter() public pure returns (uint64 duplicationCounter_) {
         duplicationCounter_ = _getArgUint64(0x64);
     }

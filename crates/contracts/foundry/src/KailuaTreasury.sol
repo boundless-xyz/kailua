@@ -41,6 +41,13 @@ import {
     GameNotResolved
 } from "@optimism/src/dispute/lib/Errors.sol";
 
+/// @title KailuaTreasury
+/// @notice The root proposal of a Kailua deployment and the single entry point for creating new proposals. The
+///         treasury anchors the proposal tree at a trusted output root, holds the collateral bonded by proposers,
+///         and distributes the slashed bonds of eliminated proposers between provers, tournament winners, and burns.
+/// @dev Deployed once per Kailua deployment and briefly installed as the game implementation in the
+///      `DisputeGameFactory` so that the anchor proposal can be created; all later proposals are `KailuaGame`
+///      instances created through `propose`.
 contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     /// @notice Semantic version.
     /// @custom:semver 1.2.0
@@ -56,6 +63,13 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     /// @notice The L2 block number of the initial root claim for the deployment
     uint64 public immutable L2_BLOCK_NUMBER;
 
+    /// @param _kailuaVerifier The verifier contract used to validate ZK proofs
+    /// @param _proposalOutputCount The number of outputs a proposal must publish, including the root claim
+    /// @param _outputBlockSpan The number of L2 blocks each published output must cover
+    /// @param _gameType The dispute game type ID registered for Kailua in the `DisputeGameFactory`
+    /// @param _optimismPortal The `OptimismPortal2` instance used to resolve the factory and respected game type
+    /// @param _rootClaim The trusted output root the proposal tree is anchored at
+    /// @param _l2BlockNumber The L2 block number committed to by the anchoring output root
     constructor(
         KailuaVerifier _kailuaVerifier,
         uint64 _proposalOutputCount,
@@ -77,6 +91,9 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     // IInitializable implementation
     // ------------------------------
 
+    /// @notice Initializes the anchor proposal
+    /// @dev Only accepts the exact root claim, L2 block number, and treasury address the deployment was
+    ///      configured with, so that only one anchor proposal can ever be initialized per deployment
     function initialize() external payable override {
         super.initializeInternal();
 
@@ -116,6 +133,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     }
 
     /// @notice Returns the treasury address used in initialization
+    /// @return treasuryAddress_ The treasury address embedded in the clone's immutable arguments
     function treasuryAddress() public pure returns (address treasuryAddress_) {
         treasuryAddress_ = _getArgAddress(0x5c);
     }
@@ -132,6 +150,8 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     }
 
     /// @inheritdoc IDisputeGame
+    /// @dev The anchor proposal is trusted, so only the factory owner may resolve it, immediately and in favor of
+    ///      the defender
     function resolve() external onlyFactoryOwner returns (GameStatus status_) {
         // INVARIANT: Resolution cannot occur unless the game is currently in progress.
         if (status != GameStatus.IN_PROGRESS) {
@@ -188,6 +208,10 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     mapping(address => address) public proposerOf;
 
     /// @inheritdoc IKailuaTreasury
+    /// @dev Only callable by the child's parent tournament. The eliminated proposer's entire bond is slashed and
+    ///      split into a prover share, a share for the parent tournament's eventual winner, and a burned remainder.
+    /// @param _child The eliminated child proposal contract
+    /// @param prover The address credited with the prover share of the slashed bond
     function eliminate(address _child, address prover) external {
         KailuaTournament child = KailuaTournament(_child);
 
@@ -233,6 +257,8 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     address public lastResolved;
 
     /// @inheritdoc IKailuaTreasury
+    /// @dev Only callable by a known proposal contract upon its resolution. Credits the winner shares accumulated
+    ///      from eliminations in the caller's tournament to the caller's proposer.
     function updateLastResolved() external {
         address proposer = proposerOf[msg.sender];
 
@@ -252,9 +278,13 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     // Treasury
     // ------------------------------
 
-    /// @notice Fixed split of a slashed participation bond between prover, winner, and burn.
+    /// @notice The total number of shares a slashed participation bond is split into
     uint256 public constant ELIMINATION_SPLIT_DENOM = 3;
+
+    /// @notice The prover's number of shares in a slashed participation bond
     uint256 public constant ELIMINATION_SPLIT_PROVER_NUM = 1;
+
+    /// @notice The tournament winner's number of shares in a slashed participation bond; the remainder is burned
     uint256 public constant ELIMINATION_SPLIT_WINNER_NUM = 1;
 
     /// @notice The locked collateral required for proposal submission
@@ -282,6 +312,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     /// @notice Boolean flag to prevent re-entrant calls
     bool internal isLocked;
 
+    /// @notice Reverts if the guarded function is re-entered
     modifier nonReentrant() {
         require(!isLocked);
         isLocked = true;
@@ -289,6 +320,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         isLocked = false;
     }
 
+    /// @notice Reverts if the caller is not the owner of the `DisputeGameFactory`
     modifier onlyFactoryOwner() {
         if (msg.sender != DISPUTE_GAME_FACTORY.owner()) revert NotFactoryOwner();
         _;
@@ -305,6 +337,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     }
 
     /// @notice Pays the proposer back its bond
+    /// @dev Only claimable by proposers that were never eliminated and whose last proposal's tournament has resolved
     function claimProposerBond() public nonReentrant {
         // INVARIANT: Can only claim back bond if not eliminated
         if (eliminationRound[msg.sender] != 0) {
@@ -332,18 +365,27 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     }
 
     /// @notice Updates the required bond for new proposals
+    /// @param amount The collateral a proposer must lock before submitting proposals
     function setParticipationBond(uint256 amount) external onlyFactoryOwner {
         participationBond = amount;
         emit BondUpdated(amount);
     }
 
     /// @notice Updates the vanguard address and advantage duration
+    /// @param _vanguard The proposer granted the exclusive first-proposal advantage, or the zero address to disable
+    /// @param _vanguardAdvantage How long other proposers must wait before countering the vanguard
     function assignVanguard(address _vanguard, Duration _vanguardAdvantage) external onlyFactoryOwner {
         vanguard = _vanguard;
         vanguardAdvantage = _vanguardAdvantage;
     }
 
     /// @notice Checks the proposer's bonded amount and creates a new proposal through the factory
+    /// @dev Any attached value is credited towards the sender's bond, which must cover `participationBond`.
+    ///      Eliminated proposers are rejected, proposals must extend the sender's previous proposal, and
+    ///      non-vanguard proposers may only open a new tournament once the vanguard's advantage has lapsed.
+    /// @param _rootClaim The claimed output root of the new proposal
+    /// @param _extraData The packed `l2BlockNumber`, `parentGameIndex`, and `duplicationCounter` of the proposal
+    /// @return tournament The newly created proposal contract
     function propose(Claim _rootClaim, bytes calldata _extraData)
         external
         payable
