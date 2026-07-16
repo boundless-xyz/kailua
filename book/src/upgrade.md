@@ -88,7 +88,8 @@ kailua-cli fast-track \
       --collateral-amount [YOUR_COLLATERAL_AMOUNT] \
       --verifier-contract [RISC_ZERO_VERIFIER_ADDRESS] \
       --challenge-timeout [YOUR_CHALLENGE_PERIOD] \
-      --proof-permit-timeout [YOUR_FAULT_PROVING_LOCK_TIMEOUT]
+      --proof-permit-timeout [YOUR_FAULT_PROVING_LOCK_TIMEOUT] \
+      --proof-permit-delay [YOUR_FAULT_PROVING_LOCK_DELAY]
 \
       --deployer-key [YOUR_DEPLOYER_KEY] \
       --owner-key [YOUR_OWNER_KEY] \
@@ -120,13 +121,14 @@ The sequencing state at the block `starting-block-number` as reported by the `op
 ```
 
 #### Fault Proving
-The next three parameters configure fault proving:
+The following parameters configure fault proving:
 * `collateral-amount`: The amount of collateral (in wei) a proposer has to stake before publishing proposals.
 * `verifier-contract`: (Optional) The address of the existing RISC Zero verifier contract to use. If this argument is omitted, a new set of verifier contracts will be deployed.
   * If you wish to use an already existing verifier, you must provide this argument, even if the `config` command had located a verifier.
   * If you are deploying a new verifier contract and wish to support fake proofs generated in dev mode (insecure), make sure to set `RISC0_DEV_MODE=1` in your environment before invoking the `fast-track` command.
 * `challenge-timeout`: The timeout (in seconds) for a sequencing proposal to be contradicted.
 * `proof-permit-timeout`: The timeout (in seconds) after which a fault proving lock expires.
+* `proof-permit-delay`: The delay (in seconds) after acquisition before a fault proving lock becomes active.
 
 #### Ethereum Transactions
 The next three parameters are the private keys for the respective parent chain wallets:

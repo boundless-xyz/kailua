@@ -70,11 +70,13 @@ The validator proving behavior can be customized through the following arguments
 * `max-derivation-length`: Maximum number of blocks in a continuous derivation proof sequence
 * `max-block-derivations`: Maximum number of blocks to derive per single proof.
 * `max-block-executions`: Maximum number of blocks to execute per single proof.
+* `num-block-partials`: Number of partial execution proofs to compute per block (Default 0). Only effective in `experimental` builds.
 * `num-tail-blocks`: Rate of growth of tail proofs in L1 blocks (Default 10).
 * `enable-experimental-witness-endpoint`: Enables the use of `debug_executePayload` to collect the execution witness from the execution layer.
 * `max-fault-proving-delay`: The maximum amount of seconds to wait before starting to compute a fault proof (Default 900).
 * `max-validity-proving-delay`: The maximum amount of seconds to wait before starting to compute a validity proof (Default 0).
 * `clear-cache-data`: Whether to clear cache data after successful completion (Default false).
+* `export-profile-csv`: Whether to export a CSV file with proving performance data (Default false).
 
 ### Fault Proving Permits
 The validator can optionally acquire [fault proving permits](design.md#fault-proving-permits) before generating
@@ -179,6 +181,9 @@ Enabling proving using [Bonsai](https://risczero.com/bonsai) requires you to set
 * `BONSAI_API_KEY`: Your Bonsai API key.
 * `BONSAI_API_URL`: Your Bonsai API url.
 
+Optionally, the polling cadence can be tuned through a third environment variable:
+* `BONSAI_POLL_INTERVAL_MS`: Time in milliseconds between proving session status polls (Default 1000).
+
 ```admonish success
 Running `kailua-cli validate` with these two environment variables should now delegate all validator proving to [Bonsai](https://risczero.com/bonsai)!
 ```
@@ -224,6 +229,8 @@ conditions and gas costs. The following optional parameters allow you to overrid
 * `boundless-min-price-per-cycle`: Minimum price per cycle, e.g. `"0.00001 USD"` or `"0.0000001 ETH"`. Requires a unit. If unset, the SDK uses market pricing from the price provider.
 * `boundless-max-price-per-cycle`: Maximum price per cycle, same format. If unset, the SDK uses a market-calibrated default plus a gas cost buffer.
 * `boundless-max-price-cap`: Hard cap on total order price (e.g. `"0.5 ETH"`, `"100 USD"`). Safety mechanism to prevent excessive spending.
+* `boundless-dynamic-pricing-timeout-modifier`: Multiplier applied to both the SDK-computed lock timeout and overall order timeout. E.g. `2.0` doubles both, preserving the post-lock fulfillment window proportionally. If unset, the SDK-computed values are used unchanged.
+* `boundless-dynamic-pricing-ramp-up-modifier`: Multiplier applied to the SDK-computed price ramp-up period. If unset, the SDK-computed value is used unchanged.
 
 #### Retry Escalation
 When a proof request expires without being fulfilled, it is automatically resubmitted with increased pricing and timeouts:
@@ -289,3 +296,4 @@ When manually computing individual proofs, the following parameters (or equiv. e
 * `SKIP_AWAIT_PROOF`: Skips waiting for the proving process to complete on Bonsai/Boundless.
 * `SKIP_DERIVATION_PROOF`: Skips provably deriving L2 transactions using L1 data.
 * `L1_HEAD_JUMP_BACK`: The number of l1 heads to jump back when initially proving.
+* `KAILUA_FORCE_RECURSION`: Forces stitched sub-proofs to be verified inside the guest program as explicit input instead of through zkVM assumption resolution (testing only).

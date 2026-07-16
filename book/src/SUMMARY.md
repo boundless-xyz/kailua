@@ -22,23 +22,8 @@
 
 # Maintenance
 - [Dependency Upgrades](./dependency-upgrades.md)
+- [Testing Tools](./testing.md)
 
 # Specification
 - [Sequencing](./sequencing.md)
 - [Validating](./validating.md)
-
-# Implementation
-- [Prover]()
-  - [Host]()
-  - [Client]()
-  - [FPVM]()
-- [Contracts]()
-  - [Verifier]()
-  - [Treasury]()
-  - [Tournament]()
-  - [Game]()
-- [CLI]()
-  - [Upgrade]()
-  - [Propose]()
-  - [Validate]()
-  - [Fault]()
