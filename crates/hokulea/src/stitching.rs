@@ -36,13 +36,17 @@ use kona_proof::FlushableCache;
 use std::fmt::Debug;
 use std::sync::Arc;
 
+/// [StitchingClient] that runs the Kailua proving client with EigenDA data availability.
 #[derive(Clone, Debug)]
 pub struct HokuleaStitchingClient<T: CommsClient + FlushableCache + Clone> {
+    /// Untrusted host-supplied EigenDA certificates and blobs used during derivation.
     pub eigen_da_witness: EigenDAWitness,
+    /// The oracle serving the boot record and EigenDA validation preimages.
     pub eigen_da_oracle: Arc<T>,
 }
 
 impl<T: CommsClient + FlushableCache + Clone> HokuleaStitchingClient<T> {
+    /// Creates a stitching client from an EigenDA witness and its backing oracle.
     pub fn new(eigen_da_witness: EigenDAWitness, eigen_da_oracle: Arc<T>) -> Self {
         Self {
             eigen_da_witness,
@@ -57,6 +61,10 @@ impl<
         T: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
     > StitchingClient<O, B> for HokuleaStitchingClient<T>
 {
+    /// Validates the EigenDA witness into a preloaded preimage provider via [KailuaCanoeVerifier],
+    /// then delegates to [KonaStitchingClient] with the EigenDA data source. A sentinel L1 head
+    /// denotes a proof with no derivation work, so witness validation is skipped and an empty
+    /// provider is used. Panics if the two oracles disagree on the boot record.
     fn run_stitching_client(
         self,
         precondition_validation_data_hash: B256,
