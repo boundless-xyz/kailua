@@ -41,6 +41,18 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
+/// Runs the proposer service loop: synchronizes tournament state through a [SyncAgent],
+/// resolves at most one pending proposal per iteration, and publishes a new proposal
+/// extending the canonical tip whenever one is due.
+///
+/// A proposal is attempted only once the op-node's finalized head covers the next
+/// `blocks_per_proposal` window, the deployment's minimum proposal time has elapsed, and any
+/// vanguard priority window has passed (or belongs to this proposer). Its intermediate output
+/// roots ride along as a blob sidecar, its extra data carries a duplication counter
+/// distinguishing it from identical proposals made faultily or by eliminated players, and any
+/// outstanding participation bond is topped up via transaction value. After a failed
+/// publication, the next iteration skips resolution to retry proposing sooner. Returns once
+/// the configured final L2 block is resolved.
 pub async fn propose(args: ProposeArgs, data_dir: PathBuf) -> anyhow::Result<()> {
     // Telemetry
     let meter = meter("kailua");
