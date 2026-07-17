@@ -39,21 +39,26 @@ pub struct SyncCursor {
 }
 
 impl SyncCursor {
+    /// True while delayed proposals remain queued or unprocessed factory entries exist.
     pub fn has_next(&self, game_count: u64) -> bool {
         !self.delayed_factory_indices.is_empty() || self.next_factory_index < game_count
     }
 
+    /// Returns the next proposal index to process, preferring queued delayed proposals.
     pub fn next_index(&mut self) -> u64 {
         self.delayed_factory_indices
             .pop_front()
             .unwrap_or(self.next_factory_index)
     }
 
+    /// Requeues delayed proposal indices ahead of those already queued.
     pub fn load_delayed_indices(&mut self, new_indices: impl IntoIterator<Item = u64>) {
         let existing_indices = core::mem::take(&mut self.delayed_factory_indices).into_iter();
         self.delayed_factory_indices = new_indices.into_iter().chain(existing_indices).collect();
     }
 
+    /// Initializes the cursor at an anchor proposal: the given address, or the treasury's
+    /// last resolved game. The anchor must be a finalized member of the target deployment.
     pub async fn load(
         deployment: &SyncDeployment,
         provider: &SyncProvider,

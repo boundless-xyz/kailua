@@ -27,6 +27,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
+/// Follows the on-chain deployment through a [SyncAgent], continuously publishing each newly
+/// admitted canonical proposal's block height and address to the server cache (and stdout as
+/// `TRACKED` lines), until the optional final L2 block is resolved.
 pub async fn handle_sync(
     args: RpcArgs,
     data_dir: PathBuf,

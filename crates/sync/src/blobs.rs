@@ -18,17 +18,21 @@ use alloy::primitives::U256;
 use anyhow::bail;
 use std::ops::{Div, Sub};
 
+/// Smallest primitive root of the BLS12-381 scalar field modulus.
 pub const PRIMITIVE_ROOT_OF_UNITY: U256 = U256::from_limbs([7, 0, 0, 0]);
 // primitive_root = 7
 // bls_mod = 52435875175126190479447740508185965837690552500527637822603658699938581184513
 // pow(primitive_root, (bls_mod - 1) // (2 ** 12), bls_mod)
 // 39033254847818212395286706435128746857159659164139250548781411570340225835782
+/// Log2 of the field element evaluation domain size (4096 elements per blob).
 pub const FE_ORDER_PO2: u32 = 12;
 
+/// Reverses the lowest `order_po2` bits of the index, as used to order blob evaluation points.
 pub fn reverse_bits(index: u128, order_po2: u32) -> u128 {
     index.reverse_bits() >> (u128::BITS - order_po2)
 }
 
+/// Computes the evaluation point of the field element at the given blob position.
 pub fn root_of_unity(index: usize) -> U256 {
     let primitive_root_exponent = BLS_MODULUS
         .sub(U256::from(1))
@@ -38,6 +42,8 @@ pub fn root_of_unity(index: usize) -> U256 {
     root.pow_mod(U256::from(root_exponent), BLS_MODULUS)
 }
 
+/// Computes and verifies the KZG proof for the field element at the given blob position,
+/// returning the proof and the element's value.
 pub fn blob_fe_proof(
     blob: &Blob,
     index: usize,
