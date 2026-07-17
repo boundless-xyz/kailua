@@ -26,6 +26,8 @@ use std::convert::identity;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
 
+/// Computes the cache file name of a derivation pipeline snapshot by digesting everything that
+/// determines it: guest image ID, boot claim, chain config hash, and precondition.
 pub fn driver_file_name<A: NoUninit>(
     image_id: A,
     boot_info: &BootInfo,
@@ -51,6 +53,7 @@ pub fn driver_file_name<A: NoUninit>(
     format!("{driver_id}.driver")
 }
 
+/// Reads and rkyv-deserializes a [CachedDriver] from the data directory, or `None` on any failure.
 pub async fn try_read_driver(data_dir: Option<&PathBuf>, file_name: &str) -> Option<CachedDriver> {
     let file_path = data_dir
         .map(|d| d.join(file_name))
@@ -81,6 +84,7 @@ pub async fn try_read_driver(data_dir: Option<&PathBuf>, file_name: &str) -> Opt
     None
 }
 
+/// Sends the [CachedDriver] over the channel when both are present, returning its digest.
 pub async fn signal_derivation_trace(
     sender: Option<Sender<CachedDriver>>,
     traced_driver: Option<CachedDriver>,

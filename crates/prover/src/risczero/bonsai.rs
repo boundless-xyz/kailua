@@ -30,6 +30,10 @@ use tokio::time::sleep;
 use tracing::log::warn;
 use tracing::{error, info};
 
+/// Proves the workload on Bonsai, returning the verified receipt with cycle counts.
+///
+/// Uploads the input payload and succinct assumption receipts, then polls the STARK session to
+/// completion (recreating it on failure), and optionally wraps the result as a Groth16 SNARK.
 pub async fn run_bonsai_client<A: NoUninit + Into<Digest>>(
     image: (A, &[u8]),
     witness_slices: Vec<Vec<u32>>,
@@ -233,6 +237,8 @@ pub async fn run_bonsai_client<A: NoUninit + Into<Digest>>(
     Ok((groth16_receipt, profile))
 }
 
+/// Starts a Bonsai STARK-to-Groth16 compression session, retrying (with receipt re-upload)
+/// until one is created.
 pub async fn create_snark_session(
     client: &Client,
     receipt: Vec<u8>,
@@ -252,6 +258,8 @@ pub async fn create_snark_session(
     }
 }
 
+/// Starts a Bonsai proving session, uploading the ELF if absent and retrying with freshly
+/// uploaded input until session creation succeeds.
 pub async fn create_stark_session<A: NoUninit + Into<Digest>>(
     image: (A, &[u8]),
     client: &Client,
@@ -308,6 +316,7 @@ pub async fn create_stark_session<A: NoUninit + Into<Digest>>(
     }
 }
 
+/// True when Bonsai API env vars are set and dev mode is off.
 #[allow(deprecated)]
 pub fn should_use_bonsai() -> bool {
     !risc0_zkvm::is_dev_mode()

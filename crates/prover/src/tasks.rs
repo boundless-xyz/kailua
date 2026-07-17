@@ -50,26 +50,47 @@ use {
     kailua_kona::evm::partial::PartialExecution,
 };
 
+/// A fully-specified proving job, ready for dispatch to the worker pool.
+///
+/// Tasks are ordered by their claimed L2 block number so results can be sorted back into
+/// chain order after concurrent completion.
 #[derive(Clone, Debug)]
 pub struct CachedTask {
+    /// Proofs of partial (chunked) block executions available for stitching.
     #[cfg(feature = "experimental")]
     pub partials_cache: Option<Arc<PartialsCache>>,
+    /// The claim to prove and its data sources.
     pub args: ProveArgs,
+    /// The target rollup configuration.
     pub rollup_config: RollupConfig,
+    /// The L1 chain configuration.
     pub l1_config: L1ChainConfig,
+    /// Shared disk preimage store, if a data directory is configured.
     pub disk_kv_store: Option<RWLKeyValueStore>,
+    /// Precondition the proof must commit to.
     pub precondition: Precondition,
+    /// Hash of the proposal precondition validation data preimage.
     pub proposal_data_hash: B256,
+    /// Cached execution traces to replay instead of deriving.
     pub stitched_executions: Vec<Vec<Execution>>,
+    /// Partial execution traces to replay for chunked proving.
     #[cfg(feature = "experimental")]
     pub partial_executions: Vec<Vec<PartialExecution>>,
+    /// Derivation pipeline snapshot to resume from.
     pub derivation_cache: Option<CachedDriver>,
+    /// Channel over which the job's resulting pipeline snapshot is signaled.
     pub derivation_trace_sender: Option<Sender<CachedDriver>>,
+    /// Preconditions of the sub-proofs being stitched.
     pub stitched_preconditions: Vec<Precondition>,
+    /// Boot claims of the sub-proofs being stitched.
     pub stitched_boot_info: Vec<StitchedBootInfo>,
+    /// Receipts of the sub-proofs being stitched.
     pub stitched_proofs: Vec<ProfiledReceipt>,
+    /// Whether to produce a Groth16 SNARK instead of a STARK.
     pub prove_snark: bool,
+    /// Whether to prove regardless of the witness size limit.
     pub force_attempt: bool,
+    /// Whether to compute a proof or only run the native client for its traces.
     pub seek_proof: bool,
 }
 
@@ -93,11 +114,15 @@ impl Ord for CachedTask {
     }
 }
 
+/// A computed receipt paired with the (possibly updated) precondition it commits to.
 pub type OneshotResultResponse = (ProfiledReceipt, Precondition);
 
+/// The outcome of a [Oneshot] task, tagged with the job that produced it for ordering.
 #[derive(Debug)]
 pub struct OneshotResult {
+    /// The job that was processed.
     pub cached_task: CachedTask,
+    /// The proving outcome.
     pub result: Result<OneshotResultResponse, ProvingError>,
 }
 
@@ -121,9 +146,12 @@ impl Ord for OneshotResult {
     }
 }
 
+/// A proving job paired with the channel its result is to be sent back on.
 #[derive(Debug)]
 pub struct Oneshot {
+    /// The job to process.
     pub cached_task: CachedTask,
+    /// Channel receiving the job's [OneshotResult].
     pub result_sender: Sender<OneshotResult>,
 }
 
@@ -234,7 +262,14 @@ pub async fn compute_oneshot_task(
         .result
 }
 
-/// Computes a receipt if it is not cached
+/// Computes a proof for the job, decomposing it into sub-proofs when limits are exceeded.
+///
+/// A complete proof is attempted first. If it fails on witness size or block count, the traces
+/// carried by the failure are recycled: derivation-only "tail" proofs are grown over the L1
+/// blocks at the end of the derivation window, execution-only proofs are computed from the
+/// cached block executions (bisecting on witness-size failures), and a final head proof
+/// stitches them all together. Errors propagate the derivation cache so the caller can split
+/// the workload without re-deriving.
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_fpvm_proof(
     #[cfg(feature = "experimental")] partials_cache: Option<Arc<PartialsCache>>,
@@ -962,6 +997,8 @@ pub async fn compute_fpvm_proof(
     ))
 }
 
+/// Builds an execution-only [CachedTask] for the job's block range, replaying the slice of
+/// cached execution artifacts between its agreed and claimed output roots.
 pub fn create_cached_execution_task(
     args: ProveArgs,
     rollup_config: RollupConfig,
@@ -1027,7 +1064,12 @@ pub fn create_cached_execution_task(
     }
 }
 
-/// Launches the native Kailua-Kona client-server pair to compute a [OneshotResultResponse]
+/// Launches the native client-server pair to compute a single job's [OneshotResultResponse].
+///
+/// Computation is skipped when the expected proof file already exists on disk; otherwise the
+/// payload is preflighted and the native client is run to generate (or just trace) the proof.
+/// Derivation pipeline snapshots are read back from the driver cache file, signaled over the
+/// trace channel, and reflected in the returned precondition and reloaded receipt.
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_cached_proof(
     #[cfg(feature = "experimental")] partials_cache: Option<Arc<PartialsCache>>,

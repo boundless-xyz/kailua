@@ -16,7 +16,7 @@ use clap::Parser;
 use hana_host::celestia::CelestiaCfg;
 use serde::Serialize;
 
-/// The host binary CLI application arguments.
+/// Celestia (Hana) node connection arguments.
 #[derive(Default, Parser, Serialize, Clone, Debug)]
 pub struct HanaArgs {
     /// Connection to celestia network
@@ -31,6 +31,7 @@ pub struct HanaArgs {
 }
 
 impl HanaArgs {
+    /// Serializes the set arguments back into CLI arguments.
     pub fn to_arg_vec(&self) -> Vec<String> {
         [
             self.celestia_connection
@@ -49,6 +50,7 @@ impl HanaArgs {
         .collect()
     }
 
+    /// True when all Celestia connection parameters are provided.
     pub fn is_set(&self) -> bool {
         self.celestia_connection.is_some()
             && self.celestia_auth_token.is_some()

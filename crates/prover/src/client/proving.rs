@@ -63,8 +63,10 @@ use {
 };
 
 lazy_static! {
+    /// Semaphore bounding concurrent witness generation runs across the process.
     pub static ref SEMAPHORE_WITGEN: Arc<Mutex<Arc<Semaphore>>> =
         Arc::new(Mutex::new(Arc::new(Semaphore::new(Semaphore::MAX_PERMITS))));
+    /// Semaphore bounding concurrent zkVM executor runs across the process.
     pub static ref SEMAPHORE_R0VM: Arc<Mutex<Arc<Semaphore>>> =
         Arc::new(Mutex::new(Arc::new(Semaphore::new(Semaphore::MAX_PERMITS))));
 }
@@ -72,6 +74,13 @@ lazy_static! {
 /// The size of the LRU cache in the oracle.
 pub const ORACLE_LRU_SIZE: usize = 1024;
 
+/// Generates the witness for the boot claim served by the oracle and seeks a matching proof.
+///
+/// Runs the DA-appropriate witgen client under the witgen semaphore, persists any traced
+/// derivation snapshot to its driver cache file, enforces the witness-size and block-count
+/// limits via [process_witness], and forwards the encoded frames to [crate::risczero::seek_proof].
+/// Under the experimental feature, cached partial-execution proofs covering the claim are
+/// loaded from disk and stitched in.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_proving_client<P, H>(
     _l1_node_address: Option<String>,
@@ -461,6 +470,7 @@ where
     Ok(())
 }
 
+/// Acquires an owned permit from the current incarnation of the semaphore.
 pub async fn acquire_owned_permit(
     semaphore: Arc<Mutex<Arc<Semaphore>>>,
 ) -> anyhow::Result<OwnedSemaphorePermit> {
@@ -473,18 +483,24 @@ pub async fn acquire_owned_permit(
         .context("Could not acquire witgen permit.")
 }
 
-/// Update the number of available permits
+/// Limits the number of concurrent witness generation runs to `count`.
 pub async fn restrict_witgen_permits(count: usize) {
     let mut witgen_sem_lock = SEMAPHORE_WITGEN.lock().await;
     *witgen_sem_lock = Arc::new(Semaphore::new(count));
 }
 
-/// Update the number of available permits
+/// Limits the number of concurrent zkVM executor runs to `count`.
 pub async fn restrict_r0vm_permits(count: usize) {
     let mut execute_sem_lock = SEMAPHORE_R0VM.lock().await;
     *execute_sem_lock = Arc::new(Semaphore::new(count));
 }
 
+/// Enforces the proving limits on the witness and encodes it into input frames.
+///
+/// Restores the original execution (and partial) inputs into the witness, then aborts with a
+/// splittable [ProvingError] variant when the witness size or block count exceeds its limit
+/// (unless `force_attempt`), or with [ProvingError::NotSeekingProof] when only traces were
+/// wanted. The error payloads carry the traces so the caller can divide the workload.
 #[allow(clippy::too_many_arguments)]
 pub fn process_witness(
     proving: &ProvingArgs,
@@ -583,6 +599,8 @@ pub fn process_witness(
     Ok([extra_frames, preloaded_frames, streamed_frames].concat())
 }
 
+/// Encodes the witness into (preloaded, streamed) rkyv frame lists: the main witness object
+/// followed by its preimage shards, and the streamed shards in reverse access order.
 #[allow(clippy::type_complexity)]
 pub fn encode_witness_frames(
     witness_vec: Witness<VecOracle>,
@@ -606,6 +624,7 @@ pub fn encode_witness_frames(
     Ok((preloaded_data, streams))
 }
 
+/// Serializes each preimage shard into its own rkyv frame, draining the entries.
 pub fn shard_witness_data(data: &mut [PreimageVecEntry]) -> anyhow::Result<Vec<Vec<u8>>> {
     let mut shards = vec![];
     for entry in data {
@@ -619,6 +638,7 @@ pub fn shard_witness_data(data: &mut [PreimageVecEntry]) -> anyhow::Result<Vec<V
     Ok(shards)
 }
 
+/// Returns the (preloaded, streamed) byte sizes of the encoded witness, measured on a deep clone.
 pub fn sum_witness_size(witness: &Witness<VecOracle>) -> (usize, usize) {
     let (witness_frames, streamed_frames) =
         encode_witness_frames(witness.deep_clone()).expect("Failed to encode VecOracle");

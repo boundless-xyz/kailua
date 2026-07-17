@@ -12,7 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// Celestia connection CLI arguments.
 pub mod args;
+/// Hint handling with Blobstream height validation and Steel height proofs.
 pub mod handler;
+/// Provider construction for the Celestia chain host.
 pub mod providers;
+/// Witness generation for the Celestia-enabled guest.
 pub mod witgen;
