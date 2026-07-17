@@ -12,9 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// EVM factory that replays cached per-transaction results instead of re-executing.
 pub mod cached;
+/// The out-of-transaction state read by OP execution logic (the L1Block predeploy).
 pub mod expected;
+/// Chunk data structures for proving transaction subsequences within a block.
 pub mod partial;
+/// Witness data for running a partial block execution in-guest.
 pub mod witness;
 
 #[cfg(test)]

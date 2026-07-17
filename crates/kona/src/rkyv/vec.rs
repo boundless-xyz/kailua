@@ -18,6 +18,8 @@ use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Archived, Place, Resolver, Serialize};
 use std::sync::{Arc, Mutex};
 
+/// `rkyv::with` wrapper (de)serializing a [PreimageVecStore] as its inner shard vector,
+/// reconstructing the `Arc<Mutex<_>>` on deserialization.
 pub struct PreimageVecStoreRkyv;
 
 impl ArchiveWith<PreimageVecStore> for PreimageVecStoreRkyv {

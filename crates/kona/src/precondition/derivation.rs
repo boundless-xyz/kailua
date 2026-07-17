@@ -36,6 +36,8 @@ use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use risc0_zkvm::sha::{Digestible, Impl as SHA2, Sha256};
 use risc0_zkvm::Digest;
 
+/// Canonically encodes a [PipelineCursor]: capacity, channel timeout, current origin, tracked
+/// origins (with infos sorted by block number), and the safe-head tip per origin.
 pub fn flatten_pipeline_cursor(pipeline_cursor: &PipelineCursor) -> Vec<u8> {
     [
         (pipeline_cursor.capacity as u64).to_be_bytes().as_slice(),
@@ -86,6 +88,7 @@ pub fn flatten_pipeline_cursor(pipeline_cursor: &PipelineCursor) -> Vec<u8> {
     .concat()
 }
 
+/// Canonically encodes the safe head's block build outcome and raw transactions.
 pub fn flatten_safe_head_artifacts(
     artifacts: &(BlockBuildingOutcome<OpReceiptEnvelope>, Vec<Bytes>),
 ) -> Vec<u8> {
@@ -103,6 +106,8 @@ pub fn flatten_safe_head_artifacts(
     .concat()
 }
 
+/// Canonically encodes a block build outcome: header hash, RLP-encoded receipts, requests, and
+/// gas totals.
 pub fn flatten_block_build_outcome(outcome: &BlockBuildingOutcome<OpReceiptEnvelope>) -> Vec<u8> {
     [
         outcome.header.hash_slow().as_slice(),
@@ -139,6 +144,8 @@ pub fn flatten_block_build_outcome(outcome: &BlockBuildingOutcome<OpReceiptEnvel
     .concat()
 }
 
+/// Canonically encodes L1 payload attributes: timestamp, randao, fee recipient, withdrawals,
+/// and parent beacon block root.
 pub fn flatten_payload_attributes(payload_attributes: &PayloadAttributes) -> Vec<u8> {
     [
         payload_attributes.timestamp.to_be_bytes().as_slice(),
@@ -166,6 +173,8 @@ pub fn flatten_payload_attributes(payload_attributes: &PayloadAttributes) -> Vec
     .concat()
 }
 
+/// Canonically encodes OP payload attributes, extending [flatten_payload_attributes] with
+/// transactions and the OP-specific fields.
 pub fn flatten_op_payload_attributes(op_payload_attributes: &OpPayloadAttributes) -> Vec<u8> {
     [
         flatten_payload_attributes(&op_payload_attributes.payload_attributes).as_slice(),
@@ -192,6 +201,8 @@ pub fn flatten_op_payload_attributes(op_payload_attributes: &OpPayloadAttributes
     .concat()
 }
 
+/// Canonically encodes payload attributes together with their parent block, derivation origin,
+/// and span position.
 pub fn flatten_op_attrib_with_parent(op_attrib_with_parent: &OpAttributesWithParent) -> Vec<u8> {
     [
         flatten_op_payload_attributes(&op_attrib_with_parent.attributes).as_slice(),
@@ -208,6 +219,7 @@ pub fn flatten_op_attrib_with_parent(op_attrib_with_parent: &OpAttributesWithPar
     .concat()
 }
 
+/// Canonically encodes a withdrawal's `(index, validator_index, address, amount)`.
 pub fn flatten_withdrawal(withdrawal: &Withdrawal) -> Vec<u8> {
     [
         withdrawal.index.to_be_bytes().as_slice(),
@@ -218,6 +230,7 @@ pub fn flatten_withdrawal(withdrawal: &Withdrawal) -> Vec<u8> {
     .concat()
 }
 
+/// Canonically encodes an L2 block's info, L1 origin, and sequence number.
 pub fn flatten_l2_block_info(l2_block_info: &L2BlockInfo) -> Vec<u8> {
     [
         flatten_block_info(&l2_block_info.block_info).as_slice(),
@@ -228,6 +241,7 @@ pub fn flatten_l2_block_info(l2_block_info: &L2BlockInfo) -> Vec<u8> {
     .concat()
 }
 
+/// Canonically encodes a batch together with the L1 block that included it.
 pub fn flatten_batch_with_inclusion_block(
     batch_with_inclusion_block: &BatchWithInclusionBlock,
 ) -> Vec<u8> {
@@ -238,6 +252,7 @@ pub fn flatten_batch_with_inclusion_block(
     .concat()
 }
 
+/// Canonically encodes a batch, domain-separated by type: `0xF1` for single, `0xF2` for span.
 pub fn flatten_batch(batch: &Batch) -> Vec<u8> {
     match batch {
         Batch::Single(single_batch) => {
@@ -247,6 +262,7 @@ pub fn flatten_batch(batch: &Batch) -> Vec<u8> {
     }
 }
 
+/// Canonically encodes a span batch, including every element and its transactions.
 pub fn flatten_span_batch(span_batch: &SpanBatch) -> Vec<u8> {
     [
         span_batch.parent_check.as_slice(),
@@ -277,6 +293,8 @@ pub fn flatten_span_batch(span_batch: &SpanBatch) -> Vec<u8> {
     .concat()
 }
 
+/// Canonically encodes the columnar transaction data of a span batch, length-prefixing every
+/// variable-length column.
 pub fn flatten_span_batch_transactions(span_batch_transactions: &SpanBatchTransactions) -> Vec<u8> {
     [
         span_batch_transactions
@@ -352,6 +370,7 @@ pub fn flatten_span_batch_transactions(span_batch_transactions: &SpanBatchTransa
     .concat()
 }
 
+/// Canonically encodes a span batch element's epoch, timestamp, and transactions.
 pub fn flatten_span_batch_element(span_batch_element: &SpanBatchElement) -> Vec<u8> {
     [
         span_batch_element.epoch_num.to_be_bytes().as_slice(),
@@ -367,6 +386,7 @@ pub fn flatten_span_batch_element(span_batch_element: &SpanBatchElement) -> Vec<
     .concat()
 }
 
+/// Canonically encodes a single batch's parent hash, epoch, timestamp, and transactions.
 pub fn flatten_single_batch(single_batch: &SingleBatch) -> Vec<u8> {
     [
         single_batch.parent_hash.as_slice(),
@@ -384,11 +404,14 @@ pub fn flatten_single_batch(single_batch: &SingleBatch) -> Vec<u8> {
     .concat()
 }
 
+/// Length-prefixes a byte string, keeping concatenations of variable-length data unambiguous.
 pub fn flatten_bytes(bytes: impl AsRef<[u8]>) -> Vec<u8> {
     let bytes = bytes.as_ref();
     [(bytes.len() as u64).to_be_bytes().as_slice(), bytes].concat()
 }
 
+/// Canonically encodes a channel, ordering its buffered frames by frame number so the encoding
+/// is independent of map iteration order.
 pub fn flatten_channel(channel: &Channel) -> Vec<u8> {
     let inputs = sorted_by_key(
         channel
@@ -414,6 +437,7 @@ pub fn flatten_channel(channel: &Channel) -> Vec<u8> {
     .concat()
 }
 
+/// Canonically encodes an ordered channel and its buffered frames.
 pub fn flatten_ordered_channel(channel: &OrderedChannel) -> Vec<u8> {
     let inputs = channel
         .inputs
@@ -432,6 +456,7 @@ pub fn flatten_ordered_channel(channel: &OrderedChannel) -> Vec<u8> {
     .concat()
 }
 
+/// Canonically encodes a frame's id, number, payload, and last-frame flag.
 pub fn flatten_frame(frame: &Frame) -> Vec<u8> {
     [
         &frame.id,
@@ -442,6 +467,7 @@ pub fn flatten_frame(frame: &Frame) -> Vec<u8> {
     .concat()
 }
 
+/// Canonically encodes a block's hash, number, parent hash, and timestamp.
 pub fn flatten_block_info(block_info: &BlockInfo) -> Vec<u8> {
     [
         block_info.hash.as_slice(),
@@ -452,6 +478,9 @@ pub fn flatten_block_info(block_info: &BlockInfo) -> Vec<u8> {
     .concat()
 }
 
+/// Stage digests are domain-separated by a unique leading tag byte (`0x01` traversal through
+/// `0x0C` driver) and each chain the digest of the preceding stage, so a single hash commits to
+/// the entire cached pipeline state.
 impl Digestible for CachedDriver {
     fn digest(&self) -> Digest {
         let fields = [

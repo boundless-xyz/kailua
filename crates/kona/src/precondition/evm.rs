@@ -115,6 +115,7 @@ pub fn hash_expected_state(expected_state: &[ExpectedStateEntry]) -> B256 {
     digest.into()
 }
 
+/// Canonically encodes a [BlockEnv] for hashing.
 pub fn flatten_block_env(block_env: &BlockEnv) -> Vec<u8> {
     [
         block_env.number.to_be_bytes::<32>().as_slice(),
@@ -130,6 +131,7 @@ pub fn flatten_block_env(block_env: &BlockEnv) -> Vec<u8> {
     .concat()
 }
 
+/// Canonically encodes an [OpBlockExecutionCtx] for hashing.
 pub fn flatten_op_block_execution_ctx(ctx: &OpBlockExecutionCtx) -> Vec<u8> {
     [
         ctx.parent_hash.as_slice(),
@@ -277,6 +279,8 @@ fn flatten_result_gas(gas: &ResultGas) -> Vec<u8> {
     .concat()
 }
 
+/// Canonically encodes an [ExecutionResult] for hashing, domain-separated by a leading variant
+/// discriminant byte.
 pub fn flatten_execution_result(r: &ExecutionResult<OpHaltReason>) -> Vec<u8> {
     match r {
         ExecutionResult::Success {
@@ -381,6 +385,8 @@ fn flatten_expected_account(acct: &ExpectedAccount) -> Vec<u8> {
     .concat()
 }
 
+/// Canonically encodes an expected-state snapshot for hashing; entries must already be sorted
+/// by address.
 pub fn flatten_expected_state(state: &[ExpectedStateEntry]) -> Vec<u8> {
     debug_assert!(
         state.windows(2).all(|w| w[0].address <= w[1].address),

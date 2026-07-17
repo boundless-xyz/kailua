@@ -20,38 +20,16 @@ use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::ops::Deref;
 
-/// Returns a value based on the provided `Option` and a default value, with safety checks.
-///
-/// This function takes an optional value `opt` and a default value `default`.
-/// If `opt` contains a value, it checks whether it is equal to the default value.
-/// If they are equal, an error is returned indicating an unsafe condition.
-/// Otherwise, the value inside `opt` is returned. If `opt` is `None`, the default value is returned.
-///
-/// # Arguments
-/// - `opt`: An `Option<V>` which may or may not contain a value.
-/// - `default`: A default value of type `V` to use if `opt` is `None`.
-///
-/// # Returns
-/// - `Ok(V)`: The value inside `opt` if it is present and not equal to the default value,
-///   or the `default` value if `opt` is `None`.
-/// - `Err(anyhow::Error)`: An error if `opt` contains a value that is equal to `default`.
-///
-/// # Errors
-/// Returns an `anyhow::Error` if the optional value is present and equal to the default value.
+/// Substitutes `default` for a missing optional value, erring if a present value equals the
+/// substitute — which would make the two cases indistinguishable once encoded for hashing.
 ///
 /// # Examples
 /// ```
-/// use anyhow::Result;
 /// use kailua_kona::config::safe_default;
 ///
-/// let value = safe_default(Some(42), 0);
-/// assert_eq!(value.unwrap(), 42);
-///
-/// let value = safe_default(None, 100);
-/// assert_eq!(value.unwrap(), 100);
-///
-/// let err = safe_default(Some(10), 10);
-/// assert!(err.is_err());
+/// assert_eq!(safe_default(Some(42), 0).unwrap(), 42);
+/// assert_eq!(safe_default(None, 100).unwrap(), 100);
+/// assert!(safe_default(Some(10), 10).is_err());
 /// ```
 pub fn safe_default<V: Debug + Eq>(opt: Option<V>, default: V) -> anyhow::Result<V> {
     if let Some(v) = opt {
@@ -365,7 +343,14 @@ pub fn l1_config_hash(l1_config: &L1ChainConfig) -> [u8; 32] {
     digest.as_bytes().try_into().expect("infallible")
 }
 
-/// Computes the deterministic hash based on all fields of the input `RollupConfig` and `L1ChainConfig`.
+/// Computes the deterministic hash committing a proof to the exact `RollupConfig` and
+/// `L1ChainConfig` it ran under, as checked on-chain against `KailuaVerifier`'s
+/// `ROLLUP_CONFIG_HASH`.
+///
+/// Every consensus-relevant field must be covered by this hash: an omitted field would let a
+/// proof generated under a modified configuration pass for the canonical one. Re-audit the
+/// field coverage on every kona/alloy upgrade, since these config structs are built with
+/// `::default()` and the compiler cannot flag newly added fields.
 pub fn config_hash(rollup_config: &RollupConfig, l1_config: &L1ChainConfig) -> [u8; 32] {
     let hash_bytes = [rollup_config_hash(rollup_config), l1_config_hash(l1_config)].concat();
     let digest = SHA2::hash_bytes(hash_bytes.as_slice());

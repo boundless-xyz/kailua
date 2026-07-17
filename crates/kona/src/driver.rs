@@ -39,9 +39,17 @@ use spin::RwLock;
 use std::fmt::Debug;
 use std::sync::Arc;
 
+/// The concrete kona [Driver] the client runs, parameterized by its executor, oracle, chain
+/// providers, and data availability source.
 pub type KonaDriver<E, O, L1, L2, DA> =
     Driver<E, OraclePipeline<O, L1, L2, DA>, ProviderDerivationPipeline<L1, L2, DA>>;
 
+/// A serializable snapshot of a kona [Driver]: its cursor, safe-head artifacts, and the state of
+/// every derivation pipeline stage — everything except the live providers, which
+/// [Self::uncache] re-injects to resume derivation exactly where the snapshot left off.
+///
+/// Snapshots let one proof pick up derivation where a previous proof stopped, with continuity
+/// enforced through the digests in [crate::precondition::derivation].
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedDriver {
     /// Cursor to keep track of the L2 tip
@@ -55,6 +63,8 @@ pub struct CachedDriver {
 }
 
 impl CachedDriver {
+    /// Rehydrates the snapshot into a live driver by re-injecting the executor, configs, and
+    /// providers, and pointing the sync-start cursor at the snapshot's cursor.
     #[allow(clippy::too_many_arguments)]
     pub fn uncache<E, O, L1, L2, DA>(
         self,
@@ -113,6 +123,8 @@ where
     }
 }
 
+/// Snapshot of a [DerivationPipeline]: the already-prepared payload attributes and the chain of
+/// stages behind the attributes queue.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedDerivationPipeline {
     /// A list of prepared [OpAttributesWithParent] to be used by the derivation pipeline
@@ -124,6 +136,7 @@ pub struct CachedDerivationPipeline {
 }
 
 impl CachedDerivationPipeline {
+    /// Rehydrates the pipeline's stage chain with live providers.
     pub fn uncache<L1, L2, DA>(
         self,
         rcfg: Arc<RollupConfig>,
@@ -166,6 +179,7 @@ where
     }
 }
 
+/// Snapshot of an [AttributesQueueStage].
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedAttributesQueueStage {
     /// Whether the current batch is the last in its span.
@@ -178,6 +192,7 @@ pub struct CachedAttributesQueueStage {
 }
 
 impl CachedAttributesQueueStage {
+    /// Rehydrates the stage, constructing a fresh attributes builder from the configs.
     pub fn uncache<L1, L2, DA>(
         self,
         rcfg: Arc<RollupConfig>,
@@ -236,15 +251,22 @@ where
     }
 }
 
+/// Snapshot of a [BatchProviderStage], preserving which of its mutually exclusive sub-stages
+/// was active.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum CachedBatchProvider {
+    /// No sub-stage active yet.
     None,
+    /// The batch stream had not yet been claimed by a queue or validator.
     BatchStream(CachedBatchStream),
+    /// The pre-Holocene batch queue was active.
     BatchQueue(CachedBatchQueue),
+    /// The post-Holocene batch validator was active.
     BatchValidator(CachedBatchValidator),
 }
 
 impl CachedBatchProvider {
+    /// Rehydrates the stage with live providers, restoring the active sub-stage.
     pub fn uncache<L1, L2, DA>(
         self,
         cfg: Arc<RollupConfig>,
@@ -328,6 +350,7 @@ where
     }
 }
 
+/// Snapshot of a [BatchQueue] stage.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedBatchQueue {
     /// The l1 block ref
@@ -352,6 +375,7 @@ pub struct CachedBatchQueue {
 }
 
 impl CachedBatchQueue {
+    /// Rehydrates the stage with live providers.
     pub fn uncache<L1, L2, DA>(
         self,
         cfg: Arc<RollupConfig>,
@@ -399,6 +423,7 @@ where
     }
 }
 
+/// Snapshot of a [BatchValidator] stage.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedBatchValidator {
     /// The L1 origin of the batch sequencer.
@@ -417,6 +442,7 @@ pub struct CachedBatchValidator {
 }
 
 impl CachedBatchValidator {
+    /// Rehydrates the stage with live providers.
     pub fn uncache<L1, L2, DA>(
         self,
         cfg: Arc<RollupConfig>,
@@ -456,6 +482,7 @@ where
     }
 }
 
+/// Snapshot of a [BatchStreamStage].
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedBatchStream {
     /// There can only be a single staged span batch.
@@ -469,6 +496,7 @@ pub struct CachedBatchStream {
 }
 
 impl CachedBatchStream {
+    /// Rehydrates the stage with live providers.
     pub fn uncache<L1, L2, DA>(
         self,
         cfg: Arc<RollupConfig>,
@@ -508,6 +536,7 @@ where
     }
 }
 
+/// Snapshot of a [ChannelReaderStage], including any partially decompressed channel.
 #[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelReader {
     /// The batch reader.
@@ -517,6 +546,7 @@ pub struct CachedChannelReader {
     pub prev: CachedChannelProvider,
 }
 
+/// Manual impl: [BatchReader] does not implement [Clone].
 impl Clone for CachedChannelReader {
     fn clone(&self) -> Self {
         Self {
@@ -534,6 +564,7 @@ impl Clone for CachedChannelReader {
 }
 
 impl CachedChannelReader {
+    /// Rehydrates the stage with live providers.
     pub fn uncache<L1, DA>(
         self,
         cfg: Arc<RollupConfig>,
@@ -567,15 +598,22 @@ where
     }
 }
 
+/// Snapshot of a [ChannelProviderStage], preserving which of its mutually exclusive sub-stages
+/// was active.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum CachedChannelProvider {
+    /// No sub-stage active yet.
     None,
+    /// The frame queue had not yet been claimed by a bank or assembler.
     FrameQueue(CachedFrameQueue),
+    /// The pre-Holocene channel bank was active.
     ChannelBank(CachedChannelBank),
+    /// The post-Holocene channel assembler was active.
     ChannelAssembler(CachedChannelAssembler),
 }
 
 impl CachedChannelProvider {
+    /// Rehydrates the stage with live providers, restoring the active sub-stage.
     pub fn uncache<L1, DA>(
         self,
         cfg: Arc<RollupConfig>,
@@ -641,6 +679,7 @@ where
     }
 }
 
+/// Snapshot of a [ChannelBank] stage, its channels sorted by ID for deterministic encoding.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelBank {
     /// Map of channels by ID.
@@ -653,6 +692,7 @@ pub struct CachedChannelBank {
 }
 
 impl CachedChannelBank {
+    /// Rehydrates the stage with live providers.
     pub fn uncache<L1, DA>(
         self,
         cfg: Arc<RollupConfig>,
@@ -686,6 +726,7 @@ where
     }
 }
 
+/// Snapshot of a [ChannelAssembler] stage.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedChannelAssembler {
     /// The current [OrderedChannel] being assembled.
@@ -696,6 +737,7 @@ pub struct CachedChannelAssembler {
 }
 
 impl CachedChannelAssembler {
+    /// Rehydrates the stage with live providers.
     pub fn uncache<L1, DA>(
         self,
         cfg: Arc<RollupConfig>,
@@ -728,6 +770,7 @@ where
     }
 }
 
+/// Snapshot of a [FrameQueueStage].
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedFrameQueue {
     /// The current frame queue.
@@ -738,6 +781,7 @@ pub struct CachedFrameQueue {
 }
 
 impl CachedFrameQueue {
+    /// Rehydrates the stage with live providers.
     pub fn uncache<L1, DA>(
         self,
         cfg: Arc<RollupConfig>,
@@ -771,6 +815,7 @@ where
     }
 }
 
+/// Snapshot of an [L1RetrievalStage].
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedL1Retrieval {
     /// The current block ref.
@@ -781,6 +826,7 @@ pub struct CachedL1Retrieval {
 }
 
 impl CachedL1Retrieval {
+    /// Rehydrates the stage with a live data availability provider.
     pub fn uncache<L1, DA>(
         self,
         cfg: Arc<RollupConfig>,
@@ -812,6 +858,7 @@ where
     }
 }
 
+/// Snapshot of a [PollingTraversal] stage.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CachedPollingTraversal {
     /// The current block in the traversal stage.
@@ -825,6 +872,7 @@ pub struct CachedPollingTraversal {
 }
 
 impl CachedPollingTraversal {
+    /// Rehydrates the stage with a live L1 chain provider.
     pub fn uncache<L1>(self, cfg: Arc<RollupConfig>, l1_chain_provider: L1) -> PollingTraversal<L1>
     where
         L1: ChainProvider + Send + Sync + Debug + Clone,

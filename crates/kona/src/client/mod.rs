@@ -12,20 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// Core logic for running kona's derivation-execution pipeline over a preimage oracle.
 pub mod core;
+/// Entry point for proving over a self-contained witness.
 pub mod stateless;
+/// Client for running the core pipeline and stitching prior proof results into one journal.
 pub mod stitching;
 
-/// Logs a given message under different logging mechanisms based on the target operating system.
-///
-/// # Parameters
-/// - `msg`: A string slice representing the message to be logged.
-///
-/// # Platform-specific Behavior
-/// - On a `zkvm` target operating system:
-///   - Logs the message using the RISC Zero zkVM environment's logging mechanism (`risc0_zkvm::guest::env::log`).
-/// - On other target operating systems:
-///   - Logs the message using the `tracing` crate's `info!` macro.
+/// Logs a message via the zkVM environment in-guest, or via `tracing::info!` elsewhere.
 pub fn log(msg: &str) {
     #[cfg(target_os = "zkvm")]
     risc0_zkvm::guest::env::log(msg);
