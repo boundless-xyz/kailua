@@ -35,12 +35,17 @@ pub struct BoundlessArgs {
     #[clap(long, env, required = false)]
     pub boundless_rpc_url: Url,
 
+    /// Boundless market request ID of the proof to download.
     #[clap(long, env)]
     pub request_id: String,
+    /// Telemetry arguments.
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
 }
 
+/// Fetches the given proof request from the Boundless market, retrieves its fulfilled
+/// receipt, and persists it to the proof file matching its journal (a pre-existing valid
+/// receipt file is left untouched).
 pub async fn boundless(args: BoundlessArgs) -> anyhow::Result<()> {
     let boundless_client = retry_res_timeout!(
         15,

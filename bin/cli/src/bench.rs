@@ -32,6 +32,7 @@ use tracing::{error, info};
 /// Benchmark proving cost and performance
 #[derive(clap::Args, Debug, Clone)]
 pub struct BenchArgs {
+    /// Chain synchronization arguments.
     #[clap(flatten)]
     pub sync: SyncArgs,
 
@@ -64,9 +65,12 @@ pub struct BenchArgs {
     pub num_concurrent_provers: u64,
 }
 
+/// A candidate block range for benchmarking, ordered by transaction count.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CandidateBlock {
+    /// Total transactions across the benchmarked block range.
     pub txn_count: u64,
+    /// First L2 block of the range.
     pub block_number: u64,
 }
 
@@ -82,6 +86,10 @@ impl Ord for CandidateBlock {
     }
 }
 
+/// Benchmarks proving over the `bench_count` most transaction-heavy (or pseudorandomly
+/// selected) `bench_length`-block ranges among `bench_range` candidates, invoking
+/// `just prove` for each in a thread pool of `num_concurrent_provers` and optionally
+/// merging the resulting proving profiles into a CSV report.
 #[allow(deprecated)]
 pub async fn benchmark(args: BenchArgs, verbosity: u8) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
