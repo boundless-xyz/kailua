@@ -28,6 +28,7 @@ use std::path::PathBuf;
 /// Start the agent for resolving on-chain Kailua disputes
 #[derive(clap::Args, Debug, Clone)]
 pub struct ValidateArgs {
+    /// Chain synchronization arguments.
     #[clap(flatten)]
     pub sync: SyncArgs,
 
@@ -72,13 +73,16 @@ pub struct ValidateArgs {
     #[clap(flatten)]
     pub txn_args: TransactArgs,
 
+    /// Proof generation arguments.
     #[clap(flatten)]
     pub proving: ProvingArgs,
+    /// Boundless proving market arguments.
     #[clap(flatten)]
     pub boundless: BoundlessArgs,
 }
 
 impl ValidateArgs {
+    /// Constructs the wallet used to sign the validator's proof and challenge transactions.
     pub async fn validator_wallet(
         &self,
         chain_id: Option<ChainId>,
@@ -100,6 +104,8 @@ impl ValidateArgs {
         Ok(validator_wallet)
     }
 
+    /// Returns the configured proof payout recipient, defaulting to the validator wallet's
+    /// address.
     pub async fn payout_recipient(&self) -> anyhow::Result<Address> {
         match self.proving.payout_recipient_address {
             Some(address) => Ok(address),
@@ -112,10 +118,14 @@ impl ValidateArgs {
     }
 }
 
+/// Whether a fault proving permit must be acquired before computing a fault proof.
 #[derive(clap::ValueEnum, Default, Debug, Clone)]
 pub enum PermitPolicy {
+    /// Never attempt to acquire a permit.
     SKIPPED,
+    /// Attempt to acquire a permit, but prove even without one.
     #[default]
     OPTIONAL,
+    /// Only compute fault proofs under an acquired permit.
     MANDATORY,
 }

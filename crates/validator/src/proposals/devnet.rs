@@ -15,6 +15,9 @@
 use risc0_zkvm::{Digest, InnerReceipt, MaybePruned, Receipt};
 use tracing::warn;
 
+/// In dev mode, patches a fake receipt's claimed image ID and the image ID trailing its
+/// journal to match the on-chain FPVM image ID, so contract checks accept it; outside dev
+/// mode, returns the receipt unchanged.
 #[allow(deprecated)]
 pub fn maybe_patch_proof(
     mut receipt: Receipt,

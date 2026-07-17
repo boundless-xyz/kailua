@@ -30,6 +30,13 @@ use std::collections::BinaryHeap;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+/// Pops every due entry from the trail fault buffer and settles it by calling
+/// `proveTrailFault` with a single KZG opening of the divergent blob position — no ZK
+/// receipt is needed to prove a malformed proposal trail.
+///
+/// Already-proven signatures are discarded, submissions during a permit activation delay
+/// or after a failed transaction are re-queued, and entries whose proposal (or parent) was
+/// freed by resolution are dropped.
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_trail_proofs<P: Provider>(
     args: &ValidateArgs,
