@@ -30,12 +30,16 @@ use risc0_steel::Contract;
 use std::str::FromStr;
 use tracing::info;
 
-/// A canoe provider implementation with steel
+/// Canoe provider proving EigenDA cert validity through a Steel EVM call.
+///
+/// Preflights each cert verifier call against L1 state at the proposal's L1 head block and
+/// returns the [EthEvmInput] the guest replays to reproduce the verdicts, failing if any
+/// preflighted verdict contradicts the claimed validity.
 #[derive(Debug, Clone)]
 pub struct KailuaCanoeSteelProvider {
-    /// hash of l1 head block
+    /// Hash of the proposal's L1 head block anchoring the Steel call.
     pub l1_head: B256,
-    /// rpc to l1 geth node
+    /// URL of the L1 execution node RPC endpoint.
     pub eth_rpc_url: String,
 }
 

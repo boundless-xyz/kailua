@@ -33,6 +33,13 @@ import {
 /// @notice Thrown when a proposal contains invalid trailing data
 error InvalidDataRemainder();
 
+/// @title KailuaTournament
+/// @notice Base contract for Kailua sequencing proposals. Every proposal is a CWIA `Clone` deployed through the
+///         `DisputeGameFactory` and doubles as a tournament between the proposals that extend it: children are
+///         appended in creation order, faulty children are eliminated using fault or validity proofs, and the first
+///         viable child to survive `pruneChildren` becomes eligible for resolution.
+/// @dev Concrete implementations are `KailuaTreasury` (the root/anchor proposal) and `KailuaGame` (all subsequent
+///      proposals).
 abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     // ------------------------------
     // Immutable configuration
@@ -62,6 +69,12 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     /// @notice The DisputeGameFactory instance
     IDisputeGameFactory public immutable DISPUTE_GAME_FACTORY;
 
+    /// @param _kailuaTreasury The treasury contract that tracks proposers, bonds, and eliminations
+    /// @param _kailuaVerifier The verifier contract used to validate ZK proofs
+    /// @param _proposalOutputCount The number of outputs a proposal must publish, including the root claim
+    /// @param _outputBlockSpan The number of L2 blocks each published output must cover
+    /// @param _gameType The dispute game type ID registered for Kailua in the `DisputeGameFactory`
+    /// @param _optimismPortal The `OptimismPortal2` instance used to resolve the factory and respected game type
     constructor(
         IKailuaTreasury _kailuaTreasury,
         KailuaVerifier _kailuaVerifier,
@@ -83,6 +96,8 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
         DISPUTE_GAME_FACTORY = OPTIMISM_PORTAL.disputeGameFactory();
     }
 
+    /// @notice Performs the initialization steps common to all proposals
+    /// @dev Reverts unless this is the first initialization and the game was created through the treasury
     function initializeInternal() internal {
         // INVARIANT: The game must not have already been initialized.
         if (createdAt.raw() > 0) revert AlreadyInitialized();
@@ -137,6 +152,7 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     bytes32 public validChildSignature;
 
     /// @notice Returns the hash of the output claim and all blob hashes associated with this proposal
+    /// @return signature_ The sha256 hash of the root claim and the proposal's blob hashes
     function signature() public view returns (bytes32 signature_) {
         // note: the absence of the l1Head in the signature implies that
         // proofs will eventually demonstrate derivation
@@ -144,6 +160,10 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     }
 
     /// @notice Returns whether a child can be considered valid
+    /// @dev Once a validity proof is submitted, only the proven signature remains viable; otherwise any signature
+    ///      not yet proven faulty is viable
+    /// @param childSignature The signature of the child proposal to check
+    /// @return isViableSignature_ Whether a child bearing this signature can still win the tournament
     function isViableSignature(bytes32 childSignature) public view returns (bool isViableSignature_) {
         if (validChildSignature != 0) {
             isViableSignature_ = childSignature == validChildSignature;
@@ -153,6 +173,9 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     }
 
     /// @notice Returns the address of the prover of the specified signature or the prover of the valid signature
+    /// @param childSignature The signature of the eliminated child proposal
+    /// @return payoutRecipient The exclusive permit beneficiary if one exists, otherwise the successful fault
+    ///         prover, otherwise the successful validity prover, otherwise the zero address
     function getPayoutRecipient(bytes32 childSignature) internal view returns (address payoutRecipient) {
         // The successful exclusive permit owner receives the payout.
         payoutRecipient = KAILUA_VERIFIER.faultProofPermitBeneficiary(IKailuaTournament(this), childSignature);
@@ -168,6 +191,8 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     }
 
     /// @notice Returns true iff the child proposal was eliminated
+    /// @param child The child proposal contract to check
+    /// @return Whether the child's proposer had been eliminated by the time the child was created
     function isChildEliminated(KailuaTournament child) internal view returns (bool) {
         address _proposer = KAILUA_TREASURY.proposerOf(address(child));
         uint256 eliminationRound = KAILUA_TREASURY.eliminationRound(_proposer);
@@ -179,11 +204,13 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     }
 
     /// @notice Returns the number of children
+    /// @return count_ The number of proposals extending this one
     function childCount() external view returns (uint256 count_) {
         count_ = children.length;
     }
 
     /// @notice Registers a new proposal that extends this one
+    /// @dev Only callable by a game while it is being created through the treasury's `propose` method
     function appendChild() external {
         // INVARIANT: The calling contract is a newly deployed contract by the dispute game factory
         if (!KAILUA_TREASURY.isProposing()) {
@@ -205,20 +232,30 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     }
 
     /// @notice Returns the amount of time left for challenges as of the input timestamp.
+    /// @param asOfTimestamp The reference timestamp against which to measure the challenge clock
+    /// @return duration_ The remaining challenge time, or zero if the challenge period has elapsed
     function getChallengerDuration(uint256 asOfTimestamp) public view virtual returns (Duration duration_);
 
     /// @notice Returns the earliest time at which this proposal could have been created
+    /// @return minCreationTime_ The timestamp before which proposal creation reverts
     function minCreationTime() public view virtual returns (Timestamp minCreationTime_);
 
     /// @notice Returns the parent game contract.
+    /// @return parentGame_ The proposal that this proposal extends
     function parentGame() public view virtual returns (KailuaTournament parentGame_);
 
     /// @notice Returns the proposer address
+    /// @return proposer_ The address that submitted this proposal through the treasury
     function proposer() public view returns (address proposer_) {
         proposer_ = KAILUA_TREASURY.proposerOf(address(this));
     }
 
     /// @notice Verifies that an intermediate output was part of the proposal
+    /// @param outputNumber The global index of the output field element across the proposal's blobs
+    /// @param outputFe The field element claimed to be published at that index
+    /// @param blobCommitment The 48-byte KZG commitment of the blob containing the field element
+    /// @param kzgProof The KZG evaluation proof for the field element
+    /// @return success Whether the commitment matches a known proposal blob and the evaluation proof is valid
     function verifyIntermediateOutput(
         uint64 outputNumber,
         uint256 outputFe,
@@ -227,6 +264,9 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     ) external virtual returns (bool success);
 
     /// @notice Updates the provability of a child signature if not already set
+    /// @param payoutRecipient The address recorded as the prover of the signature
+    /// @param childSignature The child proposal signature the proof pertains to
+    /// @param outcome The proven status to record for the signature
     function updateProofStatus(address payoutRecipient, bytes32 childSignature, ProofStatus outcome) internal {
         // INVARIANT: Proofs can only be submitted once
         if (proofStatus[childSignature] != ProofStatus.NONE) {
@@ -280,6 +320,7 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     }
 
     /// @notice The l2BlockNumber of the claim's output root.
+    /// @return l2BlockNumber_ The L2 block number committed to by the root claim
     function l2BlockNumber() public pure returns (uint256 l2BlockNumber_) {
         l2BlockNumber_ = uint256(_getArgUint64(0x54));
     }
@@ -300,6 +341,7 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     bool public wasRespectedGameTypeWhenCreated;
 
     /// @notice This is a workaround for withdrawal compatibility under op-contracts v5.0.0
+    /// @return registry_ The caller's address, echoed back to satisfy registry equality checks
     function anchorStateRegistry() external view returns (address registry_) {
         registry_ = msg.sender;
     }
@@ -309,6 +351,14 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     // ------------------------------
 
     /// @notice Eliminates children until at least one remains
+    /// @dev Plays the tournament between this proposal's children: the current contender is matched against each
+    ///      subsequent opponent in creation order. Unviable children are eliminated through the treasury, duplicates
+    ///      of the contender are tracked and eliminated alongside it, and a match against an unproven conflicting
+    ///      opponent reverts with `NotProven`. Only callable after this proposal has itself resolved in favor of the
+    ///      defender. Large tournaments can be pruned incrementally across multiple calls.
+    /// @param stepLimit The maximum number of tournament steps (eliminations or examinations) to perform this call
+    /// @return The surviving child once the tournament is decided, or the zero address if the step limit was
+    ///         exhausted before a survivor could be determined
     function pruneChildren(uint256 stepLimit) external returns (KailuaTournament) {
         // INVARIANT: Only finalized proposals may prune tournaments
         if (status != GameStatus.DEFENDER_WINS) {
@@ -445,11 +495,17 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     // ------------------------------
 
     /// @notice Returns the hash of all blob hashes associated with this proposal
+    /// @return blobsHash_ The sha256 hash of the concatenated proposal blob hashes
     function blobsHash() public view returns (bytes32 blobsHash_) {
         blobsHash_ = sha256(abi.encodePacked(proposalBlobHashes));
     }
 
     /// @notice Proves that a proposal is valid
+    /// @dev On success, the child's signature becomes the only viable signature in this tournament
+    /// @param payoutRecipient The address entitled to the proving payout, as bound into the proof journal
+    /// @param l1HeadSource The known proposal contract whose `l1Head` the proof derived L2 data from
+    /// @param childIndex The index of the child proposal being proven valid
+    /// @param encodedSeal The encoded RISC Zero seal attesting to the FPVM journal
     function proveValidity(address payoutRecipient, address l1HeadSource, uint64 childIndex, bytes calldata encodedSeal)
         external
     {
@@ -499,6 +555,17 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     // ------------------------------
 
     /// @notice Proves that a proposal committed to an incorrect transition
+    /// @dev Shows that the FPVM, starting from an output the child agrees with, computes a different output than the
+    ///      one the child published at the disputed offset. Published outputs are authenticated against the child's
+    ///      blob hashes via KZG evaluation proofs; the final output is compared against the child's root claim.
+    /// @param prHs The payout recipient address and the known proposal contract sourcing the proof's `l1Head`
+    /// @param co The index of the accused child and the offset of the disputed output within the proposal
+    /// @param encodedSeal The encoded RISC Zero seal attesting to the FPVM journal
+    /// @param ac The accepted output hash preceding the disputed offset and the correct output hash computed by the
+    ///           FPVM at the disputed offset
+    /// @param proposedOutputFe The field element the child actually published at the disputed offset
+    /// @param kzgCommitmentsProofs The KZG blob commitments (index 0) and evaluation proofs (index 1); the first
+    ///        entries authenticate the accepted output, the last entries authenticate the proposed output
     function proveOutputFault(
         // [ payoutRecipient, l1HeadSource ]
         address[2] calldata prHs,
@@ -581,6 +648,14 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     }
 
     /// @notice Proves that a proposal contains invalid intermediate data
+    /// @dev The blob field elements past the proposal's intermediate outputs must all be zero. This method
+    ///      eliminates a child by showing, via a KZG evaluation proof, that one of those trailing field elements is
+    ///      non-zero. No ZK proof is required.
+    /// @param payoutRecipient The address recorded as the prover of the fault
+    /// @param co The index of the accused child and the offset of the non-zero trailing output
+    /// @param proposedOutputFe The non-zero field element the child published in the trailing region
+    /// @param blobCommitment The 48-byte KZG commitment of the last proposal blob
+    /// @param kzgProof The KZG evaluation proof for the trailing field element
     function proveTrailFault(
         address payoutRecipient,
         uint64[2] calldata co,
@@ -633,6 +708,15 @@ abstract contract KailuaTournament is IKailuaTournament, Clone, IDisputeGame {
     // ------------------------------
 
     /// @notice Verifies a ZK proof and updates the proof status according to the provided outcome if the proof is valid
+    /// @param l1HeadSource The known proposal contract whose `l1Head` the proof derived L2 data from
+    /// @param payoutRecipient The address entitled to the proving payout, as bound into the proof journal
+    /// @param preconditionHash The blob equivalence precondition hash, or zero if no precondition applies
+    /// @param acceptedOutputHash The output root both parties agree on
+    /// @param computedOutputHash The output root computed by the FPVM from the accepted output
+    /// @param outputCount The number of outputs covered between the accepted and computed output roots
+    /// @param encodedSeal The encoded RISC Zero seal attesting to the FPVM journal
+    /// @param childSignature The child proposal signature to record the outcome against
+    /// @param outcome The proven status established by the proof
     function prove(
         address l1HeadSource,
         address payoutRecipient,

@@ -34,21 +34,26 @@ use rkyv::ser::{Allocator, Writer};
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Archived, Place, Resolver};
 
+/// Returns the vector sorted, for deterministic encodings of unordered collections.
 pub fn sorted<T: Ord>(mut values: Vec<T>) -> Vec<T> {
     values.sort();
     values
 }
 
+/// Returns the pairs sorted by key, for deterministic encodings of map-backed collections.
 pub fn sorted_by_key<T1: Ord + Copy, T2>(mut values: Vec<(T1, T2)>) -> Vec<(T1, T2)> {
     values.sort_by_key(|(k, _)| *k);
     values
 }
 
+/// Tuple encoding of [BlockInfo] for rkyv.
 pub type RkyvedBlockInfo = ([u8; 32], u64, [u8; 32], u64);
 
+/// `rkyv::with` wrapper (de)serializing [BlockInfo] via [RkyvedBlockInfo].
 pub struct BlockInfoRkyv;
 
 impl BlockInfoRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &BlockInfo) -> RkyvedBlockInfo {
         (
             value.hash.0,
@@ -58,6 +63,7 @@ impl BlockInfoRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedBlockInfo) -> BlockInfo {
         BlockInfo {
             hash: rkyved.0.into(),
@@ -103,6 +109,7 @@ where
     }
 }
 
+/// Tuple encoding of [SystemConfig] for rkyv.
 pub type RkyvedSystemConfig = (
     [u8; 20],
     [u8; 32],
@@ -118,9 +125,11 @@ pub type RkyvedSystemConfig = (
     Option<u16>,
 );
 
+/// `rkyv::with` wrapper (de)serializing [SystemConfig] via [RkyvedSystemConfig].
 pub struct SystemConfigRkyv;
 
 impl SystemConfigRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &SystemConfig) -> RkyvedSystemConfig {
         (
             *value.batcher_address.0,
@@ -138,6 +147,7 @@ impl SystemConfigRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedSystemConfig) -> SystemConfig {
         SystemConfig {
             batcher_address: rkyved.0.into(),
@@ -194,15 +204,19 @@ where
     }
 }
 
+/// Tuple encoding of [Frame] for rkyv.
 pub type RkyvedFrame = (ChannelId, u16, Vec<u8>, bool);
 
+/// `rkyv::with` wrapper (de)serializing [Frame] via [RkyvedFrame].
 pub struct FrameRkyv;
 
 impl FrameRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &Frame) -> RkyvedFrame {
         (value.id, value.number, value.data.clone(), value.is_last)
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedFrame) -> Frame {
         Frame {
             id: rkyved.0,
@@ -248,6 +262,7 @@ where
     }
 }
 
+/// Tuple encoding of [Channel] for rkyv, with buffered frames sorted by frame number.
 pub type RkyvedChannel = (
     ChannelId,
     RkyvedBlockInfo,
@@ -259,9 +274,11 @@ pub type RkyvedChannel = (
     RkyvedBlockInfo,
 );
 
+/// `rkyv::with` wrapper (de)serializing [Channel] via [RkyvedChannel].
 pub struct ChannelRkyv;
 
 impl ChannelRkyv {
+    /// Converts the value into its tuple encoding, sorting frames by number for determinism.
     pub fn rkyv(value: &Channel) -> RkyvedChannel {
         (
             value.id,
@@ -281,6 +298,7 @@ impl ChannelRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedChannel) -> Channel {
         Channel {
             id: rkyved.0,
@@ -334,6 +352,7 @@ where
     }
 }
 
+/// Tuple encoding of [OrderedChannel] for rkyv.
 pub type RkyvedOrderedChannel = (
     ChannelId,
     RkyvedBlockInfo,
@@ -343,9 +362,11 @@ pub type RkyvedOrderedChannel = (
     RkyvedBlockInfo,
 );
 
+/// `rkyv::with` wrapper (de)serializing [OrderedChannel] via [RkyvedOrderedChannel].
 pub struct OrderedChannelRkyv;
 
 impl OrderedChannelRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &OrderedChannel) -> RkyvedOrderedChannel {
         (
             value.id,
@@ -357,6 +378,7 @@ impl OrderedChannelRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedOrderedChannel) -> OrderedChannel {
         OrderedChannel {
             id: rkyved.0,
@@ -407,11 +429,14 @@ where
     }
 }
 
+/// Tuple encoding of [BatchReader] for rkyv.
 pub type RkyvedBatchReader = (Option<Vec<u8>>, Vec<u8>, usize, usize, bool, u64);
 
+/// `rkyv::with` wrapper (de)serializing [BatchReader] via [RkyvedBatchReader].
 pub struct BatchReaderRkyv;
 
 impl BatchReaderRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &BatchReader) -> RkyvedBatchReader {
         (
             value.data.clone(),
@@ -423,6 +448,7 @@ impl BatchReaderRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedBatchReader) -> BatchReader {
         BatchReader {
             data: rkyved.0,
@@ -470,11 +496,14 @@ where
     }
 }
 
+/// Tuple encoding of [SingleBatch] for rkyv.
 pub type RkyvedSingleBatch = ([u8; 32], u64, [u8; 32], u64, Vec<Vec<u8>>);
 
+/// `rkyv::with` wrapper (de)serializing [SingleBatch] via [RkyvedSingleBatch].
 pub struct SingleBatchRkyv;
 
 impl SingleBatchRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &SingleBatch) -> RkyvedSingleBatch {
         (
             value.parent_hash.0,
@@ -485,6 +514,7 @@ impl SingleBatchRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedSingleBatch) -> SingleBatch {
         SingleBatch {
             parent_hash: rkyved.0.into(),
@@ -531,8 +561,10 @@ where
     }
 }
 
+/// Tuple encoding of [SpanBatchElement] for rkyv.
 pub type RkyvedSpanBatchElement = (u64, u64, Vec<Vec<u8>>);
 
+/// Tuple encoding of [SpanBatchTransactions] for rkyv.
 pub type RkyvedSpanBatchTransactions = (
     u64,
     Vec<u8>,
@@ -546,6 +578,7 @@ pub type RkyvedSpanBatchTransactions = (
     u64,
 );
 
+/// Tuple encoding of [SpanBatch] for rkyv.
 pub type RkyvedSpanBatch = (
     [u8; 20],
     [u8; 20],
@@ -557,9 +590,11 @@ pub type RkyvedSpanBatch = (
     RkyvedSpanBatchTransactions,
 );
 
+/// `rkyv::with` wrapper (de)serializing [SpanBatch] via [RkyvedSpanBatch].
 pub struct SpanBatchRkyv;
 
 impl SpanBatchRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &SpanBatch) -> RkyvedSpanBatch {
         (
             value.parent_check.0,
@@ -594,6 +629,7 @@ impl SpanBatchRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedSpanBatch) -> SpanBatch {
         SpanBatch {
             parent_check: rkyved.0.into(),
@@ -672,15 +708,20 @@ where
     }
 }
 
+/// Tuple encoding of [BatchWithInclusionBlock] for rkyv, with exactly one of the two batch
+/// variant slots populated.
 pub type RkyvedBatchWithInclusionBlock = (
     RkyvedBlockInfo,
     Option<RkyvedSingleBatch>,
     Option<RkyvedSpanBatch>,
 );
 
+/// `rkyv::with` wrapper (de)serializing [BatchWithInclusionBlock] via
+/// [RkyvedBatchWithInclusionBlock].
 pub struct BatchWithInclusionBlockRkyv;
 
 impl BatchWithInclusionBlockRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &BatchWithInclusionBlock) -> RkyvedBatchWithInclusionBlock {
         let (single, span) = match &value.batch {
             Batch::Single(single) => (Some(SingleBatchRkyv::rkyv(single)), None),
@@ -689,6 +730,7 @@ impl BatchWithInclusionBlockRkyv {
         (BlockInfoRkyv::rkyv(&value.inclusion_block), single, span)
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedBatchWithInclusionBlock) -> BatchWithInclusionBlock {
         BatchWithInclusionBlock {
             inclusion_block: BlockInfoRkyv::raw(rkyved.0),
@@ -745,11 +787,14 @@ where
     }
 }
 
+/// Tuple encoding of [L2BlockInfo] for rkyv.
 pub type RkyvedL2BlockInfo = (RkyvedBlockInfo, u64, [u8; 32], u64);
 
+/// `rkyv::with` wrapper (de)serializing [L2BlockInfo] via [RkyvedL2BlockInfo].
 pub struct L2BlockInfoRkyv;
 
 impl L2BlockInfoRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &L2BlockInfo) -> RkyvedL2BlockInfo {
         (
             BlockInfoRkyv::rkyv(&value.block_info),
@@ -759,6 +804,7 @@ impl L2BlockInfoRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedL2BlockInfo) -> L2BlockInfo {
         L2BlockInfo {
             block_info: BlockInfoRkyv::raw(rkyved.0),
@@ -771,11 +817,14 @@ impl L2BlockInfoRkyv {
     }
 }
 
+/// Tuple encoding of [Withdrawal] for rkyv.
 pub type RkyvedWithdrawal = (u64, u64, [u8; 20], u64);
 
+/// `rkyv::with` wrapper (de)serializing [Withdrawal] via [RkyvedWithdrawal].
 pub struct WithdrawalRkyv;
 
 impl WithdrawalRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &Withdrawal) -> RkyvedWithdrawal {
         (
             value.index,
@@ -785,6 +834,7 @@ impl WithdrawalRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedWithdrawal) -> Withdrawal {
         Withdrawal {
             index: rkyved.0,
@@ -795,6 +845,7 @@ impl WithdrawalRkyv {
     }
 }
 
+/// Tuple encoding of [PayloadAttributes] for rkyv.
 pub type RkyvedPayloadAttributes = (
     u64,
     [u8; 32],
@@ -804,9 +855,11 @@ pub type RkyvedPayloadAttributes = (
     Option<u64>,
 );
 
+/// `rkyv::with` wrapper (de)serializing [PayloadAttributes] via [RkyvedPayloadAttributes].
 pub struct PayloadAttributesRkyv;
 
 impl PayloadAttributesRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &PayloadAttributes) -> RkyvedPayloadAttributes {
         (
             value.timestamp,
@@ -821,6 +874,7 @@ impl PayloadAttributesRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedPayloadAttributes) -> PayloadAttributes {
         PayloadAttributes {
             timestamp: rkyved.0,
@@ -835,6 +889,7 @@ impl PayloadAttributesRkyv {
     }
 }
 
+/// Tuple encoding of [OpPayloadAttributes] for rkyv.
 pub type RkyvedOpPayloadAttributes = (
     RkyvedPayloadAttributes,
     Option<Vec<Vec<u8>>>,
@@ -844,9 +899,11 @@ pub type RkyvedOpPayloadAttributes = (
     Option<u64>,
 );
 
+/// `rkyv::with` wrapper (de)serializing [OpPayloadAttributes] via [RkyvedOpPayloadAttributes].
 pub struct OpPayloadAttributesRkyv;
 
 impl OpPayloadAttributesRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &OpPayloadAttributes) -> RkyvedOpPayloadAttributes {
         (
             PayloadAttributesRkyv::rkyv(&value.payload_attributes),
@@ -861,6 +918,7 @@ impl OpPayloadAttributesRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedOpPayloadAttributes) -> OpPayloadAttributes {
         OpPayloadAttributes {
             payload_attributes: PayloadAttributesRkyv::raw(rkyved.0),
@@ -873,6 +931,7 @@ impl OpPayloadAttributesRkyv {
     }
 }
 
+/// Tuple encoding of [OpAttributesWithParent] for rkyv.
 pub type RkyvedOpAttributesWithParent = (
     RkyvedOpPayloadAttributes,
     RkyvedL2BlockInfo,
@@ -880,9 +939,12 @@ pub type RkyvedOpAttributesWithParent = (
     bool,
 );
 
+/// `rkyv::with` wrapper (de)serializing [OpAttributesWithParent] via
+/// [RkyvedOpAttributesWithParent].
 pub struct OpAttributesWithParentRkyv;
 
 impl OpAttributesWithParentRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &OpAttributesWithParent) -> RkyvedOpAttributesWithParent {
         (
             OpPayloadAttributesRkyv::rkyv(&value.attributes),
@@ -892,6 +954,7 @@ impl OpAttributesWithParentRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedOpAttributesWithParent) -> OpAttributesWithParent {
         OpAttributesWithParent {
             attributes: OpPayloadAttributesRkyv::raw(rkyved.0),
@@ -946,6 +1009,8 @@ where
     }
 }
 
+/// Fixed-byte fields of a [Header], grouped into a sub-tuple so [RkyvedHeader] stays within
+/// rkyv's 13-element tuple-arity limit.
 pub type RkyvedHeaderHashes = (
     [u8; 32],
     [u8; 32],
@@ -969,6 +1034,7 @@ pub type RkyvedHeaderExtras = (
     Option<u64>,
 );
 
+/// Tuple encoding of [Header] for rkyv.
 pub type RkyvedHeader = (
     RkyvedHeaderHashes,
     [u8; 32],
@@ -984,9 +1050,11 @@ pub type RkyvedHeader = (
     RkyvedHeaderExtras,
 );
 
+/// `rkyv::with` wrapper (de)serializing [Header] via [RkyvedHeader].
 pub struct HeaderRkyv;
 
 impl HeaderRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &Header) -> RkyvedHeader {
         (
             (
@@ -1019,6 +1087,7 @@ impl HeaderRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedHeader) -> Header {
         Header {
             parent_hash: rkyved.0 .0.into(),
@@ -1048,12 +1117,17 @@ impl HeaderRkyv {
     }
 }
 
+/// A block execution result carrying OP receipt envelopes.
 pub type OPBlockExecutionResult = BlockExecutionResult<OpReceiptEnvelope>;
+/// Tuple encoding of [OPBlockExecutionResult] for rkyv, with receipts and requests RLP-encoded.
 pub type RkyvedOPBlockExecutionResult = (Vec<Vec<u8>>, Vec<Vec<u8>>, u64, u64);
 
+/// `rkyv::with` wrapper (de)serializing [OPBlockExecutionResult] via
+/// [RkyvedOPBlockExecutionResult].
 pub struct OPBlockExecutionResultRkyv;
 
 impl OPBlockExecutionResultRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &OPBlockExecutionResult) -> RkyvedOPBlockExecutionResult {
         (
             value.receipts.iter().map(alloy_rlp::encode).collect(),
@@ -1069,6 +1143,7 @@ impl OPBlockExecutionResultRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedOPBlockExecutionResult) -> OPBlockExecutionResult {
         OPBlockExecutionResult {
             receipts: rkyved
@@ -1083,11 +1158,14 @@ impl OPBlockExecutionResultRkyv {
     }
 }
 
+/// Tuple encoding of [BlockBuildingOutcome] for rkyv.
 pub type RkyvedBlockBuildingOutcome = (RkyvedHeader, RkyvedOPBlockExecutionResult);
 
+/// `rkyv::with` wrapper (de)serializing [BlockBuildingOutcome] via [RkyvedBlockBuildingOutcome].
 pub struct BlockBuildingOutcomeRkyv;
 
 impl BlockBuildingOutcomeRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &BlockBuildingOutcome<OpReceiptEnvelope>) -> RkyvedBlockBuildingOutcome {
         (
             HeaderRkyv::rkyv(value.header.as_ref()),
@@ -1095,6 +1173,7 @@ impl BlockBuildingOutcomeRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedBlockBuildingOutcome) -> BlockBuildingOutcome<OpReceiptEnvelope> {
         BlockBuildingOutcome {
             header: HeaderRkyv::raw(rkyved.0).seal_slow(),
@@ -1103,12 +1182,16 @@ impl BlockBuildingOutcomeRkyv {
     }
 }
 
+/// The safe head's block build outcome paired with its raw transactions.
 pub type HeadArtifacts = (BlockBuildingOutcome<OpReceiptEnvelope>, Vec<Bytes>);
+/// Tuple encoding of [HeadArtifacts] for rkyv.
 pub type RkyvedHeadArtifacts = (RkyvedBlockBuildingOutcome, Vec<Vec<u8>>);
 
+/// `rkyv::with` wrapper (de)serializing [HeadArtifacts] via [RkyvedHeadArtifacts].
 pub struct HeadArtifactsRkyv;
 
 impl HeadArtifactsRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &HeadArtifacts) -> RkyvedHeadArtifacts {
         (
             BlockBuildingOutcomeRkyv::rkyv(&value.0),
@@ -1116,6 +1199,7 @@ impl HeadArtifactsRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedHeadArtifacts) -> HeadArtifacts {
         (
             BlockBuildingOutcomeRkyv::raw(rkyved.0),
@@ -1162,11 +1246,14 @@ where
     }
 }
 
+/// Tuple encoding of [TipCursor] for rkyv.
 pub type RkyvedTipCursor = (RkyvedL2BlockInfo, RkyvedHeader, [u8; 32]);
 
+/// `rkyv::with` wrapper (de)serializing [TipCursor] via [RkyvedTipCursor].
 pub struct TipCursorRkyv;
 
 impl TipCursorRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &TipCursor) -> RkyvedTipCursor {
         (
             L2BlockInfoRkyv::rkyv(&value.l2_safe_head),
@@ -1175,6 +1262,7 @@ impl TipCursorRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedTipCursor) -> TipCursor {
         TipCursor {
             l2_safe_head: L2BlockInfoRkyv::raw(rkyved.0),
@@ -1184,6 +1272,7 @@ impl TipCursorRkyv {
     }
 }
 
+/// Tuple encoding of [PipelineCursor] for rkyv, with map contents sorted by key.
 pub type RkyvedPipelineCursor = (
     usize,
     u64,
@@ -1193,9 +1282,11 @@ pub type RkyvedPipelineCursor = (
     Vec<(u64, RkyvedTipCursor)>,
 );
 
+/// `rkyv::with` wrapper (de)serializing [PipelineCursor] via [RkyvedPipelineCursor].
 pub struct PipelineCursorRkyv;
 
 impl PipelineCursorRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &PipelineCursor) -> RkyvedPipelineCursor {
         (
             value.capacity,
@@ -1219,6 +1310,7 @@ impl PipelineCursorRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedPipelineCursor) -> PipelineCursor {
         PipelineCursor {
             capacity: rkyved.0,
@@ -1277,16 +1369,21 @@ where
     }
 }
 
+/// A channel keyed by its ID.
 pub type IdChannel = (ChannelId, Channel);
+/// Tuple encoding of [IdChannel] for rkyv.
 pub type RkyvedIdChannel = (ChannelId, RkyvedChannel);
 
+/// `rkyv::with` wrapper (de)serializing [IdChannel] via [RkyvedIdChannel].
 pub struct IdChannelRkyv;
 
 impl IdChannelRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(value: &IdChannel) -> RkyvedIdChannel {
         (value.0, ChannelRkyv::rkyv(&value.1))
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedIdChannel) -> IdChannel {
         (rkyved.0, ChannelRkyv::raw(rkyved.1))
     }

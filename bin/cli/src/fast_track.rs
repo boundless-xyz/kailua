@@ -119,12 +119,20 @@ pub struct FastTrackArgs {
     #[clap(long, env)]
     pub respect_kailua_proposals: bool,
 
+    /// Telemetry arguments.
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
+    /// Provider timeout arguments.
     #[clap(flatten)]
     pub timeouts: ProviderTimeoutArgs,
 }
 
+/// Deploys and installs the complete Kailua contract suite on a running rollup: RISC Zero
+/// verifier contracts (unless an existing verifier is provided), the `KailuaVerifier`
+/// behind a proxy, the `KailuaTreasury` and `KailuaGame` implementations (registered in the
+/// `DisputeGameFactory` through owner Safe transactions), a treasury anchor instance at the
+/// configured starting block, the participation bond, optional vanguard parameters, and —
+/// if requested — the guardian's `respectedGameType` switch to Kailua.
 pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("fast_track"));
@@ -671,6 +679,9 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Deploys a `RiscZeroVerifierRouter` owned by `owner_address`, registers a freshly
+/// deployed `RiscZeroGroth16Verifier` in it — plus a mock verifier accepting fake proofs
+/// when running a devnet in dev mode — and returns the router's address.
 #[allow(deprecated)]
 pub async fn deploy_verifier<P1: Provider<N>, P2: Provider<N>, N: Network>(
     deployer_provider: P1,

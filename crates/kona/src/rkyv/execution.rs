@@ -22,6 +22,8 @@ use rkyv::rancor::Fallible;
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith, With};
 use rkyv::{Archive, Archived, Place, Resolver};
 
+/// `rkyv::with` wrapper (de)serializing a [BlockBuildingOutcome] as an RLP-encoded header
+/// paired with its rkyv-encoded execution result.
 pub struct BlockBuildingOutcomeRkyv;
 
 impl ArchiveWith<BlockBuildingOutcome<OpReceiptEnvelope>> for BlockBuildingOutcomeRkyv {
@@ -92,6 +94,8 @@ where
     }
 }
 
+/// `rkyv::with` wrapper (de)serializing a [BlockExecutionResult] as RLP-encoded receipt and
+/// request lists alongside the block's gas totals.
 pub struct BlockExecutionResultRkyv;
 
 impl ArchiveWith<BlockExecutionResult<OpReceiptEnvelope>> for BlockExecutionResultRkyv {

@@ -45,7 +45,7 @@ pub struct ProofJournal {
 }
 
 impl ProofJournal {
-    /// Constructs a new stand-alone instance.
+    /// Builds a journal for `boot_info`, deriving the config hash from its rollup and L1 configs.
     pub fn new(
         fpvm_image_id: B256,
         payout_recipient: Address,
@@ -67,7 +67,7 @@ impl ProofJournal {
         }
     }
 
-    /// Constructs a new instance used for stitching separate continuous journals together.
+    /// Builds a journal for a stitched boot claim, reusing an already-computed config hash.
     pub fn new_stitched(
         fpvm_image_id: B256,
         payout_recipient: Address,
@@ -89,18 +89,9 @@ impl ProofJournal {
 }
 
 impl ProofJournal {
-    /// This function concatenates the fields of the struct into a contiguous byte vector
-    /// to create a packed representation of the data. Each field is converted or sliced into
-    /// a byte representation, and then the resulting slices are concatenated.
-    ///
-    /// # Returns:
-    /// - A `Vec<u8>` containing the concatenated byte representation of the included fields.
-    ///
-    /// # Notes:
-    /// - The method relies on the assumption that all involved fields have compatible
-    ///   byte slice representations.
-    /// - Ensure the individual lengths of fields do not exceed the intended size constraint
-    ///   for the packed data.
+    /// Tightly packs the journal fields, in declaration order, into the 220-byte public output
+    /// committed by the FPVM guest. Must match the journal reconstruction in the on-chain
+    /// `KailuaVerifier.verify` method.
     pub fn encode_packed(&self) -> Vec<u8> {
         [
             self.payout_recipient.as_slice(),
@@ -115,27 +106,7 @@ impl ProofJournal {
         .concat()
     }
 
-    /// Decodes a byte slice representing a packed `ProofJournal` structure into its constituent fields.
-    ///
-    /// The method extracts fixed-width byte segments from the provided input slice, interprets them
-    /// as the respective fields of `ProofJournal`, and validates the integrity of the input.
-    ///
-    /// # Arguments
-    ///
-    /// * `encoded` - A byte slice containing the serialized representation of the `ProofJournal` fields in order.
-    ///
-    /// # Expected Encoding Layout
-    ///
-    /// The `encoded` byte slice is expected to follow this layout:
-    ///
-    /// - Bytes `[0..20]`: `payout_recipient` (20 bytes)
-    /// - Bytes `[20..52]`: `precondition_hash` (32 bytes)
-    /// - Bytes `[52..84]`: `l1_head` (32 bytes)
-    /// - Bytes `[84..116]`: `agreed_l2_output_root` (32 bytes)
-    /// - Bytes `[116..148]`: `claimed_l2_output_root` (32 bytes)
-    /// - Bytes `[148..156]`: `claimed_l2_block_number` (8 bytes - `u64` in big-endian format)
-    /// - Bytes `[156..188]`: `config_hash` (32 bytes)
-    /// - Bytes `[188..220]`: `fpvm_image_id` (32 bytes)
+    /// Inverse of [Self::encode_packed]. Panics unless `encoded` is exactly 220 bytes.
     pub fn decode_packed(encoded: &[u8]) -> Self {
         assert_eq!(encoded.len(), 220);
         ProofJournal {
@@ -152,21 +123,7 @@ impl ProofJournal {
 }
 
 impl From<&Receipt> for ProofJournal {
-    /// Converts a `Receipt` reference into the implementing type by decoding its packed journal.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - A reference to a `Receipt` object. The function uses the `journal` field of the `Receipt`
-    ///   to decode and derive the desired type.
-    ///
-    /// # Returns
-    ///
-    /// The decoded type, obtained by unpacking the journal field of the given `Receipt`.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if the decoding of the packed journal fails. Ensure that the `journal`
-    /// field in the `Receipt` contains valid encoded data before calling this method.
+    /// Decodes the packed journal carried by the receipt, panicking if it is malformed.
     fn from(value: &Receipt) -> Self {
         Self::from(&value.journal)
     }

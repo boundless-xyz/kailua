@@ -56,6 +56,7 @@ use tokio::time::sleep;
 use tracing::log::warn;
 use tracing::{debug, error, info};
 
+/// Configuration for proving through the Boundless market instead of locally.
 #[derive(Parser, Clone, Debug, Default)]
 pub struct BoundlessArgs {
     /// Market provider for proof requests
@@ -71,13 +72,14 @@ pub struct BoundlessArgs {
     pub r2_domain: Option<String>,
 }
 
+/// Connection, pricing, and lifecycle parameters for Boundless market proof requests.
 #[derive(Parser, Debug, Clone)]
 #[group(requires_all = ["boundless_rpc_url", "boundless_wallet_key"])]
 pub struct MarketProviderConfig {
     /// URL of the Ethereum RPC endpoint.
     #[clap(long, env, required = false)]
     pub boundless_rpc_url: Url,
-    /// Private key used to interact with the EvenNumber contract.
+    /// Private key of the wallet used to sign and fund Boundless market requests.
     #[clap(long, env, required = false)]
     pub boundless_wallet_key: PrivateKeySigner,
 
@@ -86,9 +88,7 @@ pub struct MarketProviderConfig {
     /// This parameter takes precedent over all other deployment arguments if set to a known value
     #[clap(long, env, required = false)]
     pub boundless_chain_id: Option<u64>,
-    /// Address of the [BoundlessMarket] contract.
-    ///
-    /// [BoundlessMarket]: crate::contracts::IBoundlessMarket
+    /// Address of the `BoundlessMarket` contract.
     #[clap(long, env, required = false)]
     pub boundless_market_address: Option<Address>,
     /// Address of the [RiscZeroVerifierRouter] contract.
@@ -115,9 +115,7 @@ pub struct MarketProviderConfig {
     /// Address of the collateral token contract. The staking token is an ERC-20.
     #[clap(long, env, required = false)]
     pub boundless_collateral_token_address: Option<Address>,
-    /// URL for the offchain [order stream service].
-    ///
-    /// [order stream service]: crate::order_stream_client
+    /// URL for the offchain order stream service.
     #[clap(
         long,
         env,
@@ -342,6 +340,7 @@ pub struct MarketProviderConfig {
 }
 
 impl MarketProviderConfig {
+    /// Parses the configured funding mode string, panicking on unknown values.
     pub fn funding_mode(&self) -> FundingMode {
         match self.boundless_order_funding_mode.as_str() {
             "always" => FundingMode::Always,
@@ -357,6 +356,7 @@ impl MarketProviderConfig {
         }
     }
 
+    /// Serializes the market and storage configuration back into CLI arguments.
     pub fn to_arg_vec(
         &self,
         storage_provider_config: &Option<StorageUploaderConfig>,
@@ -576,6 +576,11 @@ lazy_static! {
     static ref BOUNDLESS_NET: Arc<Mutex<()>> = Default::default();
 }
 
+/// Obtains a Groth16 proof through the Boundless market.
+///
+/// Repeatedly submits proof requests via [request_proof] until one is fulfilled, escalating the
+/// price and timeouts on every expiry. Uploads go through the standard storage provider, or
+/// through R2 with a custom download domain when `r2_domain` is set.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     market: MarketProviderConfig,
@@ -710,6 +715,8 @@ pub async fn run_boundless_client<A: NoUninit + Into<Digest>>(
     }
 }
 
+/// Derives the next request nonce by hashing the requirements with the previous nonce, giving
+/// each workload a deterministic nonce chain that survives process restarts.
 pub fn next_nonce(requirements: &Requirements, previous_nonce: Option<u32>) -> u32 {
     let pred_type = (requirements.predicate.predicateType as u128).to_be_bytes();
     let prev_nonce = previous_nonce.unwrap_or(u32::MAX).to_be_bytes();
@@ -728,6 +735,8 @@ pub fn next_nonce(requirements: &Requirements, previous_nonce: Option<u32>) -> u
     u32::from_be_bytes(digest[..4].try_into().unwrap())
 }
 
+/// Fetches the proof request behind the id, or `None` if no such request was ever submitted,
+/// retrying indefinitely on transient errors.
 pub async fn get_proof_request(
     market: &MarketProviderConfig,
     boundless_client: &Client,
@@ -798,6 +807,7 @@ pub async fn get_proof_request(
     }
 }
 
+/// Walks the deterministic nonce chain until an unused request id is found.
 pub async fn get_next_fresh_nonce(
     market: &MarketProviderConfig,
     boundless_client: &Client,
@@ -822,6 +832,8 @@ pub async fn get_next_fresh_nonce(
     }
 }
 
+/// Scans the deterministic nonce chain for a matching unexpired request from a prior run and
+/// awaits its proof if found, leaving the first fresh nonce in `previous_nonce` otherwise.
 pub async fn look_back(
     market: &MarketProviderConfig,
     boundless_client: &Client,
@@ -892,6 +904,8 @@ pub async fn look_back(
     }
 }
 
+/// Awaits fulfillment of the market request and returns its verified base receipt, annotating
+/// the profile with the request id, prover, lock holder, and settled cost.
 pub async fn retrieve_proof(
     boundless_client: &Client,
     request_id: U256,
@@ -1024,6 +1038,12 @@ pub async fn retrieve_proof(
     }
 }
 
+/// Submits one proof request to the market and awaits its fulfillment.
+///
+/// The cycle count comes from the request cache, the configured assumptions, or a local
+/// preflight execution. Prior submissions are reused through look-back, program/input uploads
+/// are cached, and the offer follows either the legacy static pricing parameters or the SDK's
+/// dynamic pricing — escalated by the `attempt` number on retries and clamped by the price cap.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_proof<A: NoUninit + Into<Digest>>(
     market: &MarketProviderConfig,
@@ -1475,10 +1495,12 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     }
 }
 
+/// Cache file name for a request's estimated cycle counts.
 pub fn request_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> String {
     format!("boundless-{}.req", proof_id(image_id, journal))
 }
 
+/// Cache file name for an image's uploaded program URL.
 pub fn binary_file_name<A: NoUninit>(image_id: A) -> String {
     format!(
         "boundless-{}.req",
@@ -1486,10 +1508,12 @@ pub fn binary_file_name<A: NoUninit>(image_id: A) -> String {
     )
 }
 
+/// Cache file name for a request's uploaded input URL.
 pub fn input_file_name<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> String {
     format!("boundless-{}.req", !proof_id(image_id, journal))
 }
 
+/// Cycle counts sizing a proving workload for market pricing.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BoundlessRequest {
     /// Number of cycles that require proving
@@ -1499,6 +1523,7 @@ pub struct BoundlessRequest {
 }
 
 impl BoundlessRequest {
+    /// Cycles beyond user execution (paging and reserved work).
     pub fn system_cycle_count(&self) -> u64 {
         self.total_cycle_count - self.user_cycle_count
     }
@@ -1515,6 +1540,7 @@ pub struct R2Storage {
 }
 
 impl R2Storage {
+    /// Builds an R2 client from S3-compatible storage settings and the custom download domain.
     pub async fn new(
         storage_config: &StorageUploaderConfig,
         r2_domain: &str,

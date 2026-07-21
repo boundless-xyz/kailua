@@ -27,12 +27,17 @@ use risc0_steel::ethereum::{
 use risc0_steel::Contract;
 use std::sync::Arc;
 
+/// [CanoeVerifier] that validates EigenDA certificate validity claims inline with a Steel EVM
+/// call, instead of verifying a separate Canoe proof through composition.
 #[derive(Clone)]
 pub struct KailuaCanoeVerifier<T: CommsClient + Send + Sync + 'static> {
+    /// The oracle from which the boot record is loaded.
     pub oracle: Arc<T>,
 }
 
 impl<T: CommsClient + Send + Sync + 'static> KailuaCanoeVerifier<T> {
+    /// Creates a verifier bound to `oracle` and returns the boot record loaded through it.
+    /// Panics if the boot record cannot be loaded.
     pub fn new(oracle: Arc<T>) -> (Self, BootInfo) {
         let boot = kona_proof::block_on(BootInfo::load(oracle.as_ref()))
             .expect("Failed to load boot info");
@@ -41,6 +46,13 @@ impl<T: CommsClient + Send + Sync + 'static> KailuaCanoeVerifier<T> {
 }
 
 impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifier<T> {
+    /// Validates each claimed certificate validity by replaying the cert verifier contract call
+    /// against the Steel EVM input carried in `canoe_proof`.
+    ///
+    /// Every claim must target the boot record's L1 chain and head, name the canonical
+    /// EigenLabs-deployed cert verifier for that chain, and match the status code the verifier
+    /// contract returns under Steel. Assertion failures abort the guest; an empty claim set
+    /// requires no proof.
     fn validate_cert_receipt(
         &self,
         cert_validity_pairs: Vec<(AltDACommitment, CertValidity)>,
@@ -61,7 +73,7 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
         // Load up boot information from oracle
         let boot = kona_proof::block_on(BootInfo::load(self.oracle.as_ref()))
             .expect("Failed to load boot info");
-
+        // ensure STEEL proof uses l1 head as a reference
         let env = match boot.rollup_config.l1_chain_id {
             1 => evm_input.into_env(&ETH_MAINNET_CHAIN_SPEC),
             11155111 => evm_input.into_env(&ETH_SEPOLIA_CHAIN_SPEC),
@@ -71,6 +83,7 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
                 Default::default(),
             )),
         };
+        assert_eq!(env.header().seal(), boot.l1_head);
         // Validate each steel proof
         let fetcher = CanoeVerifierAddressFetcherDeployedByEigenLabs {};
         for (altda_commitment, cert_validity) in cert_validity_pairs {
@@ -102,8 +115,8 @@ impl<T: CommsClient + Send + Sync + 'static> CanoeVerifier for KailuaCanoeVerifi
         Ok(())
     }
 
+    /// Unsupported: validation happens inline, so no Canoe journal is ever constructed.
     fn to_journals_bytes(&self, _: Vec<(AltDACommitment, CertValidity)>) -> Vec<u8> {
-        // this method should not be used
         unimplemented!()
     }
 }

@@ -36,8 +36,14 @@ use std::collections::BTreeSet;
 use std::future::IntoFuture;
 use tracing::{error, info};
 
+/// Maximum number of eliminations paid out per treasury claim transaction.
 pub const ELIMINATIONS_LIMIT: u64 = 128;
 
+/// A local replica of an on-chain proposal (treasury or game instance) and its assessment.
+///
+/// Beyond the contract data loaded via [Proposal::load], this tracks the sync agent's own
+/// verdicts on the proposal: per-field-element correctness, tournament relationships, and
+/// canonicity.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Proposal {
     // pointers
@@ -89,13 +95,19 @@ pub struct Proposal {
     pub resolved_at: u64,
 }
 
+/// Outcome of processing one factory index during synchronization.
 pub enum ProposalSync {
+    /// Proposal admitted into the local tournament state; carries its contract address and L1 head.
     SUCCESS(Address, B256),
+    /// Processing postponed until op-node data reaches the carried L2 block number.
     DELAYED(u64),
+    /// Proposal excluded from the local tournament state; carries its contract address and L1 head.
     IGNORED(Address, B256),
 }
 
 impl Proposal {
+    /// Loads the proposal at the given contract address as either a `KailuaTreasury` or a
+    /// `KailuaGame` instance, based on whether the contract is its own parent.
     pub async fn load(
         provider: &SyncProvider,
         address: Address,
@@ -118,6 +130,8 @@ impl Proposal {
         }
     }
 
+    /// Loads a `KailuaTreasury` instance, which anchors its deployment's proposal tree and is
+    /// assumed correct.
     async fn load_treasury(
         provider: &SyncProvider,
         address: Address,
@@ -239,6 +253,8 @@ impl Proposal {
         })
     }
 
+    /// Loads a `KailuaGame` instance along with its published blobs, splitting each blob into
+    /// intermediate output and trailing field elements pending correctness assessment.
     async fn load_game(
         provider: &SyncProvider,
         address: Address,
@@ -432,18 +448,23 @@ impl Proposal {
         })
     }
 
+    /// Returns a [ProposalSync::DELAYED] outcome pointing at this proposal's claimed block.
     pub fn as_delayed(&self) -> ProposalSync {
         ProposalSync::DELAYED(self.output_block_number)
     }
 
+    /// Returns a [ProposalSync::IGNORED] outcome for this proposal.
     pub fn as_ignored(&self) -> ProposalSync {
         ProposalSync::IGNORED(self.contract, self.l1_head)
     }
 
+    /// Returns a [ProposalSync::SUCCESS] outcome for this proposal.
     pub fn as_success(&self) -> ProposalSync {
         ProposalSync::SUCCESS(self.contract, self.l1_head)
     }
 
+    /// Combines the individual field verdicts into an overall correctness verdict, or `None`
+    /// if any component is still undecided.
     pub fn is_correct(&self) -> Option<bool> {
         // A proposal is false if it extends an incorrect parent proposal
         if let Some(false) = self.correct_parent {
@@ -473,6 +494,8 @@ impl Proposal {
         Some(true)
     }
 
+    /// Returns the first provably faulty commitment in this proposal, prioritizing trail data
+    /// faults, or `None` if no divergence is (yet) known.
     pub fn fault(&self) -> Option<Fault> {
         // Check divergence in trail data
         for i in 0..self.correct_trail.len() {
@@ -494,14 +517,17 @@ impl Proposal {
         None
     }
 
+    /// True for game instances; false for treasury instances, which are their own parent.
     pub fn has_parent(&self) -> bool {
         self.index != self.parent
     }
 
+    /// Records a challenger in this proposal's tournament; false if already present.
     pub fn append_child(&mut self, child_index: u64) -> bool {
         self.children.insert(child_index)
     }
 
+    /// Returns the tournament match number of the child with the given factory index.
     pub fn child_index(&self, proposal_index: u64) -> Option<u64> {
         self.children
             .iter()
@@ -510,6 +536,8 @@ impl Proposal {
             .map(|r| r.0 as u64)
     }
 
+    /// True when the given proposer must wait for a distinct vanguard to open this proposal's
+    /// tournament with a first child.
     pub fn requires_vanguard_advantage(&self, proposer: Address, vanguard: Address) -> bool {
         if vanguard.is_zero() || vanguard == proposer {
             return false;
@@ -517,16 +545,19 @@ impl Proposal {
         self.children.is_empty()
     }
 
+    /// Returns the blob hash and data holding the field element at the given position.
     pub fn io_blob_for(&self, position: u64) -> (B256, BlobData) {
         let index = position / FIELD_ELEMENTS_PER_BLOB;
         self.io_blobs[index as usize].clone()
     }
 
+    /// Returns the KZG commitment of the blob holding the field element at the given position.
     pub fn io_commitment_for(&self, position: u64) -> Bytes {
         let blob = self.io_blob_for(position);
         Bytes::from(blob.1.kzg_commitment.to_vec())
     }
 
+    /// Computes the KZG proof for the field element at the given position in its blob.
     pub fn io_proof_for(&self, position: u64) -> anyhow::Result<Bytes> {
         let io_blob = self.io_blob_for(position);
         let (proof, _) = blob_fe_proof(
@@ -536,6 +567,8 @@ impl Proposal {
         Ok(Bytes::from(proof.to_vec()))
     }
 
+    /// Returns the claimed field element at the given position: an intermediate output, the
+    /// final output root (as a field element), or a trailing element past it.
     pub fn output_fe_at(&self, position: u64) -> U256 {
         let io_count = self.io_field_elements.len() as u64;
         match position.cmp(&io_count) {
@@ -553,6 +586,8 @@ impl Proposal {
         }
     }
 
+    /// Packs intermediate output field elements into zero-padded blobs and computes their
+    /// KZG commitments and proofs for publication.
     pub fn create_sidecar(io_field_elements: &[U256]) -> anyhow::Result<BlobTransactionSidecar> {
         let mut io_blobs = vec![];
         loop {
@@ -573,14 +608,17 @@ impl Proposal {
         blob_sidecar(io_blobs)
     }
 
+    /// Returns the hash of this proposal's blob hashes.
     pub fn blobs_hash(&self) -> B256 {
         blobs_hash(self.io_blobs.iter().map(|(h, _)| h))
     }
 
+    /// Returns the proposal's unique claim signature.
     pub fn signature(&self) -> B256 {
         self.signature
     }
 
+    /// Instantiates a `KailuaTournament` contract binding for this proposal.
     pub fn tournament_contract_instance<P: Provider<N>, N: Network>(
         &self,
         provider: P,
@@ -588,6 +626,8 @@ impl Proposal {
         KailuaTournament::new(self.contract, provider)
     }
 
+    /// Simulates pruning the parent tournament's children to determine which proposal would
+    /// currently survive as the successor; `None` if the tournament cannot be decided yet.
     pub async fn fetch_parent_tournament_survivor<P: Provider<N>, N: Network>(
         &self,
         provider: P,
@@ -627,6 +667,8 @@ impl Proposal {
         }
     }
 
+    /// Reports whether this proposal is its parent tournament's current survivor; `None` if
+    /// undecided.
     pub async fn fetch_parent_tournament_survivor_status<P: Provider<N>, N: Network>(
         &self,
         provider: P,
@@ -654,6 +696,7 @@ impl Proposal {
         Ok(is_survivor_expected)
     }
 
+    /// Queries the on-chain resolution status of this proposal (see [Self::parse_finality]).
     pub async fn fetch_finality<P: Provider<N>, N: Network>(
         &self,
         provider: P,
@@ -671,6 +714,7 @@ impl Proposal {
         )
     }
 
+    /// Queries the timestamp at which this proposal was resolved; zero if unresolved.
     pub async fn fetch_resolved_at<P: Provider<N>, N: Network>(
         &self,
         provider: P,
@@ -686,6 +730,8 @@ impl Proposal {
             .await
     }
 
+    /// Maps a `GameStatus` value to a verdict: `None` while in progress, `Some(false)` if the
+    /// challenger won, `Some(true)` if the defender won.
     pub fn parse_finality(game_status: u8) -> anyhow::Result<Option<bool>> {
         match game_status {
             0u8 => Ok(None),        // IN_PROGRESS
@@ -695,6 +741,7 @@ impl Proposal {
         }
     }
 
+    /// True when a validity proof has been recorded for this proposal's successor child.
     pub async fn fetch_is_successor_validity_proven<P: Provider<N>, N: Network>(
         &self,
         provider: P,

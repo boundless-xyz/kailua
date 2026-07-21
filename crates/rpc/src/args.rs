@@ -18,6 +18,7 @@ use std::net::SocketAddr;
 /// Start the RPC server for assisting withdrawals
 #[derive(clap::Args, Debug, Clone)]
 pub struct RpcArgs {
+    /// Deployment synchronization configuration.
     #[clap(flatten)]
     pub sync: SyncArgs,
     /// Whether to bypass loading rollup chain configurations from the kona registry

@@ -22,12 +22,19 @@ import {IRiscZeroVerifier} from "@risc0/IRiscZeroVerifier.sol";
 import {Proxy} from "../src/Proxy.sol";
 import {KailuaVerifier} from "../src/KailuaVerifier.sol";
 
+/// @title UpgradeVerifierScript
+/// @notice Deploys a new `KailuaVerifier` implementation and points the existing EIP-1967 proxy at it. The proxy
+///         address is read from `KAILUA_VERIFIER_PROXY`; each constructor parameter is taken from its environment
+///         variable if set and otherwise carried over from the current implementation.
+/// @dev The broadcasting key (`PRIVATE_KEY`) must control the proxy admin, or the upgrade call gets proxied to the
+///      implementation and reverts.
 contract UpgradeVerifierScript is Script {
     uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
 
     // Required: the deployed proxy address
     Proxy proxy = Proxy(payable(vm.envAddress("KAILUA_VERIFIER_PROXY")));
 
+    /// @notice Resolves the verifier parameters, deploys the new implementation, and upgrades the proxy
     function run() public {
         KailuaVerifier current = KailuaVerifier(address(proxy));
 

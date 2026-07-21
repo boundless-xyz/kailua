@@ -15,9 +15,13 @@
 use kona_preimage::{HintWriter, OracleReader};
 use kona_std_fpvm::{FileChannel, FileDescriptor};
 
+/// Preimage-server/client pairing for native proving runs.
 pub mod native;
+/// Execution-witness payload prefetching via `debug_executionWitness`.
 pub mod payload;
+/// The native proving client: witness generation, limit enforcement, and proof seeking.
 pub mod proving;
+/// Witness-recording oracle and blob providers wrapped around the core client.
 pub mod witgen;
 
 /// The global preimage oracle reader pipe.

@@ -24,6 +24,12 @@ import {IRiscZeroVerifier} from "@risc0/IRiscZeroVerifier.sol";
 /// @notice Thrown when a target is invalid
 error BadTarget();
 
+/// @title KailuaVerifier
+/// @notice Validates Kailua FPVM proofs against the RISC Zero verifier and manages fault proof permits: bonded,
+///         time-limited locks that grant their sole holder exclusive rights to the payout for proving a specific
+///         proposal signature faulty.
+/// @dev Deployed behind an EIP-1967 proxy so that the immutable image ID and configuration hash can be upgraded;
+///      proposal contracts reference the proxy address.
 contract KailuaVerifier is ISemver {
     /// @notice Semantic version.
     /// @custom:semver 1.2.0
@@ -44,6 +50,12 @@ contract KailuaVerifier is ISemver {
     /// @notice The duration after which a permit is active
     Duration public immutable PERMIT_DELAY;
 
+    /// @param _verifierContract The RISC Zero verifier used to validate seals
+    /// @param _imageId The RISC Zero image ID of the FPVM guest program
+    /// @param _configHash The hash of the rollup configuration proofs must commit to
+    /// @param _permitDuration How long a fault proof permit remains valid after issuance
+    /// @param _permitDelay How long after issuance a fault proof permit becomes active; must be shorter than the
+    ///        permit duration
     constructor(
         IRiscZeroVerifier _verifierContract,
         bytes32 _imageId,
@@ -75,6 +87,9 @@ contract KailuaVerifier is ISemver {
     }
 
     /// @notice Returns the key for indexing fault proving permits
+    /// @param proposalParent The tournament containing the targeted proposal
+    /// @param proposalSignature The signature of the targeted proposal
+    /// @return The sha256 hash of the parent address and proposal signature
     function faultProofPermitKey(IKailuaTournament proposalParent, bytes32 proposalSignature)
         public
         pure
@@ -84,6 +99,11 @@ contract KailuaVerifier is ISemver {
     }
 
     /// @notice Returns the earliest timestamp at which a fault proof permit can be released
+    /// @dev A signature stops being viable either through a fault proof against it or a validity proof for a
+    ///      sibling; when both proofs exist, the earlier timestamp governs the permit
+    /// @param proposalParent The tournament containing the targeted proposal
+    /// @param proposalSignature The signature of the targeted proposal
+    /// @return The proving timestamp, or zero if the signature was proven valid or nothing was proven yet
     function faultProofPermitProvenAt(IKailuaTournament proposalParent, bytes32 proposalSignature)
         public
         view
@@ -106,6 +126,10 @@ contract KailuaVerifier is ISemver {
     }
 
     /// @notice Returns the exclusive beneficiary of a fault proof reward
+    /// @param proposalParent The tournament containing the targeted proposal
+    /// @param proposalSignature The signature of the targeted proposal
+    /// @return The recipient of the sole permit if it was active when the fault was proven, otherwise the zero
+    ///         address
     function faultProofPermitBeneficiary(IKailuaTournament proposalParent, bytes32 proposalSignature)
         public
         view
@@ -136,6 +160,17 @@ contract KailuaVerifier is ISemver {
 
     /// @notice Given a reference timestamp, returns the number of expired permits, the number of delayed permits,
     /// the total expired permit collateral, and the number of active permits
+    /// @dev Permits are stored in issuance order, so expired permits form a prefix of the list and delayed (not yet
+    ///      active) permits form a suffix. The caller-provided counts are hints that are advanced or walked back
+    ///      on-chain; an expired-count hint that overshoots reverts with `BadTarget`.
+    /// @param proposalKey The permit list key computed by `faultProofPermitKey`
+    /// @param numExpiredPermits A lower-bound hint for the number of expired permits
+    /// @param numDelayedPermits A hint for the number of delayed permits
+    /// @param timestamp The reference timestamp against which permit states are evaluated
+    /// @return The validated number of expired permits
+    /// @return The validated number of delayed permits
+    /// @return The aggregate collateral locked by the expired permits
+    /// @return The number of active permits remaining
     function countExpiredPermits(
         bytes32 proposalKey,
         uint64 numExpiredPermits,
@@ -189,13 +224,23 @@ contract KailuaVerifier is ISemver {
     }
 
     /// @notice Returns the collateral required to acquire a fault proof permit
+    /// @param treasury The treasury whose participation bond and elimination split determine the price
+    /// @return bond Twice the prover's share of a slashed participation bond
     function faultProofPermitBond(IKailuaTreasury treasury) public view returns (uint256 bond) {
         bond = (treasury.participationBond() * 2 * treasury.ELIMINATION_SPLIT_PROVER_NUM())
             / treasury.ELIMINATION_SPLIT_DENOM();
     }
 
     /// @notice Locks the right to submit a fault proof for a given proposal signature
-    /// @dev Do not call this function to acquire locks for faults that will not lead to elimination.
+    /// @dev Do not call this function to acquire locks for faults that will not lead to elimination: the attached
+    ///      collateral only becomes releasable once the signature is proven faulty. Permit issuance is rate-limited
+    ///      so that at most two outstanding permits exist per expired permit.
+    /// @param proposalParent The tournament containing the targeted proposal
+    /// @param proposalSignature The signature of the proposal to be proven faulty
+    /// @param numExpiredPermits A lower-bound hint for the number of expired permits as of this block
+    /// @param numDelayedPermits A hint for the number of delayed permits as of this block
+    /// @param payoutRecipient The address entitled to the permit's collateral and proving payout
+    /// @return totalPermitsIssued_ The index of the newly issued permit in the permit list
     function acquireFaultProofPermit(
         IKailuaTournament proposalParent,
         bytes32 proposalSignature,
@@ -232,6 +277,14 @@ contract KailuaVerifier is ISemver {
     }
 
     /// @notice Claims the total payout for a permit
+    /// @dev Only callable once the targeted signature is proven faulty. The permit's own collateral is refunded,
+    ///      plus an equal share of the collateral forfeited by expired permits if this permit was active at proof
+    ///      submission. Permits that expired before the proof forfeit their collateral instead.
+    /// @param proposalParent The tournament containing the targeted proposal
+    /// @param proposalSignature The signature of the proposal proven faulty
+    /// @param numExpiredPermits A lower-bound hint for the number of permits expired as of proof submission
+    /// @param numDelayedPermits A hint for the number of permits delayed as of proof submission
+    /// @param permitIndex The index of the permit to release
     function releaseFaultProofPermit(
         IKailuaTournament proposalParent,
         bytes32 proposalSignature,
@@ -272,6 +325,15 @@ contract KailuaVerifier is ISemver {
     }
 
     /// @notice Verifies a ZK proof
+    /// @dev Reconstructs the expected FPVM journal from the arguments and the immutable rollup configuration hash
+    ///      and image ID, then reverts unless the seal proves it
+    /// @param payoutRecipient The address of the recipient of the payout for this proof
+    /// @param preconditionHash The blob equivalence precondition hash, or zero if no precondition applies
+    /// @param l1Head The L1 head hash containing the safe L2 chain data that may reproduce the L2 head hash
+    /// @param agreedL2OutputRoot The output root both parties agree on
+    /// @param claimedL2OutputRoot The output root claimed to follow from the agreed output
+    /// @param claimedL2BlockNumber The L2 block number of the claimed output root
+    /// @param encodedSeal The encoded RISC Zero seal attesting to the journal
     function verify(
         address payoutRecipient,
         bytes32 preconditionHash,

@@ -12,9 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Macros for retrying fallible async operations with exponential backoff.
+//!
+//! Each macro variant composes up to three behaviors, named by its suffixes: `res` unwraps
+//! the result by retrying until success, `ctx` attaches the current OpenTelemetry context to
+//! each attempt, and `timeout` bounds the duration of each attempt.
+
+/// Default initial retry delay (milliseconds).
 pub const MIN_DELAY_MS: u64 = 250;
+/// Default maximum retry delay (milliseconds).
 pub const MAX_DELAY_MS: u64 = 16000;
 
+/// Retries the expression with exponential backoff `($base_ms, $max_ms, $expr)`, logging
+/// errors; defaults apply to omitted leading delay arguments.
 #[macro_export]
 macro_rules! retry {
     ($e:expr) => {
@@ -39,6 +49,7 @@ macro_rules! retry {
     };
 }
 
+/// [retry!] that retries until success and unwraps the `Ok` value.
 #[macro_export]
 macro_rules! retry_res {
     ($e:expr) => {
@@ -52,6 +63,7 @@ macro_rules! retry_res {
     };
 }
 
+/// [retry!] that runs each attempt in a fresh `retry_attempt` telemetry span.
 #[macro_export]
 macro_rules! retry_ctx {
     ($e:expr) => {
@@ -76,6 +88,7 @@ macro_rules! retry_ctx {
     };
 }
 
+/// [retry_ctx!] that retries until success and unwraps the `Ok` value.
 #[macro_export]
 macro_rules! retry_res_ctx {
     ($e:expr) => {
@@ -89,6 +102,7 @@ macro_rules! retry_res_ctx {
     };
 }
 
+/// [retry_res!] with a timeout of `$t` seconds applied to each attempt.
 #[macro_export]
 macro_rules! retry_timeout {
     // ($e:expr) => {
@@ -120,6 +134,8 @@ macro_rules! retry_timeout {
     };
 }
 
+/// [retry_res!] with a timeout of `$t` seconds applied to each attempt, retrying through
+/// both timeouts and errors until success.
 #[macro_export]
 macro_rules! retry_res_timeout {
     // ($e:expr) => {
@@ -156,6 +172,8 @@ macro_rules! retry_res_timeout {
     };
 }
 
+/// [retry_res_ctx!] with a timeout of `$t` seconds applied to each attempt, retrying
+/// through both timeouts and errors until success.
 #[macro_export]
 macro_rules! retry_res_ctx_timeout {
     // ($e:expr) => {

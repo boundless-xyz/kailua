@@ -25,6 +25,9 @@ use kailua_sync::transact::rpc::get_block;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 
+/// Fetches the treasury's vanguard: the address given priority in making each new proposal.
+///
+/// Like all queries in this module, retries indefinitely until the data is available.
 pub async fn fetch_vanguard(agent: &SyncAgent, timeout: u64) -> Address {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("fetch_vanguard"));
@@ -34,6 +37,7 @@ pub async fn fetch_vanguard(agent: &SyncAgent, timeout: u64) -> Address {
         .await
 }
 
+/// Fetches how many seconds of exclusive proposal priority the vanguard enjoys.
 pub async fn fetch_vanguard_advantage(agent: &SyncAgent, timeout: u64) -> u64 {
     let tracer = tracer("kailua");
     let context =
@@ -48,6 +52,7 @@ pub async fn fetch_vanguard_advantage(agent: &SyncAgent, timeout: u64) -> u64 {
         .await
 }
 
+/// Fetches the collateral the treasury requires of each proposer.
 pub async fn fetch_participation_bond(agent: &SyncAgent, timeout: u64) -> U256 {
     let tracer = tracer("kailua");
     let context =
@@ -62,6 +67,7 @@ pub async fn fetch_participation_bond(agent: &SyncAgent, timeout: u64) -> U256 {
         .await
 }
 
+/// Fetches the collateral `address` has already locked in the treasury.
 pub async fn fetch_paid_bond(agent: &SyncAgent, address: Address, timeout: u64) -> U256 {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("fetch_paid_bond"));
@@ -71,6 +77,7 @@ pub async fn fetch_paid_bond(agent: &SyncAgent, address: Address, timeout: u64) 
         .await
 }
 
+/// Fetches the seconds of challenge time a proposal has left, as of the latest L1 timestamp.
 pub async fn fetch_current_challenger_duration(
     agent: &SyncAgent,
     proposal: &Proposal,
