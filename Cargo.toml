@@ -61,6 +61,7 @@ thousands = "0.2.0"
 tokio = { version = "1.49.0", features = ["full"] }
 tokio-rayon = "2.1.0"
 tokio-retry = "0.3.0"
+tower = "0.5.3"
 url = { version = "2.5.4", features = ["serde"]}
 
 # Telemetry

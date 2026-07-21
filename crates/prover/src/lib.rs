@@ -62,6 +62,8 @@ pub mod proof;
 pub mod prove;
 /// RISC Zero proving backends: local zkVM, Bonsai, and Boundless.
 pub mod risczero;
+/// Custom RPC logic
+pub mod rpc;
 /// Proving worker pool and workload decomposition logic.
 pub mod tasks;
 

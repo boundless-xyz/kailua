@@ -13,6 +13,9 @@
 // limitations under the License.
 
 use crate::risczero::boundless::BoundlessArgs;
+use crate::rpc::BlockedMethodsLayer;
+use alloy::providers::RootProvider;
+use alloy::rpc::client::{ClientBuilder, RpcClient};
 use alloy_primitives::{Address, B256};
 use clap::Parser;
 use futures::FutureExt;
@@ -81,6 +84,11 @@ pub struct ProvingArgs {
     /// Whether to export profiling data to a CSV file
     #[clap(long, env, default_value_t = false)]
     pub export_profile_csv: bool,
+    /// RPC methods that must not be sent to any provider; requests for them are answered
+    /// locally with a JSON-RPC "method not found" error (-32601) so callers take their
+    /// unsupported-method fallback path instead
+    #[clap(long, env, value_delimiter = ',')]
+    pub blocked_rpc_methods: Vec<String>,
 
     /// EigenDA (Hokulea) connection arguments
     #[clap(flatten)]
@@ -106,6 +114,12 @@ impl ProvingArgs {
             String::from("--num-concurrent-proofs"),
             self.num_concurrent_proofs.to_string(),
         ];
+        if !self.blocked_rpc_methods.is_empty() {
+            proving_args.extend(vec![
+                String::from("--blocked-rpc-methods"),
+                self.blocked_rpc_methods.join(","),
+            ]);
+        }
         // Core flags
         proving_args.extend(
             [
@@ -235,15 +249,50 @@ pub struct ProveArgs {
 }
 
 impl ProveArgs {
-    /// Instantiates kona's L1/L2 providers, converting panics in kona's constructor to errors.
+    /// Builds an RPC client for the given URL, applying the blocked-methods layer when
+    /// `--blocked-rpc-methods` is configured. HTTP(S) URLs only: unlike
+    /// `RootProvider::connect`, this does not support ws:// or ipc endpoints, so those
+    /// remain usable only with an empty blocklist.
+    pub fn rpc_client(&self, url: &str) -> Result<RpcClient, SingleChainHostError> {
+        let url: reqwest::Url = url
+            .parse()
+            .map_err(|_| SingleChainHostError::Other("Invalid RPC URL"))?;
+        let client = if self.proving.blocked_rpc_methods.is_empty() {
+            ClientBuilder::default().http(url)
+        } else {
+            ClientBuilder::default()
+                .layer(BlockedMethodsLayer::new(
+                    self.proving.blocked_rpc_methods.iter().cloned(),
+                ))
+                .http(url)
+        };
+        Ok(client)
+    }
+
+    /// Creates the L1/beacon/L2 providers via kona's [SingleChainHost::create_providers](kona_host::single::SingleChainHost::create_providers),
+    /// then re-wraps the L2 provider with the `--blocked-rpc-methods` blocklist layer.
     pub async fn create_providers(&self) -> Result<SingleChainProviders, SingleChainHostError> {
-        AssertUnwindSafe(self.kona.clone().create_providers())
+        let mut providers = AssertUnwindSafe(self.kona.clone().create_providers())
             .catch_unwind()
             .await
             .unwrap_or_else(|err| {
                 error!("kona::create_providers panicked: {err:?}");
                 Err(SingleChainHostError::Other("create_providers panicked"))
-            })
+            })?;
+        // Re-wrap the L2 provider so `--blocked-rpc-methods` applies to it. The blockable
+        // methods (debug_executePayload, debug_executionWitness) are all served by the L2
+        // provider, so leaving the L1 and beacon providers as kona built them is sufficient.
+        // kona exposes no hook to layer the client during construction, so its L2 provider is
+        // discarded here; that is cheap because an HTTP `RootProvider` connects lazily.
+        if !self.proving.blocked_rpc_methods.is_empty() {
+            let l2_address = self
+                .kona
+                .l2_node_address
+                .as_ref()
+                .ok_or(SingleChainHostError::Other("L2 node address must be set"))?;
+            providers.l2 = RootProvider::new(self.rpc_client(l2_address)?);
+        }
+        Ok(providers)
     }
 
     /// Serializes the arguments into a complete `prove` CLI invocation.
