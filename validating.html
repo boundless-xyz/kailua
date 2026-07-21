@@ -1,0 +1,614 @@
+<!DOCTYPE HTML>
+<html lang="en" class="ayu sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Validating - The Kailua Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="./mdbook-admonish.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "ayu";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('ayu')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Kailua Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/boundless-xyz/kailua" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/boundless-xyz/kailua/edit/main/book/src/validating.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="validating"><a class="header" href="#validating">Validating</a></h1>
+<p>This chapter is the normative specification of Kailua's validation protocol: how disputes between contradictory
+<a href="sequencing.html">sequencing proposals</a> are settled by proofs, and how proposals are proven valid ahead of their
+challenge timeout.
+As in the <a href="sequencing.html">previous chapter</a>, the key words <em>must</em>, <em>must not</em>, <em>should</em>, and <em>may</em> denote
+requirements on any conforming implementation, and the rules below define the protocol in the abstract — with the
+<code>KailuaTournament</code> and <code>KailuaVerifier</code> contracts as the current implementation instance and the
+<a href="validator.html">validator agent</a> as the reference implementation of the validator role.</p>
+<p>Proof submission is <strong>permissionless</strong> and <strong>non-interactive</strong>: any party may settle any dispute with a single
+submission, and proofs attach to a proposal's <em>identity</em> rather than to any individual proposal instance.</p>
+<h2 id="transition-proofs"><a class="header" href="#transition-proofs">Transition Proofs</a></h2>
+<p>The foundation of validation is the <strong>transition proof</strong>: a succinct, verifiable attestation of one application of
+the rollup's state transition function. A transition proof establishes a claim tuple:</p>
+<div class="table-wrapper"><table><thead><tr><th>Component</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>beneficiary</td><td>The party to be credited for the proof.</td></tr>
+<tr><td>precondition</td><td>An optional commitment binding the proof to externally published data (see validity proofs).</td></tr>
+<tr><td>derivation anchor</td><td>The settlement-layer (L1) state from which all rollup inputs were derived.</td></tr>
+<tr><td>agreed output</td><td>The starting output commitment, assumed correct.</td></tr>
+<tr><td>computed output</td><td>The output commitment reached by applying the state transition function.</td></tr>
+<tr><td>computed height</td><td>The rollup height of the computed output.</td></tr>
+<tr><td>configuration</td><td>A binding commitment to the rollup configuration under which the transition was computed.</td></tr>
+<tr><td>program</td><td>A binding commitment to the state transition program itself.</td></tr>
+</tbody></table>
+</div>
+<p>A conforming verification procedure must accept a claim tuple only if <em>starting from the agreed output, deriving the
+rollup using only data reachable from the derivation anchor yields the computed output at the computed height, under
+the committed configuration and program</em>.</p>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: The Statement Established by a Transition Proof
+---
+graph LR;
+  DA[derivation anchor] --&gt; STF[state transition program];
+  AO((agreed output)) --&gt; STF;
+  CFG[configuration] --&gt; STF;
+  STF --&gt; CO((computed output at computed height));
+</pre>
+</div>
+<p>The protocol imposes two constraints on how claim tuples may be formed:</p>
+<ol>
+<li>The derivation anchor must be one committed by a proposal registered in the protocol. Provers cannot introduce an
+arbitrary L1 context; they may only derive from a view that some proposal has staked on.</li>
+<li>The computed height must equal the parent proposal's height plus a whole number of output-span (<code>S</code>) steps, so
+proofs always align with the commitment schedule of the proposals they judge.</li>
+</ol>
+<div id="admonition-note" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-title">
+<div class="admonition-title">
+<div id="admonition-note-title">
+<p>Note</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-note"></a>
+</div>
+<div>
+<p>There is no separate "fault program" and "validity program": the state transition program always computes the
+<em>correct</em> output.
+A fault is established by showing the proven-correct output <em>differs</em> from what a proposal published; validity is
+established by showing it <em>equals</em> the proposal's claim.
+Fault proofs exhibiting agreement are rejected (<a href="#output-fault-proofs">output fault rule 3</a>) — a proof can never
+convict a correct proposal.</p>
+</div>
+</div>
+<div id="admonition-implementation" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-title">
+<div class="admonition-title">
+<div id="admonition-implementation-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation"></a>
+</div>
+<div>
+<p>Transition proofs are RISC Zero zkVM receipts for the Kailua FPVM program (a Kona-based derivation client).
+The claim tuple is the FPVM's journal; <code>KailuaVerifier.verify</code> reconstructs the expected journal — substituting its
+immutable <code>ROLLUP_CONFIG_HASH</code> and <code>FPVM_IMAGE_ID</code> for the configuration and program commitments — and delegates seal
+verification to the deployed RISC Zero verifier contract. Constraint 1 is enforced by requiring the anchor to be the
+<code>l1Head</code> of a treasury-registered proposal (<code>UnknownGame</code>); constraint 2 by having the tournament contract itself
+compute the claim height.</p>
+</div>
+</div>
+<h2 id="proof-classes"><a class="header" href="#proof-classes">Proof Classes</a></h2>
+<p>Three classes of proof can be recorded against a child identity in a tournament:</p>
+<div class="table-wrapper"><table><thead><tr><th>Proof class</th><th>Needs a transition proof?</th><th>Establishes</th></tr></thead><tbody>
+<tr><td>Validity</td><td>Yes</td><td>Every commitment made by the proposal is correct.</td></tr>
+<tr><td>Output fault</td><td>Yes</td><td>One published output commitment contradicts the derivable state.</td></tr>
+<tr><td>Trail fault</td><td>No</td><td>The proposal's published data violates the required format.</td></tr>
+</tbody></table>
+</div>
+<p>For every proof class, a conforming implementation must enforce:</p>
+<ol>
+<li>Proofs may be accepted for or against a child only until its parent's tournament produces a finalized successor.</li>
+<li>At most one proof outcome is ever recorded per identity; the outcome, the prover, and the proving time are recorded
+permanently.</li>
+<li>Proof submission must remain open to any party for as long as rule 1 permits.</li>
+</ol>
+<div id="admonition-what-these-rules-uphold" class="admonition admonish-success" role="note" aria-labelledby="admonition-what-these-rules-uphold-title">
+<div class="admonition-title">
+<div id="admonition-what-these-rules-uphold-title">
+<p>What these rules uphold</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-what-these-rules-uphold"></a>
+</div>
+<div>
+<ul>
+<li><strong>Sybil resistance.</strong> Because proofs attach to identities and are recorded exactly once, duplicating a faulty
+proposal multiplies the attacker's locked collateral without adding a single unit of proving work for the defense —
+one proof settles every copy (see <a href="introduction.html#sybil-identities">Sybil identities</a>).</li>
+<li><strong>No proving deadlines.</strong> The challenge timeout limits only the <em>creation</em> of contradictions
+(<a href="sequencing.html#tournaments">tournaments</a>), never their resolution (rule 3): however large the attack, each pending
+match waits indefinitely for its proof, so proving power determines how fast disputes settle — never whether they
+settle correctly (see <a href="introduction.html#resource-exhaustion">Resource exhaustion</a>).</li>
+<li><strong>Permissionless settlement.</strong> Any party — not only the disputants — can supply the deciding proof, so settlement
+liveness does not rest on the parties whose collateral is at stake.</li>
+</ul>
+</div>
+</div>
+<div id="admonition-implementation-1" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-1-title">
+<div class="admonition-title">
+<div id="admonition-implementation-1-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-1"></a>
+</div>
+<div>
+<p>Enforced by <code>KailuaTournament</code> for all classes: <code>GameNotInProgress</code>, <code>ClaimAlreadyResolved</code>, and <code>AlreadyProven</code>; the
+recorded outcome is <code>proofStatus[signature]</code> with <code>prover</code> and <code>provenAt</code>, announced by the <code>Proven</code> event.</p>
+</div>
+</div>
+<h3 id="validity-proofs"><a class="header" href="#validity-proofs">Validity Proofs</a></h3>
+<p>A <strong>validity proof</strong> vouches for a child's entire commitment set in one step. It must consist of a transition proof
+whose agreed output is the parent's claim and whose computed output is the child's claim, at the child's full height —
+covering all <code>N × S</code> blocks.</p>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Validity Proof Coverage (N = 4)
+---
+graph LR;
+  P((parent claim)) ==4 × S blocks proven==&gt; c((claim));
+  P -.-&gt; o0((o₀)) -.-&gt; o1((o₁)) -.-&gt; o2((o₂)) -.-&gt; c;
+</pre>
+</div>
+<p>When a proposal publishes more than one output commitment (<code>N &gt; 1</code>), the transition proof must additionally commit —
+through its precondition — to the equivalence of the derived intermediate outputs and the proposal's published
+intermediate commitments. A validity proof thereby vouches for the published data, not merely the final claim.</p>
+<p>Recording a validity proof makes the proven identity the tournament's unique <strong>valid identity</strong>, with these effects:</p>
+<ul>
+<li>Every other child identity in the tournament immediately becomes unviable; contradictory siblings are disqualified
+by the tournament rules — their proposers eliminated — without individual fault proofs.</li>
+<li>No proposal contradicting the valid identity may be created from that point on (creation rule 10).</li>
+<li>Children bearing the valid identity no longer wait out the challenge timeout: they finalize as soon as their parent
+is finalized — the finality <em>fast-forward</em> of <a href="sequencing.html#resolution">resolution</a> rule 2.</li>
+</ul>
+<div id="admonition-implementation-2" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-2-title">
+<div class="admonition-title">
+<div id="admonition-implementation-2-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-2"></a>
+</div>
+<div>
+<p><code>KailuaTournament.proveValidity</code> stores <code>validChildSignature</code> and passes the parent claim, child claim, and full
+output count to verification. The precondition is
+<code>sha256(parent height ‖ N ‖ S ‖ blobsHash)</code> over the child's blob hashes; the FPVM enforces it by checking each
+derived intermediate output against the corresponding blob field element.</p>
+</div>
+</div>
+<h3 id="output-fault-proofs"><a class="header" href="#output-fault-proofs">Output Fault Proofs</a></h3>
+<p>An <strong>output fault proof</strong> convicts a child by exhibiting a single divergent output commitment.
+For a disputed commitment at position <code>i</code> (where the proposal's commitments occupy positions <code>0</code> through <code>N − 1</code>, the
+claim being the last), a conforming implementation must require:</p>
+<ol>
+<li><code>i</code> addresses one of the proposal's <code>N</code> output commitments.</li>
+<li><strong>Agreed output.</strong> For <code>i = 0</code>, the transition proof's agreed output must be the parent's claim. For <code>i &gt; 0</code>, the
+submitter must demonstrate — via the data availability layer's read-back mechanism — that the <em>proposal itself</em>
+published the agreed output as its commitment at position <code>i − 1</code>.</li>
+<li><strong>Divergence.</strong> The proven computed output must contradict the proposal's commitment at position <code>i</code>: for the final
+position, it must differ from the proposal's claim; for intermediate positions, the submitter must demonstrate what
+the proposal published at position <code>i</code> and that it differs from the computed output. Proofs exhibiting agreement
+must be rejected.</li>
+<li>The transition proof must cover exactly the <code>S</code> blocks from position <code>i − 1</code> (or the parent claim) to position <code>i</code>,
+with no precondition.</li>
+</ol>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Output Fault Proof Against Position 2 (N = 4)
+---
+graph LR;
+  P((parent claim)) -.S.-&gt; o0((o₀)) -.S.-&gt; o1((o₁ agreed)) ==S blocks proven==&gt; x((computed ≠ o₂)) -.S.-&gt; c((claim));
+</pre>
+</div>
+<p>Rule 2 is what makes disputes cheap: because the agreed output is read from the faulty proposal's <em>own</em> publication, a
+fault proof only ever derives the <code>S</code> blocks between two adjacent commitments — never the whole proposal.
+The choice of <code>N</code> and <code>S</code> thus bounds the worst-case proving work for any single dispute, as illustrated in the
+<a href="design.html#sequencing">design overview</a>.
+Note that the agreed output need not be <em>correct</em> — position <code>i − 1</code> may itself be faulty. The proof only establishes
+that the proposal is inconsistent with its own published data at position <code>i</code>, which suffices: whatever the truth,
+an identity that diverges from the derivable state at <em>any</em> position is not the correct one.</p>
+<p>A recorded fault makes the identity permanently unviable: the proposal and all duplicates can never finalize, and the
+tournament rules disqualify them, eliminating their proposers.</p>
+<div id="admonition-implementation-3" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-3-title">
+<div class="admonition-title">
+<div id="admonition-implementation-3-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-3"></a>
+</div>
+<div>
+<p><code>KailuaTournament.proveOutputFault</code> (<code>InvalidDisputedClaimIndex</code>, <code>NoConflict</code>). Read-back of published commitments is
+by KZG opening against the blob hashes fixed at creation, checked with the point-evaluation precompile
+(<code>bad acceptedOutput kzg</code> / <code>bad proposedOutput kzg</code>); comparisons use the field-element reduction of output roots,
+and the precompile inherently rejects non-canonical field elements.</p>
+</div>
+</div>
+<h3 id="trail-fault-proofs"><a class="header" href="#trail-fault-proofs">Trail Fault Proofs</a></h3>
+<p>A <strong>trail fault proof</strong> convicts a child of violating the publication format, and requires no transition proof: the
+submitter demonstrates, via the read-back mechanism, that the proposal published a non-zero value in its trailing
+(zero-padding) region.
+Implementations must reject trail fault claims that address the commitment region or exhibit a zero value.
+A recorded trail fault has the same effect as an output fault.</p>
+<div id="admonition-why-trail-faults-exist" class="admonition admonish-success" role="note" aria-labelledby="admonition-why-trail-faults-exist-title">
+<div class="admonition-title">
+<div id="admonition-why-trail-faults-exist-title">
+<p>Why trail faults exist</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-why-trail-faults-exist"></a>
+</div>
+<div>
+<p>Trail faults close the last gap in decidability. A proposal whose <code>N</code> output commitments are all correct but whose
+trailing data is non-zero still contradicts the honest identity — yet no output fault proof can convict it (there is
+no divergence to exhibit), and no validity proof can vouch for it (transition proofs enforce zero trailing data
+through their precondition). Without trail faults, such an identity would block its tournament forever. With them, the
+protocol upholds the invariant that <strong>every pair of contradictory identities is decidable by some proof</strong>: two
+identities can only differ in an output commitment (an output fault against at least one) or in the padding (a trail
+fault). Equivalently, the zero-padding rule gives correct data exactly one identity, so honest proposals always converge on a
+single identity that shares one proof and one fate.</p>
+</div>
+</div>
+<div id="admonition-implementation-4" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-4-title">
+<div class="admonition-title">
+<div id="admonition-implementation-4-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-4"></a>
+</div>
+<div>
+<p><code>KailuaTournament.proveTrailFault</code> (<code>InvalidDisputedClaimIndex</code>, <code>NoConflict</code>, <code>InvalidDataRemainder</code> — the disputed
+position must fall in the final blob, which loses no generality since earlier blobs are fully packed with
+commitments).</p>
+</div>
+</div>
+<h2 id="payouts-and-permits"><a class="header" href="#payouts-and-permits">Payouts and Permits</a></h2>
+<p>When a proposer is eliminated, the prover's share of the slashed bond is paid to a beneficiary resolved in this order
+of precedence:</p>
+<ol>
+<li>The holder of the <em>sole</em> <a href="design.html#fault-proving-permits">fault proving permit</a> for the convicted identity — if
+exactly one permit was ever acquired for it, and that permit was active when the convicting fault proof was
+recorded.</li>
+<li>The recorded prover of the convicted identity.</li>
+<li>The recorded prover of the tournament's valid identity, when elimination resulted from a validity proof.</li>
+</ol>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Prover Share Beneficiary
+---
+graph TD;
+  F[proposer eliminated] --&gt; Q{sole permit, active at fault proof time?};
+  Q -- yes --&gt; H[permit holder];
+  Q -- no --&gt; R{fault proof recorded for the convicted identity?};
+  R -- yes --&gt; V[its recorded prover];
+  R -- no --&gt; W[prover of the valid identity];
+</pre>
+</div>
+<p>Permits give provers an exclusive reward window in exchange for locked collateral. A conforming permit mechanism must
+enforce:</p>
+<ol>
+<li>Permits may only be acquired for identities that are still viable.</li>
+<li>The permit collateral must cover at least twice the prover's elimination share, so that abandoning a permit costs
+more than the reward it protects.</li>
+<li>Permit issuance capacity must be bounded by expiry: at most one more permit than twice the number of
+already-expired permits may exist for an identity at any time.</li>
+<li>A permit becomes active only after its activation delay, expires after its total duration, and its collateral is
+returned when released after a proof recorded within its lifetime. Holders whose permits expired before the proof
+forfeit their collateral to the holders active at proving time.</li>
+</ol>
+<div id="admonition-what-the-permit-collateral-scheme-upholds" class="admonition admonish-success" role="note" aria-labelledby="admonition-what-the-permit-collateral-scheme-upholds-title">
+<div class="admonition-title">
+<div id="admonition-what-the-permit-collateral-scheme-upholds-title">
+<p>What the permit collateral scheme upholds</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-what-the-permit-collateral-scheme-upholds"></a>
+</div>
+<div>
+<ul>
+<li><strong>Constant cost to participate, exponential cost to monopolize.</strong> Every permit costs the same fixed collateral
+(rule 2) no matter how many were issued before it, so entering the reward race never grows more expensive. Capacity,
+however, compounds through expiry (rule 3): one permit may exist initially, three once it expires, seven once those
+do, and so on — and every expired permit forfeits its collateral (rule 4). An actor attempting to hold <em>all</em> permits
+for a fault must therefore burn collateral that doubles with each expiry cycle, while any competitor can always
+claim a newly opened slot at the constant price — squatting on exclusivity to stall honest proving becomes
+exponentially expensive (see <a href="introduction.html#denial-of-service">Denial-of-Service</a>).</li>
+<li><strong>Every active prover is paid, despite a single proposer bond.</strong> The eliminated proposer posted one bond, whose
+prover share can reward only one beneficiary — yet expiries may leave several permits simultaneously active when
+the fault proof lands. The scheme makes these payouts self-funding: each holder active at proving time recovers its
+own collateral <em>plus</em> an equal share of the collateral forfeited by expired permits. Because active permits can
+outnumber expired ones by at most one (rule 3), and each expired permit forfeited twice the prover share (rule 2),
+this pool pays every active holder at least a full prover reward — funded by the forfeited collateral alone, not
+the bond. The sole-permit case needs no pool: its holder is paid the bond's prover share directly, per the
+precedence above.</li>
+</ul>
+</div>
+</div>
+<div id="admonition-implementation-5" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-5-title">
+<div class="admonition-title">
+<div id="admonition-implementation-5-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-5"></a>
+</div>
+<div>
+<p><code>KailuaVerifier.acquireFaultProofPermit</code> (<code>ProvenFaulty</code>, <code>IncorrectBondAmount</code>, <code>ClockNotExpired</code>) and
+<code>releaseFaultProofPermit</code> (<code>NotProven</code>), parameterized by the immutable <code>PERMIT_DELAY</code> and <code>PERMIT_DURATION</code>;
+beneficiary resolution is <code>getPayoutRecipient</code> in <code>KailuaTournament</code>.</p>
+</div>
+</div>
+<h2 id="the-validator-role"><a class="header" href="#the-validator-role">The Validator Role</a></h2>
+<p>Any party may act as a validator.
+The protocol's safety argument requires that every dispute eventually receives a deciding proof; for this, at least
+one honest validator must exist and behave as follows:</p>
+<ul>
+<li><strong>Prove only provable statements.</strong> A validator must confirm that the deployment's committed program and
+configuration are ones it can execute and vouch for, before dedicating any resources to the deployment.</li>
+<li><strong>Judge from a trusted view.</strong> A validator must assess every observed proposal — claim, each intermediate
+commitment, and trailing data — against its own trusted view of the rollup, and must defer judgement on any
+proposal whose height its view has not yet settled. It must never derive a fault verdict from unverifiable data.</li>
+<li><strong>Target the first divergence.</strong> For an incorrect proposal, the validator should convict at the cheapest sufficient
+point: a format violation (trail fault) needs no transition proof and takes precedence; otherwise the <em>earliest</em>
+divergent commitment, so the transition proof spans a single <code>S</code>-block step whose agreed output is still shared
+with the canonical chain.</li>
+<li><strong>Avoid redundant work.</strong> A validator should prove each identity at most once across all duplicates, skip disputes
+already settled (re-checking immediately before submission, since other validators race for the same
+disputes), decline to fault-prove when a validity proof already settles the tournament, and de-correlate its
+proving schedule from other validators (e.g., by randomized delay) where redundancy is not desired.</li>
+<li><strong>Use registered derivation anchors.</strong> A validator must construct claim tuples only over registered derivation
+anchors (<a href="#transition-proofs">constraint 1</a>): beginning with the disputed proposal's own, and — if its L1 view
+proves insufficient to derive the disputed span — retrying with successively later ones.</li>
+<li><strong>Verify before submitting.</strong> A validator should verify its own proofs and cross-check every claim-tuple component
+and read-back opening against the settlement layer before submission, and re-buffer rather than discard proofs
+whose submission fails.</li>
+<li><strong>Fast-forward when appropriate.</strong> A validator may prove the validity of correct proposals to accelerate finality.
+On deployments where <code>N = 1</code>, it should respond to any conflict with a validity proof of the correct sibling: a
+single such proof both accelerates the honest proposal and eliminates every contradiction, and there is no cheaper
+intermediate fault to exhibit.</li>
+<li><strong>Honor the permit protocol.</strong> A validator using permits must acquire them only when capacity is available, wait
+for activation before submitting the associated proof so the exclusive window applies, and release them after the
+proof is recorded to reclaim collateral.</li>
+</ul>
+<div id="admonition-implementation-6" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-6-title">
+<div class="admonition-title">
+<div id="admonition-implementation-6-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-6"></a>
+</div>
+<div>
+<p><code>kailua-cli validate</code> implements this role: it refuses deployments whose <code>FPVM_IMAGE_ID</code> is not baked into its
+binary, gates all judgement on <code>op-node</code> finality, classifies faults as trail-first-then-earliest-output, re-checks
+<code>proofStatus</code>/<code>isViableSignature</code> at queueing, dispatch, and submission time, retries proof generation across
+successive proposal <code>l1Head</code>s, locally verifies receipts and dry-runs KZG openings before spending gas, and manages
+permits per the configured policy. See <a href="validator.html">Validator</a> for operation.</p>
+</div>
+</div>
+<div id="admonition-danger" class="admonition admonish-danger" role="note" aria-labelledby="admonition-danger-title">
+<div class="admonition-title">
+<div id="admonition-danger-title">
+<p>Danger</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-danger"></a>
+</div>
+<div>
+<p>A validator's effectiveness reduces to the integrity of its rollup view (<code>op-node</code> and archive <code>op-geth</code>).
+The proof system prevents a misinformed validator from harming the protocol — incorrect verdicts yield unprovable
+statements or rejected submissions — but not from wasting proving effort or failing to convict real faults.</p>
+</div>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="sequencing.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="sequencing.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="mermaid.min.js"></script>
+        <script src="mermaid-init.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

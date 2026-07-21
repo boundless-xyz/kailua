@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Project - The Kailua Book</title>
+        <title>Testing Tools - The Kailua Book</title>
 
 
         <!-- Custom HTML head -->
@@ -148,7 +148,7 @@
                         <a href="https://github.com/boundless-xyz/kailua" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/boundless-xyz/kailua/edit/main/book/src/project.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                        <a href="https://github.com/boundless-xyz/kailua/edit/main/book/src/testing.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -182,92 +182,134 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="project"><a class="header" href="#project">Project</a></h1>
-<p>Kailua's project structure is primarily as follows:</p>
-<pre><code>kailua                      // Root project directory
-├── bin                     
-│   └── cli                 // Main Kailua CLI
-├── book                    // This document
-├── build                   
-│   └── risczero            // RISC Zero zkVM proving binaries
-│       ├── hokulea         // Eigen DA
-│       ├── hana            // Celestia DA
-│       └── kona            // Native ETH DA
-├── crates                  
-│   ├── contracts           // Fault proof contracts
-│   ├── hana                // Celestia DA support
-│   ├── hokulea             // Eigen DA support
-│   ├── kona                // Core Kona proving primitives
-│   ├── proposer            // Sequencing proposal submitter
-│   ├── prover              // Proof generation orcherstrator
-│   ├── rpc                 // RPC server for introspection
-│   ├── sync                // Sequencing proposal tracker
-│   └── validator           // Sequencing proposal validator
-└── justfile                // Convenience commands
-</code></pre>
-<h2 id="cli"><a class="header" href="#cli">CLI</a></h2>
-<p>The CLI for Kailua the main entry point for all supported commands:</p>
-<ul>
-<li><code>config</code>      Inspect the configuration of a running rollup</li>
-<li><code>fast-track</code>  Fast-track migrate a rollup to use Kailua</li>
-<li><code>propose</code>     Start the agent for publishing on-chain sequencing proposals</li>
-<li><code>validate</code>    Start the agent for resolving on-chain Kailua disputes</li>
-<li><code>prove</code>       Run the prover to generate an execution/fault/validity proof</li>
-<li><code>test-fault</code>  Publish a faulty sequencing proposal to test fault proofs</li>
-<li><code>benchmark</code>   Benchmark proving cost and performance</li>
-<li><code>demo</code>        Validity prove any running OP Stack rollup</li>
-<li><code>rpc</code>         Start the RPC server for assisting withdrawals</li>
-<li><code>bonsai</code>      Download a receipt from Bonsai</li>
-<li><code>boundless</code>   Download a receipt from Boundless</li>
-<li><code>export</code>      Export the FPVM binaries and their hardcoded image ids</li>
-</ul>
-<p>The testing and benchmarking commands (<code>test-fault</code>, <code>benchmark</code>, <code>demo</code>, <code>bonsai</code>, and <code>boundless</code>) are documented in
-the <a href="testing.html">Testing Tools</a> chapter.</p>
-<h2 id="contracts"><a class="header" href="#contracts">Contracts</a></h2>
-<p>The contracts directory is a foundry project comprised of the following main contracts:</p>
-<ul>
-<li><code>KailuaVerifier.sol</code>: Logic for verifying fault/validity proofs and fault proof locks.</li>
-<li><code>KailuaTournament.sol</code>: Logic for resolving disputes between contradictory proposals.</li>
-<li><code>KailuaTreasury.sol</code>: Logic for maintaining proposer collateral.</li>
-<li><code>KailuaGame.sol</code>: Logic for introducing new sequencing proposals.</li>
-<li><code>KailuaLib.sol</code>: Misc. utilities.</li>
-</ul>
-<p>The <code>kailua-contracts</code> crate builds and exports these contracts in Rust.</p>
-<h2 id="fpvm"><a class="header" href="#fpvm">FPVM</a></h2>
-<p>The Kailua FPVM executes Optimism's <code>Kona</code> inside the RISC Zero zkVM to derive and execute optimism blocks and create fault proofs.
-The following project components work together to enable this functionality:</p>
-<ul>
-<li><code>build/risczero/kona</code>: The zkVM binary to create ZK fault proofs with <code>Kona</code>.</li>
-<li><code>crates/kona</code>: A wrapper crate around <code>Kona</code> with utilities for efficient ZK fault proving.</li>
-<li><code>crates/prover</code>: An orchestrator for proof generation locally, remotely on Bonsai, or through Boundless.</li>
-</ul>
-<p>Rollups with alternative DA requirements are supported through the following components:</p>
-<ul>
-<li><code>build/risczero/hokulea</code>: The zkVM binary for rollups on EigenDA.</li>
-<li><code>build/risczero/hana</code>: The zkVM binary for rollups on Celestia.</li>
-<li><code>crates/hokulea</code>: A wrapper crate around <code>kailua-kona</code> with Eigen DA support.</li>
-<li><code>crates/hana</code>: A wrapper crate around <code>kailua-kona</code> with Celestia DA support.</li>
-</ul>
-<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+                        <h1 id="testing-tools"><a class="header" href="#testing-tools">Testing Tools</a></h1>
+<p>Beyond the agents described in the <a href="operate.html">migration guide</a>, the Kailua CLI ships commands for measuring proving
+performance, testing fault proofs, and recovering delegated proofs.
+None of these are required to operate Kailua, but they are useful when evaluating it, dimensioning provers, or
+exercising a test deployment.</p>
+<div id="admonition-tip" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-title">
 <div class="admonition-title">
-<div id="admonition-warning-title">
-<p>Warning</p>
+<div id="admonition-tip-title">
+<p>Tip</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-warning"></a>
+<a class="admonition-anchor-link" href="#admonition-tip"></a>
 </div>
 <div>
-<p>Celestia DA support is still an experimental work in progress with known liveness vulnerabilities.</p>
+<p>All the parameters below can also be provided as environment variables.</p>
 </div>
 </div>
+<h2 id="validity-proving-demo"><a class="header" href="#validity-proving-demo">Validity Proving Demo</a></h2>
+<p><code>kailua-cli demo</code> continuously computes validity proofs for a running OP Stack rollup <strong>without requiring any Kailua
+contract deployment</strong>.
+This is the quickest way to measure real proving costs and latency for your rollup before migrating.</p>
+<pre><code class="language-shell">kailua-cli demo \
+      --eth-rpc-url [YOUR_ETH_RPC_URL] \
+      --beacon-rpc-url [YOUR_BEACON_RPC_URL] \
+      --op-geth-url [YOUR_OP_GETH_URL] \
+      --op-node-url [YOUR_OP_NODE_URL] \
+      --num-blocks-per-proof [BLOCKS_PER_PROOF]
+</code></pre>
+<ul>
+<li><code>num-blocks-per-proof</code>: The number of L2 blocks each proof must cover.</li>
+<li><code>starting-block-height</code>: (Optional) The L2 block to start proving from. Defaults to <code>nth-proof-to-process</code> times <code>num-blocks-per-proof</code> blocks before the latest safe block.</li>
+<li><code>nth-proof-to-process</code>: Compute only every n-th proof (Default 1), allowing multiple demo instances to split one workload.</li>
+<li><code>num-concurrent-provers</code>: Number of provers to run simultaneously (Default 1).</li>
+<li><code>kailua-cli</code>: The optional path of the external binary to call for custom proof generation.</li>
+<li><code>data-dir</code>: Optional directory to save proving data to.</li>
+</ul>
+<p>The <a href="validator.html#prover">prover</a>, <a href="validator.html#delegated-proof-generation">delegated proving</a>, and
+<a href="validator.html#telemetry">telemetry</a> parameters of the validator also apply.
+The <code>just demo</code> recipe wraps this command.</p>
+<h2 id="benchmarking"><a class="header" href="#benchmarking">Benchmarking</a></h2>
+<p><code>kailua-cli benchmark</code> measures proving cost and performance over past L2 blocks.
+It scans the <code>bench-range</code> blocks starting at <code>bench-start</code>, selects the <code>bench-count</code> candidate blocks with the
+highest transaction counts, and proves the <code>bench-length</code>-block sequence starting at each candidate.</p>
+<ul>
+<li><code>bench-start</code>: The first L2 block number to scan from.</li>
+<li><code>bench-range</code>: The number of L2 blocks to scan as benchmark candidates.</li>
+<li><code>bench-count</code>: The number of top candidate blocks to benchmark.</li>
+<li><code>bench-length</code>: The number of consecutive L2 blocks each benchmark proof must cover.</li>
+<li><code>seq-window</code>: The sequencing window size to use for proving.</li>
+<li><code>random-select</code>: Select candidates pseudorandomly instead of by highest transaction count (Default false).</li>
+<li><code>export-bench-csv</code>: Whether to export a CSV file with the benchmark results (Default false).</li>
+<li><code>num-concurrent-provers</code>: Number of provers to run simultaneously (Default 1).</li>
+</ul>
+<p>The same endpoint, prover, and delegated proving parameters as <code>demo</code> apply.
+The <code>just bench</code> recipe wraps this command.</p>
+<h2 id="fault-injection"><a class="header" href="#fault-injection">Fault Injection</a></h2>
+<p><code>kailua-cli test-fault</code> publishes a deliberately faulty sequencing proposal, so that a running validator can be
+observed disputing and defeating it.
+It accepts all <a href="proposer.html">proposer</a> parameters, plus:</p>
+<ul>
+<li><code>fault-offset</code>: The offset of the faulty intermediate output commitment within the published proposal data.</li>
+<li><code>fault-parent</code>: The index of the proposal to build the faulty proposal on top of.</li>
+</ul>
+<p>The faulty proposal commits to a garbage output root at the chosen offset.
+An offset within the proposal's output count yields a proposal refutable by an
+<a href="validating.html#output-fault-proofs">output fault proof</a>, while an offset pointing into the zero-padded trail
+yields one refutable by a <a href="validating.html#trail-fault-proofs">trail fault proof</a>.</p>
+<div id="admonition-danger" class="admonition admonish-danger" role="note" aria-labelledby="admonition-danger-title">
+<div class="admonition-title">
+<div id="admonition-danger-title">
+<p>Danger</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-danger"></a>
+</div>
+<div>
+<p>The faulty proposal is staked with the proposer wallet's real collateral, which is slashed once the fault is proven.
+Only use this command against test deployments.</p>
+</div>
+</div>
+<p>On the <a href="#local-devnet">local devnet</a>, <code>just devnet-fault [OFFSET] [PARENT]</code> wraps this command.</p>
+<h2 id="receipt-recovery"><a class="header" href="#receipt-recovery">Receipt Recovery</a></h2>
+<p>When proof generation is delegated to a remote service, the finished receipt can be lost if the requesting process
+dies before retrieving it (or was run with <code>skip-await-proof</code>).
+These two commands download the finished receipt, verify it, and save it to the same proof file a local proving run
+would have produced:</p>
+<ul>
+<li><code>kailua-cli bonsai --session-id [SESSION_ID]</code> retrieves a proving session's receipt from
+<a href="https://risczero.com/bonsai">Bonsai</a>, using the <code>BONSAI_API_KEY</code>/<code>BONSAI_API_URL</code> environment variables.</li>
+<li><code>kailua-cli boundless --boundless-rpc-url [RPC_URL] --request-id [REQUEST_ID]</code> retrieves the fulfilled proof for a
+request from the <a href="https://docs.boundless.network/">Boundless</a> market.</li>
+</ul>
+<h2 id="manual-proving"><a class="header" href="#manual-proving">Manual Proving</a></h2>
+<p><code>kailua-cli prove</code> is the command the validator internally invokes to compute individual proofs, and it can also be
+called manually (see the <code>prove</code> and <code>devnet-prove</code> justfile recipes for example invocations).
+Beyond the shared <a href="validator.html#prover">prover</a> and <a href="validator.html#delegated-proof-generation">delegated proving</a>
+parameters, three parameters bind the computed proof to a proposal's published data instead of a bare block range:</p>
+<ul>
+<li><code>precondition-params</code>: Three comma-separated values: the proposal's starting L2 block number, its published
+intermediate commitment count, and the number of blocks covered per commitment.</li>
+<li><code>precondition-block-hashes</code>: The comma-separated hashes of the L1 blocks at which each of the proposal's data blobs
+was published.</li>
+<li><code>precondition-blob-hashes</code>: The comma-separated versioned hashes of the proposal's data blobs.</li>
+</ul>
+<p>When set, the resulting proof can only settle disputes involving proposals that published that exact data.
+The validator supplies these parameters automatically when generating proofs for on-chain disputes.</p>
+<h2 id="local-devnet"><a class="header" href="#local-devnet">Local Devnet</a></h2>
+<p>For end-to-end testing, the repository ships a <a href="https://docs.kurtosis.com/">Kurtosis</a>-based local devnet with recipes
+covering the full lifecycle:</p>
+<pre><code class="language-shell">just devnet-up            # fetch, patch, and launch the devnet (Docker + Kurtosis required)
+just devnet-upgrade       # deploy the Kailua contracts (uses RISC0_DEV_MODE)
+just devnet-propose       # run a proposer against the devnet
+just devnet-validate      # run a validator against the devnet
+just devnet-fault 1 0     # publish a faulty proposal for the validator to defeat
+just devnet-down          # tear the devnet down
+just devnet-clean         # tear down and delete all devnet artifacts
+</code></pre>
+<p>The recipes resolve endpoints and prefunded wallet keys automatically from the devnet descriptor produced by
+<code>devnet-up</code>.
+The underlying scripts — including the EigenDA devnet variant — are described in <code>scripts/README.md</code>.</p>
+
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="design.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="dependency-upgrades.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="setup.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="sequencing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -277,11 +319,11 @@ The following project components work together to enable this functionality:</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="design.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="dependency-upgrades.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="setup.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="sequencing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

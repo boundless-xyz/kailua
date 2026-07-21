@@ -557,6 +557,8 @@ of active permit holders.</p>
 <li><code>boundless</code>   Download a receipt from Boundless</li>
 <li><code>export</code>      Export the FPVM binaries and their hardcoded image ids</li>
 </ul>
+<p>The testing and benchmarking commands (<code>test-fault</code>, <code>benchmark</code>, <code>demo</code>, <code>bonsai</code>, and <code>boundless</code>) are documented in
+the <a href="testing.html">Testing Tools</a> chapter.</p>
 <h2 id="contracts"><a class="header" href="#contracts">Contracts</a></h2>
 <p>The contracts directory is a foundry project comprised of the following main contracts:</p>
 <ul>
@@ -999,7 +1001,8 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
       --collateral-amount [YOUR_COLLATERAL_AMOUNT] \
       --verifier-contract [RISC_ZERO_VERIFIER_ADDRESS] \
       --challenge-timeout [YOUR_CHALLENGE_PERIOD] \
-      --proof-permit-timeout [YOUR_FAULT_PROVING_LOCK_TIMEOUT]
+      --proof-permit-timeout [YOUR_FAULT_PROVING_LOCK_TIMEOUT] \
+      --proof-permit-delay [YOUR_FAULT_PROVING_LOCK_DELAY]
 \
       --deployer-key [YOUR_DEPLOYER_KEY] \
       --owner-key [YOUR_OWNER_KEY] \
@@ -1047,7 +1050,7 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
 </div>
 </div>
 <h4 id="fault-proving"><a class="header" href="#fault-proving">Fault Proving</a></h4>
-<p>The next three parameters configure fault proving:</p>
+<p>The following parameters configure fault proving:</p>
 <ul>
 <li><code>collateral-amount</code>: The amount of collateral (in wei) a proposer has to stake before publishing proposals.</li>
 <li><code>verifier-contract</code>: (Optional) The address of the existing RISC Zero verifier contract to use. If this argument is omitted, a new set of verifier contracts will be deployed.
@@ -1058,6 +1061,7 @@ You can enable withdrawals manually later using the <code>OptimismPortal2</code>
 </li>
 <li><code>challenge-timeout</code>: The timeout (in seconds) for a sequencing proposal to be contradicted.</li>
 <li><code>proof-permit-timeout</code>: The timeout (in seconds) after which a fault proving lock expires.</li>
+<li><code>proof-permit-delay</code>: The delay (in seconds) after acquisition before a fault proving lock becomes active.</li>
 </ul>
 <h4 id="ethereum-transactions"><a class="header" href="#ethereum-transactions">Ethereum Transactions</a></h4>
 <p>The next three parameters are the private keys for the respective parent chain wallets:</p>
@@ -2097,11 +2101,13 @@ This allows it to restart quickly.</p>
 <li><code>max-derivation-length</code>: Maximum number of blocks in a continuous derivation proof sequence</li>
 <li><code>max-block-derivations</code>: Maximum number of blocks to derive per single proof.</li>
 <li><code>max-block-executions</code>: Maximum number of blocks to execute per single proof.</li>
+<li><code>num-block-partials</code>: Number of partial execution proofs to compute per block (Default 0). Only effective in <code>experimental</code> builds.</li>
 <li><code>num-tail-blocks</code>: Rate of growth of tail proofs in L1 blocks (Default 10).</li>
 <li><code>enable-experimental-witness-endpoint</code>: Enables the use of <code>debug_executePayload</code> to collect the execution witness from the execution layer.</li>
 <li><code>max-fault-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a fault proof (Default 900).</li>
 <li><code>max-validity-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a validity proof (Default 0).</li>
 <li><code>clear-cache-data</code>: Whether to clear cache data after successful completion (Default false).</li>
+<li><code>export-profile-csv</code>: Whether to export a CSV file with proving performance data (Default false).</li>
 </ul>
 <h3 id="fault-proving-permits-1"><a class="header" href="#fault-proving-permits-1">Fault Proving Permits</a></h3>
 <p>The validator can optionally acquire <a href="design.html#fault-proving-permits">fault proving permits</a> before generating
@@ -2265,6 +2271,10 @@ making this process safe to delegate.</p>
 <li><code>BONSAI_API_KEY</code>: Your Bonsai API key.</li>
 <li><code>BONSAI_API_URL</code>: Your Bonsai API url.</li>
 </ul>
+<p>Optionally, the polling cadence can be tuned through a third environment variable:</p>
+<ul>
+<li><code>BONSAI_POLL_INTERVAL_MS</code>: Time in milliseconds between proving session status polls (Default 1000).</li>
+</ul>
 <div id="admonition-success-2" class="admonition admonish-success" role="note" aria-labelledby="admonition-success-2-title">
 <div class="admonition-title">
 <div id="admonition-success-2-title">
@@ -2317,6 +2327,8 @@ conditions and gas costs. The following optional parameters allow you to overrid
 <li><code>boundless-min-price-per-cycle</code>: Minimum price per cycle, e.g. <code>"0.00001 USD"</code> or <code>"0.0000001 ETH"</code>. Requires a unit. If unset, the SDK uses market pricing from the price provider.</li>
 <li><code>boundless-max-price-per-cycle</code>: Maximum price per cycle, same format. If unset, the SDK uses a market-calibrated default plus a gas cost buffer.</li>
 <li><code>boundless-max-price-cap</code>: Hard cap on total order price (e.g. <code>"0.5 ETH"</code>, <code>"100 USD"</code>). Safety mechanism to prevent excessive spending.</li>
+<li><code>boundless-dynamic-pricing-timeout-modifier</code>: Multiplier applied to both the SDK-computed lock timeout and overall order timeout. E.g. <code>2.0</code> doubles both, preserving the post-lock fulfillment window proportionally. If unset, the SDK-computed values are used unchanged.</li>
+<li><code>boundless-dynamic-pricing-ramp-up-modifier</code>: Multiplier applied to the SDK-computed price ramp-up period. If unset, the SDK-computed value is used unchanged.</li>
 </ul>
 <h4 id="retry-escalation"><a class="header" href="#retry-escalation">Retry Escalation</a></h4>
 <p>When a proof request expires without being fulfilled, it is automatically resubmitted with increased pricing and timeouts:</p>
@@ -2400,6 +2412,7 @@ hidden from <code>--help</code> and are rejected when <code>--boundless-dynamic-
 <li><code>SKIP_AWAIT_PROOF</code>: Skips waiting for the proving process to complete on Bonsai/Boundless.</li>
 <li><code>SKIP_DERIVATION_PROOF</code>: Skips provably deriving L2 transactions using L1 data.</li>
 <li><code>L1_HEAD_JUMP_BACK</code>: The number of l1 heads to jump back when initially proving.</li>
+<li><code>KAILUA_FORCE_RECURSION</code>: Forces stitched sub-proofs to be verified inside the guest program as explicit input instead of through zkVM assumption resolution (testing only).</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="kailua-rpc"><a class="header" href="#kailua-rpc">Kailua RPC</a></h1>
 <p>The Kailua RPC watches a Kailua chain deployment for proposals and keeps track of the canonical dispute game
@@ -2500,6 +2513,1236 @@ This allows it to restart quickly.</p>
 </div>
 <div>
 <p>Running <code>kailua-cli rpc</code> should now serve incoming RPC requests for the <code>kailua</code> namespace!</p>
+</div>
+</div>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="dependency-upgrades"><a class="header" href="#dependency-upgrades">Dependency Upgrades</a></h1>
+<p>This chapter is for Kailua maintainers (and forks) who need to upgrade Kailua to a newer release of
+<a href="https://github.com/ethereum-optimism/optimism">Kona</a>, <a href="https://github.com/Layr-Labs/hokulea">Hokulea</a>, or
+<a href="https://github.com/celestiaorg/hana">Hana</a>, along with the <code>alloy</code>/<code>op-alloy</code>/<code>revm</code>/<code>reth</code> dependency tree that
+rides along with them.</p>
+<p>Upgrading these dependencies is unlike upgrading dependencies in a normal Rust project, because most of the affected
+code is compiled into RISC Zero zkVM guest programs whose image IDs are consensus-critical:</p>
+<ul>
+<li>A successful upgrade <strong>always changes the FPVM image IDs</strong>, which requires an <a href="fpvm-upgrade.html">on-chain upgrade</a>
+before the new binaries can be used in production.</li>
+<li>A careless upgrade can introduce a <strong>soundness gap</strong> (e.g. an unhashed configuration field) that no compiler error
+or test failure will surface unless you follow the audit steps below.</li>
+</ul>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div class="admonition-title">
+<div id="admonition-warning-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="dependency-upgrades.html#admonition-warning"></a>
+</div>
+<div>
+<p>Do not treat a green build as a finished upgrade.
+The soundness re-audit in <a href="dependency-upgrades.html#step-3-re-audit-the-config-hash">Step 3</a> is mandatory on every upgrade.</p>
+</div>
+</div>
+<h2 id="how-the-pieces-fit-together"><a class="header" href="#how-the-pieces-fit-together">How the Pieces Fit Together</a></h2>
+<p>Recall from the <a href="project.html">project structure</a> that each supported DA option has a wrapper crate and a corresponding
+zkVM guest workspace:</p>
+<div class="table-wrapper"><table><thead><tr><th>Guest program</th><th>Guest workspace</th><th>Compiled-in crates</th></tr></thead><tbody>
+<tr><td><code>kailua-fpvm-kona</code></td><td><code>build/risczero/kona</code></td><td><code>kailua-kona</code></td></tr>
+<tr><td><code>kailua-fpvm-hokulea</code></td><td><code>build/risczero/hokulea</code></td><td><code>kailua-kona</code> + <code>kailua-hokulea</code></td></tr>
+<tr><td><code>kailua-fpvm-hana</code></td><td><code>build/risczero/hana</code></td><td><code>kailua-kona</code> + <code>kailua-hana</code></td></tr>
+</tbody></table>
+</div>
+<p>Three properties drive the entire upgrade procedure:</p>
+<ol>
+<li><strong>Each guest workspace is an independent Cargo workspace</strong> with its own <code>Cargo.toml</code>, <code>Cargo.lock</code>, and <code>[patch]</code>
+section. Version and tag changes must be applied to each of them, not just the root workspace.</li>
+<li><strong>Guest builds are reproducible Docker builds</strong> (<code>RISC0_USE_DOCKER=1</code>, <code>--locked</code>) over <em>vendored</em> sources.
+Reproducibility comes from the pinned RISC Zero Docker toolchain image plus the committed lockfiles — not from
+your local build cache.</li>
+<li><strong>Crate versions feed into image IDs.</strong> Cargo passes each crate's version into symbol mangling (<code>-C metadata</code>),
+so bumping the version of any crate that compiles into a guest changes that guest's image ID — even with zero
+source changes. This is why <code>kailua-kona</code>, <code>kailua-hokulea</code>, and <code>kailua-hana</code> deliberately do <strong>not</strong> inherit
+the workspace version: it lets you bump the workspace (host) version without churning guest image IDs, and bump
+an individual wrapper crate to churn only the guests that depend on it.</li>
+</ol>
+<h2 id="standard-vs-experimental-builds"><a class="header" href="#standard-vs-experimental-builds">Standard vs. Experimental Builds</a></h2>
+<p>Every guest program additionally exists in two variants, selected by the <code>experimental</code> cargo feature:</p>
+<ul>
+<li>The <strong>standard</strong> build already supports proof decomposition down to the block level: derivation-only proofs,
+execution-only proofs, and the recursive stitching that combines such proofs into a complete proposal proof.</li>
+<li>The <strong>experimental</strong> build extends decomposition <em>below</em> the block level, allowing a single block's execution to
+be proven through partial (per-transaction-chunk) execution traces. Inside the zkVM it also swaps the EVM's
+precompile cryptography for RISC Zero's accelerated implementations (the <code>r0vm_crypto</code> module, backed by the
+<code>risc0-crypto-evm</code> dependency).</li>
+</ul>
+<p>Mechanically this is one codebase, not two: <code>bin/cli</code>'s <code>experimental</code> feature fans out to <code>kailua-kona</code>,
+<code>kailua-prover</code>, and <code>kailua-validator</code>, and <code>build/risczero/build.rs</code> forwards the flag into the guest builds. The
+same source tree therefore produces two program families — six committed guest binaries in total, with two sets of
+image ID constants (<code>build/risczero/src/fpvm.rs</code> and <code>build/risczero/src/fpvm-experimental.rs</code>) and two
+configuration blocks in <a href="setup.html">Setup</a>.</p>
+<p>This split has consequences for every step of an upgrade:</p>
+<ul>
+<li><strong>Everything in this chapter happens twice.</strong> The clippy/test matrix, the ELF bakes, the image ID constant
+updates, the documentation values, and (where deployed) the on-chain rollout each have a standard and an
+experimental leg. Skipping the experimental leg does not produce a stale-but-working experimental build — it
+produces one that no longer matches the host code.</li>
+<li><strong>A given <code>kailua-cli</code> binary embeds exactly one family, chosen at compile time.</strong> The <code>experimental</code> feature
+adds fields to the witness types (<code>pe_witness</code>, <code>partial_executions</code> in <code>crates/kona/src/witness.rs</code>), so the
+serialized witness format itself differs between the two builds. Host and guest must be built with the same
+feature — a standard host cannot drive an experimental guest or vice versa, and there is no runtime toggle.</li>
+<li><strong>Some experimental code compiles only inside the guest bake.</strong> <code>r0vm_crypto</code> is gated on <code>experimental</code> <em>and</em>
+<code>target_os = "zkvm"</code>, so no host build, clippy invocation, or test ever compiles it — the experimental FPVM build
+is its only compile check, and an error in it surfaces half an hour into the Docker bake. Since it reimplements
+revm's <code>Crypto</code> trait, diff it against the vendored <code>revm-precompile</code> interface on every <code>revm</code> bump <em>before</em>
+baking.</li>
+<li><strong>The experimental EVM wrappers track upstream trait surfaces.</strong> <code>crates/kona/src/evm/</code> wraps the OP EVM in
+adapters implementing upstream hook traits (e.g. <code>alloy-op-evm</code>'s post-execution hooks). When an upgrade adds
+methods to those traits, the wrappers gain mandatory delegations. New hooks are usually inert under Kailua's
+single-pass execution, but verify that for each one and delegate to the inner EVM rather than stubbing a default.</li>
+</ul>
+<h2 id="step-1-align-versions"><a class="header" href="#step-1-align-versions">Step 1: Align Versions</a></h2>
+<p>The source of truth for the entire dependency tree is the lockfile of the Kona release you are upgrading to:
+<code>rust/Cargo.lock</code> in the <a href="https://github.com/ethereum-optimism/optimism">optimism monorepo</a> at the new
+<code>kona-client/vX.Y.Z</code> tag. Kailua's workspace dependencies must resolve to the same versions Kona itself was built
+and tested against.</p>
+<p>Update the pinned tags and revisions in <strong>all</strong> of the following files:</p>
+<ul>
+<li><code>Cargo.toml</code> (root): the <code>kona-*</code>, <code>hokulea-*</code>/<code>canoe-*</code>/<code>eigenda-*</code>, and <code>hana-*</code> dependency blocks, <strong>and</strong> the
+<code>[patch.crates-io]</code> section (the <code>op-alloy-*</code>, <code>alloy-op-evm</code>, and <code>op-revm</code> patches must point at the same tag).</li>
+<li><code>build/risczero/kona/Cargo.toml</code>, <code>build/risczero/hokulea/Cargo.toml</code>, <code>build/risczero/hana/Cargo.toml</code>: each
+guest manifest repeats the relevant <code>[patch]</code> entries. These also pin the RISC Zero <strong>accelerated forks</strong> of
+<code>blst</code> and <code>c-kzg</code> — when the new dependency tree raises its <code>c-kzg</code>/<code>blst</code> requirements, matching fork releases
+must exist and be bumped here too.</li>
+<li><code>build/risczero/.cargo/config.toml</code>: the <code>[source."git+..."]</code> replacement blocks name the tags/revisions
+explicitly and must match, or the vendored Docker build will fetch nothing.</li>
+</ul>
+<p>Then align the shared crates (<code>alloy-*</code>, <code>op-alloy-*</code>, <code>op-revm</code>, <code>revm</code>, <code>alloy-evm</code>, <code>alloy-op-evm</code>, ...) in the
+root <code>[workspace.dependencies]</code> to the versions in Kona's lockfile. Two traps deserve special attention:</p>
+<div id="admonition-the-caret-drift-trap" class="admonition admonish-danger" role="note" aria-labelledby="admonition-the-caret-drift-trap-title">
+<div class="admonition-title">
+<div id="admonition-the-caret-drift-trap-title">
+<p>The caret-drift trap</p>
+</div>
+<a class="admonition-anchor-link" href="dependency-upgrades.html#admonition-the-caret-drift-trap"></a>
+</div>
+<div>
+<p>Pin the <code>alloy</code> 2.x family with <strong>exact</strong> version requirements (<code>=2.0.5</code>), not caret ranges.
+The host workspace depends on the <code>alloy</code> meta-crate, which exact-pins its whole family — so a host-only build
+will look fine either way. But the guest workspaces reference the individual <code>alloy-*</code> crates directly, and a caret
+range there floats up to whatever newer minor release exists on crates.io, which Kona predates. This failure mode
+only appears inside the FPVM build, long after the host compiles.
+After updating, verify the guest lockfiles (e.g. <code>build/risczero/kona/Cargo.lock</code>) resolve to the exact intended
+versions.</p>
+</div>
+</div>
+<div id="admonition-the-source-split-trap" class="admonition admonish-danger" role="note" aria-labelledby="admonition-the-source-split-trap-title">
+<div class="admonition-title">
+<div id="admonition-the-source-split-trap-title">
+<p>The source-split trap</p>
+</div>
+<a class="admonition-anchor-link" href="dependency-upgrades.html#admonition-the-source-split-trap"></a>
+</div>
+<div>
+<p>Kona and <code>alloy-op-evm</code> consume some crates (notably <code>op-revm</code>) from <em>inside</em> the optimism monorepo via path
+dependencies. The crates.io release with the same name and version is a <strong>different crate</strong> to Cargo, so types like
+<code>OpSpecId</code> will not unify across the two copies and you will get baffling trait-bound errors. The fix is the
+<code>[patch.crates-io]</code> entry pointing that crate at the optimism git tag — in the root manifest <strong>and</strong> in each of the
+three guest manifests.</p>
+</div>
+</div>
+<p>Exact pins cut both ways: a <strong>stale</strong> exact pin left over from the previous upgrade forces Cargo to keep the old
+version alongside the new one, and two coexisting copies of the same crate produce baffling "expected <code>Evm</code>, found
+<code>Evm</code>" trait-bound errors. Every exact pin must be revisited on every upgrade.</p>
+<p>Finally, expect release lag. Kona typically releases first, and Hokulea, Hana, and host-only dependencies that track
+alloy (e.g. <code>risc0-steel</code>, <code>boundless-market</code>) may not yet have cut a release against the new tree. It is normal to
+temporarily pin these to interim git revisions and swap to proper tags in a follow-up once upstream catches up —
+the v1.5.2 upgrade shipped exactly that way.</p>
+<h2 id="step-2-migrate-the-source"><a class="header" href="#step-2-migrate-the-source">Step 2: Migrate the Source</a></h2>
+<p>With versions aligned, work through the compile errors host-first, since host iteration is much faster:</p>
+<pre><code class="language-shell">RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked --all-targets -- -D warnings
+</code></pre>
+<p><code>RISC0_SKIP_BUILD=true</code> skips the guest builds so you can iterate on <code>crates/kona</code>, <code>crates/hokulea</code>, <code>crates/hana</code>,
+and the host crates. Repeat with the feature combinations used by <code>just clippy</code> (including
+<code>-F devnet -F eigen -F celestia -F experimental</code>), then check each guest workspace via its own manifest path.</p>
+<p>A few hard-won rules for this phase:</p>
+<ul>
+<li><strong>Grep the right checkout.</strong> When verifying how an upstream struct changed, resolve the tag to its commit hash via
+<code>Cargo.lock</code> and read that exact checkout under <code>~/.cargo/git/checkouts/</code> (or the vendored copy under
+<code>build/risczero/vendor/</code> once vendored). Similarly-named checkouts of forks can contain phantom fields.</li>
+<li><strong>The compiler, not grep, is ground truth for field existence.</strong> Upstream fields can be <code>#[cfg(feature = ...)]</code>-gated
+behind features Kailua does not enable (e.g. <code>RollupConfig::fjord_max_sequencer_drift</code>), so a field visible in
+source may be absent from the compiled struct.</li>
+<li><strong><code>rkyv</code> mirrors must round-trip new fields, not default them.</strong> <code>crates/kona/src/rkyv/</code> mirrors upstream types
+for witness serialization. When an upstream type gains a field, add it to the mirror and its round-trip test.
+Note that <code>rkyv</code> only implements its traits for tuples up to arity 13 — nest a sub-tuple when a mirror outgrows
+that, following the existing pattern.</li>
+<li><strong>Anything serialized into the witness must also be bound by the precondition hash.</strong> When a mirrored type gains
+a field, check the corresponding <code>flatten_*</code> helpers: a field that is rkyv-encoded but not hashed is
+attacker-controlled.</li>
+<li><strong>Audit new host-side configuration fields, not just removed ones.</strong> When an upstream struct Kailua constructs
+(e.g. Kona's <code>SingleChainHost</code>) gains a field, filling it with <code>Default::default()</code> compiles but silently adopts
+whatever new behavior upstream chose. In the v1.5.2 upgrade, Kona's new <code>data_format</code> field defaulted to a new
+directory-based preimage store format while Kailua's own stores remained RocksDB — preimages seeded through one
+would have been invisible to the other if this were not examined. Review what each new field does and choose its
+value deliberately.</li>
+</ul>
+<h2 id="step-3-re-audit-the-config-hash"><a class="header" href="#step-3-re-audit-the-config-hash">Step 3: Re-audit the Config Hash</a></h2>
+<p><code>kailua_kona::config::config_hash</code> (<code>crates/kona/src/config.rs</code>) commits to the rollup and L1 chain configuration a
+fault proof is about. <strong>Every field of every hashed struct must be included in the hash</strong> — an omitted field means
+two semantically different configurations collide to the same on-chain commitment, letting a prover prove under a
+configuration the verifier never pinned.</p>
+<p>On every upgrade, re-audit field coverage of all hashed structs: <code>RollupConfig</code>, <code>SystemConfig</code>, <code>HardForkConfig</code>,
+<code>AltDAConfig</code>, <code>BaseFeeConfig</code>, <code>ChainGenesis</code>, <code>BlobParams</code>, and <code>L1ChainConfig</code>.</p>
+<p>Most of these are compiler-protected: <code>test_config_hash</code> constructs them with exhaustive struct literals (no
+<code>..Default::default()</code>), so a new upstream field breaks compilation until it is named — and hopefully hashed.</p>
+<div id="admonition-l1chainconfig-is-not-compiler-protected" class="admonition admonish-danger" role="note" aria-labelledby="admonition-l1chainconfig-is-not-compiler-protected-title">
+<div class="admonition-title">
+<div id="admonition-l1chainconfig-is-not-compiler-protected-title">
+<p>L1ChainConfig is not compiler-protected</p>
+</div>
+<a class="admonition-anchor-link" href="dependency-upgrades.html#admonition-l1chainconfig-is-not-compiler-protected"></a>
+</div>
+<div>
+<p><code>L1ChainConfig</code> is an alias for <code>alloy_genesis::ChainConfig</code> and is constructed via <code>::default()</code> in the tests, so
+a new field added upstream compiles silently and silently escapes <code>l1_config_hash</code>.  On every alloy bump, diff the full
+field list of <code>ChainConfig</code> in the vendored sources against the fields consumed by <code>l1_config_hash</code>, one by one.</p>
+</div>
+</div>
+<p>Audit against the <em>vendored</em> sources (<code>build/risczero/vendor/</code>) — that is exactly the code the guest compiles.
+Remember that adding any field to the hash changes the hash value for <strong>all</strong> configurations (even those where the
+new field is <code>None</code>), which changes the on-chain <code>ROLLUP_CONFIG_HASH</code> alongside the image IDs.</p>
+<h2 id="step-4-vendor-the-guest-dependencies"><a class="header" href="#step-4-vendor-the-guest-dependencies">Step 4: Vendor the Guest Dependencies</a></h2>
+<p>The Docker guest builds compile from vendored sources. Refresh them with:</p>
+<pre><code class="language-shell">just vendor
+</code></pre>
+<p>This runs <code>cargo vendor</code> across the three guest workspaces into <code>build/risczero/vendor</code> and then stages the out-of-crate
+files that <code>cargo vendor</code> omits (e.g. the NUT bundle JSONs read by <code>kona-hardforks</code>' build script — see
+<code>scripts/stage-nut-bundles.sh</code>).</p>
+<div id="admonition-do-not-over-vendor" class="admonition admonish-warning" role="note" aria-labelledby="admonition-do-not-over-vendor-title">
+<div class="admonition-title">
+<div id="admonition-do-not-over-vendor-title">
+<p>Do not over-vendor</p>
+</div>
+<a class="admonition-anchor-link" href="dependency-upgrades.html#admonition-do-not-over-vendor"></a>
+</div>
+<div>
+<p><code>cargo vendor</code> prints a complete <code>[source]</code> replacement list at the end of its run. Do <strong>not</strong> paste it wholesale
+into <code>build/risczero/.cargo/config.toml</code>. Crates that compile C sources living <em>outside</em> their own crate directory
+(e.g. the RISC Zero <code>blst</code> fork builds <code>../../src/server.c</code>) cannot be vendored — <code>cargo vendor</code> never copies the
+out-of-crate C files, and the vendored build fails with "No such file or directory". Keep the replacement list
+minimal (the kona/hokulea/hana/reth trees and pure-Rust git dependencies) and let the C-source crates remain
+git-fetched inside Docker.</p>
+</div>
+</div>
+<h2 id="step-5-bump-versions-and-lockfiles"><a class="header" href="#step-5-bump-versions-and-lockfiles">Step 5: Bump Versions and Lockfiles</a></h2>
+<p>Decide which crate versions to bump based on which guests actually changed:</p>
+<ul>
+<li>Bump the root <code>[workspace.package]</code> version — all host-side crates inherit it, and it never affects image IDs.</li>
+<li>Bump <code>crates/kona</code> only if the Kona-level code changed (this churns <strong>all three</strong> guest image IDs).</li>
+<li>Bump <code>crates/hokulea</code> / <code>crates/hana</code> for changes scoped to those wrappers (churns only that guest's image ID).</li>
+<li>Mirror any bumped guest-member versions into the corresponding guest <code>Cargo.toml</code> <strong>and</strong> <code>Cargo.lock</code> files —
+the Docker build runs with <code>--locked</code> and will refuse a stale lockfile.</li>
+</ul>
+<p>Finally, refresh the root lockfile with <code>cargo update -w</code> (or targeted <code>cargo update -p</code> invocations) and re-run the
+host checks.</p>
+<h2 id="step-6-rebake-the-fpvm-binaries"><a class="header" href="#step-6-rebake-the-fpvm-binaries">Step 6: Rebake the FPVM Binaries</a></h2>
+<p>The reproducible ELFs are built inside Docker and committed to the repository together with their image IDs.</p>
+<p>A rebake is required not only for Kona/Hokulea/Hana changes: bumping the RISC Zero toolchain or the <code>risc0-*</code>
+crates also changes every image ID, and a zkVM version bump can additionally change the <code>CONTROL_ROOT</code>/<code>CONTROL_ID</code>
+and the required on-chain verifier — check the <a href="https://dev.risczero.com/api/blockchain-integration/contracts/verifier">RISC Zero verifier documentation</a>
+when the <code>RISC0_VERSION</code> reported by <code>kailua-cli config</code> changes.</p>
+<div id="admonition-tip" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-title">
+<div class="admonition-title">
+<div id="admonition-tip-title">
+<p>Tip</p>
+</div>
+<a class="admonition-anchor-link" href="dependency-upgrades.html#admonition-tip"></a>
+</div>
+<div>
+<p>Each variant's bake leaves tens of gigabytes of buildkit cache in the Docker VM, and a full upgrade bakes at least
+two variants back-to-back. Check <code>docker system df</code> first and reclaim space with <code>docker builder prune -f</code> if
+needed — a full VM disk surfaces as an opaque <code>risc0-build</code> panic ("docker build failed") with the real
+"no space left on device" error buried in the log. Losing the cache only costs time; reproducibility comes from the
+pinned toolchain image and <code>--locked</code>, not the cache.</p>
+<p>The pinned <code>risczero/risc0-guest-builder</code> images are amd64-only (and, as of <code>r0.1.97.0</code>, published as manifest
+lists that buildkit platform-matches strictly), so <code>build/risczero/build.rs</code> sets
+<code>DOCKER_DEFAULT_PLATFORM=linux/amd64</code> for the docker build unless the caller already set it — on arm64 hosts the
+build runs under emulation, which is slower but produces the same reproducible output. The builder tag itself is
+pinned in the same file (<code>docker_container_tag</code>), not by the guest <code>rust-toolchain.toml</code> files, which only govern
+native (non-Docker) builds.</p>
+</div>
+</div>
+<p>For the standard build:</p>
+<pre><code class="language-shell">just build-fpvm     # reproducible Docker build of all three guests (~30 min)
+just export-fpvm    # writes build/risczero/src/bin/*.bin and prints each image ID
+</code></pre>
+<p>Then manually paste the printed <code>[u32; 8]</code> image IDs into the constants in <code>build/risczero/src/fpvm.rs</code>.</p>
+<p>Repeat for the experimental build: <code>just build-fpvm-experimental</code>, <code>just export-fpvm</code> (the experimental CLI writes
+the <code>*-experimental.bin</code> files), and update <code>build/risczero/src/fpvm-experimental.rs</code>.</p>
+<div id="admonition-export-exports-whatever-cli-you-last-built" class="admonition admonish-warning" role="note" aria-labelledby="admonition-export-exports-whatever-cli-you-last-built-title">
+<div class="admonition-title">
+<div id="admonition-export-exports-whatever-cli-you-last-built-title">
+<p>export exports whatever CLI you last built</p>
+</div>
+<a class="admonition-anchor-link" href="dependency-upgrades.html#admonition-export-exports-whatever-cli-you-last-built"></a>
+</div>
+<div>
+<p><code>just export-fpvm</code> runs <code>target/release/kailua-cli export</code>, which writes out the guest binaries <strong>embedded in that
+CLI binary</strong> — the variant is decided by how the CLI was built, not by any export flag. Interleave strictly per
+variant: bake standard → export → paste IDs → bake experimental → export → paste IDs. If a bake fails, the
+previously built CLI remains in <code>target/release</code>, and running export anyway will silently re-export the <em>other</em>
+variant's binaries without any error.</p>
+</div>
+</div>
+<p>Two verification habits are worth keeping:</p>
+<ul>
+<li><strong>Byte-identical binaries are your regression check.</strong> If a guest was not supposed to change (e.g. you bumped only
+<code>crates/hokulea</code>), its rebaked <code>.bin</code> must be byte-identical to the committed one — <code>git status</code> simply won't list
+it. If an "untouched" guest's binary changed, something leaked into it; find out what before proceeding.</li>
+<li><strong>The ID constants and the <code>.bin</code> files must come from the same bake.</strong> <code>kailua-cli config</code> asserts at runtime that
+the computed image ID of each embedded ELF matches its hardcoded constant, so a mismatched paste fails loudly —
+but only once someone runs it.</li>
+</ul>
+<p>Finally, update the example image IDs in <a href="setup.html">Setup</a>. Note the format difference: <code>fpvm.rs</code> stores each ID as
+<code>[u32; 8]</code> words, while the <code>config</code> command output shown in the book displays the RISC Zero digest form — each word
+serialized as little-endian bytes and concatenated. The <code>just export-fpvm</code> log prints both representations' inputs;
+the easiest path is to run <code>kailua-cli config</code> against a live rollup and copy its output.</p>
+<h2 id="step-7-test"><a class="header" href="#step-7-test">Step 7: Test</a></h2>
+<p>Run the full local suite:</p>
+<pre><code class="language-shell">just fmt
+just clippy   # host (default + full-featured) and all three guest workspaces, -D warnings
+just test     # cargo tests with RISC0_DEV_MODE=1
+</code></pre>
+<p>Run the <code>kailua-kona</code> library tests both with and without <code>-F experimental</code> — the partial-execution and EVM-wrapper
+code paths described in <a href="dependency-upgrades.html#standard-vs-experimental-builds">Standard vs. Experimental Builds</a> are only compiled and
+exercised under the flag (except <code>r0vm_crypto</code>, which only the experimental bake itself compiles). Be patient: the
+flag also enables additional stitching tests that iterate over pairs of boot configurations against the ~290 MiB
+<code>testdata</code> fixture, so the suite runs many times longer than the standard one — a long-quiet test process is
+grinding, not deadlocked. For the same reason, <code>just coverage</code> deliberately omits the flag; the experimental suite runs in the
+regular CI test jobs instead.</p>
+<p>The recorded-block replay tests in <code>crates/kona</code> re-derive and re-execute real blocks against a committed preimage
+fixture (<code>crates/kona/testdata</code>). A Kona upgrade can change <em>which</em> preimages the pipeline requests, failing these
+tests with missing-key errors even though the code is correct; in that case the fixture needs to be regenerated by
+re-running the recorded proofs in dev mode (<code>RISC0_DEV_MODE=1 kailua-cli prove --native --data-dir ./crates/kona/testdata ...</code> with the boot parameters pinned by the tests), not the code reverted. When regenerating,
+flush RocksDB's write-ahead log into the <code>.sst</code> files before committing — preimages that only exist in the trailing
+<code>*.log</code> WAL file open fine locally but are matched by <code>.gitignore</code>'s <code>*.log</code> rule, producing a fixture that passes
+on your machine and fails in CI.</p>
+<div id="admonition-missing-preimages-hang-they-dont-error" class="admonition admonish-tip" role="note" aria-labelledby="admonition-missing-preimages-hang-they-dont-error-title">
+<div class="admonition-title">
+<div id="admonition-missing-preimages-hang-they-dont-error-title">
+<p>Missing preimages hang, they don't error</p>
+</div>
+<a class="admonition-anchor-link" href="dependency-upgrades.html#admonition-missing-preimages-hang-they-dont-error"></a>
+</div>
+<div>
+<p>Kona's host backend retries a failing or unresolvable preimage hint indefinitely.
+Whether in the replay tests, a devnet proving run, or production, a preimage that was seeded into the wrong store
+(or never seeded) presents as a <em>silent infinite hang</em> at the affected proving phase — not as an error.
+If a proving pipeline stalls after an upgrade, suspect a missing or misrouted preimage before anything else.</p>
+</div>
+</div>
+<p>Then validate end-to-end on the local devnet:</p>
+<pre><code class="language-shell">just devnet-fetch
+just devnet-build-fpvm      # debug build with locally-rebuilt guests
+just devnet-up
+just devnet-upgrade         # deploy contracts against the new image IDs
+just devnet-propose         # run a proposer...
+just devnet-validate        # ...and a validator
+just devnet-fault 1 [PARENT] # publish a faulty proposal and watch it get disproven
+</code></pre>
+<p>A faulty proposal being successfully disproven, and honest proposals resolving, exercises the full pipeline: new
+guests, new config hash, and new contracts working together.</p>
+<div id="admonition-note" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-title">
+<div class="admonition-title">
+<div id="admonition-note-title">
+<p>Note</p>
+</div>
+<a class="admonition-anchor-link" href="dependency-upgrades.html#admonition-note"></a>
+</div>
+<div>
+<p><code>just devnet-build-fpvm*</code> compiles the guests <strong>locally</strong> (not in Docker), so the resulting image IDs will not match
+the committed reproducible ones — that is expected, and the devnet deploys against whatever it built. Only the
+Docker bake from Step 6 produces the canonical IDs.</p>
+</div>
+</div>
+<h2 id="step-8-roll-out-on-chain"><a class="header" href="#step-8-roll-out-on-chain">Step 8: Roll Out On-chain</a></h2>
+<p>For an already-migrated rollup, the new image IDs (and, if the config hash computation changed, the new
+<code>ROLLUP_CONFIG_HASH</code>) must be pushed on-chain by upgrading the <code>KailuaVerifier</code> implementation as described in
+<a href="fpvm-upgrade.html">FPVM Upgrade</a>. Fresh migrations pick the new values up automatically through the standard
+<a href="upgrade.html">on-chain migration</a> flow.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="testing-tools"><a class="header" href="#testing-tools">Testing Tools</a></h1>
+<p>Beyond the agents described in the <a href="operate.html">migration guide</a>, the Kailua CLI ships commands for measuring proving
+performance, testing fault proofs, and recovering delegated proofs.
+None of these are required to operate Kailua, but they are useful when evaluating it, dimensioning provers, or
+exercising a test deployment.</p>
+<div id="admonition-tip" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-title">
+<div class="admonition-title">
+<div id="admonition-tip-title">
+<p>Tip</p>
+</div>
+<a class="admonition-anchor-link" href="testing.html#admonition-tip"></a>
+</div>
+<div>
+<p>All the parameters below can also be provided as environment variables.</p>
+</div>
+</div>
+<h2 id="validity-proving-demo"><a class="header" href="#validity-proving-demo">Validity Proving Demo</a></h2>
+<p><code>kailua-cli demo</code> continuously computes validity proofs for a running OP Stack rollup <strong>without requiring any Kailua
+contract deployment</strong>.
+This is the quickest way to measure real proving costs and latency for your rollup before migrating.</p>
+<pre><code class="language-shell">kailua-cli demo \
+      --eth-rpc-url [YOUR_ETH_RPC_URL] \
+      --beacon-rpc-url [YOUR_BEACON_RPC_URL] \
+      --op-geth-url [YOUR_OP_GETH_URL] \
+      --op-node-url [YOUR_OP_NODE_URL] \
+      --num-blocks-per-proof [BLOCKS_PER_PROOF]
+</code></pre>
+<ul>
+<li><code>num-blocks-per-proof</code>: The number of L2 blocks each proof must cover.</li>
+<li><code>starting-block-height</code>: (Optional) The L2 block to start proving from. Defaults to <code>nth-proof-to-process</code> times <code>num-blocks-per-proof</code> blocks before the latest safe block.</li>
+<li><code>nth-proof-to-process</code>: Compute only every n-th proof (Default 1), allowing multiple demo instances to split one workload.</li>
+<li><code>num-concurrent-provers</code>: Number of provers to run simultaneously (Default 1).</li>
+<li><code>kailua-cli</code>: The optional path of the external binary to call for custom proof generation.</li>
+<li><code>data-dir</code>: Optional directory to save proving data to.</li>
+</ul>
+<p>The <a href="validator.html#prover">prover</a>, <a href="validator.html#delegated-proof-generation">delegated proving</a>, and
+<a href="validator.html#telemetry">telemetry</a> parameters of the validator also apply.
+The <code>just demo</code> recipe wraps this command.</p>
+<h2 id="benchmarking"><a class="header" href="#benchmarking">Benchmarking</a></h2>
+<p><code>kailua-cli benchmark</code> measures proving cost and performance over past L2 blocks.
+It scans the <code>bench-range</code> blocks starting at <code>bench-start</code>, selects the <code>bench-count</code> candidate blocks with the
+highest transaction counts, and proves the <code>bench-length</code>-block sequence starting at each candidate.</p>
+<ul>
+<li><code>bench-start</code>: The first L2 block number to scan from.</li>
+<li><code>bench-range</code>: The number of L2 blocks to scan as benchmark candidates.</li>
+<li><code>bench-count</code>: The number of top candidate blocks to benchmark.</li>
+<li><code>bench-length</code>: The number of consecutive L2 blocks each benchmark proof must cover.</li>
+<li><code>seq-window</code>: The sequencing window size to use for proving.</li>
+<li><code>random-select</code>: Select candidates pseudorandomly instead of by highest transaction count (Default false).</li>
+<li><code>export-bench-csv</code>: Whether to export a CSV file with the benchmark results (Default false).</li>
+<li><code>num-concurrent-provers</code>: Number of provers to run simultaneously (Default 1).</li>
+</ul>
+<p>The same endpoint, prover, and delegated proving parameters as <code>demo</code> apply.
+The <code>just bench</code> recipe wraps this command.</p>
+<h2 id="fault-injection"><a class="header" href="#fault-injection">Fault Injection</a></h2>
+<p><code>kailua-cli test-fault</code> publishes a deliberately faulty sequencing proposal, so that a running validator can be
+observed disputing and defeating it.
+It accepts all <a href="proposer.html">proposer</a> parameters, plus:</p>
+<ul>
+<li><code>fault-offset</code>: The offset of the faulty intermediate output commitment within the published proposal data.</li>
+<li><code>fault-parent</code>: The index of the proposal to build the faulty proposal on top of.</li>
+</ul>
+<p>The faulty proposal commits to a garbage output root at the chosen offset.
+An offset within the proposal's output count yields a proposal refutable by an
+<a href="validating.html#output-fault-proofs">output fault proof</a>, while an offset pointing into the zero-padded trail
+yields one refutable by a <a href="validating.html#trail-fault-proofs">trail fault proof</a>.</p>
+<div id="admonition-danger" class="admonition admonish-danger" role="note" aria-labelledby="admonition-danger-title">
+<div class="admonition-title">
+<div id="admonition-danger-title">
+<p>Danger</p>
+</div>
+<a class="admonition-anchor-link" href="testing.html#admonition-danger"></a>
+</div>
+<div>
+<p>The faulty proposal is staked with the proposer wallet's real collateral, which is slashed once the fault is proven.
+Only use this command against test deployments.</p>
+</div>
+</div>
+<p>On the <a href="testing.html#local-devnet">local devnet</a>, <code>just devnet-fault [OFFSET] [PARENT]</code> wraps this command.</p>
+<h2 id="receipt-recovery"><a class="header" href="#receipt-recovery">Receipt Recovery</a></h2>
+<p>When proof generation is delegated to a remote service, the finished receipt can be lost if the requesting process
+dies before retrieving it (or was run with <code>skip-await-proof</code>).
+These two commands download the finished receipt, verify it, and save it to the same proof file a local proving run
+would have produced:</p>
+<ul>
+<li><code>kailua-cli bonsai --session-id [SESSION_ID]</code> retrieves a proving session's receipt from
+<a href="https://risczero.com/bonsai">Bonsai</a>, using the <code>BONSAI_API_KEY</code>/<code>BONSAI_API_URL</code> environment variables.</li>
+<li><code>kailua-cli boundless --boundless-rpc-url [RPC_URL] --request-id [REQUEST_ID]</code> retrieves the fulfilled proof for a
+request from the <a href="https://docs.boundless.network/">Boundless</a> market.</li>
+</ul>
+<h2 id="manual-proving"><a class="header" href="#manual-proving">Manual Proving</a></h2>
+<p><code>kailua-cli prove</code> is the command the validator internally invokes to compute individual proofs, and it can also be
+called manually (see the <code>prove</code> and <code>devnet-prove</code> justfile recipes for example invocations).
+Beyond the shared <a href="validator.html#prover">prover</a> and <a href="validator.html#delegated-proof-generation">delegated proving</a>
+parameters, three parameters bind the computed proof to a proposal's published data instead of a bare block range:</p>
+<ul>
+<li><code>precondition-params</code>: Three comma-separated values: the proposal's starting L2 block number, its published
+intermediate commitment count, and the number of blocks covered per commitment.</li>
+<li><code>precondition-block-hashes</code>: The comma-separated hashes of the L1 blocks at which each of the proposal's data blobs
+was published.</li>
+<li><code>precondition-blob-hashes</code>: The comma-separated versioned hashes of the proposal's data blobs.</li>
+</ul>
+<p>When set, the resulting proof can only settle disputes involving proposals that published that exact data.
+The validator supplies these parameters automatically when generating proofs for on-chain disputes.</p>
+<h2 id="local-devnet-1"><a class="header" href="#local-devnet-1">Local Devnet</a></h2>
+<p>For end-to-end testing, the repository ships a <a href="https://docs.kurtosis.com/">Kurtosis</a>-based local devnet with recipes
+covering the full lifecycle:</p>
+<pre><code class="language-shell">just devnet-up            # fetch, patch, and launch the devnet (Docker + Kurtosis required)
+just devnet-upgrade       # deploy the Kailua contracts (uses RISC0_DEV_MODE)
+just devnet-propose       # run a proposer against the devnet
+just devnet-validate      # run a validator against the devnet
+just devnet-fault 1 0     # publish a faulty proposal for the validator to defeat
+just devnet-down          # tear the devnet down
+just devnet-clean         # tear down and delete all devnet artifacts
+</code></pre>
+<p>The recipes resolve endpoints and prefunded wallet keys automatically from the devnet descriptor produced by
+<code>devnet-up</code>.
+The underlying scripts — including the EigenDA devnet variant — are described in <code>scripts/README.md</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="sequencing-2"><a class="header" href="#sequencing-2">Sequencing</a></h1>
+<p>This chapter is the normative specification of Kailua's sequencing protocol: how the canonical state of a rollup is
+advanced through <em>proposals</em>, how contradictory proposals compete, and how a proposal becomes finalized.
+The key words <em>must</em>, <em>must not</em>, <em>should</em>, and <em>may</em> are to be interpreted as requirements on any conforming
+implementation.</p>
+<p>The rules below define the protocol in the abstract.
+The <code>KailuaTreasury</code>, <code>KailuaGame</code>, and <code>KailuaTournament</code> contracts constitute the current <em>implementation instance</em>
+of these rules on Ethereum, and the <a href="proposer.html">proposer agent</a> is the reference implementation of the
+proposer role.
+Implementation notes throughout this chapter map each abstract rule to its current enforcement point, but the abstract
+rules — not the contracts — are the source of intended behavior.</p>
+<h2 id="protocol-parameters"><a class="header" href="#protocol-parameters">Protocol Parameters</a></h2>
+<p>A sequencing deployment is parameterized by the following values, fixed at deployment time:</p>
+<div class="table-wrapper"><table><thead><tr><th>Symbol</th><th>Name</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>N</code></td><td>proposal output count</td><td>The number of output commitments each proposal must publish.</td></tr>
+<tr><td><code>S</code></td><td>output block span</td><td>The number of L2 blocks covered by each output commitment.</td></tr>
+<tr><td><code>T</code></td><td>challenge timeout</td><td>The period during which a proposal remains contestable.</td></tr>
+<tr><td><code>B</code></td><td>participation bond</td><td>The collateral a proposer must lock before proposing.</td></tr>
+<tr><td><code>V, A</code></td><td>vanguard, advantage</td><td>An optional privileged proposer and the duration of its priority window.</td></tr>
+<tr><td><code>G, t</code></td><td>genesis time, block time</td><td>The timestamp of the L2 genesis block and the L2 block interval.</td></tr>
+</tbody></table>
+</div>
+<p>Each proposal advances the chain by exactly <code>N × S</code> blocks.</p>
+<div id="admonition-implementation" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-title">
+<div class="admonition-title">
+<div id="admonition-implementation-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-implementation"></a>
+</div>
+<div>
+<p>These parameters are immutable values of the deployed contract instance: <code>PROPOSAL_OUTPUT_COUNT</code>,
+<code>OUTPUT_BLOCK_SPAN</code>, <code>MAX_CLOCK_DURATION</code>, <code>participationBond</code> (owner-adjustable), <code>vanguard</code>/<code>vanguardAdvantage</code>
+(owner-assignable), and <code>GENESIS_TIME_STAMP</code>/<code>L2_BLOCK_TIME</code>. See <a href="parameters.html">deployment parameters</a>.</p>
+</div>
+</div>
+<h2 id="proposals"><a class="header" href="#proposals">Proposals</a></h2>
+<p>The protocol maintains a tree of proposals rooted at a trusted <strong>anchor</strong>: a starting state assumed valid by all
+participants.</p>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Example Proposal Tree (N × S = 64 blocks per proposal)
+---
+graph LR;
+  A[Anchor: 0] --&gt; B[B: 64];
+  A --&gt; B'[B': 64];
+  B --&gt; C[C: 128];
+  B --&gt; C'[C': 128];
+  C --&gt; D[D: 192];
+</pre>
+</div>
+<p>Siblings with different identities — such as <code>B</code> and <code>B'</code> above — implicitly dispute one another, with no separate
+challenge step. The <a href="sequencing.html#tournaments">tournament rules</a> below determine which child of each parent, here along the path
+<code>Anchor → B → C → D</code>, may carry finality forward.</p>
+<p>A <strong>proposal</strong> extends exactly one parent (the anchor or an earlier proposal) and consists of:</p>
+<ul>
+<li>A <strong>claim</strong>: an output commitment to the rollup state at height <code>h = h_parent + N × S</code>.</li>
+<li><strong>Intermediate commitments</strong>: output commitments at each of the <code>N − 1</code> heights
+<code>h_parent + S, h_parent + 2S, …</code>, published to a data availability layer such that each individual commitment can
+later be provably read back on the settlement layer. The claim itself serves as the <code>N</code>-th commitment.</li>
+<li>A <strong>derivation anchor</strong>: a reference to the settlement-layer (L1) state from which the proposal's rollup data is
+derivable.</li>
+<li>A <strong>duplication counter</strong>: an ordinal distinguishing repeated publications of otherwise identical proposal data.</li>
+</ul>
+<p>Publication space not occupied by intermediate commitments (<em>trailing data</em>) must be zero-valued.</p>
+<p>Every proposal has an <strong>identity</strong>: a binding commitment to its claim together with the entirety of its published
+data — intermediate commitments and trailing data alike.
+Two proposals with equal identities are <strong>duplicates</strong>: they assert exactly the same state transitions and the
+protocol treats them as sharing one fate.</p>
+<div id="admonition-note" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-title">
+<div class="admonition-title">
+<div id="admonition-note-title">
+<p>Note</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-note"></a>
+</div>
+<div>
+<p>A proposal's identity deliberately excludes its derivation anchor.
+Whether a proposal's commitments are correct is independent of which L1 view they are derived from — this is
+eventually demonstrated by a <a href="validating.html">proof</a> against <em>some</em> published derivation anchor.</p>
+</div>
+</div>
+<div id="admonition-implementation-1" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-1-title">
+<div class="admonition-title">
+<div id="admonition-implementation-1-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-implementation-1"></a>
+</div>
+<div>
+<p>Proposals are <code>KailuaGame</code> instances created through the rollup's <code>DisputeGameFactory</code>; the anchor is the
+<code>KailuaTreasury</code> instance. Intermediate commitments are 32-byte output roots reduced to BLS12-381 scalar field
+elements (<code>hash_to_fe</code>) and published as EIP-4844 blobs — <code>ceil((N − 1) / 4096)</code> blobs per proposal — with KZG
+openings as the read-back mechanism. The claim is the game's <code>rootClaim</code>, the derivation anchor its <code>l1Head</code>, and the
+identity is <code>signature = sha256(rootClaim ‖ proposalBlobHashes)</code>.</p>
+</div>
+</div>
+<h2 id="proposal-creation-rules"><a class="header" href="#proposal-creation-rules">Proposal Creation Rules</a></h2>
+<p>A conforming implementation must reject any proposal that violates one of the following rules.</p>
+<p><strong>Proposer eligibility:</strong></p>
+<ol>
+<li>The proposer must not have been <a href="sequencing.html#elimination-and-collateral">eliminated</a> at any prior point.</li>
+<li>The proposer must have at least <code>B</code> collateral locked with the protocol at creation time.</li>
+<li>Successive proposals by the same proposer must strictly increase in height.</li>
+</ol>
+<p><strong>Structural integrity:</strong></p>
+<ol start="4">
+<li>Proposals must enter the protocol only through its sanctioned creation path, and be initialized exactly once.</li>
+<li>A proposal's encoding must be canonical: two encodings of the same proposal data must not be able to coexist as
+distinct proposals.</li>
+<li>Duplication counters must be assigned sequentially: a proposal with counter <code>d &gt; 0</code> is valid only if a proposal
+with identical claim data and counter <code>d − 1</code> exists.</li>
+<li>The proposal's height must equal its parent's height plus exactly <code>N × S</code>.</li>
+<li>All published data the proposal commits to must be available at creation time.</li>
+</ol>
+<p><strong>Tree consistency:</strong></p>
+<ol start="9">
+<li>The parent must itself be a proposal known to the protocol (or the anchor).</li>
+<li>The proposal's identity must still be <em>viable</em> in the parent's tournament: an identity proven faulty, or one that
+contradicts an identity proven valid, must not be (re-)introduced.</li>
+<li>The parent's tournament must not already have produced a finalized successor.</li>
+</ol>
+<p><strong>Timing:</strong></p>
+<ol start="12">
+<li>A proposal must not be created before the earliest time its claimed height can exist according to the rollup's
+block schedule: <code>G + h × t</code>.</li>
+<li>If a vanguard <code>V</code> is assigned, only <code>V</code> may create the <em>first</em> child of any parent until the advantage duration
+<code>A</code> has elapsed beyond the time given by rule 12. Other proposers may always create counter-proposals to an
+existing first child.</li>
+</ol>
+<p>The duplication counter (rules 5–6) exists so that a correct claim can be re-proposed when all prior proposals carrying
+it are disqualified — for example, when the original was published by a since-eliminated proposer, or alongside faulty
+intermediate commitments (which alter the identity but not the claim).</p>
+<div id="admonition-what-these-rules-uphold" class="admonition admonish-success" role="note" aria-labelledby="admonition-what-these-rules-uphold-title">
+<div class="admonition-title">
+<div id="admonition-what-these-rules-uphold-title">
+<p>What these rules uphold</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-what-these-rules-uphold"></a>
+</div>
+<div>
+<ul>
+<li><strong>Constant collateral (rules 1–3).</strong> One bond of <code>B</code> backs a proposer's entire chain of proposals, with at most one
+proposal per tournament. An honest proposer's collateral requirement never grows with the number or size of attacks
+against it — the resource-exhaustion resistance described in the
+<a href="introduction.html#resource-exhaustion">introduction</a>.</li>
+<li><strong>Exhaustive accounting (rules 4–6).</strong> A single creation path and a canonical encoding make the protocol's record of
+children and duplicates complete and unambiguous, so tournament outcomes can be computed from that record alone.</li>
+<li><strong>A connected, judgeable tree (rules 7–11).</strong> Every proposal attaches at exactly one known parent and height, with
+its full data available for judgement from the moment of creation, and nothing can attach below a decided
+tournament — settled state can never be re-opened.</li>
+<li><strong>Meaningful clocks (rules 12–13).</strong> A challenge window that opens before the claimed blocks can even exist burns
+dispute time while there is nothing yet to check; rule 12 prevents this, and rule 13 grants the vanguard only a
+bounded head start that can never block counter-proposals to an existing first child.</li>
+</ul>
+</div>
+</div>
+<div id="admonition-implementation-2" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-2-title">
+<div class="admonition-title">
+<div id="admonition-implementation-2-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-implementation-2"></a>
+</div>
+<div>
+<p>Rules 1–3 and 13 are enforced by <code>KailuaTreasury.propose</code> (<code>BadAuth</code>, <code>IncorrectBondAmount</code>, <code>BlockNumberMismatch</code>,
+<code>VanguardError</code>); rules 4–12 by <code>KailuaGame.initialize</code> (<code>Blacklisted</code>/<code>AlreadyInitialized</code>/<code>UnknownGame</code>,
+<code>BadExtraData</code> — via a fixed <code>0x72</code>-byte calldata length that removes encoding malleability —
+<code>InvalidDuplicationCounter</code>, <code>BlockNumberMismatch</code>, <code>BlobHashMissing</code>, <code>InvalidParent</code>, <code>ProvenFaulty</code>,
+<code>ClaimAlreadyResolved</code>, <code>ProposalGapRemaining</code>).</p>
+</div>
+</div>
+<h2 id="tournaments"><a class="header" href="#tournaments">Tournaments</a></h2>
+<p>The children of a proposal compete in a <strong>tournament</strong> to become its unique finalized successor.
+The tournament is decided by the following match rules, evaluated over children in order of creation:</p>
+<ol>
+<li>The earliest child whose identity is still viable (creation rule 10) and whose proposer is not eliminated is the
+current <strong>contender</strong>.</li>
+<li>Each later child (<strong>opponent</strong>) is compared against the contender:
+<ul>
+<li>An opponent created after the contender's challenge window (<code>T</code> from the contender's creation) had already
+closed is disregarded, and the contender wins the tournament outright. Late counter-proposals cannot re-open a
+settled claim.</li>
+<li>An opponent from an eliminated proposer is skipped.</li>
+<li>An opponent with the same identity is a duplicate of the contender and shares its fate.</li>
+<li>An opponent whose identity was proven faulty is disqualified, and its proposer
+<a href="sequencing.html#elimination-and-collateral">eliminated</a>.</li>
+<li>An opponent with a different but still-viable identity <strong>blocks the tournament</strong>: a match between two
+contradictory, unproven identities must not be decided by anything other than a <a href="validating.html">proof</a>.</li>
+</ul>
+</li>
+<li>If the contender's own identity becomes unviable, the contender and all of its recorded duplicates are
+disqualified — their proposers eliminated — and the contender search resumes from the next child.</li>
+</ol>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Match Evaluation Against the Contender
+---
+graph TD;
+  O[next opponent] --&gt; L{created after the contender's challenge window?};
+  L -- yes --&gt; W[contender wins the tournament];
+  L -- no --&gt; E{proposer eliminated?};
+  E -- yes --&gt; S[opponent skipped];
+  E -- no --&gt; I{same identity as contender?};
+  I -- yes --&gt; D[recorded as duplicate];
+  I -- no --&gt; F{proven faulty?};
+  F -- yes --&gt; X[opponent disqualified];
+  F -- no --&gt; P[tournament blocked until a proof decides];
+</pre>
+</div>
+<p>A tournament may be played out incrementally, but its outcome must be a deterministic function of the recorded proof
+outcomes, independent of who evaluates it.</p>
+<div id="admonition-what-these-rules-uphold-1" class="admonition admonish-success" role="note" aria-labelledby="admonition-what-these-rules-uphold-1-title">
+<div class="admonition-title">
+<div id="admonition-what-these-rules-uphold-1-title">
+<p>What these rules uphold</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-what-these-rules-uphold-1"></a>
+</div>
+<div>
+<ul>
+<li><strong>Safety without deadlines.</strong> A match between contradictory identities is only ever decided by a proof, and no
+<a href="validating.html#transition-proofs">proof can convict a correct proposal</a>. An honest proposal therefore survives every
+match it is drawn into without its proposer ever having to respond — attackers who flood a tournament with
+contradictions only queue up their own eliminations, at no added cost to the defender (see
+<a href="introduction.html#sybil-identities">Sybil identities</a>).</li>
+<li><strong>Bounded delay.</strong> Because opponents arriving after the contender's challenge window are disregarded, an adversary
+cannot keep a settled claim contested by continuously re-proposing against it. Once a correct contender's window
+closes, finality waits only on proofs against the contradictions created inside that window — a workload that
+shrinks with proving power rather than growing with the attacker's persistence (see
+<a href="introduction.html#withdrawal-delay">Withdrawal delay</a>).</li>
+</ul>
+</div>
+</div>
+<h3 id="resolution"><a class="header" href="#resolution">Resolution</a></h3>
+<p>A proposal becomes <strong>finalized</strong> — its claim accepted as the canonical rollup state — only when all of the following
+hold:</p>
+<ol>
+<li>Its parent is finalized. Finality proceeds strictly from the anchor outward.</li>
+<li>Either its full challenge timeout <code>T</code> has elapsed since creation, or its identity has been proven valid
+(finality <em>fast-forward</em>).</li>
+<li>It has won its parent's tournament as the surviving contender.</li>
+</ol>
+<p>The anchor itself is finalized directly by deployment governance, which is how a new deployment is activated.</p>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Proposal Lifecycle
+---
+graph LR;
+  C[Created] -- challenge window T elapses --&gt; R[Resolvable];
+  C -- identity proven valid --&gt; R;
+  R -- parent finalized, tournament won --&gt; F[Finalized];
+  C -- proven faulty, or contradicts a valid identity --&gt; X[Disqualified];
+</pre>
+</div>
+<p>Condition 1 exists because a proposal's correctness is only ever <em>conditional</em> on its parent: proofs judge the
+transition starting from the parent's claim. Finalizing strictly outward from the anchor turns this chain of
+conditional statements into an unconditional one — and gives faults a free cascade: once a proposal is eliminated, its
+entire descendant subtree simply never finalizes, without a single proof against any descendant.</p>
+<div id="admonition-implementation-3" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-3-title">
+<div class="admonition-title">
+<div id="admonition-implementation-3-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-implementation-3"></a>
+</div>
+<div>
+<p>Tournaments are evaluated by <code>KailuaTournament.pruneChildren</code> (progress persisted in
+<code>contenderIndex</code>/<code>opponentIndex</code>/<code>contenderDuplicates</code>; a viable contradiction reverts with <code>NotProven</code>).
+Resolution conditions are enforced by <code>KailuaGame.resolve</code> (<code>OutOfOrderResolution</code>, <code>ClockNotExpired</code>/<code>ProvenFaulty</code>,
+<code>NotProven</code>), and anchor finalization by the factory-owner-gated <code>KailuaTreasury.resolve</code>.</p>
+</div>
+</div>
+<h2 id="elimination-and-collateral"><a class="header" href="#elimination-and-collateral">Elimination and Collateral</a></h2>
+<p><strong>Elimination</strong> permanently disqualifies a proposer:</p>
+<ol>
+<li>A proposer is eliminated when one of their proposals is disqualified in a tournament match — its identity proven
+faulty, or contradicting a proven-valid identity.</li>
+<li>Elimination happens at most once per proposer, and only through a tournament of a finalized parent.</li>
+<li>The eliminated proposer's locked collateral is slashed and split three ways: one share to a prover beneficiary —
+resolved by the <a href="validating.html#payouts-and-permits">payout precedence</a> — one share to the proposer of the
+tournament's eventual winner, and one share burned.</li>
+<li>From the offending proposal onward, all of the proposer's proposals are skipped in every tournament, and the
+proposer may never propose again. Proposals made <em>before</em> the offending one remain in play.</li>
+</ol>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Slashed Bond Distribution
+---
+graph LR;
+  B[slashed bond B] --&gt; P[⅓ prover reward];
+  B --&gt; W[⅓ tournament winner];
+  B --&gt; X[⅓ burned];
+</pre>
+</div>
+<p>Each share of the split serves a distinct purpose: the prover share is the bounty that funds permissionless proving,
+so that every fault pays for its own conviction; the winner share compensates the proposer whose correct
+counter-proposal kept the chain live while its collateral was locked in the dispute; and the burned share guarantees
+that every proven fault carries a strictly positive cost — even a proposer who convicts themselves through colluding
+prover and winner identities recovers at most two thirds of their bond.</p>
+<p>Honest proposers recover their collateral in full: a proposer who was never eliminated may withdraw their bond once
+every tournament containing one of their proposals has produced a finalized successor.</p>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div class="admonition-title">
+<div id="admonition-warning-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-warning"></a>
+</div>
+<div>
+<p>The one-bond-many-proposals design means a single proven fault forfeits the proposer's entire bond, no matter how many
+correct proposals they have in flight. There is no partial slashing.</p>
+</div>
+</div>
+<div id="admonition-implementation-4" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-4-title">
+<div class="admonition-title">
+<div id="admonition-implementation-4-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-implementation-4"></a>
+</div>
+<div>
+<p><code>KailuaTreasury.eliminate</code> enforces rule 2 (<code>Blacklisted</code>, <code>NotProposed</code>, <code>AlreadyEliminated</code>) and performs the
+1/3 prover / 1/3 winner / 1/3 burn split; the winner's share accrues per-tournament and is credited upon resolution.
+Bond recovery is <code>claimProposerBond</code>.</p>
+</div>
+</div>
+<h2 id="the-proposer-role"><a class="header" href="#the-proposer-role">The Proposer Role</a></h2>
+<p>Any party may act as a proposer.
+For the rollup to remain both <em>safe</em> (no incorrect state finalizes) and <em>live</em> (correct state keeps finalizing), at
+least one honest, well-collateralized proposer must exist, and it must behave as follows:</p>
+<ul>
+<li><strong>Verify before extending.</strong> An honest proposer must validate every observed proposal — claim, each intermediate
+commitment, and the zeroness of trailing data — against its own trusted view of the rollup, and extend only the
+<em>canonical tip</em>: the highest correct proposal made by a non-eliminated proposer.</li>
+<li><strong>Propose only settled data.</strong> Proposals must be assembled exclusively from L2 data the proposer's view considers
+final, so published commitments can never be invalidated by an L2 reorg.</li>
+<li><strong>Respect timing.</strong> The proposer must wait out rule 12's minimum creation time, and — when it is not the vanguard —
+rule 13's advantage window, rather than submit proposals that will be rejected.</li>
+<li><strong>Handle duplicates deliberately.</strong> When its intended claim has already been proposed, the proposer must locate the
+lowest unused duplication counter, skipping duplicates that are faulty or authored by eliminated proposers — and
+must <em>not</em> re-propose at all if a correct duplicate by a non-eliminated proposer is already live, since doing so
+locks additional collateral without changing any outcome.</li>
+<li><strong>Maintain collateral.</strong> The proposer must ensure its locked collateral meets <code>B</code> (topping up exactly the shortfall)
+before proposing, and must keep its wallet funded — an unfunded honest proposer is a liveness failure.</li>
+<li><strong>Drive resolution.</strong> The proposer should finalize resolvable proposals along the canonical chain: waiting out
+timeouts (or acting on recorded validity proofs), advancing tournament evaluation, and resolving the surviving
+successor. Where evaluation is blocked by an undecided match, resolution must wait for a <a href="validating.html">proof</a>.</li>
+<li><strong>Monitor its own standing.</strong> A proposer observing its own elimination must alert its operator: its key is
+compromised or its data sources fed it incorrect outputs. It must also verify it is targeting the deployment's
+current implementation instance before proposing.</li>
+</ul>
+<div id="admonition-implementation-5" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-5-title">
+<div class="admonition-title">
+<div id="admonition-implementation-5-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-implementation-5"></a>
+</div>
+<div>
+<p><code>kailua-cli propose</code> implements this role: it validates all proposals against <code>op-node</code> output roots, gates proposals
+on the finalized L2 head, performs the duplication-counter search and honest-duplicate skip, tops up bond shortfalls
+in the propose call, issues incremental tournament-evaluation transactions in bounded batches, and raises telemetry
+alarms upon self-elimination. See <a href="proposer.html">Proposer</a> for operation.</p>
+</div>
+</div>
+<div id="admonition-danger" class="admonition admonish-danger" role="note" aria-labelledby="admonition-danger-title">
+<div class="admonition-title">
+<div id="admonition-danger-title">
+<p>Danger</p>
+</div>
+<a class="admonition-anchor-link" href="sequencing.html#admonition-danger"></a>
+</div>
+<div>
+<p>A proposer's safety reduces to the integrity of its rollup view.
+An honest implementation connected to a divergent or lagging <code>op-node</code> will publish provably faulty proposals and
+forfeit its collateral; the protocol cannot distinguish it from a malicious proposer.</p>
+</div>
+</div>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="validating"><a class="header" href="#validating">Validating</a></h1>
+<p>This chapter is the normative specification of Kailua's validation protocol: how disputes between contradictory
+<a href="sequencing.html">sequencing proposals</a> are settled by proofs, and how proposals are proven valid ahead of their
+challenge timeout.
+As in the <a href="sequencing.html">previous chapter</a>, the key words <em>must</em>, <em>must not</em>, <em>should</em>, and <em>may</em> denote
+requirements on any conforming implementation, and the rules below define the protocol in the abstract — with the
+<code>KailuaTournament</code> and <code>KailuaVerifier</code> contracts as the current implementation instance and the
+<a href="validator.html">validator agent</a> as the reference implementation of the validator role.</p>
+<p>Proof submission is <strong>permissionless</strong> and <strong>non-interactive</strong>: any party may settle any dispute with a single
+submission, and proofs attach to a proposal's <em>identity</em> rather than to any individual proposal instance.</p>
+<h2 id="transition-proofs"><a class="header" href="#transition-proofs">Transition Proofs</a></h2>
+<p>The foundation of validation is the <strong>transition proof</strong>: a succinct, verifiable attestation of one application of
+the rollup's state transition function. A transition proof establishes a claim tuple:</p>
+<div class="table-wrapper"><table><thead><tr><th>Component</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>beneficiary</td><td>The party to be credited for the proof.</td></tr>
+<tr><td>precondition</td><td>An optional commitment binding the proof to externally published data (see validity proofs).</td></tr>
+<tr><td>derivation anchor</td><td>The settlement-layer (L1) state from which all rollup inputs were derived.</td></tr>
+<tr><td>agreed output</td><td>The starting output commitment, assumed correct.</td></tr>
+<tr><td>computed output</td><td>The output commitment reached by applying the state transition function.</td></tr>
+<tr><td>computed height</td><td>The rollup height of the computed output.</td></tr>
+<tr><td>configuration</td><td>A binding commitment to the rollup configuration under which the transition was computed.</td></tr>
+<tr><td>program</td><td>A binding commitment to the state transition program itself.</td></tr>
+</tbody></table>
+</div>
+<p>A conforming verification procedure must accept a claim tuple only if <em>starting from the agreed output, deriving the
+rollup using only data reachable from the derivation anchor yields the computed output at the computed height, under
+the committed configuration and program</em>.</p>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: The Statement Established by a Transition Proof
+---
+graph LR;
+  DA[derivation anchor] --&gt; STF[state transition program];
+  AO((agreed output)) --&gt; STF;
+  CFG[configuration] --&gt; STF;
+  STF --&gt; CO((computed output at computed height));
+</pre>
+</div>
+<p>The protocol imposes two constraints on how claim tuples may be formed:</p>
+<ol>
+<li>The derivation anchor must be one committed by a proposal registered in the protocol. Provers cannot introduce an
+arbitrary L1 context; they may only derive from a view that some proposal has staked on.</li>
+<li>The computed height must equal the parent proposal's height plus a whole number of output-span (<code>S</code>) steps, so
+proofs always align with the commitment schedule of the proposals they judge.</li>
+</ol>
+<div id="admonition-note" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-title">
+<div class="admonition-title">
+<div id="admonition-note-title">
+<p>Note</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-note"></a>
+</div>
+<div>
+<p>There is no separate "fault program" and "validity program": the state transition program always computes the
+<em>correct</em> output.
+A fault is established by showing the proven-correct output <em>differs</em> from what a proposal published; validity is
+established by showing it <em>equals</em> the proposal's claim.
+Fault proofs exhibiting agreement are rejected (<a href="validating.html#output-fault-proofs">output fault rule 3</a>) — a proof can never
+convict a correct proposal.</p>
+</div>
+</div>
+<div id="admonition-implementation" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-title">
+<div class="admonition-title">
+<div id="admonition-implementation-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-implementation"></a>
+</div>
+<div>
+<p>Transition proofs are RISC Zero zkVM receipts for the Kailua FPVM program (a Kona-based derivation client).
+The claim tuple is the FPVM's journal; <code>KailuaVerifier.verify</code> reconstructs the expected journal — substituting its
+immutable <code>ROLLUP_CONFIG_HASH</code> and <code>FPVM_IMAGE_ID</code> for the configuration and program commitments — and delegates seal
+verification to the deployed RISC Zero verifier contract. Constraint 1 is enforced by requiring the anchor to be the
+<code>l1Head</code> of a treasury-registered proposal (<code>UnknownGame</code>); constraint 2 by having the tournament contract itself
+compute the claim height.</p>
+</div>
+</div>
+<h2 id="proof-classes"><a class="header" href="#proof-classes">Proof Classes</a></h2>
+<p>Three classes of proof can be recorded against a child identity in a tournament:</p>
+<div class="table-wrapper"><table><thead><tr><th>Proof class</th><th>Needs a transition proof?</th><th>Establishes</th></tr></thead><tbody>
+<tr><td>Validity</td><td>Yes</td><td>Every commitment made by the proposal is correct.</td></tr>
+<tr><td>Output fault</td><td>Yes</td><td>One published output commitment contradicts the derivable state.</td></tr>
+<tr><td>Trail fault</td><td>No</td><td>The proposal's published data violates the required format.</td></tr>
+</tbody></table>
+</div>
+<p>For every proof class, a conforming implementation must enforce:</p>
+<ol>
+<li>Proofs may be accepted for or against a child only until its parent's tournament produces a finalized successor.</li>
+<li>At most one proof outcome is ever recorded per identity; the outcome, the prover, and the proving time are recorded
+permanently.</li>
+<li>Proof submission must remain open to any party for as long as rule 1 permits.</li>
+</ol>
+<div id="admonition-what-these-rules-uphold" class="admonition admonish-success" role="note" aria-labelledby="admonition-what-these-rules-uphold-title">
+<div class="admonition-title">
+<div id="admonition-what-these-rules-uphold-title">
+<p>What these rules uphold</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-what-these-rules-uphold"></a>
+</div>
+<div>
+<ul>
+<li><strong>Sybil resistance.</strong> Because proofs attach to identities and are recorded exactly once, duplicating a faulty
+proposal multiplies the attacker's locked collateral without adding a single unit of proving work for the defense —
+one proof settles every copy (see <a href="introduction.html#sybil-identities">Sybil identities</a>).</li>
+<li><strong>No proving deadlines.</strong> The challenge timeout limits only the <em>creation</em> of contradictions
+(<a href="sequencing.html#tournaments">tournaments</a>), never their resolution (rule 3): however large the attack, each pending
+match waits indefinitely for its proof, so proving power determines how fast disputes settle — never whether they
+settle correctly (see <a href="introduction.html#resource-exhaustion">Resource exhaustion</a>).</li>
+<li><strong>Permissionless settlement.</strong> Any party — not only the disputants — can supply the deciding proof, so settlement
+liveness does not rest on the parties whose collateral is at stake.</li>
+</ul>
+</div>
+</div>
+<div id="admonition-implementation-1" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-1-title">
+<div class="admonition-title">
+<div id="admonition-implementation-1-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-implementation-1"></a>
+</div>
+<div>
+<p>Enforced by <code>KailuaTournament</code> for all classes: <code>GameNotInProgress</code>, <code>ClaimAlreadyResolved</code>, and <code>AlreadyProven</code>; the
+recorded outcome is <code>proofStatus[signature]</code> with <code>prover</code> and <code>provenAt</code>, announced by the <code>Proven</code> event.</p>
+</div>
+</div>
+<h3 id="validity-proofs"><a class="header" href="#validity-proofs">Validity Proofs</a></h3>
+<p>A <strong>validity proof</strong> vouches for a child's entire commitment set in one step. It must consist of a transition proof
+whose agreed output is the parent's claim and whose computed output is the child's claim, at the child's full height —
+covering all <code>N × S</code> blocks.</p>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Validity Proof Coverage (N = 4)
+---
+graph LR;
+  P((parent claim)) ==4 × S blocks proven==&gt; c((claim));
+  P -.-&gt; o0((o₀)) -.-&gt; o1((o₁)) -.-&gt; o2((o₂)) -.-&gt; c;
+</pre>
+</div>
+<p>When a proposal publishes more than one output commitment (<code>N &gt; 1</code>), the transition proof must additionally commit —
+through its precondition — to the equivalence of the derived intermediate outputs and the proposal's published
+intermediate commitments. A validity proof thereby vouches for the published data, not merely the final claim.</p>
+<p>Recording a validity proof makes the proven identity the tournament's unique <strong>valid identity</strong>, with these effects:</p>
+<ul>
+<li>Every other child identity in the tournament immediately becomes unviable; contradictory siblings are disqualified
+by the tournament rules — their proposers eliminated — without individual fault proofs.</li>
+<li>No proposal contradicting the valid identity may be created from that point on (creation rule 10).</li>
+<li>Children bearing the valid identity no longer wait out the challenge timeout: they finalize as soon as their parent
+is finalized — the finality <em>fast-forward</em> of <a href="sequencing.html#resolution">resolution</a> rule 2.</li>
+</ul>
+<div id="admonition-implementation-2" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-2-title">
+<div class="admonition-title">
+<div id="admonition-implementation-2-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-implementation-2"></a>
+</div>
+<div>
+<p><code>KailuaTournament.proveValidity</code> stores <code>validChildSignature</code> and passes the parent claim, child claim, and full
+output count to verification. The precondition is
+<code>sha256(parent height ‖ N ‖ S ‖ blobsHash)</code> over the child's blob hashes; the FPVM enforces it by checking each
+derived intermediate output against the corresponding blob field element.</p>
+</div>
+</div>
+<h3 id="output-fault-proofs"><a class="header" href="#output-fault-proofs">Output Fault Proofs</a></h3>
+<p>An <strong>output fault proof</strong> convicts a child by exhibiting a single divergent output commitment.
+For a disputed commitment at position <code>i</code> (where the proposal's commitments occupy positions <code>0</code> through <code>N − 1</code>, the
+claim being the last), a conforming implementation must require:</p>
+<ol>
+<li><code>i</code> addresses one of the proposal's <code>N</code> output commitments.</li>
+<li><strong>Agreed output.</strong> For <code>i = 0</code>, the transition proof's agreed output must be the parent's claim. For <code>i &gt; 0</code>, the
+submitter must demonstrate — via the data availability layer's read-back mechanism — that the <em>proposal itself</em>
+published the agreed output as its commitment at position <code>i − 1</code>.</li>
+<li><strong>Divergence.</strong> The proven computed output must contradict the proposal's commitment at position <code>i</code>: for the final
+position, it must differ from the proposal's claim; for intermediate positions, the submitter must demonstrate what
+the proposal published at position <code>i</code> and that it differs from the computed output. Proofs exhibiting agreement
+must be rejected.</li>
+<li>The transition proof must cover exactly the <code>S</code> blocks from position <code>i − 1</code> (or the parent claim) to position <code>i</code>,
+with no precondition.</li>
+</ol>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Output Fault Proof Against Position 2 (N = 4)
+---
+graph LR;
+  P((parent claim)) -.S.-&gt; o0((o₀)) -.S.-&gt; o1((o₁ agreed)) ==S blocks proven==&gt; x((computed ≠ o₂)) -.S.-&gt; c((claim));
+</pre>
+</div>
+<p>Rule 2 is what makes disputes cheap: because the agreed output is read from the faulty proposal's <em>own</em> publication, a
+fault proof only ever derives the <code>S</code> blocks between two adjacent commitments — never the whole proposal.
+The choice of <code>N</code> and <code>S</code> thus bounds the worst-case proving work for any single dispute, as illustrated in the
+<a href="design.html#sequencing">design overview</a>.
+Note that the agreed output need not be <em>correct</em> — position <code>i − 1</code> may itself be faulty. The proof only establishes
+that the proposal is inconsistent with its own published data at position <code>i</code>, which suffices: whatever the truth,
+an identity that diverges from the derivable state at <em>any</em> position is not the correct one.</p>
+<p>A recorded fault makes the identity permanently unviable: the proposal and all duplicates can never finalize, and the
+tournament rules disqualify them, eliminating their proposers.</p>
+<div id="admonition-implementation-3" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-3-title">
+<div class="admonition-title">
+<div id="admonition-implementation-3-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-implementation-3"></a>
+</div>
+<div>
+<p><code>KailuaTournament.proveOutputFault</code> (<code>InvalidDisputedClaimIndex</code>, <code>NoConflict</code>). Read-back of published commitments is
+by KZG opening against the blob hashes fixed at creation, checked with the point-evaluation precompile
+(<code>bad acceptedOutput kzg</code> / <code>bad proposedOutput kzg</code>); comparisons use the field-element reduction of output roots,
+and the precompile inherently rejects non-canonical field elements.</p>
+</div>
+</div>
+<h3 id="trail-fault-proofs"><a class="header" href="#trail-fault-proofs">Trail Fault Proofs</a></h3>
+<p>A <strong>trail fault proof</strong> convicts a child of violating the publication format, and requires no transition proof: the
+submitter demonstrates, via the read-back mechanism, that the proposal published a non-zero value in its trailing
+(zero-padding) region.
+Implementations must reject trail fault claims that address the commitment region or exhibit a zero value.
+A recorded trail fault has the same effect as an output fault.</p>
+<div id="admonition-why-trail-faults-exist" class="admonition admonish-success" role="note" aria-labelledby="admonition-why-trail-faults-exist-title">
+<div class="admonition-title">
+<div id="admonition-why-trail-faults-exist-title">
+<p>Why trail faults exist</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-why-trail-faults-exist"></a>
+</div>
+<div>
+<p>Trail faults close the last gap in decidability. A proposal whose <code>N</code> output commitments are all correct but whose
+trailing data is non-zero still contradicts the honest identity — yet no output fault proof can convict it (there is
+no divergence to exhibit), and no validity proof can vouch for it (transition proofs enforce zero trailing data
+through their precondition). Without trail faults, such an identity would block its tournament forever. With them, the
+protocol upholds the invariant that <strong>every pair of contradictory identities is decidable by some proof</strong>: two
+identities can only differ in an output commitment (an output fault against at least one) or in the padding (a trail
+fault). Equivalently, the zero-padding rule gives correct data exactly one identity, so honest proposals always converge on a
+single identity that shares one proof and one fate.</p>
+</div>
+</div>
+<div id="admonition-implementation-4" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-4-title">
+<div class="admonition-title">
+<div id="admonition-implementation-4-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-implementation-4"></a>
+</div>
+<div>
+<p><code>KailuaTournament.proveTrailFault</code> (<code>InvalidDisputedClaimIndex</code>, <code>NoConflict</code>, <code>InvalidDataRemainder</code> — the disputed
+position must fall in the final blob, which loses no generality since earlier blobs are fully packed with
+commitments).</p>
+</div>
+</div>
+<h2 id="payouts-and-permits"><a class="header" href="#payouts-and-permits">Payouts and Permits</a></h2>
+<p>When a proposer is eliminated, the prover's share of the slashed bond is paid to a beneficiary resolved in this order
+of precedence:</p>
+<ol>
+<li>The holder of the <em>sole</em> <a href="design.html#fault-proving-permits">fault proving permit</a> for the convicted identity — if
+exactly one permit was ever acquired for it, and that permit was active when the convicting fault proof was
+recorded.</li>
+<li>The recorded prover of the convicted identity.</li>
+<li>The recorded prover of the tournament's valid identity, when elimination resulted from a validity proof.</li>
+</ol>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Prover Share Beneficiary
+---
+graph TD;
+  F[proposer eliminated] --&gt; Q{sole permit, active at fault proof time?};
+  Q -- yes --&gt; H[permit holder];
+  Q -- no --&gt; R{fault proof recorded for the convicted identity?};
+  R -- yes --&gt; V[its recorded prover];
+  R -- no --&gt; W[prover of the valid identity];
+</pre>
+</div>
+<p>Permits give provers an exclusive reward window in exchange for locked collateral. A conforming permit mechanism must
+enforce:</p>
+<ol>
+<li>Permits may only be acquired for identities that are still viable.</li>
+<li>The permit collateral must cover at least twice the prover's elimination share, so that abandoning a permit costs
+more than the reward it protects.</li>
+<li>Permit issuance capacity must be bounded by expiry: at most one more permit than twice the number of
+already-expired permits may exist for an identity at any time.</li>
+<li>A permit becomes active only after its activation delay, expires after its total duration, and its collateral is
+returned when released after a proof recorded within its lifetime. Holders whose permits expired before the proof
+forfeit their collateral to the holders active at proving time.</li>
+</ol>
+<div id="admonition-what-the-permit-collateral-scheme-upholds" class="admonition admonish-success" role="note" aria-labelledby="admonition-what-the-permit-collateral-scheme-upholds-title">
+<div class="admonition-title">
+<div id="admonition-what-the-permit-collateral-scheme-upholds-title">
+<p>What the permit collateral scheme upholds</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-what-the-permit-collateral-scheme-upholds"></a>
+</div>
+<div>
+<ul>
+<li><strong>Constant cost to participate, exponential cost to monopolize.</strong> Every permit costs the same fixed collateral
+(rule 2) no matter how many were issued before it, so entering the reward race never grows more expensive. Capacity,
+however, compounds through expiry (rule 3): one permit may exist initially, three once it expires, seven once those
+do, and so on — and every expired permit forfeits its collateral (rule 4). An actor attempting to hold <em>all</em> permits
+for a fault must therefore burn collateral that doubles with each expiry cycle, while any competitor can always
+claim a newly opened slot at the constant price — squatting on exclusivity to stall honest proving becomes
+exponentially expensive (see <a href="introduction.html#denial-of-service">Denial-of-Service</a>).</li>
+<li><strong>Every active prover is paid, despite a single proposer bond.</strong> The eliminated proposer posted one bond, whose
+prover share can reward only one beneficiary — yet expiries may leave several permits simultaneously active when
+the fault proof lands. The scheme makes these payouts self-funding: each holder active at proving time recovers its
+own collateral <em>plus</em> an equal share of the collateral forfeited by expired permits. Because active permits can
+outnumber expired ones by at most one (rule 3), and each expired permit forfeited twice the prover share (rule 2),
+this pool pays every active holder at least a full prover reward — funded by the forfeited collateral alone, not
+the bond. The sole-permit case needs no pool: its holder is paid the bond's prover share directly, per the
+precedence above.</li>
+</ul>
+</div>
+</div>
+<div id="admonition-implementation-5" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-5-title">
+<div class="admonition-title">
+<div id="admonition-implementation-5-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-implementation-5"></a>
+</div>
+<div>
+<p><code>KailuaVerifier.acquireFaultProofPermit</code> (<code>ProvenFaulty</code>, <code>IncorrectBondAmount</code>, <code>ClockNotExpired</code>) and
+<code>releaseFaultProofPermit</code> (<code>NotProven</code>), parameterized by the immutable <code>PERMIT_DELAY</code> and <code>PERMIT_DURATION</code>;
+beneficiary resolution is <code>getPayoutRecipient</code> in <code>KailuaTournament</code>.</p>
+</div>
+</div>
+<h2 id="the-validator-role"><a class="header" href="#the-validator-role">The Validator Role</a></h2>
+<p>Any party may act as a validator.
+The protocol's safety argument requires that every dispute eventually receives a deciding proof; for this, at least
+one honest validator must exist and behave as follows:</p>
+<ul>
+<li><strong>Prove only provable statements.</strong> A validator must confirm that the deployment's committed program and
+configuration are ones it can execute and vouch for, before dedicating any resources to the deployment.</li>
+<li><strong>Judge from a trusted view.</strong> A validator must assess every observed proposal — claim, each intermediate
+commitment, and trailing data — against its own trusted view of the rollup, and must defer judgement on any
+proposal whose height its view has not yet settled. It must never derive a fault verdict from unverifiable data.</li>
+<li><strong>Target the first divergence.</strong> For an incorrect proposal, the validator should convict at the cheapest sufficient
+point: a format violation (trail fault) needs no transition proof and takes precedence; otherwise the <em>earliest</em>
+divergent commitment, so the transition proof spans a single <code>S</code>-block step whose agreed output is still shared
+with the canonical chain.</li>
+<li><strong>Avoid redundant work.</strong> A validator should prove each identity at most once across all duplicates, skip disputes
+already settled (re-checking immediately before submission, since other validators race for the same
+disputes), decline to fault-prove when a validity proof already settles the tournament, and de-correlate its
+proving schedule from other validators (e.g., by randomized delay) where redundancy is not desired.</li>
+<li><strong>Use registered derivation anchors.</strong> A validator must construct claim tuples only over registered derivation
+anchors (<a href="validating.html#transition-proofs">constraint 1</a>): beginning with the disputed proposal's own, and — if its L1 view
+proves insufficient to derive the disputed span — retrying with successively later ones.</li>
+<li><strong>Verify before submitting.</strong> A validator should verify its own proofs and cross-check every claim-tuple component
+and read-back opening against the settlement layer before submission, and re-buffer rather than discard proofs
+whose submission fails.</li>
+<li><strong>Fast-forward when appropriate.</strong> A validator may prove the validity of correct proposals to accelerate finality.
+On deployments where <code>N = 1</code>, it should respond to any conflict with a validity proof of the correct sibling: a
+single such proof both accelerates the honest proposal and eliminates every contradiction, and there is no cheaper
+intermediate fault to exhibit.</li>
+<li><strong>Honor the permit protocol.</strong> A validator using permits must acquire them only when capacity is available, wait
+for activation before submitting the associated proof so the exclusive window applies, and release them after the
+proof is recorded to reclaim collateral.</li>
+</ul>
+<div id="admonition-implementation-6" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-6-title">
+<div class="admonition-title">
+<div id="admonition-implementation-6-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-implementation-6"></a>
+</div>
+<div>
+<p><code>kailua-cli validate</code> implements this role: it refuses deployments whose <code>FPVM_IMAGE_ID</code> is not baked into its
+binary, gates all judgement on <code>op-node</code> finality, classifies faults as trail-first-then-earliest-output, re-checks
+<code>proofStatus</code>/<code>isViableSignature</code> at queueing, dispatch, and submission time, retries proof generation across
+successive proposal <code>l1Head</code>s, locally verifies receipts and dry-runs KZG openings before spending gas, and manages
+permits per the configured policy. See <a href="validator.html">Validator</a> for operation.</p>
+</div>
+</div>
+<div id="admonition-danger" class="admonition admonish-danger" role="note" aria-labelledby="admonition-danger-title">
+<div class="admonition-title">
+<div id="admonition-danger-title">
+<p>Danger</p>
+</div>
+<a class="admonition-anchor-link" href="validating.html#admonition-danger"></a>
+</div>
+<div>
+<p>A validator's effectiveness reduces to the integrity of its rollup view (<code>op-node</code> and archive <code>op-geth</code>).
+The proof system prevents a misinformed validator from harming the protocol — incorrect verdicts yield unprovable
+statements or rejected submissions — but not from wasting proving effort or failing to convict real faults.</p>
 </div>
 </div>
 

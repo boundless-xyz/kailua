@@ -1,0 +1,591 @@
+<!DOCTYPE HTML>
+<html lang="en" class="ayu sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Dependency Upgrades - The Kailua Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="./mdbook-admonish.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "ayu";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('ayu')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Kailua Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/boundless-xyz/kailua" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/boundless-xyz/kailua/edit/main/book/src/dependency-upgrades.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="dependency-upgrades"><a class="header" href="#dependency-upgrades">Dependency Upgrades</a></h1>
+<p>This chapter is for Kailua maintainers (and forks) who need to upgrade Kailua to a newer release of
+<a href="https://github.com/ethereum-optimism/optimism">Kona</a>, <a href="https://github.com/Layr-Labs/hokulea">Hokulea</a>, or
+<a href="https://github.com/celestiaorg/hana">Hana</a>, along with the <code>alloy</code>/<code>op-alloy</code>/<code>revm</code>/<code>reth</code> dependency tree that
+rides along with them.</p>
+<p>Upgrading these dependencies is unlike upgrading dependencies in a normal Rust project, because most of the affected
+code is compiled into RISC Zero zkVM guest programs whose image IDs are consensus-critical:</p>
+<ul>
+<li>A successful upgrade <strong>always changes the FPVM image IDs</strong>, which requires an <a href="fpvm-upgrade.html">on-chain upgrade</a>
+before the new binaries can be used in production.</li>
+<li>A careless upgrade can introduce a <strong>soundness gap</strong> (e.g. an unhashed configuration field) that no compiler error
+or test failure will surface unless you follow the audit steps below.</li>
+</ul>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div class="admonition-title">
+<div id="admonition-warning-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-warning"></a>
+</div>
+<div>
+<p>Do not treat a green build as a finished upgrade.
+The soundness re-audit in <a href="#step-3-re-audit-the-config-hash">Step 3</a> is mandatory on every upgrade.</p>
+</div>
+</div>
+<h2 id="how-the-pieces-fit-together"><a class="header" href="#how-the-pieces-fit-together">How the Pieces Fit Together</a></h2>
+<p>Recall from the <a href="project.html">project structure</a> that each supported DA option has a wrapper crate and a corresponding
+zkVM guest workspace:</p>
+<div class="table-wrapper"><table><thead><tr><th>Guest program</th><th>Guest workspace</th><th>Compiled-in crates</th></tr></thead><tbody>
+<tr><td><code>kailua-fpvm-kona</code></td><td><code>build/risczero/kona</code></td><td><code>kailua-kona</code></td></tr>
+<tr><td><code>kailua-fpvm-hokulea</code></td><td><code>build/risczero/hokulea</code></td><td><code>kailua-kona</code> + <code>kailua-hokulea</code></td></tr>
+<tr><td><code>kailua-fpvm-hana</code></td><td><code>build/risczero/hana</code></td><td><code>kailua-kona</code> + <code>kailua-hana</code></td></tr>
+</tbody></table>
+</div>
+<p>Three properties drive the entire upgrade procedure:</p>
+<ol>
+<li><strong>Each guest workspace is an independent Cargo workspace</strong> with its own <code>Cargo.toml</code>, <code>Cargo.lock</code>, and <code>[patch]</code>
+section. Version and tag changes must be applied to each of them, not just the root workspace.</li>
+<li><strong>Guest builds are reproducible Docker builds</strong> (<code>RISC0_USE_DOCKER=1</code>, <code>--locked</code>) over <em>vendored</em> sources.
+Reproducibility comes from the pinned RISC Zero Docker toolchain image plus the committed lockfiles — not from
+your local build cache.</li>
+<li><strong>Crate versions feed into image IDs.</strong> Cargo passes each crate's version into symbol mangling (<code>-C metadata</code>),
+so bumping the version of any crate that compiles into a guest changes that guest's image ID — even with zero
+source changes. This is why <code>kailua-kona</code>, <code>kailua-hokulea</code>, and <code>kailua-hana</code> deliberately do <strong>not</strong> inherit
+the workspace version: it lets you bump the workspace (host) version without churning guest image IDs, and bump
+an individual wrapper crate to churn only the guests that depend on it.</li>
+</ol>
+<h2 id="standard-vs-experimental-builds"><a class="header" href="#standard-vs-experimental-builds">Standard vs. Experimental Builds</a></h2>
+<p>Every guest program additionally exists in two variants, selected by the <code>experimental</code> cargo feature:</p>
+<ul>
+<li>The <strong>standard</strong> build already supports proof decomposition down to the block level: derivation-only proofs,
+execution-only proofs, and the recursive stitching that combines such proofs into a complete proposal proof.</li>
+<li>The <strong>experimental</strong> build extends decomposition <em>below</em> the block level, allowing a single block's execution to
+be proven through partial (per-transaction-chunk) execution traces. Inside the zkVM it also swaps the EVM's
+precompile cryptography for RISC Zero's accelerated implementations (the <code>r0vm_crypto</code> module, backed by the
+<code>risc0-crypto-evm</code> dependency).</li>
+</ul>
+<p>Mechanically this is one codebase, not two: <code>bin/cli</code>'s <code>experimental</code> feature fans out to <code>kailua-kona</code>,
+<code>kailua-prover</code>, and <code>kailua-validator</code>, and <code>build/risczero/build.rs</code> forwards the flag into the guest builds. The
+same source tree therefore produces two program families — six committed guest binaries in total, with two sets of
+image ID constants (<code>build/risczero/src/fpvm.rs</code> and <code>build/risczero/src/fpvm-experimental.rs</code>) and two
+configuration blocks in <a href="setup.html">Setup</a>.</p>
+<p>This split has consequences for every step of an upgrade:</p>
+<ul>
+<li><strong>Everything in this chapter happens twice.</strong> The clippy/test matrix, the ELF bakes, the image ID constant
+updates, the documentation values, and (where deployed) the on-chain rollout each have a standard and an
+experimental leg. Skipping the experimental leg does not produce a stale-but-working experimental build — it
+produces one that no longer matches the host code.</li>
+<li><strong>A given <code>kailua-cli</code> binary embeds exactly one family, chosen at compile time.</strong> The <code>experimental</code> feature
+adds fields to the witness types (<code>pe_witness</code>, <code>partial_executions</code> in <code>crates/kona/src/witness.rs</code>), so the
+serialized witness format itself differs between the two builds. Host and guest must be built with the same
+feature — a standard host cannot drive an experimental guest or vice versa, and there is no runtime toggle.</li>
+<li><strong>Some experimental code compiles only inside the guest bake.</strong> <code>r0vm_crypto</code> is gated on <code>experimental</code> <em>and</em>
+<code>target_os = "zkvm"</code>, so no host build, clippy invocation, or test ever compiles it — the experimental FPVM build
+is its only compile check, and an error in it surfaces half an hour into the Docker bake. Since it reimplements
+revm's <code>Crypto</code> trait, diff it against the vendored <code>revm-precompile</code> interface on every <code>revm</code> bump <em>before</em>
+baking.</li>
+<li><strong>The experimental EVM wrappers track upstream trait surfaces.</strong> <code>crates/kona/src/evm/</code> wraps the OP EVM in
+adapters implementing upstream hook traits (e.g. <code>alloy-op-evm</code>'s post-execution hooks). When an upgrade adds
+methods to those traits, the wrappers gain mandatory delegations. New hooks are usually inert under Kailua's
+single-pass execution, but verify that for each one and delegate to the inner EVM rather than stubbing a default.</li>
+</ul>
+<h2 id="step-1-align-versions"><a class="header" href="#step-1-align-versions">Step 1: Align Versions</a></h2>
+<p>The source of truth for the entire dependency tree is the lockfile of the Kona release you are upgrading to:
+<code>rust/Cargo.lock</code> in the <a href="https://github.com/ethereum-optimism/optimism">optimism monorepo</a> at the new
+<code>kona-client/vX.Y.Z</code> tag. Kailua's workspace dependencies must resolve to the same versions Kona itself was built
+and tested against.</p>
+<p>Update the pinned tags and revisions in <strong>all</strong> of the following files:</p>
+<ul>
+<li><code>Cargo.toml</code> (root): the <code>kona-*</code>, <code>hokulea-*</code>/<code>canoe-*</code>/<code>eigenda-*</code>, and <code>hana-*</code> dependency blocks, <strong>and</strong> the
+<code>[patch.crates-io]</code> section (the <code>op-alloy-*</code>, <code>alloy-op-evm</code>, and <code>op-revm</code> patches must point at the same tag).</li>
+<li><code>build/risczero/kona/Cargo.toml</code>, <code>build/risczero/hokulea/Cargo.toml</code>, <code>build/risczero/hana/Cargo.toml</code>: each
+guest manifest repeats the relevant <code>[patch]</code> entries. These also pin the RISC Zero <strong>accelerated forks</strong> of
+<code>blst</code> and <code>c-kzg</code> — when the new dependency tree raises its <code>c-kzg</code>/<code>blst</code> requirements, matching fork releases
+must exist and be bumped here too.</li>
+<li><code>build/risczero/.cargo/config.toml</code>: the <code>[source."git+..."]</code> replacement blocks name the tags/revisions
+explicitly and must match, or the vendored Docker build will fetch nothing.</li>
+</ul>
+<p>Then align the shared crates (<code>alloy-*</code>, <code>op-alloy-*</code>, <code>op-revm</code>, <code>revm</code>, <code>alloy-evm</code>, <code>alloy-op-evm</code>, ...) in the
+root <code>[workspace.dependencies]</code> to the versions in Kona's lockfile. Two traps deserve special attention:</p>
+<div id="admonition-the-caret-drift-trap" class="admonition admonish-danger" role="note" aria-labelledby="admonition-the-caret-drift-trap-title">
+<div class="admonition-title">
+<div id="admonition-the-caret-drift-trap-title">
+<p>The caret-drift trap</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-the-caret-drift-trap"></a>
+</div>
+<div>
+<p>Pin the <code>alloy</code> 2.x family with <strong>exact</strong> version requirements (<code>=2.0.5</code>), not caret ranges.
+The host workspace depends on the <code>alloy</code> meta-crate, which exact-pins its whole family — so a host-only build
+will look fine either way. But the guest workspaces reference the individual <code>alloy-*</code> crates directly, and a caret
+range there floats up to whatever newer minor release exists on crates.io, which Kona predates. This failure mode
+only appears inside the FPVM build, long after the host compiles.
+After updating, verify the guest lockfiles (e.g. <code>build/risczero/kona/Cargo.lock</code>) resolve to the exact intended
+versions.</p>
+</div>
+</div>
+<div id="admonition-the-source-split-trap" class="admonition admonish-danger" role="note" aria-labelledby="admonition-the-source-split-trap-title">
+<div class="admonition-title">
+<div id="admonition-the-source-split-trap-title">
+<p>The source-split trap</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-the-source-split-trap"></a>
+</div>
+<div>
+<p>Kona and <code>alloy-op-evm</code> consume some crates (notably <code>op-revm</code>) from <em>inside</em> the optimism monorepo via path
+dependencies. The crates.io release with the same name and version is a <strong>different crate</strong> to Cargo, so types like
+<code>OpSpecId</code> will not unify across the two copies and you will get baffling trait-bound errors. The fix is the
+<code>[patch.crates-io]</code> entry pointing that crate at the optimism git tag — in the root manifest <strong>and</strong> in each of the
+three guest manifests.</p>
+</div>
+</div>
+<p>Exact pins cut both ways: a <strong>stale</strong> exact pin left over from the previous upgrade forces Cargo to keep the old
+version alongside the new one, and two coexisting copies of the same crate produce baffling "expected <code>Evm</code>, found
+<code>Evm</code>" trait-bound errors. Every exact pin must be revisited on every upgrade.</p>
+<p>Finally, expect release lag. Kona typically releases first, and Hokulea, Hana, and host-only dependencies that track
+alloy (e.g. <code>risc0-steel</code>, <code>boundless-market</code>) may not yet have cut a release against the new tree. It is normal to
+temporarily pin these to interim git revisions and swap to proper tags in a follow-up once upstream catches up —
+the v1.5.2 upgrade shipped exactly that way.</p>
+<h2 id="step-2-migrate-the-source"><a class="header" href="#step-2-migrate-the-source">Step 2: Migrate the Source</a></h2>
+<p>With versions aligned, work through the compile errors host-first, since host iteration is much faster:</p>
+<pre><code class="language-shell">RISC0_SKIP_BUILD=true cargo clippy --bin kailua-cli --locked --all-targets -- -D warnings
+</code></pre>
+<p><code>RISC0_SKIP_BUILD=true</code> skips the guest builds so you can iterate on <code>crates/kona</code>, <code>crates/hokulea</code>, <code>crates/hana</code>,
+and the host crates. Repeat with the feature combinations used by <code>just clippy</code> (including
+<code>-F devnet -F eigen -F celestia -F experimental</code>), then check each guest workspace via its own manifest path.</p>
+<p>A few hard-won rules for this phase:</p>
+<ul>
+<li><strong>Grep the right checkout.</strong> When verifying how an upstream struct changed, resolve the tag to its commit hash via
+<code>Cargo.lock</code> and read that exact checkout under <code>~/.cargo/git/checkouts/</code> (or the vendored copy under
+<code>build/risczero/vendor/</code> once vendored). Similarly-named checkouts of forks can contain phantom fields.</li>
+<li><strong>The compiler, not grep, is ground truth for field existence.</strong> Upstream fields can be <code>#[cfg(feature = ...)]</code>-gated
+behind features Kailua does not enable (e.g. <code>RollupConfig::fjord_max_sequencer_drift</code>), so a field visible in
+source may be absent from the compiled struct.</li>
+<li><strong><code>rkyv</code> mirrors must round-trip new fields, not default them.</strong> <code>crates/kona/src/rkyv/</code> mirrors upstream types
+for witness serialization. When an upstream type gains a field, add it to the mirror and its round-trip test.
+Note that <code>rkyv</code> only implements its traits for tuples up to arity 13 — nest a sub-tuple when a mirror outgrows
+that, following the existing pattern.</li>
+<li><strong>Anything serialized into the witness must also be bound by the precondition hash.</strong> When a mirrored type gains
+a field, check the corresponding <code>flatten_*</code> helpers: a field that is rkyv-encoded but not hashed is
+attacker-controlled.</li>
+<li><strong>Audit new host-side configuration fields, not just removed ones.</strong> When an upstream struct Kailua constructs
+(e.g. Kona's <code>SingleChainHost</code>) gains a field, filling it with <code>Default::default()</code> compiles but silently adopts
+whatever new behavior upstream chose. In the v1.5.2 upgrade, Kona's new <code>data_format</code> field defaulted to a new
+directory-based preimage store format while Kailua's own stores remained RocksDB — preimages seeded through one
+would have been invisible to the other if this were not examined. Review what each new field does and choose its
+value deliberately.</li>
+</ul>
+<h2 id="step-3-re-audit-the-config-hash"><a class="header" href="#step-3-re-audit-the-config-hash">Step 3: Re-audit the Config Hash</a></h2>
+<p><code>kailua_kona::config::config_hash</code> (<code>crates/kona/src/config.rs</code>) commits to the rollup and L1 chain configuration a
+fault proof is about. <strong>Every field of every hashed struct must be included in the hash</strong> — an omitted field means
+two semantically different configurations collide to the same on-chain commitment, letting a prover prove under a
+configuration the verifier never pinned.</p>
+<p>On every upgrade, re-audit field coverage of all hashed structs: <code>RollupConfig</code>, <code>SystemConfig</code>, <code>HardForkConfig</code>,
+<code>AltDAConfig</code>, <code>BaseFeeConfig</code>, <code>ChainGenesis</code>, <code>BlobParams</code>, and <code>L1ChainConfig</code>.</p>
+<p>Most of these are compiler-protected: <code>test_config_hash</code> constructs them with exhaustive struct literals (no
+<code>..Default::default()</code>), so a new upstream field breaks compilation until it is named — and hopefully hashed.</p>
+<div id="admonition-l1chainconfig-is-not-compiler-protected" class="admonition admonish-danger" role="note" aria-labelledby="admonition-l1chainconfig-is-not-compiler-protected-title">
+<div class="admonition-title">
+<div id="admonition-l1chainconfig-is-not-compiler-protected-title">
+<p>L1ChainConfig is not compiler-protected</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-l1chainconfig-is-not-compiler-protected"></a>
+</div>
+<div>
+<p><code>L1ChainConfig</code> is an alias for <code>alloy_genesis::ChainConfig</code> and is constructed via <code>::default()</code> in the tests, so
+a new field added upstream compiles silently and silently escapes <code>l1_config_hash</code>.  On every alloy bump, diff the full
+field list of <code>ChainConfig</code> in the vendored sources against the fields consumed by <code>l1_config_hash</code>, one by one.</p>
+</div>
+</div>
+<p>Audit against the <em>vendored</em> sources (<code>build/risczero/vendor/</code>) — that is exactly the code the guest compiles.
+Remember that adding any field to the hash changes the hash value for <strong>all</strong> configurations (even those where the
+new field is <code>None</code>), which changes the on-chain <code>ROLLUP_CONFIG_HASH</code> alongside the image IDs.</p>
+<h2 id="step-4-vendor-the-guest-dependencies"><a class="header" href="#step-4-vendor-the-guest-dependencies">Step 4: Vendor the Guest Dependencies</a></h2>
+<p>The Docker guest builds compile from vendored sources. Refresh them with:</p>
+<pre><code class="language-shell">just vendor
+</code></pre>
+<p>This runs <code>cargo vendor</code> across the three guest workspaces into <code>build/risczero/vendor</code> and then stages the out-of-crate
+files that <code>cargo vendor</code> omits (e.g. the NUT bundle JSONs read by <code>kona-hardforks</code>' build script — see
+<code>scripts/stage-nut-bundles.sh</code>).</p>
+<div id="admonition-do-not-over-vendor" class="admonition admonish-warning" role="note" aria-labelledby="admonition-do-not-over-vendor-title">
+<div class="admonition-title">
+<div id="admonition-do-not-over-vendor-title">
+<p>Do not over-vendor</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-do-not-over-vendor"></a>
+</div>
+<div>
+<p><code>cargo vendor</code> prints a complete <code>[source]</code> replacement list at the end of its run. Do <strong>not</strong> paste it wholesale
+into <code>build/risczero/.cargo/config.toml</code>. Crates that compile C sources living <em>outside</em> their own crate directory
+(e.g. the RISC Zero <code>blst</code> fork builds <code>../../src/server.c</code>) cannot be vendored — <code>cargo vendor</code> never copies the
+out-of-crate C files, and the vendored build fails with "No such file or directory". Keep the replacement list
+minimal (the kona/hokulea/hana/reth trees and pure-Rust git dependencies) and let the C-source crates remain
+git-fetched inside Docker.</p>
+</div>
+</div>
+<h2 id="step-5-bump-versions-and-lockfiles"><a class="header" href="#step-5-bump-versions-and-lockfiles">Step 5: Bump Versions and Lockfiles</a></h2>
+<p>Decide which crate versions to bump based on which guests actually changed:</p>
+<ul>
+<li>Bump the root <code>[workspace.package]</code> version — all host-side crates inherit it, and it never affects image IDs.</li>
+<li>Bump <code>crates/kona</code> only if the Kona-level code changed (this churns <strong>all three</strong> guest image IDs).</li>
+<li>Bump <code>crates/hokulea</code> / <code>crates/hana</code> for changes scoped to those wrappers (churns only that guest's image ID).</li>
+<li>Mirror any bumped guest-member versions into the corresponding guest <code>Cargo.toml</code> <strong>and</strong> <code>Cargo.lock</code> files —
+the Docker build runs with <code>--locked</code> and will refuse a stale lockfile.</li>
+</ul>
+<p>Finally, refresh the root lockfile with <code>cargo update -w</code> (or targeted <code>cargo update -p</code> invocations) and re-run the
+host checks.</p>
+<h2 id="step-6-rebake-the-fpvm-binaries"><a class="header" href="#step-6-rebake-the-fpvm-binaries">Step 6: Rebake the FPVM Binaries</a></h2>
+<p>The reproducible ELFs are built inside Docker and committed to the repository together with their image IDs.</p>
+<p>A rebake is required not only for Kona/Hokulea/Hana changes: bumping the RISC Zero toolchain or the <code>risc0-*</code>
+crates also changes every image ID, and a zkVM version bump can additionally change the <code>CONTROL_ROOT</code>/<code>CONTROL_ID</code>
+and the required on-chain verifier — check the <a href="https://dev.risczero.com/api/blockchain-integration/contracts/verifier">RISC Zero verifier documentation</a>
+when the <code>RISC0_VERSION</code> reported by <code>kailua-cli config</code> changes.</p>
+<div id="admonition-tip" class="admonition admonish-tip" role="note" aria-labelledby="admonition-tip-title">
+<div class="admonition-title">
+<div id="admonition-tip-title">
+<p>Tip</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-tip"></a>
+</div>
+<div>
+<p>Each variant's bake leaves tens of gigabytes of buildkit cache in the Docker VM, and a full upgrade bakes at least
+two variants back-to-back. Check <code>docker system df</code> first and reclaim space with <code>docker builder prune -f</code> if
+needed — a full VM disk surfaces as an opaque <code>risc0-build</code> panic ("docker build failed") with the real
+"no space left on device" error buried in the log. Losing the cache only costs time; reproducibility comes from the
+pinned toolchain image and <code>--locked</code>, not the cache.</p>
+<p>The pinned <code>risczero/risc0-guest-builder</code> images are amd64-only (and, as of <code>r0.1.97.0</code>, published as manifest
+lists that buildkit platform-matches strictly), so <code>build/risczero/build.rs</code> sets
+<code>DOCKER_DEFAULT_PLATFORM=linux/amd64</code> for the docker build unless the caller already set it — on arm64 hosts the
+build runs under emulation, which is slower but produces the same reproducible output. The builder tag itself is
+pinned in the same file (<code>docker_container_tag</code>), not by the guest <code>rust-toolchain.toml</code> files, which only govern
+native (non-Docker) builds.</p>
+</div>
+</div>
+<p>For the standard build:</p>
+<pre><code class="language-shell">just build-fpvm     # reproducible Docker build of all three guests (~30 min)
+just export-fpvm    # writes build/risczero/src/bin/*.bin and prints each image ID
+</code></pre>
+<p>Then manually paste the printed <code>[u32; 8]</code> image IDs into the constants in <code>build/risczero/src/fpvm.rs</code>.</p>
+<p>Repeat for the experimental build: <code>just build-fpvm-experimental</code>, <code>just export-fpvm</code> (the experimental CLI writes
+the <code>*-experimental.bin</code> files), and update <code>build/risczero/src/fpvm-experimental.rs</code>.</p>
+<div id="admonition-export-exports-whatever-cli-you-last-built" class="admonition admonish-warning" role="note" aria-labelledby="admonition-export-exports-whatever-cli-you-last-built-title">
+<div class="admonition-title">
+<div id="admonition-export-exports-whatever-cli-you-last-built-title">
+<p>export exports whatever CLI you last built</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-export-exports-whatever-cli-you-last-built"></a>
+</div>
+<div>
+<p><code>just export-fpvm</code> runs <code>target/release/kailua-cli export</code>, which writes out the guest binaries <strong>embedded in that
+CLI binary</strong> — the variant is decided by how the CLI was built, not by any export flag. Interleave strictly per
+variant: bake standard → export → paste IDs → bake experimental → export → paste IDs. If a bake fails, the
+previously built CLI remains in <code>target/release</code>, and running export anyway will silently re-export the <em>other</em>
+variant's binaries without any error.</p>
+</div>
+</div>
+<p>Two verification habits are worth keeping:</p>
+<ul>
+<li><strong>Byte-identical binaries are your regression check.</strong> If a guest was not supposed to change (e.g. you bumped only
+<code>crates/hokulea</code>), its rebaked <code>.bin</code> must be byte-identical to the committed one — <code>git status</code> simply won't list
+it. If an "untouched" guest's binary changed, something leaked into it; find out what before proceeding.</li>
+<li><strong>The ID constants and the <code>.bin</code> files must come from the same bake.</strong> <code>kailua-cli config</code> asserts at runtime that
+the computed image ID of each embedded ELF matches its hardcoded constant, so a mismatched paste fails loudly —
+but only once someone runs it.</li>
+</ul>
+<p>Finally, update the example image IDs in <a href="setup.html">Setup</a>. Note the format difference: <code>fpvm.rs</code> stores each ID as
+<code>[u32; 8]</code> words, while the <code>config</code> command output shown in the book displays the RISC Zero digest form — each word
+serialized as little-endian bytes and concatenated. The <code>just export-fpvm</code> log prints both representations' inputs;
+the easiest path is to run <code>kailua-cli config</code> against a live rollup and copy its output.</p>
+<h2 id="step-7-test"><a class="header" href="#step-7-test">Step 7: Test</a></h2>
+<p>Run the full local suite:</p>
+<pre><code class="language-shell">just fmt
+just clippy   # host (default + full-featured) and all three guest workspaces, -D warnings
+just test     # cargo tests with RISC0_DEV_MODE=1
+</code></pre>
+<p>Run the <code>kailua-kona</code> library tests both with and without <code>-F experimental</code> — the partial-execution and EVM-wrapper
+code paths described in <a href="#standard-vs-experimental-builds">Standard vs. Experimental Builds</a> are only compiled and
+exercised under the flag (except <code>r0vm_crypto</code>, which only the experimental bake itself compiles). Be patient: the
+flag also enables additional stitching tests that iterate over pairs of boot configurations against the ~290 MiB
+<code>testdata</code> fixture, so the suite runs many times longer than the standard one — a long-quiet test process is
+grinding, not deadlocked. For the same reason, <code>just coverage</code> deliberately omits the flag; the experimental suite runs in the
+regular CI test jobs instead.</p>
+<p>The recorded-block replay tests in <code>crates/kona</code> re-derive and re-execute real blocks against a committed preimage
+fixture (<code>crates/kona/testdata</code>). A Kona upgrade can change <em>which</em> preimages the pipeline requests, failing these
+tests with missing-key errors even though the code is correct; in that case the fixture needs to be regenerated by
+re-running the recorded proofs in dev mode (<code>RISC0_DEV_MODE=1 kailua-cli prove --native --data-dir ./crates/kona/testdata ...</code> with the boot parameters pinned by the tests), not the code reverted. When regenerating,
+flush RocksDB's write-ahead log into the <code>.sst</code> files before committing — preimages that only exist in the trailing
+<code>*.log</code> WAL file open fine locally but are matched by <code>.gitignore</code>'s <code>*.log</code> rule, producing a fixture that passes
+on your machine and fails in CI.</p>
+<div id="admonition-missing-preimages-hang-they-dont-error" class="admonition admonish-tip" role="note" aria-labelledby="admonition-missing-preimages-hang-they-dont-error-title">
+<div class="admonition-title">
+<div id="admonition-missing-preimages-hang-they-dont-error-title">
+<p>Missing preimages hang, they don't error</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-missing-preimages-hang-they-dont-error"></a>
+</div>
+<div>
+<p>Kona's host backend retries a failing or unresolvable preimage hint indefinitely.
+Whether in the replay tests, a devnet proving run, or production, a preimage that was seeded into the wrong store
+(or never seeded) presents as a <em>silent infinite hang</em> at the affected proving phase — not as an error.
+If a proving pipeline stalls after an upgrade, suspect a missing or misrouted preimage before anything else.</p>
+</div>
+</div>
+<p>Then validate end-to-end on the local devnet:</p>
+<pre><code class="language-shell">just devnet-fetch
+just devnet-build-fpvm      # debug build with locally-rebuilt guests
+just devnet-up
+just devnet-upgrade         # deploy contracts against the new image IDs
+just devnet-propose         # run a proposer...
+just devnet-validate        # ...and a validator
+just devnet-fault 1 [PARENT] # publish a faulty proposal and watch it get disproven
+</code></pre>
+<p>A faulty proposal being successfully disproven, and honest proposals resolving, exercises the full pipeline: new
+guests, new config hash, and new contracts working together.</p>
+<div id="admonition-note" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-title">
+<div class="admonition-title">
+<div id="admonition-note-title">
+<p>Note</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-note"></a>
+</div>
+<div>
+<p><code>just devnet-build-fpvm*</code> compiles the guests <strong>locally</strong> (not in Docker), so the resulting image IDs will not match
+the committed reproducible ones — that is expected, and the devnet deploys against whatever it built. Only the
+Docker bake from Step 6 produces the canonical IDs.</p>
+</div>
+</div>
+<h2 id="step-8-roll-out-on-chain"><a class="header" href="#step-8-roll-out-on-chain">Step 8: Roll Out On-chain</a></h2>
+<p>For an already-migrated rollup, the new image IDs (and, if the config hash computation changed, the new
+<code>ROLLUP_CONFIG_HASH</code>) must be pushed on-chain by upgrading the <code>KailuaVerifier</code> implementation as described in
+<a href="fpvm-upgrade.html">FPVM Upgrade</a>. Fresh migrations pick the new values up automatically through the standard
+<a href="upgrade.html">on-chain migration</a> flow.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="rpc.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="testing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="rpc.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="testing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="mermaid.min.js"></script>
+        <script src="mermaid-init.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

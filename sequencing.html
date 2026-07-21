@@ -1,0 +1,618 @@
+<!DOCTYPE HTML>
+<html lang="en" class="ayu sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Sequencing - The Kailua Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="./mdbook-admonish.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "ayu";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('ayu')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Kailua Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/boundless-xyz/kailua" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/boundless-xyz/kailua/edit/main/book/src/sequencing.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="sequencing"><a class="header" href="#sequencing">Sequencing</a></h1>
+<p>This chapter is the normative specification of Kailua's sequencing protocol: how the canonical state of a rollup is
+advanced through <em>proposals</em>, how contradictory proposals compete, and how a proposal becomes finalized.
+The key words <em>must</em>, <em>must not</em>, <em>should</em>, and <em>may</em> are to be interpreted as requirements on any conforming
+implementation.</p>
+<p>The rules below define the protocol in the abstract.
+The <code>KailuaTreasury</code>, <code>KailuaGame</code>, and <code>KailuaTournament</code> contracts constitute the current <em>implementation instance</em>
+of these rules on Ethereum, and the <a href="proposer.html">proposer agent</a> is the reference implementation of the
+proposer role.
+Implementation notes throughout this chapter map each abstract rule to its current enforcement point, but the abstract
+rules — not the contracts — are the source of intended behavior.</p>
+<h2 id="protocol-parameters"><a class="header" href="#protocol-parameters">Protocol Parameters</a></h2>
+<p>A sequencing deployment is parameterized by the following values, fixed at deployment time:</p>
+<div class="table-wrapper"><table><thead><tr><th>Symbol</th><th>Name</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>N</code></td><td>proposal output count</td><td>The number of output commitments each proposal must publish.</td></tr>
+<tr><td><code>S</code></td><td>output block span</td><td>The number of L2 blocks covered by each output commitment.</td></tr>
+<tr><td><code>T</code></td><td>challenge timeout</td><td>The period during which a proposal remains contestable.</td></tr>
+<tr><td><code>B</code></td><td>participation bond</td><td>The collateral a proposer must lock before proposing.</td></tr>
+<tr><td><code>V, A</code></td><td>vanguard, advantage</td><td>An optional privileged proposer and the duration of its priority window.</td></tr>
+<tr><td><code>G, t</code></td><td>genesis time, block time</td><td>The timestamp of the L2 genesis block and the L2 block interval.</td></tr>
+</tbody></table>
+</div>
+<p>Each proposal advances the chain by exactly <code>N × S</code> blocks.</p>
+<div id="admonition-implementation" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-title">
+<div class="admonition-title">
+<div id="admonition-implementation-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation"></a>
+</div>
+<div>
+<p>These parameters are immutable values of the deployed contract instance: <code>PROPOSAL_OUTPUT_COUNT</code>,
+<code>OUTPUT_BLOCK_SPAN</code>, <code>MAX_CLOCK_DURATION</code>, <code>participationBond</code> (owner-adjustable), <code>vanguard</code>/<code>vanguardAdvantage</code>
+(owner-assignable), and <code>GENESIS_TIME_STAMP</code>/<code>L2_BLOCK_TIME</code>. See <a href="parameters.html">deployment parameters</a>.</p>
+</div>
+</div>
+<h2 id="proposals"><a class="header" href="#proposals">Proposals</a></h2>
+<p>The protocol maintains a tree of proposals rooted at a trusted <strong>anchor</strong>: a starting state assumed valid by all
+participants.</p>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Example Proposal Tree (N × S = 64 blocks per proposal)
+---
+graph LR;
+  A[Anchor: 0] --&gt; B[B: 64];
+  A --&gt; B'[B': 64];
+  B --&gt; C[C: 128];
+  B --&gt; C'[C': 128];
+  C --&gt; D[D: 192];
+</pre>
+</div>
+<p>Siblings with different identities — such as <code>B</code> and <code>B'</code> above — implicitly dispute one another, with no separate
+challenge step. The <a href="#tournaments">tournament rules</a> below determine which child of each parent, here along the path
+<code>Anchor → B → C → D</code>, may carry finality forward.</p>
+<p>A <strong>proposal</strong> extends exactly one parent (the anchor or an earlier proposal) and consists of:</p>
+<ul>
+<li>A <strong>claim</strong>: an output commitment to the rollup state at height <code>h = h_parent + N × S</code>.</li>
+<li><strong>Intermediate commitments</strong>: output commitments at each of the <code>N − 1</code> heights
+<code>h_parent + S, h_parent + 2S, …</code>, published to a data availability layer such that each individual commitment can
+later be provably read back on the settlement layer. The claim itself serves as the <code>N</code>-th commitment.</li>
+<li>A <strong>derivation anchor</strong>: a reference to the settlement-layer (L1) state from which the proposal's rollup data is
+derivable.</li>
+<li>A <strong>duplication counter</strong>: an ordinal distinguishing repeated publications of otherwise identical proposal data.</li>
+</ul>
+<p>Publication space not occupied by intermediate commitments (<em>trailing data</em>) must be zero-valued.</p>
+<p>Every proposal has an <strong>identity</strong>: a binding commitment to its claim together with the entirety of its published
+data — intermediate commitments and trailing data alike.
+Two proposals with equal identities are <strong>duplicates</strong>: they assert exactly the same state transitions and the
+protocol treats them as sharing one fate.</p>
+<div id="admonition-note" class="admonition admonish-note" role="note" aria-labelledby="admonition-note-title">
+<div class="admonition-title">
+<div id="admonition-note-title">
+<p>Note</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-note"></a>
+</div>
+<div>
+<p>A proposal's identity deliberately excludes its derivation anchor.
+Whether a proposal's commitments are correct is independent of which L1 view they are derived from — this is
+eventually demonstrated by a <a href="validating.html">proof</a> against <em>some</em> published derivation anchor.</p>
+</div>
+</div>
+<div id="admonition-implementation-1" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-1-title">
+<div class="admonition-title">
+<div id="admonition-implementation-1-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-1"></a>
+</div>
+<div>
+<p>Proposals are <code>KailuaGame</code> instances created through the rollup's <code>DisputeGameFactory</code>; the anchor is the
+<code>KailuaTreasury</code> instance. Intermediate commitments are 32-byte output roots reduced to BLS12-381 scalar field
+elements (<code>hash_to_fe</code>) and published as EIP-4844 blobs — <code>ceil((N − 1) / 4096)</code> blobs per proposal — with KZG
+openings as the read-back mechanism. The claim is the game's <code>rootClaim</code>, the derivation anchor its <code>l1Head</code>, and the
+identity is <code>signature = sha256(rootClaim ‖ proposalBlobHashes)</code>.</p>
+</div>
+</div>
+<h2 id="proposal-creation-rules"><a class="header" href="#proposal-creation-rules">Proposal Creation Rules</a></h2>
+<p>A conforming implementation must reject any proposal that violates one of the following rules.</p>
+<p><strong>Proposer eligibility:</strong></p>
+<ol>
+<li>The proposer must not have been <a href="#elimination-and-collateral">eliminated</a> at any prior point.</li>
+<li>The proposer must have at least <code>B</code> collateral locked with the protocol at creation time.</li>
+<li>Successive proposals by the same proposer must strictly increase in height.</li>
+</ol>
+<p><strong>Structural integrity:</strong></p>
+<ol start="4">
+<li>Proposals must enter the protocol only through its sanctioned creation path, and be initialized exactly once.</li>
+<li>A proposal's encoding must be canonical: two encodings of the same proposal data must not be able to coexist as
+distinct proposals.</li>
+<li>Duplication counters must be assigned sequentially: a proposal with counter <code>d &gt; 0</code> is valid only if a proposal
+with identical claim data and counter <code>d − 1</code> exists.</li>
+<li>The proposal's height must equal its parent's height plus exactly <code>N × S</code>.</li>
+<li>All published data the proposal commits to must be available at creation time.</li>
+</ol>
+<p><strong>Tree consistency:</strong></p>
+<ol start="9">
+<li>The parent must itself be a proposal known to the protocol (or the anchor).</li>
+<li>The proposal's identity must still be <em>viable</em> in the parent's tournament: an identity proven faulty, or one that
+contradicts an identity proven valid, must not be (re-)introduced.</li>
+<li>The parent's tournament must not already have produced a finalized successor.</li>
+</ol>
+<p><strong>Timing:</strong></p>
+<ol start="12">
+<li>A proposal must not be created before the earliest time its claimed height can exist according to the rollup's
+block schedule: <code>G + h × t</code>.</li>
+<li>If a vanguard <code>V</code> is assigned, only <code>V</code> may create the <em>first</em> child of any parent until the advantage duration
+<code>A</code> has elapsed beyond the time given by rule 12. Other proposers may always create counter-proposals to an
+existing first child.</li>
+</ol>
+<p>The duplication counter (rules 5–6) exists so that a correct claim can be re-proposed when all prior proposals carrying
+it are disqualified — for example, when the original was published by a since-eliminated proposer, or alongside faulty
+intermediate commitments (which alter the identity but not the claim).</p>
+<div id="admonition-what-these-rules-uphold" class="admonition admonish-success" role="note" aria-labelledby="admonition-what-these-rules-uphold-title">
+<div class="admonition-title">
+<div id="admonition-what-these-rules-uphold-title">
+<p>What these rules uphold</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-what-these-rules-uphold"></a>
+</div>
+<div>
+<ul>
+<li><strong>Constant collateral (rules 1–3).</strong> One bond of <code>B</code> backs a proposer's entire chain of proposals, with at most one
+proposal per tournament. An honest proposer's collateral requirement never grows with the number or size of attacks
+against it — the resource-exhaustion resistance described in the
+<a href="introduction.html#resource-exhaustion">introduction</a>.</li>
+<li><strong>Exhaustive accounting (rules 4–6).</strong> A single creation path and a canonical encoding make the protocol's record of
+children and duplicates complete and unambiguous, so tournament outcomes can be computed from that record alone.</li>
+<li><strong>A connected, judgeable tree (rules 7–11).</strong> Every proposal attaches at exactly one known parent and height, with
+its full data available for judgement from the moment of creation, and nothing can attach below a decided
+tournament — settled state can never be re-opened.</li>
+<li><strong>Meaningful clocks (rules 12–13).</strong> A challenge window that opens before the claimed blocks can even exist burns
+dispute time while there is nothing yet to check; rule 12 prevents this, and rule 13 grants the vanguard only a
+bounded head start that can never block counter-proposals to an existing first child.</li>
+</ul>
+</div>
+</div>
+<div id="admonition-implementation-2" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-2-title">
+<div class="admonition-title">
+<div id="admonition-implementation-2-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-2"></a>
+</div>
+<div>
+<p>Rules 1–3 and 13 are enforced by <code>KailuaTreasury.propose</code> (<code>BadAuth</code>, <code>IncorrectBondAmount</code>, <code>BlockNumberMismatch</code>,
+<code>VanguardError</code>); rules 4–12 by <code>KailuaGame.initialize</code> (<code>Blacklisted</code>/<code>AlreadyInitialized</code>/<code>UnknownGame</code>,
+<code>BadExtraData</code> — via a fixed <code>0x72</code>-byte calldata length that removes encoding malleability —
+<code>InvalidDuplicationCounter</code>, <code>BlockNumberMismatch</code>, <code>BlobHashMissing</code>, <code>InvalidParent</code>, <code>ProvenFaulty</code>,
+<code>ClaimAlreadyResolved</code>, <code>ProposalGapRemaining</code>).</p>
+</div>
+</div>
+<h2 id="tournaments"><a class="header" href="#tournaments">Tournaments</a></h2>
+<p>The children of a proposal compete in a <strong>tournament</strong> to become its unique finalized successor.
+The tournament is decided by the following match rules, evaluated over children in order of creation:</p>
+<ol>
+<li>The earliest child whose identity is still viable (creation rule 10) and whose proposer is not eliminated is the
+current <strong>contender</strong>.</li>
+<li>Each later child (<strong>opponent</strong>) is compared against the contender:
+<ul>
+<li>An opponent created after the contender's challenge window (<code>T</code> from the contender's creation) had already
+closed is disregarded, and the contender wins the tournament outright. Late counter-proposals cannot re-open a
+settled claim.</li>
+<li>An opponent from an eliminated proposer is skipped.</li>
+<li>An opponent with the same identity is a duplicate of the contender and shares its fate.</li>
+<li>An opponent whose identity was proven faulty is disqualified, and its proposer
+<a href="#elimination-and-collateral">eliminated</a>.</li>
+<li>An opponent with a different but still-viable identity <strong>blocks the tournament</strong>: a match between two
+contradictory, unproven identities must not be decided by anything other than a <a href="validating.html">proof</a>.</li>
+</ul>
+</li>
+<li>If the contender's own identity becomes unviable, the contender and all of its recorded duplicates are
+disqualified — their proposers eliminated — and the contender search resumes from the next child.</li>
+</ol>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Match Evaluation Against the Contender
+---
+graph TD;
+  O[next opponent] --&gt; L{created after the contender's challenge window?};
+  L -- yes --&gt; W[contender wins the tournament];
+  L -- no --&gt; E{proposer eliminated?};
+  E -- yes --&gt; S[opponent skipped];
+  E -- no --&gt; I{same identity as contender?};
+  I -- yes --&gt; D[recorded as duplicate];
+  I -- no --&gt; F{proven faulty?};
+  F -- yes --&gt; X[opponent disqualified];
+  F -- no --&gt; P[tournament blocked until a proof decides];
+</pre>
+</div>
+<p>A tournament may be played out incrementally, but its outcome must be a deterministic function of the recorded proof
+outcomes, independent of who evaluates it.</p>
+<div id="admonition-what-these-rules-uphold-1" class="admonition admonish-success" role="note" aria-labelledby="admonition-what-these-rules-uphold-1-title">
+<div class="admonition-title">
+<div id="admonition-what-these-rules-uphold-1-title">
+<p>What these rules uphold</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-what-these-rules-uphold-1"></a>
+</div>
+<div>
+<ul>
+<li><strong>Safety without deadlines.</strong> A match between contradictory identities is only ever decided by a proof, and no
+<a href="validating.html#transition-proofs">proof can convict a correct proposal</a>. An honest proposal therefore survives every
+match it is drawn into without its proposer ever having to respond — attackers who flood a tournament with
+contradictions only queue up their own eliminations, at no added cost to the defender (see
+<a href="introduction.html#sybil-identities">Sybil identities</a>).</li>
+<li><strong>Bounded delay.</strong> Because opponents arriving after the contender's challenge window are disregarded, an adversary
+cannot keep a settled claim contested by continuously re-proposing against it. Once a correct contender's window
+closes, finality waits only on proofs against the contradictions created inside that window — a workload that
+shrinks with proving power rather than growing with the attacker's persistence (see
+<a href="introduction.html#withdrawal-delay">Withdrawal delay</a>).</li>
+</ul>
+</div>
+</div>
+<h3 id="resolution"><a class="header" href="#resolution">Resolution</a></h3>
+<p>A proposal becomes <strong>finalized</strong> — its claim accepted as the canonical rollup state — only when all of the following
+hold:</p>
+<ol>
+<li>Its parent is finalized. Finality proceeds strictly from the anchor outward.</li>
+<li>Either its full challenge timeout <code>T</code> has elapsed since creation, or its identity has been proven valid
+(finality <em>fast-forward</em>).</li>
+<li>It has won its parent's tournament as the surviving contender.</li>
+</ol>
+<p>The anchor itself is finalized directly by deployment governance, which is how a new deployment is activated.</p>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Proposal Lifecycle
+---
+graph LR;
+  C[Created] -- challenge window T elapses --&gt; R[Resolvable];
+  C -- identity proven valid --&gt; R;
+  R -- parent finalized, tournament won --&gt; F[Finalized];
+  C -- proven faulty, or contradicts a valid identity --&gt; X[Disqualified];
+</pre>
+</div>
+<p>Condition 1 exists because a proposal's correctness is only ever <em>conditional</em> on its parent: proofs judge the
+transition starting from the parent's claim. Finalizing strictly outward from the anchor turns this chain of
+conditional statements into an unconditional one — and gives faults a free cascade: once a proposal is eliminated, its
+entire descendant subtree simply never finalizes, without a single proof against any descendant.</p>
+<div id="admonition-implementation-3" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-3-title">
+<div class="admonition-title">
+<div id="admonition-implementation-3-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-3"></a>
+</div>
+<div>
+<p>Tournaments are evaluated by <code>KailuaTournament.pruneChildren</code> (progress persisted in
+<code>contenderIndex</code>/<code>opponentIndex</code>/<code>contenderDuplicates</code>; a viable contradiction reverts with <code>NotProven</code>).
+Resolution conditions are enforced by <code>KailuaGame.resolve</code> (<code>OutOfOrderResolution</code>, <code>ClockNotExpired</code>/<code>ProvenFaulty</code>,
+<code>NotProven</code>), and anchor finalization by the factory-owner-gated <code>KailuaTreasury.resolve</code>.</p>
+</div>
+</div>
+<h2 id="elimination-and-collateral"><a class="header" href="#elimination-and-collateral">Elimination and Collateral</a></h2>
+<p><strong>Elimination</strong> permanently disqualifies a proposer:</p>
+<ol>
+<li>A proposer is eliminated when one of their proposals is disqualified in a tournament match — its identity proven
+faulty, or contradicting a proven-valid identity.</li>
+<li>Elimination happens at most once per proposer, and only through a tournament of a finalized parent.</li>
+<li>The eliminated proposer's locked collateral is slashed and split three ways: one share to a prover beneficiary —
+resolved by the <a href="validating.html#payouts-and-permits">payout precedence</a> — one share to the proposer of the
+tournament's eventual winner, and one share burned.</li>
+<li>From the offending proposal onward, all of the proposer's proposals are skipped in every tournament, and the
+proposer may never propose again. Proposals made <em>before</em> the offending one remain in play.</li>
+</ol>
+<div style="text-align: center;">
+<pre class="mermaid">---
+title: Slashed Bond Distribution
+---
+graph LR;
+  B[slashed bond B] --&gt; P[⅓ prover reward];
+  B --&gt; W[⅓ tournament winner];
+  B --&gt; X[⅓ burned];
+</pre>
+</div>
+<p>Each share of the split serves a distinct purpose: the prover share is the bounty that funds permissionless proving,
+so that every fault pays for its own conviction; the winner share compensates the proposer whose correct
+counter-proposal kept the chain live while its collateral was locked in the dispute; and the burned share guarantees
+that every proven fault carries a strictly positive cost — even a proposer who convicts themselves through colluding
+prover and winner identities recovers at most two thirds of their bond.</p>
+<p>Honest proposers recover their collateral in full: a proposer who was never eliminated may withdraw their bond once
+every tournament containing one of their proposals has produced a finalized successor.</p>
+<div id="admonition-warning" class="admonition admonish-warning" role="note" aria-labelledby="admonition-warning-title">
+<div class="admonition-title">
+<div id="admonition-warning-title">
+<p>Warning</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-warning"></a>
+</div>
+<div>
+<p>The one-bond-many-proposals design means a single proven fault forfeits the proposer's entire bond, no matter how many
+correct proposals they have in flight. There is no partial slashing.</p>
+</div>
+</div>
+<div id="admonition-implementation-4" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-4-title">
+<div class="admonition-title">
+<div id="admonition-implementation-4-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-4"></a>
+</div>
+<div>
+<p><code>KailuaTreasury.eliminate</code> enforces rule 2 (<code>Blacklisted</code>, <code>NotProposed</code>, <code>AlreadyEliminated</code>) and performs the
+1/3 prover / 1/3 winner / 1/3 burn split; the winner's share accrues per-tournament and is credited upon resolution.
+Bond recovery is <code>claimProposerBond</code>.</p>
+</div>
+</div>
+<h2 id="the-proposer-role"><a class="header" href="#the-proposer-role">The Proposer Role</a></h2>
+<p>Any party may act as a proposer.
+For the rollup to remain both <em>safe</em> (no incorrect state finalizes) and <em>live</em> (correct state keeps finalizing), at
+least one honest, well-collateralized proposer must exist, and it must behave as follows:</p>
+<ul>
+<li><strong>Verify before extending.</strong> An honest proposer must validate every observed proposal — claim, each intermediate
+commitment, and the zeroness of trailing data — against its own trusted view of the rollup, and extend only the
+<em>canonical tip</em>: the highest correct proposal made by a non-eliminated proposer.</li>
+<li><strong>Propose only settled data.</strong> Proposals must be assembled exclusively from L2 data the proposer's view considers
+final, so published commitments can never be invalidated by an L2 reorg.</li>
+<li><strong>Respect timing.</strong> The proposer must wait out rule 12's minimum creation time, and — when it is not the vanguard —
+rule 13's advantage window, rather than submit proposals that will be rejected.</li>
+<li><strong>Handle duplicates deliberately.</strong> When its intended claim has already been proposed, the proposer must locate the
+lowest unused duplication counter, skipping duplicates that are faulty or authored by eliminated proposers — and
+must <em>not</em> re-propose at all if a correct duplicate by a non-eliminated proposer is already live, since doing so
+locks additional collateral without changing any outcome.</li>
+<li><strong>Maintain collateral.</strong> The proposer must ensure its locked collateral meets <code>B</code> (topping up exactly the shortfall)
+before proposing, and must keep its wallet funded — an unfunded honest proposer is a liveness failure.</li>
+<li><strong>Drive resolution.</strong> The proposer should finalize resolvable proposals along the canonical chain: waiting out
+timeouts (or acting on recorded validity proofs), advancing tournament evaluation, and resolving the surviving
+successor. Where evaluation is blocked by an undecided match, resolution must wait for a <a href="validating.html">proof</a>.</li>
+<li><strong>Monitor its own standing.</strong> A proposer observing its own elimination must alert its operator: its key is
+compromised or its data sources fed it incorrect outputs. It must also verify it is targeting the deployment's
+current implementation instance before proposing.</li>
+</ul>
+<div id="admonition-implementation-5" class="admonition admonish-info" role="note" aria-labelledby="admonition-implementation-5-title">
+<div class="admonition-title">
+<div id="admonition-implementation-5-title">
+<p>Implementation</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-implementation-5"></a>
+</div>
+<div>
+<p><code>kailua-cli propose</code> implements this role: it validates all proposals against <code>op-node</code> output roots, gates proposals
+on the finalized L2 head, performs the duplication-counter search and honest-duplicate skip, tops up bond shortfalls
+in the propose call, issues incremental tournament-evaluation transactions in bounded batches, and raises telemetry
+alarms upon self-elimination. See <a href="proposer.html">Proposer</a> for operation.</p>
+</div>
+</div>
+<div id="admonition-danger" class="admonition admonish-danger" role="note" aria-labelledby="admonition-danger-title">
+<div class="admonition-title">
+<div id="admonition-danger-title">
+<p>Danger</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-danger"></a>
+</div>
+<div>
+<p>A proposer's safety reduces to the integrity of its rollup view.
+An honest implementation connected to a divergent or lagging <code>op-node</code> will publish provably faulty proposals and
+forfeit its collateral; the protocol cannot distinguish it from a malicious proposer.</p>
+</div>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="testing.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="validating.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="testing.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="validating.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="mermaid.min.js"></script>
+        <script src="mermaid-init.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

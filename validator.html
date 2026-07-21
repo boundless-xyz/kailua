@@ -273,11 +273,13 @@ This allows it to restart quickly.</p>
 <li><code>max-derivation-length</code>: Maximum number of blocks in a continuous derivation proof sequence</li>
 <li><code>max-block-derivations</code>: Maximum number of blocks to derive per single proof.</li>
 <li><code>max-block-executions</code>: Maximum number of blocks to execute per single proof.</li>
+<li><code>num-block-partials</code>: Number of partial execution proofs to compute per block (Default 0). Only effective in <code>experimental</code> builds.</li>
 <li><code>num-tail-blocks</code>: Rate of growth of tail proofs in L1 blocks (Default 10).</li>
 <li><code>enable-experimental-witness-endpoint</code>: Enables the use of <code>debug_executePayload</code> to collect the execution witness from the execution layer.</li>
 <li><code>max-fault-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a fault proof (Default 900).</li>
 <li><code>max-validity-proving-delay</code>: The maximum amount of seconds to wait before starting to compute a validity proof (Default 0).</li>
 <li><code>clear-cache-data</code>: Whether to clear cache data after successful completion (Default false).</li>
+<li><code>export-profile-csv</code>: Whether to export a CSV file with proving performance data (Default false).</li>
 </ul>
 <h3 id="fault-proving-permits"><a class="header" href="#fault-proving-permits">Fault Proving Permits</a></h3>
 <p>The validator can optionally acquire <a href="design.html#fault-proving-permits">fault proving permits</a> before generating
@@ -441,6 +443,10 @@ making this process safe to delegate.</p>
 <li><code>BONSAI_API_KEY</code>: Your Bonsai API key.</li>
 <li><code>BONSAI_API_URL</code>: Your Bonsai API url.</li>
 </ul>
+<p>Optionally, the polling cadence can be tuned through a third environment variable:</p>
+<ul>
+<li><code>BONSAI_POLL_INTERVAL_MS</code>: Time in milliseconds between proving session status polls (Default 1000).</li>
+</ul>
 <div id="admonition-success-2" class="admonition admonish-success" role="note" aria-labelledby="admonition-success-2-title">
 <div class="admonition-title">
 <div id="admonition-success-2-title">
@@ -493,6 +499,8 @@ conditions and gas costs. The following optional parameters allow you to overrid
 <li><code>boundless-min-price-per-cycle</code>: Minimum price per cycle, e.g. <code>"0.00001 USD"</code> or <code>"0.0000001 ETH"</code>. Requires a unit. If unset, the SDK uses market pricing from the price provider.</li>
 <li><code>boundless-max-price-per-cycle</code>: Maximum price per cycle, same format. If unset, the SDK uses a market-calibrated default plus a gas cost buffer.</li>
 <li><code>boundless-max-price-cap</code>: Hard cap on total order price (e.g. <code>"0.5 ETH"</code>, <code>"100 USD"</code>). Safety mechanism to prevent excessive spending.</li>
+<li><code>boundless-dynamic-pricing-timeout-modifier</code>: Multiplier applied to both the SDK-computed lock timeout and overall order timeout. E.g. <code>2.0</code> doubles both, preserving the post-lock fulfillment window proportionally. If unset, the SDK-computed values are used unchanged.</li>
+<li><code>boundless-dynamic-pricing-ramp-up-modifier</code>: Multiplier applied to the SDK-computed price ramp-up period. If unset, the SDK-computed value is used unchanged.</li>
 </ul>
 <h4 id="retry-escalation"><a class="header" href="#retry-escalation">Retry Escalation</a></h4>
 <p>When a proof request expires without being fulfilled, it is automatically resubmitted with increased pricing and timeouts:</p>
@@ -576,6 +584,7 @@ hidden from <code>--help</code> and are rejected when <code>--boundless-dynamic-
 <li><code>SKIP_AWAIT_PROOF</code>: Skips waiting for the proving process to complete on Bonsai/Boundless.</li>
 <li><code>SKIP_DERIVATION_PROOF</code>: Skips provably deriving L2 transactions using L1 data.</li>
 <li><code>L1_HEAD_JUMP_BACK</code>: The number of l1 heads to jump back when initially proving.</li>
+<li><code>KAILUA_FORCE_RECURSION</code>: Forces stitched sub-proofs to be verified inside the guest program as explicit input instead of through zkVM assumption resolution (testing only).</li>
 </ul>
 
                     </main>
