@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// EigenDA proxy CLI arguments.
 pub mod args;
+/// Steel-based Canoe provider for EigenDA cert validity proofs.
 pub mod provider;
+/// Witness generation for the EigenDA-enabled guest.
 pub mod witgen;

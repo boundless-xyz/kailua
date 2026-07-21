@@ -35,6 +35,7 @@ use tracing::{error, info, warn};
 /// Publish a faulty sequencing proposal to test fault proofs
 #[derive(clap::Args, Debug, Clone)]
 pub struct FaultArgs {
+    /// Proposer arguments naming the deployment, signer, and transaction configuration.
     #[clap(flatten)]
     pub propose_args: ProposeArgs,
 
@@ -47,6 +48,11 @@ pub struct FaultArgs {
     pub fault_parent: u64,
 }
 
+/// Publishes an intentionally faulty proposal to exercise fault proving (devnet testing):
+/// the output at `fault_offset` past the parent proposal is replaced with a garbage root
+/// derived from the game count — falsifying the claimed root, an intermediate output, or
+/// the zeroed blob trail depending on the offset — and the proposal is submitted through
+/// the treasury with the required bond and duplication counter.
 pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("fault"));

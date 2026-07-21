@@ -30,16 +30,24 @@ use risc0_steel::Contract;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-/// A [CelestiaProvider] aware of the celestia height synchronized with a blobstream contract
+/// A [CelestiaProvider] that only serves blobs at heights the L1 Blobstream contract has attested.
 #[derive(Debug, Clone)]
 pub struct HanaProvider<T: CelestiaProvider + Send + Sync + Clone + Debug> {
+    /// The underlying provider used to fetch Celestia blobs.
     pub celestia_provider: T,
+    /// Latest Celestia height attested by the Blobstream contract as of the proposal's L1 head.
     pub blobstream_height: u64,
 }
 
 impl<T: CommsClient + FlushableCache + Send + Sync + Debug + Clone>
     HanaProvider<OracleCelestiaProvider<T>>
 {
+    /// Creates a provider whose trusted Celestia height is read from the Blobstream contract.
+    ///
+    /// Loads the [BootInfo] through the oracle, then proves the `SP1Blobstream.latestBlock` value
+    /// with a Steel EVM call whose block header must seal to the boot record's L1 head, so the
+    /// height bound is exactly what L1 had attested when the proposal was made. Returns the
+    /// provider together with the loaded boot record. Panics on any missing or malformed preimage.
     pub fn new(celestia_oracle: Arc<T>) -> (Self, BootInfo) {
         // Boot up hana provider with validated max height
         let boot = kona_proof::block_on(BootInfo::load(celestia_oracle.as_ref()))
@@ -87,6 +95,7 @@ impl<T: CelestiaProvider<Error = OracleProviderError> + Send + Sync + Clone + De
 {
     type Error = OracleProviderError;
 
+    /// Fetches a Celestia blob, rejecting any height beyond the Blobstream-attested maximum.
     async fn blob_get(&self, height: u64, commitment: Commitment) -> Result<Bytes, Self::Error> {
         if height > self.blobstream_height {
             return Err(OracleProviderError::BlockNumberPastHead(

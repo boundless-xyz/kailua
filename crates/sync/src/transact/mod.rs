@@ -12,10 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// Gas-premium transaction fillers.
 pub mod fillers;
+/// Fee-escalating transaction-publishing provider.
 pub mod provider;
+/// Retried block queries.
 pub mod rpc;
+/// Transaction execution through a Gnosis Safe.
 pub mod safe;
+/// Signer configuration from raw keys, AWS KMS, or GCP KMS.
 pub mod signer;
 
 use alloy::contract::{CallBuilder, CallDecoder, EthCall};
@@ -32,6 +37,7 @@ use std::future::IntoFuture;
 use std::time::Duration;
 use tracing::info;
 
+/// Transaction publication parameters.
 #[derive(clap::Args, Debug, Clone)]
 pub struct TransactArgs {
     /// Transaction Confirmation Timeout
@@ -43,12 +49,14 @@ pub struct TransactArgs {
     /// Blob Gas Fee Premium
     #[clap(long, env, required = false, default_value_t = 25)]
     pub blob_gas_premium: u128,
-    /// Whether to EIP-7594 to EIP-4844 transactions
+    /// Whether to apply EIP-7594 encoding to EIP-4844 transactions
     #[clap(long, env, required = false, default_value_t = false)]
     pub eip_7594: bool,
 }
 
 impl TransactArgs {
+    /// Returns a provider builder applying the configured gas fee premiums (see
+    /// [premium_provider]).
     pub fn premium_provider<N: Network>(
         &self,
     ) -> ProviderBuilder<Identity, JoinFill<Identity, PremiumFiller>>
@@ -59,14 +67,17 @@ impl TransactArgs {
     }
 }
 
+/// Publication of contract calls as transactions, instrumented under a tracing span.
 #[async_trait]
 pub trait Transact<N: Network> {
+    /// Publishes the call as a transaction and awaits its receipt within the timeout.
     async fn transact(
         &self,
         span: &'static str,
         timeout: Option<Duration>,
     ) -> anyhow::Result<N::ReceiptResponse>;
 
+    /// [Self::transact] under the given telemetry context.
     async fn timed_transact_with_context(
         &self,
         context: opentelemetry::Context,
@@ -76,6 +87,7 @@ pub trait Transact<N: Network> {
         self.transact(span, timeout).with_context(context).await
     }
 
+    /// [Self::transact] under the given telemetry context, with no receipt timeout.
     async fn transact_with_context(
         &self,
         context: opentelemetry::Context,
@@ -118,6 +130,8 @@ where
     }
 }
 
+/// Returns a provider builder whose fillers mark up estimated execution and blob gas prices
+/// by the given percentages, fetch nonces from the latest block, and fill in the chain id.
 pub fn premium_provider<N: Network>(
     premium_exec_gas: u128,
     premium_blob_gas: u128,

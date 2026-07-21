@@ -36,6 +36,7 @@ use tracing::{debug, error, info};
 /// Validity prove any running OP Stack rollup
 #[derive(clap::Args, Debug, Clone)]
 pub struct DemoArgs {
+    /// RPC provider arguments.
     #[clap(flatten)]
     pub provider: ProviderArgs,
 
@@ -61,14 +62,21 @@ pub struct DemoArgs {
     #[clap(long, env)]
     pub data_dir: Option<PathBuf>,
 
+    /// Proof generation arguments.
     #[clap(flatten)]
     pub proving: ProvingArgs,
+    /// Boundless proving market arguments.
     #[clap(flatten)]
     pub boundless: BoundlessArgs,
+    /// Telemetry arguments.
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
 }
 
+/// Continuously computes validity proofs for a running rollup without any on-chain Kailua
+/// deployment: a [handle_blocks] task requests one proof per `num_blocks_per_proof`
+/// finalized L2 blocks, serviced by the validator's proof request handler with permits and
+/// transaction publication disabled.
 pub async fn demo(args: DemoArgs, verbosity: u8, data_dir: PathBuf) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("demo"));
@@ -132,6 +140,9 @@ pub async fn demo(args: DemoArgs, verbosity: u8, data_dir: PathBuf) -> anyhow::R
     Ok(())
 }
 
+/// Follows the op-node's finalized head, requesting a proof for every
+/// `nth_proof_to_process`-th window of `num_blocks_per_proof` L2 blocks (against the latest
+/// L1 head), and logs the completions reported back through the channel.
 pub async fn handle_blocks(
     mut channel: DuplexChannel<Message>,
     args: DemoArgs,

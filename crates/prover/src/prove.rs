@@ -51,6 +51,16 @@ use {
     std::sync::Arc,
 };
 
+/// Computes a proof of the claim described by `args`, decomposing the workload as needed.
+///
+/// After preflight, the claim is divided into jobs of at most `max_block_derivations` L2 blocks,
+/// each proven via [crate::tasks::compute_fpvm_proof] and bisected whenever its witness exceeds
+/// the size limit, with derivation pipeline snapshots relayed between adjacent jobs. The
+/// resulting proofs are then recursively stitched, at most `max_proof_stitches` at a time, into
+/// a single receipt. Under the experimental feature, partial (chunked) execution proofs are
+/// computed up front and made available to all jobs.
+///
+/// Returns `None` when the L1 head is insufficient to derive the claim or stitching is skipped.
 pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt>> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("prove"));
@@ -874,6 +884,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     Ok(final_result)
 }
 
+/// Deletes the data directory if `clear_cache_data` is set; otherwise reports its persistence.
 pub async fn cleanup_cache_data(args: &ProveArgs) {
     let Some(data_dir) = args.kona.data_dir.as_ref() else {
         return;

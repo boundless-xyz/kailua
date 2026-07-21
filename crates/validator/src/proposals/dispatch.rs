@@ -28,6 +28,12 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 use tracing::{error, info, warn};
 
+/// Pops every due entry from `buffer` — a min-heap of `(Reverse(dispatch time), proposal
+/// index)` — and requests a fault or validity proof for it, per `is_fault`.
+///
+/// Entries whose proposal (or parent) was freed by resolution, whose signature is no longer
+/// viable, or whose claim is already proven are dropped; failed requests are re-queued ten
+/// seconds later.
 #[allow(clippy::too_many_arguments)]
 pub async fn dispatch_proof_requests<P: Provider>(
     args: &crate::args::ValidateArgs,

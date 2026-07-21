@@ -25,16 +25,24 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tracing::debug;
 
+/// Client fetching blobs from an L1 consensus node's Beacon API by timestamp and hash.
 #[derive(Clone, Debug)]
 pub struct BlobProvider {
+    /// Base URL of the Beacon API endpoint, without trailing slash.
     pub cl_node_endpoint: String,
+    /// HTTP client used for all requests.
     pub client: Client,
+    /// Genesis timestamp of the beacon chain.
     pub genesis_time: u64,
+    /// Slot duration used to convert timestamps to slot numbers.
     pub seconds_per_slot: u64,
+    /// Timeout (seconds) per request attempt.
     pub timeout: u64,
 }
 
 impl BlobProvider {
+    /// Connects to the Beacon API endpoint, fetching the genesis time and slot duration
+    /// needed to locate blobs by timestamp.
     pub async fn new(cl_node_endpoint: String, timeout: u64) -> anyhow::Result<Self> {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(tracer.start("BlobProvider::new"));
@@ -83,10 +91,12 @@ impl BlobProvider {
         })
     }
 
+    /// Converts a block timestamp to its beacon chain slot number.
     pub fn slot(&self, timestamp: u64) -> u64 {
         (timestamp - self.genesis_time) / self.seconds_per_slot
     }
 
+    /// Performs a GET request against a Beacon API path and deserializes the JSON response.
     pub async fn client_get<T: DeserializeOwned>(
         client: &Client,
         endpoint: &str,
@@ -108,10 +118,12 @@ impl BlobProvider {
             .context("json")
     }
 
+    /// Performs a GET request against this provider's endpoint (see [Self::client_get]).
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         Self::client_get(&self.client, &self.cl_node_endpoint, path).await
     }
 
+    /// Fetches the blob with the given versioned hash from the slot at the given timestamp.
     pub async fn get_blob(&self, timestamp: u64, blob_hash: B256) -> anyhow::Result<BlobData> {
         let tracer = tracer("kailua");
         let context =
@@ -139,6 +151,8 @@ impl BlobProvider {
         bail!("Blob {blob_hash} @ {timestamp} not found in slot ({blob_count} blobs found)!");
     }
 
+    /// Fetches all blobs in a slot, trying the post-Fusaka `blobs` endpoint (recomputing KZG
+    /// commitments locally) before falling back to the legacy `blob_sidecars` endpoint.
     pub async fn get_blobs(&self, slot: u64) -> anyhow::Result<Vec<BlobData>> {
         let tracer = tracer("kailua");
         let context =
@@ -184,6 +198,7 @@ impl BlobProvider {
     }
 }
 
+/// Computes KZG commitments and proofs for the given blobs to form a transaction sidecar.
 pub fn blob_sidecar(blob_data: Vec<Blob>) -> anyhow::Result<BlobTransactionSidecar> {
     let mut blobs = Vec::with_capacity(blob_data.len());
     let mut commitments = Vec::with_capacity(blob_data.len());

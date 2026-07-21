@@ -41,12 +41,14 @@ pub fn proof_id_file_name(proof_id: B256) -> String {
     format!("risc0-{version}-{proof_id}.{suffix}")
 }
 
+/// Computes a unique proof identifier as the keccak256 hash of the image id and journal.
 pub fn proof_id<A: NoUninit>(image_id: A, journal: impl Into<Journal>) -> B256 {
     let image_id = bytemuck::cast::<A, [u8; 32]>(image_id);
     let data = [image_id.as_slice(), journal.into().bytes.as_slice()].concat();
     keccak256(&data)
 }
 
+/// Reads and bincode-deserializes a file from the data directory (or the working directory).
 pub async fn read_bincoded_file<T: DeserializeOwned>(
     data_dir: Option<&PathBuf>,
     file_name: &str,
@@ -70,6 +72,7 @@ pub async fn read_bincoded_file<T: DeserializeOwned>(
     ))
 }
 
+/// Bincode-serializes a value into a file in the data directory (or the working directory).
 pub async fn save_to_bincoded_file<T: Serialize>(
     value: &T,
     data_dir: Option<&PathBuf>,
@@ -83,6 +86,7 @@ pub async fn save_to_bincoded_file<T: Serialize>(
     .await
 }
 
+/// Writes bytes to a file in the data directory (or the working directory), overwriting it.
 pub async fn save_to_file(
     data: &[u8],
     data_dir: Option<&PathBuf>,

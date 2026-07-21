@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+#![cfg_attr(not(test), warn(missing_docs))]
 
 //! This crate contains the cryptographic primitives and procedures for securely generating
 //! Kona block derivation and execution traces usable in the Kailua hybrid dispute engine.

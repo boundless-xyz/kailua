@@ -43,6 +43,12 @@ use {
     kailua_kona::evm::witness::PartialExecutionWitness, kona_proof::errors::OracleProviderError,
 };
 
+/// Runs the core client natively while recording every oracle read into a witness.
+///
+/// The preimage oracle and blob provider are wrapped in witness-recording providers before
+/// driving [kailua_kona::client::core::run_core_client], so the returned [Witness] captures
+/// exactly the data the guest will replay. Boot claims are stitched into the final journal, and
+/// the collected preimages are finalized into shards of the requested size.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_witgen_client<P, B, O, D>(
     fpvm_image_id: B256,
@@ -185,9 +191,12 @@ where
     Ok((boot, journal_output, precondition, cached_driver, witness))
 }
 
+/// Blob provider that records every fetched blob with a freshly computed KZG commitment/proof.
 #[derive(Clone, Debug)]
 pub struct BlobWitnessProvider<T: BlobProvider> {
+    /// The wrapped blob provider.
     pub provider: T,
+    /// Collected blobs, commitments, and proofs.
     pub witness: Arc<Mutex<BlobWitnessData>>,
 }
 
@@ -224,12 +233,15 @@ impl<T: BlobProvider + Send> BlobProvider for BlobWitnessProvider<T> {
     }
 }
 
+/// Preimage oracle wrapper that records every successful read into a [WitnessOracle].
 #[derive(Clone, Debug)]
 pub struct OracleWitnessProvider<
     P: CommsClient + FlushableCache + Send + Sync + Debug + Clone,
     O: WitnessOracle,
 > {
+    /// The wrapped preimage oracle.
     pub oracle: Arc<P>,
+    /// The witness oracle collecting the read preimages.
     pub witness: Arc<Mutex<O>>,
 }
 
@@ -238,6 +250,7 @@ where
     P: CommsClient + FlushableCache + Send + Sync + Debug + Clone,
     O: WitnessOracle,
 {
+    /// Records a preimage key-value pair into the witness.
     pub fn save(&self, key: PreimageKey, value: &[u8]) {
         self.witness
             .lock()

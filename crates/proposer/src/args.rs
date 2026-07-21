@@ -19,6 +19,7 @@ use kailua_sync::transact::TransactArgs;
 /// Start the agent for publishing on-chain sequencing proposals
 #[derive(clap::Args, Debug, Clone)]
 pub struct ProposeArgs {
+    /// Chain synchronization arguments.
     #[clap(flatten)]
     pub sync: SyncArgs,
 

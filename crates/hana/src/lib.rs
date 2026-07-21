@@ -12,6 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![cfg_attr(not(test), warn(missing_docs))]
+
+//! This crate extends the Kailua proving client with Celestia data availability via Hana.
+//!
+//! Batch data may be fetched from Celestia blobs in addition to L1 calldata and EIP-4844 blobs.
+//! Celestia reads are only trusted up to the height attested by the SP1 Blobstream contract on
+//! L1, which is proven inside the guest using a Steel EVM call anchored to the proposal's L1 head.
+
+/// Data source factory that inserts Celestia into the derivation pipeline.
 pub mod da;
+/// Blobstream-bounded Celestia blob provider.
 pub mod provider;
+/// Entry point for running the stitching client with Celestia DA enabled.
 pub mod stitching;

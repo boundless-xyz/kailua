@@ -12,6 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Embedded FPVM guest programs and their RISC Zero image IDs.
+//!
+//! The crate root exposes `KAILUA_FPVM_*_ELF`/`_ID`/`_PATH` constants for each supported
+//! proving target: kona (always), hokulea for EigenDA (`eigen` feature), and hana for
+//! Celestia DA (`celestia` feature). Exactly one source provides them: the checked-in
+//! binaries under `src/bin` via `fpvm.rs` by default (or `fpvm-experimental.rs` under the
+//! `experimental` feature), or a fresh guest compilation through `risc0-build` under the
+//! `rebuild-fpvm` feature. The checked-in image IDs are pinned by deployed contracts;
+//! regenerate them with the `build-fpvm*` and `export-fpvm` justfile recipes.
+
+// The rebuild-fpvm path includes risc0-build generated code, which carries no doc comments.
+#![cfg_attr(not(any(test, feature = "rebuild-fpvm")), warn(missing_docs))]
+
 #[cfg(feature = "rebuild-fpvm")]
 include!(concat!(env!("OUT_DIR"), "/methods.rs"));
 

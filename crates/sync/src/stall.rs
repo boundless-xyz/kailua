@@ -24,10 +24,15 @@ use opentelemetry::Context;
 use std::future::IntoFuture;
 use std::marker::PhantomData;
 
+/// Contract calls retried indefinitely until they succeed, instrumented under a tracing span.
+///
+/// Named for its effect: the caller stalls until the queried data becomes available.
 #[async_trait]
 pub trait Stall<R> {
+    /// Repeats the call until it succeeds, retrying each attempt after the timeout (seconds).
     async fn stall(&self, span: &'static str, timeout: u64) -> R;
 
+    /// [Self::stall] under the given telemetry context.
     async fn stall_with_context(&self, context: Context, span: &'static str, timeout: u64) -> R {
         self.stall(span, timeout).with_context(context).await
     }

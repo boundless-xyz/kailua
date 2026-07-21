@@ -23,17 +23,25 @@ use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 use tokio::sync;
 
+/// A [DiskKeyValueStore] shared across concurrent proving tasks behind a read-write lock.
+///
+/// Global-generic preimage keys are XOR-masked with [Self::global_mask] (set to the job's L1
+/// head) so that jobs sharing the store keep their context-dependent global values apart.
 #[derive(Debug, Clone)]
 pub struct RWLKeyValueStore {
+    /// The shared underlying disk store.
     pub kv: Arc<RwLock<DiskKeyValueStore>>,
+    /// Mask applied to global-generic keys on every access.
     pub global_mask: B256,
 }
 
 impl RWLKeyValueStore {
+    /// Wraps a shared disk store with the given global-key mask.
     pub fn new(kv: Arc<RwLock<DiskKeyValueStore>>, global_mask: B256) -> Self {
         Self { kv, global_mask }
     }
 
+    /// Returns a handle to the same store using a different global-key mask.
     pub fn with_global_mask(self, global_mask: B256) -> Self {
         Self {
             kv: self.kv,
@@ -41,7 +49,7 @@ impl RWLKeyValueStore {
         }
     }
 
-    /// Applies a mask to global generics that may be relevant only in certain contexts
+    /// XORs global-generic keys with the mask; other key types pass through unchanged.
     pub fn mask(&self, key: B256) -> B256 {
         if let Ok(PreimageKeyType::GlobalGeneric) = PreimageKeyType::try_from(key.0[0]) {
             key ^ self.global_mask
@@ -78,12 +86,14 @@ impl KeyValueStore for RWLKeyValueStore {
     }
 }
 
+/// Creates a disk-backed preimage store in the configured data directory, if one is set.
 pub fn create_disk_kv_store(kona: &SingleChainHost) -> Option<RWLKeyValueStore> {
     kona.data_dir
         .as_ref()
         .map(|data_dir| RWLKeyValueStore::from(DiskKeyValueStore::new(data_dir.clone())))
 }
 
+/// Layers kona's local boot inputs over the disk store, or over a fresh in-memory store if none.
 pub fn create_split_kv_store(
     kona: &SingleChainHost,
     disk_kv_store: Option<RWLKeyValueStore>,

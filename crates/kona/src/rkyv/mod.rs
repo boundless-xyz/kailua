@@ -12,36 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// Serialization support for cached derivation pipeline stages.
 pub mod driver;
+/// Serialization support for revm state and execution result types.
 pub mod evm;
+/// Serialization support for block execution outcomes.
 pub mod execution;
+/// Serialization support for KZG blob and commitment types.
 pub mod kzg;
+/// Serialization support for OP payload attribute types.
 pub mod optimism;
+/// Serialization support for alloy primitive types.
 pub mod primitives;
+/// Serialization support for the preimage vector store.
 pub mod vec;
 
-/// A macro for serializing a given value into a `Vec<u8>` (byte vector) while applying a
-/// specified wrapper type for the serialization process.
-///
-/// This macro uses the `rkyv` library's serialization functionality and the `With` wrapper
-/// to allow for custom serialization contexts. The macro will immediately `unwrap` the
-/// result of the serialization, so it will panic if serialization fails. It is intended
-/// for cases where you are confident that serialization will not error in normal usage.
-///
-/// # Parameters
-///
-/// * `$with:ty` - The type of the wrapper that will be applied during serialization.
-/// * `$value:expr` - The value to be serialized using the specified wrapper.
-///
-/// # Returns
-///
-/// A `Vec<u8>` containing the serialized byte representation of the `$value`.
-///
-/// # Panics
-///
-/// This macro panics if the underlying serialization process returns an error or if
-/// the `unwrap()` call fails. Ensure that serialization cannot fail for the provided value
-/// and context.
+/// Serializes a value into bytes through the `rkyv::with` wrapper type `$with`, panicking on
+/// failure.
 #[macro_export]
 macro_rules! to_bytes_with {
     ($with:ty, $value:expr) => {
@@ -51,29 +38,8 @@ macro_rules! to_bytes_with {
     };
 }
 
-/// A macro to deserialize a byte slice into a specific type using a custom `rkyv::with` implementation.
-///
-/// This macro is particularly useful when you want to deserialize archived data that requires a
-/// custom implementation of the `ArchiveWith` and `DeserializeWith` traits. It uses the `rkyv`
-/// crate to access a byte slice, and applies the provided wrapper trait for deserialization to the
-/// original type.
-///
-/// # Arguments
-///
-/// - `$with`: The custom type implementing the `rkyv::with::ArchiveWith` and
-///   `rkyv::with::DeserializeWith` traits.
-/// - `$orig`: The original type that the input will be deserialized into.
-/// - `$bytes`: A reference to the byte slice which contains the archived data to deserialize.
-///
-/// # Returns
-///
-/// - The deserialized value of type `$orig`.
-///
-/// # Panics
-///
-/// - This macro will panic if:
-///   - The byte slice does not contain valid archived data.
-///   - Deserialization fails.
+/// Deserializes a byte slice into `$orig` through the `rkyv::with` wrapper type `$with`,
+/// panicking on invalid data.
 #[macro_export]
 macro_rules! from_bytes_with {
     ($with:ty, $orig:ty, $bytes:expr) => {{
