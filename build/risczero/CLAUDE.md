@@ -36,7 +36,11 @@ path-depending on `crates/{kona,hokulea,hana}`. Consequences:
   can't-vendor and kona-hardforks NUT-bundle gotchas — never run `cargo vendor` directly).
 - Anything that changes the compiled guest — source, deps, or even the `version` field of
   `crates/{kona,hokulea,hana}` — changes the image IDs. Those three crates deliberately pin
-  their own `version` instead of inheriting the workspace version.
+  their own `version` instead of inheriting the workspace version. This includes
+  **comment-only edits**: the guest ELFs embed panic `Location` (file, line) data, so shifting
+  line numbers in guest-reachable source perturbs every image that compiles it in (a rebuilt
+  ELF that is byte-size-identical but content-different is the signature of pure line-number
+  churn).
 
 ## Lint quirk
 
