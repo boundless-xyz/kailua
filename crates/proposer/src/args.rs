@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,12 +13,13 @@
 // limitations under the License.
 
 use kailua_sync::args::SyncArgs;
-use kailua_sync::transact::signer::ProposerSignerArgs;
 use kailua_sync::transact::TransactArgs;
+use kailua_sync::transact::signer::ProposerSignerArgs;
 
 /// Start the agent for publishing on-chain sequencing proposals
 #[derive(clap::Args, Debug, Clone)]
 pub struct ProposeArgs {
+    /// Chain synchronization arguments.
     #[clap(flatten)]
     pub sync: SyncArgs,
 

@@ -1,4 +1,4 @@
-// Copyright 2026 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,9 +23,9 @@
 //! Errors from a method blocked via `--blocked-rpc-methods` are exempt from the delay: they
 //! can never succeed, so kona should fall through to fine-grained hints without pacing. A
 //! generic "method not found" is not exempt, since behind a load balancer it can recover on
-//! retry (see [is_method_blacklisted]).
+//! retry (see `is_method_blacklisted`).
 
-use alloy_primitives::{keccak256, B256};
+use alloy_primitives::{B256, keccak256};
 use anyhow::Result;
 use async_trait::async_trait;
 use kailua_sync::retry::{MAX_DELAY_MS, MIN_DELAY_MS};
@@ -153,17 +153,20 @@ where
     }
 }
 
+/// [crate::hint_handler::FallbackBlobHintHandler] with retry backoff.
 pub type BackoffFallbackBlobHintHandler = BackoffWrapper<
     crate::hint_handler::FallbackBlobHintHandler,
     kona_host::single::SingleChainHost,
 >;
 
+/// [crate::hint_handler::FallbackBlobHintHandlerWithEigenDA] with retry backoff.
 #[cfg(feature = "eigen")]
 pub type BackoffFallbackBlobHintHandlerWithEigenDA = BackoffWrapper<
     crate::hint_handler::FallbackBlobHintHandlerWithEigenDA,
     hokulea_host_bin::cfg::SingleChainHostWithEigenDA,
 >;
 
+/// [crate::hint_handler::FallbackHanaHintHandler] with retry backoff.
 #[cfg(feature = "celestia")]
 pub type BackoffFallbackHanaHintHandler = BackoffWrapper<
     crate::hint_handler::FallbackHanaHintHandler,
@@ -342,10 +345,12 @@ mod tests {
         .await
         .unwrap_err();
         assert!(started.elapsed() < Duration::from_millis(MIN_DELAY_MS));
-        assert!(!FAILURES
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains_key(&key));
+        assert!(
+            !FAILURES
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains_key(&key)
+        );
     }
 
     #[tokio::test]
@@ -380,9 +385,11 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!FAILURES
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains_key(&key));
+        assert!(
+            !FAILURES
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains_key(&key)
+        );
     }
 }

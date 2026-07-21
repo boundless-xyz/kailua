@@ -1,10 +1,24 @@
+// Copyright 2025, 2026 Boundless Foundation, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::client::witgen;
 use crate::client::witgen::OracleWitnessProvider;
 use alloy_primitives::{Address, B256};
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_hokulea::canoe::KailuaCanoeVerifier;
-use kailua_kona::boot::{StitchedBootInfo, L1_HEAD_SENTINELS};
+use kailua_kona::boot::{L1_HEAD_SENTINELS, StitchedBootInfo};
 use kailua_kona::driver::CachedDriver;
 #[cfg(feature = "experimental")]
 use kailua_kona::evm::partial::PartialExecution;
@@ -12,8 +26,8 @@ use kailua_kona::evm::partial::PartialExecution;
 use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
-use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::oracle::WitnessOracle;
+use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
 use kona_derive::BlobProvider;
@@ -23,6 +37,11 @@ use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
+/// Runs the witgen client with EigenDA data availability, additionally collecting the EigenDA
+/// preimage and its auxiliary oracle reads through a [LocalOnceOracle]-cached provider.
+///
+/// The recorded witness is validated up front with the in-guest Canoe verifier, except for
+/// partial-execution proofs whose sentinel L1 heads have no DA to validate.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_hokulea_witgen_client<P, B, O>(
     preimage_oracle: Arc<P>,

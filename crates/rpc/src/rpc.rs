@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@ use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 use std::path::PathBuf;
 use tokio::{spawn, try_join};
 
+/// Runs the RPC service: a [sync::handle_sync] task feeding the proposal cache and a
+/// [requests::handle_rpc_requests] server answering from it, until either exits.
 pub async fn rpc(args: RpcArgs, data_dir: PathBuf) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("rpc"));

@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,13 +14,13 @@
 
 use crate::canoe::KailuaCanoeVerifier;
 use crate::da::EigenDADataSourceProvider;
-use alloy_primitives::aliases::B256;
 use alloy_primitives::Address;
+use alloy_primitives::aliases::B256;
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_proof::eigenda_witness::EigenDAWitness;
 use hokulea_proof::preloaded_eigenda_provider::PreloadedEigenDAPreimageProvider;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
-use kailua_kona::boot::{StitchedBootInfo, L1_HEAD_SENTINELS};
+use kailua_kona::boot::{L1_HEAD_SENTINELS, StitchedBootInfo};
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
 #[cfg(feature = "experimental")]
@@ -31,18 +31,22 @@ use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::precondition::Precondition;
 use kona_derive::BlobProvider;
 use kona_preimage::CommsClient;
-use kona_proof::boot::BootInfo;
 use kona_proof::FlushableCache;
+use kona_proof::boot::BootInfo;
 use std::fmt::Debug;
 use std::sync::Arc;
 
+/// [StitchingClient] that runs the Kailua proving client with EigenDA data availability.
 #[derive(Clone, Debug)]
 pub struct HokuleaStitchingClient<T: CommsClient + FlushableCache + Clone> {
+    /// Untrusted host-supplied EigenDA certificates and blobs used during derivation.
     pub eigen_da_witness: EigenDAWitness,
+    /// The oracle serving the boot record and EigenDA validation preimages.
     pub eigen_da_oracle: Arc<T>,
 }
 
 impl<T: CommsClient + FlushableCache + Clone> HokuleaStitchingClient<T> {
+    /// Creates a stitching client from an EigenDA witness and its backing oracle.
     pub fn new(eigen_da_witness: EigenDAWitness, eigen_da_oracle: Arc<T>) -> Self {
         Self {
             eigen_da_witness,
@@ -52,11 +56,15 @@ impl<T: CommsClient + FlushableCache + Clone> HokuleaStitchingClient<T> {
 }
 
 impl<
-        O: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
-        B: BlobProvider + Send + Sync + Debug + Clone,
-        T: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
-    > StitchingClient<O, B> for HokuleaStitchingClient<T>
+    O: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
+    B: BlobProvider + Send + Sync + Debug + Clone,
+    T: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
+> StitchingClient<O, B> for HokuleaStitchingClient<T>
 {
+    /// Validates the EigenDA witness into a preloaded preimage provider via [KailuaCanoeVerifier],
+    /// then delegates to [KonaStitchingClient] with the EigenDA data source. A sentinel L1 head
+    /// denotes a proof with no derivation work, so witness validation is skipped and an empty
+    /// provider is used. Panics if the two oracles disagree on the boot record.
     fn run_stitching_client(
         self,
         precondition_validation_data_hash: B256,

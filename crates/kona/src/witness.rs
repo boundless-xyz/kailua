@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,15 +20,15 @@ use crate::evm::partial::PartialExecution;
 #[cfg(feature = "experimental")]
 use crate::evm::witness::PartialExecutionWitness;
 use crate::executor::Execution;
-use crate::oracle::vec::VecOracle;
 use crate::oracle::WitnessOracle;
+use crate::oracle::vec::VecOracle;
 use crate::precondition::Precondition;
 use crate::rkyv::primitives::{AddressDef, B256Def};
 use alloy_primitives::{Address, B256};
 use std::fmt::Debug;
 
-/// Represents the complete structure of a `Witness`, which is used to hold
-/// the necessary data for authenticating a rollup state transition in the FPVM.
+/// The complete input to a guest program run: every preimage, blob, and prior proof output
+/// needed to authenticate a rollup state transition in the FPVM.
 #[derive(Clone, Debug, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct Witness<O: WitnessOracle> {
     /// The witness oracle for preimage data preloaded in memory.
@@ -43,15 +43,8 @@ pub struct Witness<O: WitnessOracle> {
     /// Represents a hash value used for loading precondition validation data.
     #[rkyv(with = B256Def)]
     pub precondition_validation_data_hash: B256,
-    /// A collection of stitched executions represented as a two-dimensional vector.
-    ///
-    /// # Structure:
-    /// - The outer `Vec` represents a collection of execution groups.
-    /// - Each inner `Vec<Execution>` contains a continuous series of `Execution` objects that
-    ///   represent individual executions within a specific stitched group.
-    ///
-    /// # Notes:
-    /// - Ensure all `Execution` objects within the groups are properly sorted.
+    /// Block execution traces to stitch in, grouped per proof, each group contiguous and in
+    /// block order.
     pub stitched_executions: Vec<Vec<Execution>>,
     /// Optional witness data for partial execution.
     #[cfg(feature = "experimental")]
@@ -59,13 +52,13 @@ pub struct Witness<O: WitnessOracle> {
     /// Pre-computed per-block chunk aggregation data.
     #[cfg(feature = "experimental")]
     pub partial_executions: Vec<Vec<PartialExecution>>,
-    /// An initial state for the derivation pipeline
+    /// Snapshot of the derivation pipeline to resume from, if any.
     pub derivation_cache: Option<CachedDriver>,
     /// Whether to record a derivation trace precondition in the output journal
     pub trace_derivation: bool,
-    /// A list of `StitchedBootInfo` instances to be stitched together from other proofs.
+    /// Preconditions claimed by the other proofs being stitched in.
     pub stitched_preconditions: Vec<Precondition>,
-    /// A list of `StitchedBootInfo` instances to be stitched together from other proofs.
+    /// Boot claims of the other proofs being stitched in.
     pub stitched_boot_info: Vec<StitchedBootInfo>,
     /// Represents the fault-proof virtual machine program image id.
     #[rkyv(with = B256Def)]
@@ -73,15 +66,8 @@ pub struct Witness<O: WitnessOracle> {
 }
 
 impl Witness<VecOracle> {
-    /// Creates a deep copy of the current instance.
-    ///
-    /// This method performs a "deep clone" of the object by cloning all its fields,
-    /// including any nested fields that implement the `deep_clone` method.
-    /// This ensures that all references and internal data are duplicated,
-    /// rather than pointing to the same objects.
-    ///
-    /// # Returns
-    /// A new instance of the structure with all fields deeply cloned.
+    /// Clones the witness with independent copies of both oracles' `Arc`-shared preimage
+    /// stores, so that consuming one witness does not drain the other.
     pub fn deep_clone(&self) -> Self {
         let mut cloned_with_arc = self.clone();
         cloned_with_arc.oracle_witness = cloned_with_arc.oracle_witness.deep_clone();
@@ -110,10 +96,12 @@ pub mod tests {
             blobs_witness,
             payout_recipient_address: Address::from([0xb0; 20]),
             precondition_validation_data_hash: keccak256(b"precondition_validation_data_hash"),
-            stitched_executions: vec![gen_executions(64)
-                .into_iter()
-                .map(|e| e.deref().clone())
-                .collect()],
+            stitched_executions: vec![
+                gen_executions(64)
+                    .into_iter()
+                    .map(|e| e.deref().clone())
+                    .collect(),
+            ],
             derivation_cache: None,
             trace_derivation: false,
             stitched_preconditions: vec![

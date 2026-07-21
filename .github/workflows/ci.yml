@@ -22,7 +22,7 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   SOLC_VERSION: 0.8.24
   RISC0_VERSION: 2.3.1
-  RISC0_TOOLCHAIN_VERSION: 1.94.1
+  RISC0_TOOLCHAIN_VERSION: 1.97.0
   RUST_BACKTRACE: full
 
 jobs:
@@ -44,6 +44,13 @@ jobs:
       - name: cargo fmt kailua-fpvm-hana
         run: |
           cargo fmt --all --check --manifest-path build/risczero/hana/Cargo.toml
+
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check license headers
+        run: ./scripts/check-license-headers.sh
 
   cargo-clippy:
     runs-on: [ self-hosted, prod, "${{ matrix.os }}" ]

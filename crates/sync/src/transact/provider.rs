@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,6 +29,9 @@ use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 use tracing::info;
 
+/// Provider wrapper that hardens transaction publication: each send is first simulated
+/// against the latest block, the nonce is taken as of that block, and fees are escalated by
+/// 10% per retry until the transaction is no longer underpriced.
 #[derive(Debug, Clone)]
 pub struct KailuaProvider<P> {
     /// Inner provider.
@@ -39,10 +42,12 @@ pub struct KailuaProvider<P> {
 }
 
 impl<P> KailuaProvider<P> {
+    /// Wraps the provider, optionally re-encoding EIP-4844 blob sidecars per EIP-7594.
     pub fn new(inner: P, eip_7594: bool) -> Self {
         Self { inner, eip_7594 }
     }
 
+    /// Returns the wrapped provider.
     pub fn provider(&self) -> &P {
         &self.inner
     }
@@ -155,6 +160,7 @@ where
     }
 }
 
+/// Converts an EIP-4844 blob sidecar into its EIP-7594 form by computing cell proofs.
 pub fn convert_sidecar(sidecar: BlobTransactionSidecar) -> BlobTransactionSidecarEip7594 {
     let settings = alloy::consensus::EnvKzgSettings::default();
     let cell_proofs = sidecar

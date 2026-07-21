@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,17 +19,17 @@ use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
 use alloy_evm::EvmFactory;
 use alloy_op_evm::block::OpAlloyReceiptBuilder;
-use alloy_primitives::{Sealed, B256};
+use alloy_primitives::{B256, Sealed};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
 use kona_executor::{BlockBuildingOutcome, TrieDBProvider};
 use kona_genesis::RollupConfig;
 use kona_mpt::TrieHinter;
 use kona_preimage::CommsClient;
+use kona_proof::FlushableCache;
 use kona_proof::errors::OracleProviderError;
 use kona_proof::executor::KonaExecutor;
 use kona_proof::l2::OracleL2ChainProvider;
-use kona_proof::FlushableCache;
 use kona_protocol::{BatchValidationProvider, BlockInfo};
 use op_alloy_consensus::OpReceiptEnvelope;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
@@ -52,11 +52,8 @@ use {
     risc0_zkvm::sha::{Impl as SHA2, Sha256},
 };
 
-/// Represents a block execution process and its results.
-///
-/// This struct is designed to hold essential information about the execution,
-/// including its initial state, the attributes associated with the execution,
-/// the resulting artifacts, and the final state after execution.
+/// A single block's execution trace: the payload attributes executed between two output roots,
+/// and the block artifacts they produced.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct Execution {
     /// Output root prior to execution
@@ -75,6 +72,8 @@ pub struct Execution {
 
 #[cfg(feature = "experimental")]
 impl Execution {
+    /// Returns the raw transactions matching the given SHA-256 hashes, in request order,
+    /// silently skipping unknown hashes.
     pub fn get_transactions(&self, tx_hashes: &[B256]) -> Vec<Bytes> {
         let transactions = self.attributes.transactions.as_deref().unwrap_or(&[]);
         let by_hash: std::collections::HashMap<B256, Bytes> = transactions
@@ -93,18 +92,15 @@ impl Execution {
     }
 }
 
-/// A structure that provides a caching layer for an `Executor` implementation.
-///
-/// The `CachedExecutor` is a generic struct that allows the caching of executed tasks
-/// and their results. It is designed to work with executors that implement the `Executor`
-/// trait and are thread-safe (`Send` and `Sync`).
+/// An [Executor] wrapper that replays already-proven block executions from a cache instead of
+/// re-executing them, and can optionally record fresh executions for later proving.
 #[derive(Debug)]
 pub struct CachedExecutor<E: Executor + Send + Sync + Debug> {
-    /// A vector of cached execution results.
+    /// Cached execution traces, in reverse of the expected execution order.
     pub cache: Vec<Arc<Execution>>,
-    /// The underlying block executor used when a task is not found in the cache.
+    /// The underlying block executor used on cache misses.
     pub executor: E,
-    /// An optional shared target for collecting executed tasks.
+    /// An optional shared sink recording every freshly executed block.
     pub collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
 }
 
@@ -126,12 +122,14 @@ where
         RollupConfig,
         Evm,
     >: for<'b> alloy_evm::block::BlockExecutorFactory<
-        EvmFactory = Evm,
-        ExecutionCtx<'b> = alloy_op_evm::OpBlockExecutionCtx,
-        Transaction = op_alloy_consensus::OpTxEnvelope,
-        Receipt = op_alloy_consensus::OpReceiptEnvelope,
-    >,
+            EvmFactory = Evm,
+            ExecutionCtx<'b> = alloy_op_evm::OpBlockExecutionCtx,
+            Transaction = op_alloy_consensus::OpTxEnvelope,
+            Receipt = op_alloy_consensus::OpReceiptEnvelope,
+        >,
 {
+    /// Wraps a new [KonaExecutor] with the given execution cache, reversing the cache for
+    /// consumption by pops.
     pub fn new(
         execution_cache: Vec<Arc<Execution>>,
         rollup_config: &'a RollupConfig,
@@ -178,74 +176,20 @@ impl<E: Executor<Receipt = OpReceiptEnvelope> + Send + Sync + Debug> Executor
     type Error = <E as Executor>::Error;
     type Receipt = OpReceiptEnvelope;
 
-    /// An asynchronous function that waits until the executor is ready.
-    ///
-    /// This function calls the `wait_until_ready` method on the internal `executor`
-    /// and awaits its completion. It ensures that the required state or prerequisites
-    /// are ready before proceeding.
-    ///
-    /// This can be used in scenarios where subsequent operations depend on the
-    /// readiness of the executor.
+    /// Defers to the wrapped executor.
     async fn wait_until_ready(&mut self) {
         self.executor.wait_until_ready().await;
     }
 
-    /// Updates the "safe head" of the blockchain to the specified sealed header.
-    ///
-    /// The "safe head" refers to the point in the blockchain that is considered
-    /// finalized or safe for operations and is used as a reference for further
-    /// progression or validation within the node.
-    ///
-    /// # Parameters
-    /// - `header`: A `Sealed<Header>` representing the new "safe head" of the blockchain.
-    ///   It is a sealed header, meaning it has gone through necessary validation and is immutable.
-    ///
-    /// # Behavior
-    /// Delegates the update operation to the `executor` component that handles
-    /// the internal logic for updating the safe head within the system.
+    /// Defers to the wrapped executor.
     fn update_safe_head(&mut self, header: Sealed<Header>) {
         self.executor.update_safe_head(header);
     }
 
-    /// Executes a given payload based on the specified `OpPayloadAttributes` and manages its outcomes.
-    ///
-    /// # Parameters
-    /// - `attributes`: An instance of [`OpPayloadAttributes`] containing the attributes used to build or execute the payload.
-    ///
-    /// # Returns
-    /// - `Result<BlockBuildingOutcome, Self::Error>`: On success, returns the resulting [`BlockBuildingOutcome`].
-    ///   If an error occurs during the execution process or cache lookup, returns `Self::Error`.
-    ///
-    /// # Functionality
-    /// 1. Calculates an agreed output root by invoking `compute_output_root`, which must succeed.
-    /// 2. Checks if the execution can be optimized by matching the given attributes and the agreed output
-    ///    with the last cached entry:
-    ///    - If a match is found:
-    ///      - Uses the cached artifacts and logs the cache hit details.
-    ///      - Updates the safe head with the cached header.
-    ///      - Returns the cached artifacts.
-    /// 3. If no cache optimization is possible but a `collection_target` exists:
-    ///    - Executes the payload with the given attributes using the executor.
-    ///    - Updates the `collection_target` with the resulting artifacts and metadata.
-    ///    - Returns the resulting artifacts.
-    /// 4. If no additional conditions are met, directly delegates the execution of the payload to the executor and awaits its result.
-    ///
-    /// # Edge Cases
-    /// - If no cached result is found (`self.cache.last()` fails or returns `None`):
-    ///   - Verification of cache attributes defaults to `false`.
-    /// - Handles locking and modification of the shared `collection_target` state safely.
-    ///
-    /// # Notes
-    /// - If an entry exists in the cache, it is popped after a cache hit is confirmed.
-    /// - The function assumes `self.executor.execute_payload` is an asynchronous operation meaning any errors or delays
-    ///   during this invocation may affect execution flow.
-    /// - Logging details about cache hits include the header number of the cached artifacts.
-    ///
-    /// # Errors
-    /// - Returns an appropriate error (`Self::Error`) if:
-    ///   - `compute_output_root` fails to calculate the agreed output root.
-    ///   - Matching cached attributes comparison (or unwrap) fails.
-    ///   - Payload execution via `self.executor` encounters an issue.
+    /// Serves the execution from the cache when the next cached entry matches the current output
+    /// root and the given attributes, advancing the safe head to the cached header. Otherwise
+    /// executes the payload, additionally recording the result (with a blank claimed output)
+    /// into the collection target when one is set.
     async fn execute_payload(
         &mut self,
         attributes: OpPayloadAttributes,
@@ -276,27 +220,14 @@ impl<E: Executor<Receipt = OpReceiptEnvelope> + Send + Sync + Debug> Executor
         self.executor.execute_payload(attributes).await
     }
 
-    /// Computes the output root based on the current state of the executor.
-    ///
-    /// This method invokes the `compute_output_root` function on the executor associated
-    /// with this instance. The output root is a cryptographic hash (of type `B256`) that
-    /// represents the resulting state or output from the operations performed by the executor.
-    ///
-    /// This operation could potentially result in an error, in which case the error type
-    /// associated with this instance (`Self::Error`) will be returned.
-    ///
-    /// # Returns
-    /// - `Ok(B256)`: The computed output root if the operation succeeds.
-    /// - `Err(Self::Error)`: If an error occurs during the computation.
-    ///
-    /// # Errors
-    /// This method will return an error if the executor fails to compute the output root.
+    /// Defers to the wrapped executor.
     fn compute_output_root(&mut self) -> Result<B256, Self::Error> {
         self.executor.compute_output_root()
     }
 }
 
-/// Initializes and constructs a new `PipelineCursor` for a given L2 chain.
+/// Constructs a derivation pipeline cursor positioned at the given L2 safe head, with the
+/// channel timeout appropriate for the head's timestamp.
 pub async fn new_execution_cursor<O>(
     rollup_config: &RollupConfig,
     safe_header: Sealed<Header>,
@@ -324,6 +255,7 @@ where
     Ok(Arc::new(RwLock::new(cursor)))
 }
 
+/// Computes the blob gas parameters revm expects for the child block of `parent_header`.
 #[cfg(feature = "experimental")]
 fn expected_blob_excess_gas_and_price(
     parent_header: &Header,
@@ -349,6 +281,8 @@ fn expected_blob_excess_gas_and_price(
         .map(|excess| BlobExcessGasAndPrice::new(excess, fraction))
 }
 
+/// Assembles the [PartialExecution] chunk for one block from its per-transaction traces,
+/// deriving the block environment and execution context from the executed header.
 #[cfg(feature = "experimental")]
 pub fn build_single_partial_for_block(
     execution: &Execution,
@@ -399,12 +333,12 @@ pub fn build_single_partial_for_block(
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::oracle::WitnessOracle;
+    use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::precondition::execution::{attributes_hash, exec_precondition_hash};
     use crate::rkyv::execution::tests::gen_execution_outcomes;
     use alloy_eips::eip4895::Withdrawal;
-    use alloy_primitives::{keccak256, Address, Sealable, B64};
+    use alloy_primitives::{Address, B64, Sealable, keccak256};
     use alloy_rpc_types_engine::PayloadAttributes;
     use kona_mpt::TrieNode;
     use kona_preimage::PreimageKey;
@@ -472,10 +406,9 @@ pub mod tests {
                             ))),
                             slot_number: Some(i as u64),
                         },
-                        transactions: Some(vec![format!("transactions {i}")
-                            .as_bytes()
-                            .to_vec()
-                            .into()]),
+                        transactions: Some(vec![
+                            format!("transactions {i}").as_bytes().to_vec().into(),
+                        ]),
                         no_tx_pool: Some(true),
                         gas_limit: Some(u64::MAX / 2),
                         eip_1559_params: Some(B64::new([0xb0; 8])),

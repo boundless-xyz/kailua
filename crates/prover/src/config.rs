@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2024 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ use tempfile::TempDir;
 use tokio::fs;
 use tracing::{debug, warn};
 
+/// Returns the rollup config from `args`, or fetches it from the op-node and persists it to a
+/// temp file kona can read, updating `args.kona.rollup_config_path` to point at it.
 pub async fn generate_rollup_config_file(
     args: &mut ProveArgs,
     tmp_dir: &TempDir,
@@ -51,6 +53,9 @@ pub async fn generate_rollup_config_file(
     })
 }
 
+/// Returns the L1 chain config from `args`, or looks it up in the kona registry (falling back to
+/// the default config with a warning), persisting it to a temp file kona can read and updating
+/// `args.kona.l1_config_path` to point at it.
 pub async fn generate_l1_config_file(
     args: &mut ProveArgs,
     tmp_dir: &TempDir,

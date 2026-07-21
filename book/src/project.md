@@ -41,6 +41,9 @@ The CLI for Kailua the main entry point for all supported commands:
 * `boundless`   Download a receipt from Boundless
 * `export`      Export the FPVM binaries and their hardcoded image ids
 
+The testing and benchmarking commands (`test-fault`, `benchmark`, `demo`, `bonsai`, and `boundless`) are documented in
+the [Testing Tools](testing.md) chapter.
+
 ## Contracts
 
 The contracts directory is a foundry project comprised of the following main contracts:

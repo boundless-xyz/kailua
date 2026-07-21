@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,14 +22,17 @@ use alloy::signers::{
 use anyhow::Context;
 use aws_config::BehaviorVersion;
 use gcloud_sdk::{
-    google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient, GoogleApi,
+    GoogleApi, google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
 };
 use std::str::FromStr;
 
+/// Defines a clap `Args` struct with prefixed arguments selecting one of three signer
+/// backends: a raw private key, an AWS KMS key, or a GCP KMS key.
 #[macro_export]
 macro_rules! define_signer_args {
     ($vis: vis $struct_name: ident, $prefix: ident) => {
         paste::paste! {
+            /// Signing key arguments naming a raw private key, an AWS KMS key, or a GCP KMS key.
             #[derive(clap::Args, Debug, Clone, Default)]
             $vis struct $struct_name {
                 /// Wallet private key
@@ -56,6 +59,7 @@ macro_rules! define_signer_args {
             }
 
             impl $struct_name {
+                /// Instantiates the wallet described by these arguments (see `args_to_wallet`).
                 pub async fn wallet(&self, chain_id: Option<ChainId>) -> anyhow::Result<EthereumWallet> {
                     args_to_wallet(
                         &self.[<$prefix key>],
@@ -87,6 +91,8 @@ define_signer_args!(pub GuardianSignerArgs, guardian_);
 define_signer_args!(pub ProposerSignerArgs, proposer_);
 define_signer_args!(pub ValidatorSignerArgs, validator_);
 
+/// Instantiates a wallet from the first configured backend, in order of precedence: raw
+/// private key, AWS KMS key, then GCP KMS key (whose arguments must all be present).
 pub async fn args_to_wallet(
     key: &Option<String>,
     aws_key_id: &Option<String>,

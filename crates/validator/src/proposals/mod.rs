@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,11 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// Dev-mode receipt patching (devnet only).
 #[cfg(feature = "devnet")]
 pub mod devnet;
+/// Dispatch of due proof requests to the proving workers.
 pub mod dispatch;
+/// Classification of new proposals and queueing of proof responses.
 pub mod processing;
+/// On-chain publication of computed validity and output fault proofs.
 pub mod receipts;
+/// On-chain publication of trail fault proofs.
 pub mod trails;
 
 use crate::args::ValidateArgs;
@@ -24,22 +29,28 @@ use crate::channel::DuplexChannel;
 use crate::channel::Message;
 use alloy::network::{Ethereum, TxSigner};
 use alloy::primitives::B256;
-use anyhow::{bail, Context};
-use kailua_sync::agent::{SyncAgent, FINAL_L2_BLOCK_RESOLVED};
+use anyhow::{Context, bail};
+use kailua_sync::agent::{FINAL_L2_BLOCK_RESOLVED, SyncAgent};
 use kailua_sync::proposal::Proposal;
 use kailua_sync::transact::provider::KailuaProvider;
 use kailua_sync::{await_tel, await_tel_res};
 use opentelemetry::global::{meter, tracer};
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::InnerReceipt;
+use risc0_zkvm::sha::Digestible;
 use std::collections::{BTreeMap, BinaryHeap, VecDeque};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
+/// Follows the on-chain deployment through a [SyncAgent] and drives the proving pipeline.
+///
+/// Each round classifies newly synced proposals and queues responses ([processing]),
+/// dispatches due fault and validity proof requests to the provers ([dispatch]), publishes
+/// completed receipts ([receipts]), and submits trail fault proofs ([trails]). Runs until
+/// the configured final L2 block is resolved.
 pub async fn handle_proposals(
     mut channel: DuplexChannel<Message>,
     args: ValidateArgs,
@@ -196,6 +207,11 @@ pub async fn handle_proposals(
     }
 }
 
+/// Picks the L1 head to prove a proposal against and records the choice in
+/// `last_proof_l1_head`: the proposal's own L1 head on the first attempt, then the next
+/// L1 head known beyond the last one tried, or `None` when no later head is known yet.
+/// Under devnet, the first attempt can be rolled back `jump_back` heads to force an
+/// insufficient-data proving error.
 pub fn get_next_l1_head(
     agent: &SyncAgent,
     last_proof_l1_head: &mut BTreeMap<u64, u64>,
@@ -227,7 +243,9 @@ pub fn get_next_l1_head(
             .map(|(_, (_, delayed_head))| *delayed_head)
             .unwrap_or(l1_head);
         if delayed_l1_head != l1_head {
-            warn!("(DEVNET ONLY) Forced l1 head rollback from {l1_head} to {delayed_l1_head}. Expect a proving error.");
+            warn!(
+                "(DEVNET ONLY) Forced l1 head rollback from {l1_head} to {delayed_l1_head}. Expect a proving error."
+            );
         }
         delayed_l1_head
     };

@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,13 +14,17 @@
 
 use crate::rkyv::primitives::B256Def;
 use alloy_primitives::B256;
-use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Digest;
+use risc0_zkvm::sha::Digestible;
 
+/// Canonical encodings and digests for cached derivation pipeline state.
 pub mod derivation;
+/// Validation of partial block execution (chunk) preconditions.
 #[cfg(feature = "experimental")]
 pub mod evm;
+/// Hashes committing to standalone block execution traces.
 pub mod execution;
+/// Loading and validation of proposal blob preconditions for validity proofs.
 pub mod proposal;
 
 #[derive(
@@ -36,6 +40,13 @@ pub mod proposal;
     rkyv::Serialize,
     rkyv::Deserialize,
 )]
+/// The set of validation conditions a proof commits to beyond its boot claim, digested into the
+/// journal's precondition hash.
+///
+/// At most one flavor is populated: a partial-execution (chunk) trace, an execution-only trace,
+/// or a combination of proposal blobs and derivation cache/trace conditions. The digest
+/// implementation enforces this exclusivity and collapses the populated fields into one hash,
+/// with a lone condition hash digesting to itself.
 pub struct Precondition {
     /// Blob of proposed intermediate outputs whose publication is a precondition
     #[rkyv(with = B256Def)]
@@ -55,22 +66,26 @@ pub struct Precondition {
 }
 
 impl Precondition {
+    /// Sets the execution trace condition.
     pub fn execution(mut self, execution_trace: B256) -> Self {
         self.execution_trace = execution_trace;
         self
     }
 
+    /// Sets the derivation cache and derivation trace conditions.
     pub fn derivation(mut self, derivation_cache: B256, derivation_trace: B256) -> Self {
         self.derivation_cache = derivation_cache;
         self.derivation_trace = derivation_trace;
         self
     }
 
+    /// Sets the proposal blobs condition.
     pub fn proposal(mut self, proposal_blobs: B256) -> Self {
         self.proposal_blobs = proposal_blobs;
         self
     }
 
+    /// Sets the partial (chunk) execution trace condition.
     pub fn partial(mut self, partial_execution: B256) -> Self {
         self.partial_executions = partial_execution;
         self
@@ -105,7 +120,8 @@ impl Digestible for Precondition {
     }
 }
 
-/// Combines (derivation/blob) precondition hashes
+/// Combines the (derivation, blob) precondition hashes, passing a lone non-zero hash through
+/// unchanged and hashing the concatenation when both are set.
 pub fn combine_precondition_hashes(left: B256, right: B256) -> B256 {
     match (left, right) {
         (B256::ZERO, B256::ZERO) => B256::ZERO,
@@ -115,7 +131,8 @@ pub fn combine_precondition_hashes(left: B256, right: B256) -> B256 {
     }
 }
 
-/// Merges (cache/trace) precondition hashes
+/// Merges the (cache, trace) derivation condition hashes, hashing the concatenation whenever
+/// either is non-zero.
 pub fn merge_precondition_hashes(left: B256, right: B256) -> B256 {
     match (left, right) {
         (B256::ZERO, B256::ZERO) => B256::ZERO,

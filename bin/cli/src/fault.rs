@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2024 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 use alloy::eips::eip4844::FIELD_ELEMENTS_PER_BLOB;
 use alloy::network::Ethereum;
-use alloy::primitives::{Bytes, B256, U256};
+use alloy::primitives::{B256, Bytes, U256};
 use alloy::providers::RootProvider;
 use alloy::sol_types::SolValue;
 use anyhow::Context;
@@ -23,11 +23,11 @@ use kailua_kona::blobs::hash_to_fe;
 use kailua_kona::config::config_hash;
 use kailua_proposer::args::ProposeArgs;
 use kailua_sync::proposal::Proposal;
-use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::provider::optimism::OpNodeProvider;
+use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::Transact;
-use kailua_sync::{await_tel, await_tel_res, retry_res_ctx_timeout, KAILUA_GAME_TYPE};
+use kailua_sync::{KAILUA_GAME_TYPE, await_tel, await_tel_res, retry_res_ctx_timeout};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 use tracing::{error, info, warn};
@@ -35,6 +35,7 @@ use tracing::{error, info, warn};
 /// Publish a faulty sequencing proposal to test fault proofs
 #[derive(clap::Args, Debug, Clone)]
 pub struct FaultArgs {
+    /// Proposer arguments naming the deployment, signer, and transaction configuration.
     #[clap(flatten)]
     pub propose_args: ProposeArgs,
 
@@ -47,6 +48,11 @@ pub struct FaultArgs {
     pub fault_parent: u64,
 }
 
+/// Publishes an intentionally faulty proposal to exercise fault proving (devnet testing):
+/// the output at `fault_offset` past the parent proposal is replaced with a garbage root
+/// derived from the game count — falsifying the claimed root, an intermediate output, or
+/// the zeroed blob trail depending on the offset — and the proposal is submitted through
+/// the treasury with the required bond and duplication counter.
 pub async fn fault(args: FaultArgs) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("fault"));

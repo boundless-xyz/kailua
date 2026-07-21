@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,17 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::ProvingError;
 use crate::args::ProvingArgs;
-use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
+use crate::client::proving::{SEMAPHORE_R0VM, acquire_owned_permit};
 use crate::profiling::{Profile, ProfiledReceipt};
 use crate::risczero::{KailuaProveInfo, KailuaSessionStats};
-use crate::ProvingError;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use bytemuck::NoUninit;
-use risc0_zkvm::{default_prover, Digest, ExecutorEnv, InnerReceipt, ProverOpts, Receipt};
+use risc0_zkvm::{Digest, ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_prover};
 use tracing::info;
 use tracing::log::warn;
 
+/// Proves the workload with the local zkVM prover under the r0vm semaphore, returning the
+/// verified receipt with cycle counts. Groth16 when `prove_snark`, succinct STARK otherwise.
 pub async fn run_zkvm_client<A: NoUninit + Into<Digest>>(
     image: (A, &[u8]),
     witness_slices: Vec<Vec<u32>>,
@@ -99,6 +101,9 @@ pub async fn run_zkvm_client<A: NoUninit + Into<Digest>>(
     ))
 }
 
+/// Builds the executor environment: witness slices and frames as guest input, and stitched
+/// receipts as verified assumptions — except Groth16 receipts (and all receipts under
+/// `KAILUA_FORCE_RECURSION`), which are written as input for in-guest verification.
 #[allow(deprecated)]
 pub fn build_zkvm_env<'a>(
     witness_slices: Vec<Vec<u32>>,

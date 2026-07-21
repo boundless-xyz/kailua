@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,13 +24,17 @@ use alloy::providers::{Provider, SendableTx};
 use alloy::transports::{RpcError, TransportResult};
 use async_trait::async_trait;
 
+/// [GasFiller] wrapper marking up every filled execution gas price by a percentage.
 #[derive(Clone, Debug, Default)]
 pub struct PremiumExecGasFiller {
+    /// Underlying gas estimation filler.
     pub inner: GasFiller,
+    /// Percentage premium added on top of estimated prices.
     pub premium: u128,
 }
 
 impl PremiumExecGasFiller {
+    /// Creates a filler adding the given percentage premium.
     pub fn with_premium(premium: u128) -> Self {
         Self {
             inner: Default::default(),
@@ -38,6 +42,7 @@ impl PremiumExecGasFiller {
         }
     }
 
+    /// Applies the premium (at least 1%) to a gas price (floored at 1).
     pub fn make_premium(&self, price: u128) -> u128 {
         let price = price.max(1);
         price + price * self.premium.max(1) / 100
@@ -84,13 +89,18 @@ impl<N: Network> TxFiller<N> for PremiumExecGasFiller {
     }
 }
 
+/// [BlobGasFiller] wrapper marking up blob gas prices by a percentage, quoting at least
+/// double the highest recent base blob fee.
 #[derive(Clone, Debug, Default)]
 pub struct PremiumBlobGasFiller {
+    /// Underlying blob gas filler.
     pub inner: BlobGasFiller,
+    /// Percentage premium added on top of estimated prices.
     pub premium: u128,
 }
 
 impl PremiumBlobGasFiller {
+    /// Creates a filler adding the given percentage premium.
     pub fn with_premium(premium: u128) -> Self {
         Self {
             inner: Default::default(),
@@ -98,6 +108,7 @@ impl PremiumBlobGasFiller {
         }
     }
 
+    /// Applies the premium to a blob gas price (floored at 1).
     pub fn make_premium(&self, price: u128) -> u128 {
         let price = price.max(1);
         price + price * self.premium / 100
@@ -148,6 +159,8 @@ where
     }
 }
 
+/// Nonce manager reading the transaction count at the latest block on every request,
+/// instead of tracking nonces locally.
 #[derive(Clone, Debug, Default)]
 pub struct LatestNonceManager;
 
@@ -165,6 +178,7 @@ impl NonceManager for LatestNonceManager {
     }
 }
 
+/// Combined filler stack applying gas premiums, latest-block nonces, and the chain id.
 pub type PremiumFiller = JoinFill<
     PremiumExecGasFiller,
     JoinFill<PremiumBlobGasFiller, JoinFill<NonceFiller<LatestNonceManager>, ChainIdFiller>>,

@@ -1,11 +1,13 @@
 [package]
 name = "kailua-cli"
+description = "All-in-one CLI for deploying, operating, and testing the Kailua fault proof system"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true

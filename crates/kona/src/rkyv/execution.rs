@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@ use rkyv::rancor::Fallible;
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith, With};
 use rkyv::{Archive, Archived, Place, Resolver};
 
+/// `rkyv::with` wrapper (de)serializing a [BlockBuildingOutcome] as an RLP-encoded header
+/// paired with its rkyv-encoded execution result.
 pub struct BlockBuildingOutcomeRkyv;
 
 impl ArchiveWith<BlockBuildingOutcome<OpReceiptEnvelope>> for BlockBuildingOutcomeRkyv {
@@ -92,6 +94,8 @@ where
     }
 }
 
+/// `rkyv::with` wrapper (de)serializing a [BlockExecutionResult] as RLP-encoded receipt and
+/// request lists alongside the block's gas totals.
 pub struct BlockExecutionResultRkyv;
 
 impl ArchiveWith<BlockExecutionResult<OpReceiptEnvelope>> for BlockExecutionResultRkyv {
@@ -158,7 +162,7 @@ where
 pub mod tests {
     use super::*;
     use crate::{from_bytes_with, to_bytes_with};
-    use alloy_primitives::{keccak256, Address, Bloom, B64, U256};
+    use alloy_primitives::{Address, B64, Bloom, U256, keccak256};
     use op_alloy_consensus::OpTxType;
 
     pub fn gen_execution_results(count: usize) -> Vec<BlockExecutionResult<OpReceiptEnvelope>> {

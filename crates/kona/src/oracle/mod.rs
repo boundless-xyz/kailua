@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// Oracle wrapper enforcing consistent responses for unauthenticated local keys.
 pub mod local;
+/// Vector-backed oracle serving witness preimages in expected access order.
 pub mod vec;
 
 use alloy_primitives::keccak256;
@@ -22,16 +24,10 @@ use kona_proof::FlushableCache;
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 use std::fmt::Debug;
 
-/// Determines if a given `PreimageKeyType` requires validation.
+/// Returns true if preimages under this key type must be authenticated against their key.
 ///
-/// # Parameters
-/// - `key_type`: A reference to a `PreimageKeyType` enum variant that specifies the type of key
-///   involved.
-///
-/// # Returns
-/// - `true` if the `key_type` requires validation.
-/// - `false` if the `key_type` is either `PreimageKeyType::Local` or `PreimageKeyType::GlobalGeneric`,
-///   as these types do not require validation.
+/// `Local` and `GlobalGeneric` keys do not embed a hash of their value, so they cannot be
+/// validated; every other key type must be.
 pub fn needs_validation(key_type: &PreimageKeyType) -> bool {
     !matches!(
         key_type,
@@ -39,42 +35,12 @@ pub fn needs_validation(key_type: &PreimageKeyType) -> bool {
     )
 }
 
-/// Recomputes the [PreimageKey] for a piece of data to validate its authenticity
+/// Authenticates `value` against `key` by recomputing the key from the data.
 ///
-/// This function ensures that the provided `value` is consistent with the `key`
-/// for the specified key type. It computes the hash of the `value` using the
-/// appropriate hashing algorithm based on the specified key type, and compares
-/// it against the given `key` to verify its validity.
-///
-/// # Arguments
-///
-/// * `key` - A reference to a `PreimageKey` that contains the hash and key type
-///   against which the `value` should be validated.
-/// * `value` - A byte slice representing the data whose hash will be calculated
-///   and validated against the given `key`.
-///
-/// # Returns
-///
-/// * `Ok(())` - If the `key` is consistent with the hashed `value`.
-/// * `Err(PreimageOracleError::InvalidPreimageKey)` - If the computed hash of
-///   the `value` does not match the given `key`.
-///
-/// # Key Types
-///
-/// The function supports the following key types:
-///
-/// * `PreimageKeyType::Keccak256` - Computes a Keccak-256 hash of the `value`.
-/// * `PreimageKeyType::Sha256` - Computes a SHA-256 hash of the `value`.
-/// * `PreimageKeyType::Local` or `PreimageKeyType::GlobalGeneric` - These key
-///   types bypass hash validation and do not compute or compare hashes.
-///
-/// # Panics
-///
-/// * Panics with `unimplemented!` if called with `PreimageKeyType::Precompile`,
-///   as precompile acceleration is not yet supported.
-/// * Panics with `unreachable!` if called with `PreimageKeyType::Blob`, since
-///   blob key types should not be loaded.
-///
+/// Keccak256 and Sha256 keys are recomputed with their respective hash and compared, returning
+/// `InvalidPreimageKey` on mismatch. Local and GlobalGeneric keys carry no hash and pass without
+/// checks. Panics on Precompile keys (acceleration unsupported) and Blob keys (never loaded
+/// directly; blobs are authenticated through [crate::blobs]).
 pub fn validate_preimage(key: &PreimageKey, value: &[u8]) -> PreimageOracleResult<()> {
     let key_type = key.key_type();
     let image = match key_type {
@@ -91,32 +57,32 @@ pub fn validate_preimage(key: &PreimageKey, value: &[u8]) -> PreimageOracleResul
         }
         PreimageKeyType::Local | PreimageKeyType::GlobalGeneric => None,
     };
-    if let Some(image) = image {
-        if key != &PreimageKey::new(image, key_type) {
-            return Err(PreimageOracleError::InvalidPreimageKey);
-        }
+    if let Some(image) = image
+        && key != &PreimageKey::new(image, key_type)
+    {
+        return Err(PreimageOracleError::InvalidPreimageKey);
     }
     Ok(())
 }
 
-/// A trait representing a Witness Oracle which manages and validates cryptographic preimages.
+/// An oracle that serves preimages recorded ahead of time in a host-supplied witness, rather
+/// than communicating with a live host.
 ///
-/// The `WitnessOracle` trait provides functionality to interact with and manage preimages.
-/// Preimages are key-value pairs where the key is typically an identifier for the data,
-/// and the value is the data itself stored as a `Vec<u8>`.
+/// The host populates the oracle with `insert_preimage` while running natively, then calls
+/// `finalize_preimages` to shape the data for in-guest consumption. The guest must call
+/// `validate_preimages` before serving any data, after which every response is trustworthy.
 pub trait WitnessOracle: CommsClient + FlushableCache + Send + Sync + Debug + Default {
-    /// Returns the count of preimages stored in the oracle.
+    /// Returns the number of preimages currently held by the oracle.
     fn preimage_count(&self) -> usize;
 
-    /// Ensures that the preimages stored in the oracle meet the required criteria or constraints
-    /// defined by each `PreimageKeyType`. If the validation fails, an error is returned.
+    /// Authenticates every held preimage against its key, erring on any mismatch.
     fn validate_preimages(&self) -> anyhow::Result<()>;
 
-    /// Inserts a preimage into the oracle.
+    /// Adds a preimage to the oracle.
     fn insert_preimage(&mut self, key: PreimageKey, value: Vec<u8>);
 
-    /// This method finalizes the process of preparing the oracle preimages for a specific shard
-    /// size and optional validation cache.
+    /// Prepares the recorded preimages for consumption, sharding them by `shard_size` and
+    /// optionally deduplicating validation work via back-references.
     fn finalize_preimages(&mut self, shard_size: usize, with_validation_cache: bool);
 }
 

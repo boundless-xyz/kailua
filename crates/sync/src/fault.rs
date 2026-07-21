@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// A provable divergence between a proposal's published commitments and local L2 outputs.
 #[derive(Copy, Clone, Debug)]
 pub enum Fault {
     /// Denotes a faulty intermediate output commitment

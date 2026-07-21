@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@ use crate::api::KailuaServerCache;
 use crate::args::RpcArgs;
 use anyhow::Context;
 use kailua_contracts::*;
-use kailua_sync::agent::{SyncAgent, FINAL_L2_BLOCK_RESOLVED};
+use kailua_sync::agent::{FINAL_L2_BLOCK_RESOLVED, SyncAgent};
 use kailua_sync::stall::Stall;
-use kailua_sync::{await_tel, KAILUA_GAME_TYPE};
+use kailua_sync::{KAILUA_GAME_TYPE, await_tel};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
@@ -27,6 +27,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
+/// Follows the on-chain deployment through a [SyncAgent], continuously publishing each newly
+/// admitted canonical proposal's block height and address to the server cache (and stdout as
+/// `TRACKED` lines), until the optional final L2 block is resolved.
 pub async fn handle_sync(
     args: RpcArgs,
     data_dir: PathBuf,
@@ -107,14 +110,14 @@ pub async fn handle_sync(
                 continue;
             }
             // Check termination condition
-            if let Some(final_l2_block) = args.sync.final_l2_block {
-                if proposal.output_block_number >= final_l2_block {
-                    warn!(
-                        "Dropping proposal {} with output height {} past final l2 block {}.",
-                        proposal.index, proposal.output_block_number, final_l2_block
-                    );
-                    continue;
-                }
+            if let Some(final_l2_block) = args.sync.final_l2_block
+                && proposal.output_block_number >= final_l2_block
+            {
+                warn!(
+                    "Dropping proposal {} with output height {} past final l2 block {}.",
+                    proposal.index, proposal.output_block_number, final_l2_block
+                );
+                continue;
             }
             // Print proposal index/address/height/output to stdout
             println!(

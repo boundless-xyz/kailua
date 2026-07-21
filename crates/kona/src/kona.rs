@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,31 +16,33 @@ use crate::boot::L1_HEAD_SENTINELS;
 use alloy_consensus::{Header, Receipt, ReceiptEnvelope, TxEnvelope};
 use alloy_eips::Decodable2718;
 use alloy_primitives::map::B256Map;
-use alloy_primitives::{Sealed, B256};
+use alloy_primitives::{B256, Sealed};
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
 use kona_derive::ChainProvider;
 use kona_mpt::{OrderedListWalker, TrieNode, TrieProvider};
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use kona_proof::errors::OracleProviderError;
 use kona_proof::HintType;
+use kona_proof::errors::OracleProviderError;
 use kona_protocol::BlockInfo;
 use std::sync::Arc;
 
-/// The oracle-backed L1 chain provider for the client program.
-/// Forked from [kona_proof::l1::OracleL1ChainProvider]
+/// The oracle-backed L1 chain provider for the client program, forked from
+/// [kona_proof::l1::OracleL1ChainProvider] to cache the traversed header chain and to support
+/// sentinel L1 heads denoting proofs without derivation.
 #[derive(Debug, Clone)]
 pub struct OracleL1ChainProvider<T: CommsClient> {
     /// The preimage oracle client.
     pub oracle: Arc<T>,
-    /// The chain of block headers traversed
+    /// The chain of block headers walked so far, starting from the L1 head.
     pub headers: Vec<Sealed<Header>>,
-    /// The index of each
+    /// Index of each cached header in [Self::headers], keyed by block hash.
     pub headers_map: B256Map<usize>,
 }
 
 impl<T: CommsClient> OracleL1ChainProvider<T> {
-    /// Creates a new [OracleL1ChainProvider] with the given boot information and oracle client.
+    /// Creates a provider anchored at `l1_head`, loading and sealing its header through the
+    /// oracle. A sentinel head yields an empty provider.
     pub async fn new(l1_head: B256, oracle: Arc<T>) -> Result<Self, OracleProviderError> {
         let (headers, headers_map) = if L1_HEAD_SENTINELS.contains(&l1_head) {
             Default::default()
@@ -72,32 +74,8 @@ impl<T: CommsClient> OracleL1ChainProvider<T> {
 impl<T: CommsClient + Sync + Send> ChainProvider for OracleL1ChainProvider<T> {
     type Error = OracleProviderError;
 
-    /// Retrieves and returns a block header by its hash.
-    ///
-    /// This function attempts to retrieve a block header by its hash (`hash`),
-    /// prioritizing locally cached headers to minimize the need for external requests.
-    /// If the header is not found in the cache, it fetches the data using the
-    /// connected oracle.
-    ///
-    /// # Parameters
-    /// - `hash`: The hash (`[u8; 32]` format, wrapped in `B256`) identifying the block header.
-    ///
-    /// # Returns
-    /// - `Ok(Header)`: The successfully retrieved and decoded block header.
-    /// - `Err(Self::Error)`: An error that occurred during the retrieval or decoding process.
-    ///
-    /// # Process
-    /// 1. Check if the header is cached in `self.headers_map`. If found, it is fetched
-    ///    from local storage, unsealed, and returned.
-    /// 2. If not cached, the function sends a request (using a `HintType`) for the
-    ///    header data via the oracle.
-    /// 3. Retrieves the header's RLP data from the oracle using `PreimageKey::new_keccak256`.
-    /// 4. Decodes the RLP-encoded header into a `Header` structure.
-    /// 5. Returns the decoded `Header` or an error if decoding fails.
-    ///
-    /// # Errors
-    /// - Returns a `Self::Error` if the oracle request, response retrieval, or
-    ///   RLP decoding fails.
+    /// Returns the header with the given hash — from the cache if already walked, otherwise
+    /// from the oracle, where the keccak preimage key authenticates the RLP data.
     async fn header_by_hash(&mut self, hash: B256) -> Result<Header, Self::Error> {
         // Use cached headers
         if let Some(index) = self.headers_map.get(&hash) {
@@ -115,35 +93,9 @@ impl<T: CommsClient + Sync + Send> ChainProvider for OracleL1ChainProvider<T> {
         Header::decode(&mut header_rlp.as_slice()).map_err(OracleProviderError::Rlp)
     }
 
-    /// Retrieves block information for a specific block number asynchronously.
-    ///
-    /// This function attempts to retrieve information about a block specified by its number. It works
-    /// by navigating the blockchain headers stored in memory, accessing the required block's details,
-    /// and constructing a `BlockInfo` structure with relevant data such as hash, number, parent hash,
-    /// and timestamp.
-    ///
-    /// # Arguments
-    /// * `block_number` - A `u64` representing the block number whose information is being retrieved.
-    ///
-    /// # Returns
-    /// A `Result` which:
-    /// - On success, contains a `BlockInfo` struct with the requested block's details.
-    /// - On failure, contains an error of type `Self::Error`, such as `OracleProviderError`.
-    ///
-    /// # Errors
-    /// - Returns `OracleProviderError::BlockNumberPastHead` if the requested `block_number` is greater
-    ///   than the number of the current "head" block.
-    /// - Returns other errors propagated from asynchronous operations such as fetching a header based
-    ///   on its hash.
-    ///
-    /// # Behavior
-    /// 1. First, checks if the block number is greater than the head block's number. If true,
-    ///    returns an error.
-    /// 2. Calculates the index of the requested block in the local header cache.
-    /// 3. Iteratively walks back through cached blockchain headers if the desired block is not yet
-    ///    cached, fetching additional parent headers as needed via `header_by_hash`.
-    /// 4. Constructs and returns a `BlockInfo` struct containing the required block's hash, number,
-    ///    parent hash, and timestamp.
+    /// Walks the header chain back from the L1 head to the requested height, caching each parent
+    /// along the way, so every returned block is an authenticated ancestor of the head. Errs if
+    /// the height exceeds the head.
     async fn block_info_by_number(&mut self, block_number: u64) -> Result<BlockInfo, Self::Error> {
         // Check if the block number is in range. If not, we can fail early.
         if block_number > self.headers[0].number {
@@ -173,6 +125,7 @@ impl<T: CommsClient + Sync + Send> ChainProvider for OracleL1ChainProvider<T> {
         })
     }
 
+    /// Reads the block's receipts by walking the receipts trie under the header's receipts root.
     async fn receipts_by_hash(&mut self, hash: B256) -> Result<Vec<Receipt>, Self::Error> {
         // Fetch the block header to find the receipts root.
         let header = self.header_by_hash(hash).await?;
@@ -199,6 +152,8 @@ impl<T: CommsClient + Sync + Send> ChainProvider for OracleL1ChainProvider<T> {
         Ok(receipts)
     }
 
+    /// Reads the block's transactions by walking the transactions trie under the header's
+    /// transactions root.
     async fn block_info_and_transactions_by_hash(
         &mut self,
         hash: B256,
@@ -260,11 +215,11 @@ impl<T: CommsClient> TrieProvider for OracleL1ChainProvider<T> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::oracle::WitnessOracle;
+    use crate::oracle::vec::tests::prepare_vec_oracle;
     use alloy_consensus::{ReceiptWithBloom, SignableTransaction, TxEip1559};
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{bytes, keccak256, Log, Signature, U256};
+    use alloy_primitives::{Log, Signature, U256, bytes, keccak256};
     use kona_mpt::{Nibbles, NoopTrieProvider};
 
     #[tokio::test(flavor = "multi_thread")]
@@ -415,10 +370,12 @@ pub mod tests {
             .await
             .unwrap();
         // fail to query future block
-        assert!(provider
-            .block_info_by_number(2)
-            .await
-            .is_err_and(|e| matches!(e, OracleProviderError::BlockNumberPastHead(_, _))));
+        assert!(
+            provider
+                .block_info_by_number(2)
+                .await
+                .is_err_and(|e| matches!(e, OracleProviderError::BlockNumberPastHead(_, _)))
+        );
         // query genesis
         assert_eq!(
             provider.block_info_by_number(0).await.unwrap(),

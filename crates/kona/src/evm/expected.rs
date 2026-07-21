@@ -1,4 +1,4 @@
-// Copyright 2026 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
 use crate::evm::partial::PartialResultAndState;
 use crate::rkyv::evm::AccountInfoRkyv;
 use crate::rkyv::primitives::{AddressDef, U256Def};
-use alloy_evm::revm::state::{AccountInfo, AccountStatus};
 use alloy_evm::revm::Database as RevmDatabase;
+use alloy_evm::revm::state::{AccountInfo, AccountStatus};
 use alloy_primitives::{Address, U256};
 use op_revm::constants::{
     ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT,
@@ -25,32 +25,44 @@ use op_revm::constants::{
 use std::collections::BTreeMap;
 use std::mem::take;
 
+/// A storage slot and its expected value.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ExpectedStorageEntry {
+    /// The storage slot key.
     #[rkyv(with = U256Def)]
     pub slot: U256,
+    /// The value expected in the slot.
     #[rkyv(with = U256Def)]
     pub value: U256,
 }
 
+/// The expected view of an account read by OP execution logic outside transaction state.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ExpectedAccount {
+    /// Whether the account exists.
     pub exists: bool,
+    /// The account's balance, nonce, and code identity.
     #[rkyv(with = AccountInfoRkyv)]
     pub info: AccountInfo,
     /// Sorted by slot key.
     pub storage: Vec<ExpectedStorageEntry>,
 }
 
+/// An account's expected state, keyed by address.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ExpectedStateEntry {
+    /// The account's address.
     #[rkyv(with = AddressDef)]
     pub address: Address,
+    /// The account's expected state.
     pub account: ExpectedAccount,
 }
 
+/// The accounts OP execution logic reads outside individual transaction state: the L1Block
+/// predeploy.
 pub const EXPECTED_STATE_ADDRESSES: [Address; 1] = [L1_BLOCK_CONTRACT];
 
+/// The L1Block storage slots read by OP fee calculations.
 pub const EXPECTED_STORAGE_SLOTS: [U256; 6] = [
     L1_BASE_FEE_SLOT,              // 1
     ECOTONE_L1_FEE_SCALARS_SLOT,   // 3
@@ -61,6 +73,7 @@ pub const EXPECTED_STORAGE_SLOTS: [U256; 6] = [
                                    // DA_FOOTPRINT_GAS_SCALAR_SLOT,
 ];
 
+/// Sorts the entries by address, and each account's storage by slot, for deterministic hashing.
 pub fn canonicalize_expected_state(
     mut expected_state: Vec<ExpectedStateEntry>,
 ) -> Vec<ExpectedStateEntry> {
@@ -71,6 +84,8 @@ pub fn canonicalize_expected_state(
     expected_state
 }
 
+/// Reads the fixed expected-state address and slot set out of the database, panicking if an
+/// account read fails.
 pub fn capture_required_expected_state<DB: RevmDatabase>(db: &mut DB) -> Vec<ExpectedStateEntry> {
     EXPECTED_STATE_ADDRESSES
         .into_iter()

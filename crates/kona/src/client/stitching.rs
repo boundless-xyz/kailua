@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::boot::{StitchedBootInfo, L1_HEAD_EXEC_ONLY_SENTINEL, L1_HEAD_SENTINELS};
+use crate::boot::{L1_HEAD_EXEC_ONLY_SENTINEL, L1_HEAD_SENTINELS, StitchedBootInfo};
 use crate::client::core::DASourceProvider;
 use crate::client::log;
 use crate::config::config_hash;
@@ -38,38 +38,35 @@ use std::sync::Arc;
 #[cfg(target_os = "zkvm")]
 use {
     alloy_primitives::map::HashSet,
-    risc0_zkvm::{serde::Deserializer, sha::Digest, Receipt},
+    risc0_zkvm::{Receipt, serde::Deserializer, sha::Digest},
     serde::Deserialize,
 };
 
+/// A client that runs the core Kailua program and absorbs other proofs' results into a single
+/// journal, implemented once per data availability integration.
 pub trait StitchingClient<
     O: CommsClient + FlushableCache + Send + Sync + Debug,
     B: BlobProvider + Send + Sync + Debug + Clone,
 >
 {
-    /// Runs the Kailua client to transition the rollup state and combines the result with
-    /// other proven contiguous state transitions to yield a single overarching
-    /// `ProofJournal` and `Precondition`.
-    ///
-    /// The returned `BootInfo` instance is what was loaded by the Kona client.
+    /// Runs the Kailua client to transition the rollup state, then combines the result with the
+    /// other proven contiguous state transitions to yield a single overarching [ProofJournal]
+    /// and [Precondition]. Also returns the [BootInfo] loaded by the client.
     ///
     /// # Arguments
-    ///
-    /// * `proposal_data_hash` - The hash of the proposal blob precondition data.
-    /// * `oracle` - The client for preloaded communication with the host environment.
+    /// * `proposal_data_hash` - The hash referencing the proposal blob precondition data, if any.
+    /// * `oracle` - The client for preloaded communication with the host.
     /// * `stream` - The client for streamed communication with the host.
     /// * `beacon` - The blob provider.
-    /// * `fpvm_image_id` - A `B256` identifier for the FPVM image to associate with the operations performed.
-    /// * `payout_recipient_address` - The Ethereum address (`Address`) where payout rewards are allocated.
-    /// * `stitched_executions` - A nested vector of `Execution` objects containing precomputed execution
-    ///   proofs to be stitched.
-    /// * `derivation_cache`: An initial snapshot to load for the derivation pipeline.
-    /// * `derivation_trace`: Whether to capture the final snapshot of the derivation pipeline in the precondition.
-    /// * `stitched_preconditions`: A vector of `Precondition` objects for the stitched proofs.
-    /// * `stitched_boot_info` - A vector of `StitchedBootInfo` objects describing proofs
-    ///   to be stitched together.
-    /// * `chunk_witness`: An optional witness for running a partial execution
-    /// * `chunks`: A list of partial executions to reuse
+    /// * `fpvm_image_id` - The image id against which stitched proofs are verified.
+    /// * `payout_recipient_address` - The proof payout recipient.
+    /// * `stitched_executions` - Execution traces of the exec-only proofs being stitched.
+    /// * `derivation_cache` - A derivation pipeline snapshot to resume from, if any.
+    /// * `derivation_trace` - Whether to commit a final pipeline snapshot in the precondition.
+    /// * `stitched_preconditions` - The preconditions of the boot claims being stitched.
+    /// * `stitched_boot_info` - The boot claims of the other proofs being stitched.
+    /// * `pe_witness` - An optional witness for running a partial execution.
+    /// * `partial_executions` - Partial execution (chunk) results to reuse.
     #[allow(clippy::too_many_arguments)]
     fn run_stitching_client(
         self,
@@ -91,15 +88,24 @@ pub trait StitchingClient<
         <B as BlobProvider>::Error: Debug;
 }
 
+/// The base [StitchingClient], generic over the data availability source factory used for
+/// derivation.
 #[derive(Clone, Debug)]
-pub struct KonaStitchingClient<D: Clone + Debug>(pub D);
+pub struct KonaStitchingClient<D: Clone + Debug>(
+    /// The data availability source factory.
+    pub D,
+);
 
 impl<
-        O: CommsClient + FlushableCache + Send + Sync + Debug,
-        B: BlobProvider + Send + Sync + Debug + Clone,
-        D: DASourceProvider<OracleL1ChainProvider<O>, B> + Clone + Debug,
-    > StitchingClient<O, B> for KonaStitchingClient<D>
+    O: CommsClient + FlushableCache + Send + Sync + Debug,
+    B: BlobProvider + Send + Sync + Debug + Clone,
+    D: DASourceProvider<OracleL1ChainProvider<O>, B> + Clone + Debug,
+> StitchingClient<O, B> for KonaStitchingClient<D>
 {
+    /// Runs [crate::client::core::run_core_client], then stitches partial executions, exec-only
+    /// proofs, and boot claims into the resulting journal. On zkVM targets, receipts streamed
+    /// from the host are verified natively up front; any stitched journal not among them becomes
+    /// a deferred verification assumption.
     fn run_stitching_client(
         self,
         proposal_data_hash: B256,
@@ -200,44 +206,9 @@ impl<
     }
 }
 
-/// Loads and verifies stitching journals for a given FPVM image.
-///
-/// This function continuously reads receipts representing the proofs of computations from the
-/// standard input (stdin). Each receipt is validated against the provided `fpvm_image_id`,
-/// representing the image digest of the FPVM. Validated receipts' journal digests are stored
-/// in a `HashSet` ensuring uniqueness. If deserialization of the receipt fails, the function
-/// terminates and returns the set of proven journal digests.
-///
-/// # Parameters
-/// - `fpvm_image_id`: A `B256` type identifier representing the hashed image ID of the FPVM.
-///
-/// # Returns
-/// - A `HashSet<Digest>` containing the unique journal digests of all verified receipts.
-///
-/// # Behavior
-/// 1. Converts the `fpvm_image_id` into a `Digest` for verification purposes.
-/// 2. Reads receipts in a loop from the standard input until an `Err` occurs during deserialization.
-///    - While reading receipts:
-///      - Logs the verification process.
-///      - Deserializes and verifies receipts against the provided `fpvm_image_id`.
-///      - Inserts successfully verified journal digests into the `HashSet`.
-/// 3. Logs the total number of successfully verified journal digests and exits with the result.
-///
-/// # Panics
-/// Panics if:
-/// - Receipt verification fails, indicating an invalid or tampered proof. The panic message will
-///   include which journal digest's verification failed.
-///
-/// # Logging
-/// - Logs "VERIFY" at the start of the method.
-/// - Logs "VERIFY {journal_digest}" after calculating journal digests.
-/// - Logs "PROOFS {count}" denoting the number of proven journal digests before exiting.
-///
-/// # Notes
-/// - The `Receipt::deserialize` and `risc0_zkvm::guest::env::stdin` are used to process input
-///   receipts.
-/// - This function is designed for environments where proofs generated externally are verified
-///   within the FPVM.
+/// Reads RISC Zero receipts from the zkVM input stream until it is exhausted, verifying each
+/// against the FPVM image id — panicking on failure — and returning the set of proven journal
+/// digests.
 #[cfg(target_os = "zkvm")]
 pub fn load_stitching_journals(fpvm_image_id: B256) -> HashSet<Digest> {
     log("VERIFY");
@@ -265,31 +236,9 @@ pub fn load_stitching_journals(fpvm_image_id: B256) -> HashSet<Digest> {
     }
 }
 
-/// Verifies the stitching journal of an FPVM image.
-///
-/// This function checks the validity of a journal based on its digest and the existing
-/// set of proven FPVM journal digests. The behavior of this function depends on the
-/// target OS being `zkvm`. If the journal's digest exists in the set of verified digests,
-/// it logs that the digest was found. Otherwise, it assumes the journal and attempts to
-/// verify it using the RISC Zero ZKVM environment.
-///
-/// # Parameters
-/// - `_fpvm_image_id`: The ID of the FPVM image represented as a `B256` hash. This
-///   ID is used during the journal verification process.
-/// - `_proof_journal`: The serialized proof journal as a `Vec<u8>`. It serves as
-///   the data to be verified.
-/// - `proven_fpvm_journals`: A reference to a `HashSet` of digests (of type `Digest`)
-///   containing the previously verified journals. This parameter is only used when
-///   the target OS is `zkvm`.
-///
-/// # Logs
-/// - Logs a message indicating whether the given journal digest was "FOUND" in the proven
-///   set or "ASSUME" if it is not present.
-///
-/// # Panics
-/// - If the verification process fails (i.e., the journal does not match the
-///   expected criteria for verification), the function will panic with the message:
-///   `"Failed to verify stitched journal assumption"`.
+/// Requires the given journal to be proven for the FPVM image: journals verified up front pass
+/// immediately, and any other becomes a verification assumption to be discharged through proof
+/// composition. No-op outside the zkVM.
 pub fn verify_stitching_journal(
     _fpvm_image_id: B256,
     _proof_journal: Vec<u8>,
@@ -308,23 +257,8 @@ pub fn verify_stitching_journal(
     }
 }
 
-/// Splits a provided two-dimensional vector of `Execution` objects into two separate structures:
-/// - A nested two-dimensional vector where each inner `Execution` is wrapped in an `Arc`.
-/// - A flattened vector containing all the `Execution` objects, each wrapped in an `Arc`.
-///
-/// This function is useful for scenarios where you want to maintain the original structure
-/// but also need a separate flattened cache to quickly access all `Execution` objects.
-///
-/// # Arguments
-///
-/// * `stitched_executions` - A two-dimensional vector of `Execution` objects (`Vec<Vec<Execution>>`)
-///   representing grouped and stitched executions.
-///
-/// # Returns
-///
-/// A tuple containing:
-/// 1. A two-dimensional vector (`Vec<Vec<Arc<Execution>>>`) where each `Execution` is wrapped in an `Arc`.
-/// 2. A flattened vector (`Vec<Arc<Execution>>`) representing a cache of all `Execution` objects.
+/// Wraps every execution in an [Arc], returning both the original per-proof grouping and a
+/// flattened execution cache sharing the same allocations.
 pub fn split_executions(
     stitched_executions: Vec<Vec<Execution>>,
 ) -> (Vec<Vec<Arc<Execution>>>, Vec<Arc<Execution>>) {
@@ -340,30 +274,10 @@ pub fn split_executions(
     (stitched_executions, execution_cache)
 }
 
-/// Stitches a collection of execution traces into a cohesive proof journal and validates the results.
-/// This function ensures the integrity of execution traces and their compliance with the rollup configuration.
-///
-/// # Parameters
-/// - `boot`: A reference to the `BootInfo` structure containing the rollup's configuration and state information.
-/// - `fpvm_image_id`: The unique identifier of the FPVM (Fault-Proof Virtual Machine) image being used for proofs.
-/// - `payout_recipient_address`: The address to receive the payout as a result of the execution.
-/// - `stitched_executions`: A reference to a vector of vectors containing execution traces. Each inner vector represents
-///   a sequence of linked execution steps (`Execution` objects).
-/// - `proven_fpvm_journals` (*conditional*): A reference to a set of `Digest` values representing proven
-///   journals from the FPVM. Only available when compiled for `zkvm` target (`#[cfg(target_os = "zkvm")]`).
-///
-/// # Behavior
-/// - When the `boot.l1_head` is zero, it represents a special case where only one batch of execution is validated
-///   by the Kailua client. If more than one batch is found, the function panics.
-/// - Validates the `receipts_root` of each execution in all traces by comparing it with the computed root value
-///   based on the execution result, rollup configuration, and payload attributes' timestamp.
-/// - Constructs an expected proof journal for each execution trace, which includes precondition and configuration
-///   hashes, and other state values derived from the execution trace (e.g., output roots and block numbers).
-/// - When the system is targeting `zkvm`, the proof journal is verified using the `proven_fpvm_journals`.
-///
-/// # Panics
-/// - When `boot.l1_head` is zero but the number of `stitched_executions` exceeds 1.
-/// - When an execution trace is empty (used in `.first()` or `.last()` calls without valid elements).
+/// Requires an execution-only proof covering each stitched execution trace by reconstructing
+/// the exact journal such a proof must commit to: the exec-only sentinel L1 head, the trace's
+/// execution precondition hash, and the output roots the trace spans. When this proof is itself
+/// execution-only, no proofs are required and only the single client-validated trace is allowed.
 pub fn stitch_executions(
     boot: &BootInfo,
     fpvm_image_id: B256,
@@ -476,59 +390,16 @@ pub fn stitch_partial_executions(
     }
 }
 
-/// Stitches multiple boot information records into a unified `ProofJournal`.
+/// Absorbs the boot claims of other derivation proofs into a unified [ProofJournal], returning
+/// the final boot record, journal, and precondition.
 ///
-/// This function consolidates and verifies multiple bootstrapping records, validating their
-/// integrity and creating a coherent journal that reflects the intermediate states and outputs
-/// of the bootstrapping process.
-///
-/// NOTE: This method does not support combining non-derivation proofs.
-///
-/// # Arguments
-///
-/// * `boot` - A reference to the base `BootInfo` structure used as the initial data point.
-/// * `fpvm_image_id` - A 256-bit identifier representing the FPVM image being used.
-/// * `payout_recipient_address` - The Ethereum address to which payouts should be sent.
-/// * `precondition_hash` - A 256-bit hash representing the preconditions required for stitching.
-/// * `stitched_boot_info` - A vector of `StitchedBootInfo` objects that are incrementally stitched
-///   into the `ProofJournal`.
-/// * `proven_fpvm_journals` - (Optional, only on `zkvm` platforms) A reference to a set of
-///   precomputed and verified FPVM journal digests used for proof verification.
-///
-/// # Returns
-///
-/// A `ProofJournal` object that reflects the final stitched state after processing
-/// all input records.
-///
-/// # Panics
-///
-/// This function will panic in the following scenarios:
-///
-/// 1. **Equivalence Check Failure**: If the `l1_head` values in the current and stitched boots
-///    are inconsistent.
-/// 2. **Progress Check Failure**: If there is no progress between the `agreed_l2_output_root` and
-///    `claimed_l2_output_root` of a `stitched_boot` object.
-/// 3. **Proof Assumption Failure**: If the stitching proof journal fails the `verify_stitching_journal`
-///    check.
-/// 4. **Non-contiguous Stitching**: If the claimed and agreed L2 output roots cannot be matched
-///    in a forward or backward stitching configuration.
-/// 5. **Execution-only Records**: If the combination of execution-only boot infos is attempted.
-///
-/// # Stitching Logic
-///
-/// 1. The function initializes a `ProofJournal` object using the base `BootInfo` structure and
-///    additional parameters.
-/// 2. For each `StitchedBootInfo` object in `stitched_boot_info`:
-///     - Verify the equivalence of `l1_head`.
-///     - Ensure progress is made between `agreed_l2_output_root` and `claimed_l2_output_root`.
-///     - Validate the proof associated with the stitching via the `verify_stitching_journal` function.
-///     - Perform continuity checks and update the journal in a forward or backward stitching
-///       configuration. If stitching is non-contiguous, the function will panic.
-///
-/// # Platform-specific Behavior
-///
-/// * On `zkvm` platforms, the function requires access to `proven_fpvm_journals` to verify stitching
-///   proofs. On other platforms, the verification step is omitted.
+/// Claims are stitched backwards: each stitched claim must end at the journal's current agreed
+/// output root, its derivation trace must equal the current derivation cache, and its proposal
+/// blobs condition must match — the journal's agreed root and derivation cache then rewind to
+/// the stitched claim's. Each claim requires a matching derivation proof via
+/// [verify_stitching_journal], and its L1 head must be an ancestor of the boot L1 head (walked
+/// through the header chain, with successive heads non-increasing). Panics on any violation;
+/// stitching claims of non-derivation proofs is unsupported.
 pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + Debug>(
     stream: Option<Arc<O>>,
     boot: BootInfo,
@@ -643,8 +514,8 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::client::core::tests::{op_sepolia_16491249_16491349, test_derivation};
     use crate::client::core::EthereumDataSourceProvider;
+    use crate::client::core::tests::{op_sepolia_16491249_16491349, test_derivation};
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
     use alloy_primitives::b256;

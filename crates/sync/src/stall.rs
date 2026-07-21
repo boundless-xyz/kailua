@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2024 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,16 +18,21 @@ use alloy::network::Network;
 use alloy::providers::Provider;
 use alloy::sol_types::SolCall;
 use async_trait::async_trait;
+use opentelemetry::Context;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
-use opentelemetry::Context;
 use std::future::IntoFuture;
 use std::marker::PhantomData;
 
+/// Contract calls retried indefinitely until they succeed, instrumented under a tracing span.
+///
+/// Named for its effect: the caller stalls until the queried data becomes available.
 #[async_trait]
 pub trait Stall<R> {
+    /// Repeats the call until it succeeds, retrying each attempt after the timeout (seconds).
     async fn stall(&self, span: &'static str, timeout: u64) -> R;
 
+    /// [Self::stall] under the given telemetry context.
     async fn stall_with_context(&self, context: Context, span: &'static str, timeout: u64) -> R {
         self.stall(span, timeout).with_context(context).await
     }

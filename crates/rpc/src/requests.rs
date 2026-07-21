@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@ use crate::args::RpcArgs;
 use jsonrpsee::server::ServerConfig;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+/// Serves the `kailua` API over HTTP and/or WS on the configured socket (127.0.0.1:1337 by
+/// default) until stopped; returns immediately if both protocols are disabled.
 pub async fn handle_rpc_requests(args: RpcArgs, cache: KailuaServerCache) -> anyhow::Result<()> {
     // Actual handler for requests
     let kailua_api_handler = KailuaApiHandler { cache }.into_rpc();

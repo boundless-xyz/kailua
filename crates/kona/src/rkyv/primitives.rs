@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_primitives::{Address, B256, B64, U256};
+use alloy_primitives::{Address, B64, B256, U256};
 
+/// rkyv mirror of [B256].
 #[derive(Clone, Debug, Copy, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[rkyv(remote = B256)]
 #[rkyv(archived = ArchivedB256)]
@@ -25,6 +26,7 @@ impl From<B256Def> for B256 {
     }
 }
 
+/// rkyv mirror of [B64].
 #[derive(Clone, Debug, Copy, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[rkyv(remote = B64)]
 #[rkyv(archived = ArchivedB64)]
@@ -36,6 +38,7 @@ impl From<B64Def> for B64 {
     }
 }
 
+/// rkyv mirror of [Address].
 #[derive(
     Clone, Debug, Copy, Hash, Eq, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]

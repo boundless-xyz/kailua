@@ -1,4 +1,4 @@
-// Copyright 2026 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@ use crate::evm::partial::{PartialExecution, PartialResultAndState, PartialStateE
 use crate::executor::Execution;
 use crate::rkyv::evm::{BlockEnvRkyv, CacheStateRkyv, OpBlockExecutionCtxRkyv};
 use alloy_evm::revm::context::BlockEnv;
-use alloy_evm::revm::database::states::CacheAccount;
 use alloy_evm::revm::database::CacheState;
+use alloy_evm::revm::database::states::CacheAccount;
 use alloy_evm::revm::state::AccountStatus;
 use alloy_op_evm::OpBlockExecutionCtx;
 
@@ -49,6 +49,8 @@ pub struct PartialExecutionWitness {
 }
 
 impl PartialExecutionWitness {
+    /// Builds a witness for the chunk, seeding the pre-state cache from its expected state and
+    /// per-transaction results.
     pub fn new(partial_execution: PartialExecution, transactions: Vec<Vec<u8>>) -> Self {
         let PartialExecution {
             results,
@@ -66,6 +68,8 @@ impl PartialExecutionWitness {
         }
     }
 
+    /// Builds a witness for the chunk, looking its raw transactions up in the block's execution
+    /// trace by their identity hashes.
     pub fn from_preflight(partial: PartialExecution, execution: &Execution) -> Self {
         let transactions = execution
             .get_transactions(&partial.tx_hashes)
@@ -76,6 +80,8 @@ impl PartialExecutionWitness {
     }
 }
 
+/// Seeds a pre-state cache with the expected out-of-transaction state and each account's
+/// original (pre-transaction) info, storage values, and bytecode from the chunk's results.
 pub fn cache_results(
     results: Vec<PartialResultAndState>,
     expected_state: Vec<ExpectedStateEntry>,

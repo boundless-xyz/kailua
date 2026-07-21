@@ -1,4 +1,4 @@
-// Copyright 2026 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 use crate::boot::L1_HEAD_TXN_ONLY_SENTINEL;
 use crate::evm::expected::{
-    apply_result_to_expected_state, canonicalize_expected_state, ExpectedStateEntry,
+    ExpectedStateEntry, apply_result_to_expected_state, canonicalize_expected_state,
 };
 use crate::precondition::evm::{
     compute_pe_trace, hash_block_ctx, hash_expected_state, hash_results,
@@ -24,8 +24,8 @@ use crate::rkyv::evm::{
     OpBlockExecutionCtxRkyv,
 };
 use crate::rkyv::primitives::{AddressDef, B256Def, U256Def};
-use alloy_evm::revm::context::result::{ExecutionResult, ResultAndState};
 use alloy_evm::revm::context::BlockEnv;
+use alloy_evm::revm::context::result::{ExecutionResult, ResultAndState};
 use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmStorageSlot};
 use alloy_op_evm::OpBlockExecutionCtx;
 use alloy_primitives::{Address, B256, U256};
@@ -33,23 +33,31 @@ use kona_proof::BootInfo;
 use op_revm::OpHaltReason;
 use std::sync::{Arc, Mutex};
 
+/// A storage slot and its recorded EVM slot value.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PartialStorageEntry {
+    /// The storage slot key.
     #[rkyv(with = U256Def)]
     pub slot: U256,
+    /// The slot's original and present values.
     #[rkyv(with = EvmStorageSlotRkyv)]
     pub slot_value: EvmStorageSlot,
 }
 
+/// rkyv-serializable mirror of a revm [Account], with storage sorted by slot.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PartialAccount {
+    /// The account's post-transaction info.
     #[rkyv(with = AccountInfoRkyv)]
     pub info: AccountInfo,
+    /// The account's info before the transaction.
     #[rkyv(with = AccountInfoRkyv)]
     pub original_info: AccountInfo,
+    /// The transaction's index within the block.
     pub transaction_id: u64,
     /// Sorted by slot key.
     pub storage: Vec<PartialStorageEntry>,
+    /// The account's status flags.
     #[rkyv(with = AccountStatusRkyv)]
     pub status: AccountStatus,
 }
@@ -88,10 +96,13 @@ impl From<PartialAccount> for Account {
     }
 }
 
+/// An account's post-transaction state, keyed by address.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PartialStateEntry {
+    /// The account's address.
     #[rkyv(with = AddressDef)]
     pub address: Address,
+    /// The account's state diff.
     pub account: PartialAccount,
 }
 
@@ -105,6 +116,7 @@ pub struct PartialStateEntry {
 /// `evm/cached.rs`.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PartialResultAndState {
+    /// The transaction's execution result.
     #[rkyv(with = ExecutionResultRkyv)]
     pub result: ExecutionResult<OpHaltReason>,
     /// Sorted by address.
@@ -142,10 +154,15 @@ impl From<PartialResultAndState> for ResultAndState<OpHaltReason> {
     }
 }
 
+/// One transaction's captured trace: its identity hash, result, and the expected pre-state at
+/// its boundary.
 #[derive(Clone, Debug)]
 pub struct PartialExecutionTrace {
+    /// SHA-256 of the transaction's EIP-2718 envelope.
     pub tx_hash: B256,
+    /// The transaction's execution result and state diff.
     pub result: PartialResultAndState,
+    /// The expected out-of-transaction state at this transaction's boundary.
     pub expected_state: Vec<ExpectedStateEntry>,
 }
 
@@ -174,6 +191,8 @@ pub struct PartialExecution {
 }
 
 impl PartialExecution {
+    /// Computes the chunk's precondition hash, binding its transaction results, block context,
+    /// and expected pre-state.
     pub fn precondition_hash(&self) -> B256 {
         compute_pe_trace(
             hash_results(&self.tx_hashes, &self.results),
@@ -182,6 +201,8 @@ impl PartialExecution {
         )
     }
 
+    /// Builds the boot record a chunk proof commits to: a no-op output root transition at the
+    /// parent block under the txn-only sentinel L1 head.
     pub fn boot_info(&self, boot: &BootInfo) -> BootInfo {
         BootInfo {
             l1_head: L1_HEAD_TXN_ONLY_SENTINEL,
@@ -194,6 +215,8 @@ impl PartialExecution {
         }
     }
 
+    /// Splits the chunk into up to `partials_per_block` smaller chunks, recomputing the expected
+    /// pre-state carried at each chunk boundary.
     pub fn split(self, partials_per_block: usize) -> Vec<PartialExecution> {
         // return nothing if we don't want any partials per block
         if partials_per_block == 0 {
@@ -228,7 +251,10 @@ impl PartialExecution {
     }
 }
 
+/// The chunk currently being replayed, tracking whether its expected pre-state was verified.
 pub struct ActivePartialExecution {
+    /// The chunk being replayed.
     pub partial: PartialExecution,
+    /// Whether the chunk's expected pre-state has been checked against the database.
     pub expected_state_verified: bool,
 }

@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,4 +12,5 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// The sender/receiver handle pair of an async channel of `T` values.
 pub type AsyncChannel<T> = (async_channel::Sender<T>, async_channel::Receiver<T>);

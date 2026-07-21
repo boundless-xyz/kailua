@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,8 +14,8 @@
 
 use kailua_hana::stitching::HanaStitchingClient;
 use kailua_kona::client::stateless::run_stateless_client;
-use kailua_kona::oracle::vec::VecOracle;
 use kailua_kona::oracle::WitnessOracle;
+use kailua_kona::oracle::vec::VecOracle;
 use kailua_kona::{client::log, witness::Witness};
 use risc0_zkvm::guest::env;
 use rkyv::rancor::BoxedError;

@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::blobs::hash_to_fe;
 use crate::blobs::BlobFetchRequest;
+use crate::blobs::hash_to_fe;
 use alloy_eips::eip4844::{Blob, FIELD_ELEMENTS_PER_BLOB};
 use alloy_primitives::B256;
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
 use kona_derive::BlobProvider;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use kona_proof::errors::OracleProviderError;
@@ -29,77 +29,44 @@ use std::fmt::Debug;
 use std::iter::once;
 use std::sync::Arc;
 
-/// Represents the data required to validate the output roots published in a proposal.
+/// The data required to validate the intermediate output roots published in a proposal against
+/// the outputs computed by a proof.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProposalPrecondition {
-    /// Represents the block height of the starting l2 root of the proposal.
+    /// Block height of the proposal's starting (agreed) L2 output root.
     pub proposal_l2_head_number: u64,
-    /// Represents the number of output roots expected in the proposal.
+    /// Number of output roots the proposal commits to.
     pub proposal_output_count: u64,
-    /// Represents the number of blocks covered by each output root.
+    /// Number of L2 blocks covered by each output root.
     pub output_block_span: u64,
-    /// A list of `BlobFetchRequest` instances, one for each blob published in the proposal.
+    /// One blob fetch request per blob published with the proposal.
     pub blob_hashes: Vec<BlobFetchRequest>,
 }
 
 impl ProposalPrecondition {
-    /// Converts the current instance of the object into a `Vec<u8>` (a vector of bytes).
-    ///
-    /// This function serializes the `self` object using the `pot::to_vec` method and
-    /// returns the resulting byte representation. The serialization process is expected
-    /// to succeed, and any errors during the process will cause the function to panic.
-    ///
-    /// # Returns
-    /// A `Vec<u8>` containing the serialized byte representation of the object.
-    ///
-    /// # Panics
-    /// - If the `pot::to_vec` method returns an error during serialization.
+    /// Serializes the precondition with `pot`, panicking on failure.
     pub fn to_vec(&self) -> Vec<u8> {
         pot::to_vec(self).unwrap()
     }
 
-    /// Computes the hash of the current object using the SHA-256 algorithm.
-    ///
-    /// This method converts the object into its vector representation, hashes it
-    /// using the `SHA2::hash_bytes` function, and then returns the result as a `B256` type.
-    ///
-    /// # Returns
-    /// * `B256` - The 256-bit hash of the object generated using the SHA-256 algorithm.
-    ///
-    /// # Notes
-    /// * This hash cannot be used to authenticate the precondition, but may be used to
-    ///   reference the `PreconditionValidationData` instance in storage.
+    /// The SHA-256 hash of the serialized precondition, used to reference it in oracle storage.
+    /// It does not authenticate the precondition, unlike [Self::precondition_hash].
     pub fn hash(&self) -> B256 {
         let digest = *SHA2::hash_bytes(&self.to_vec());
         B256::from_slice(digest.as_bytes())
     }
 
-    /// This method provides access to the `BlobFetchRequest` objects
-    /// contained within the `PreconditionValidationData::Validity` variant.
+    /// The blob fetch requests, one per blob published with the proposal.
     pub fn blob_fetch_requests(&self) -> &[BlobFetchRequest] {
         self.blob_hashes.as_slice()
     }
 
-    /// This function retrieves the `blob_hash` associated with each blob fetch request
-    /// and returns a consolidated hash using the `blobs_hash` function.
+    /// The SHA-256 hash of the concatenated versioned hashes of the proposal's blobs.
     pub fn blobs_hash(&self) -> B256 {
         blobs_hash(self.blob_fetch_requests().iter().map(|b| &b.blob_hash.hash))
     }
 
-    /// Computes the precondition hash for the current instance of `PreconditionValidationData`.
-    ///
-    /// # Returns
-    /// A `B256` value representing the computed precondition hash.
-    ///
-    /// # Process
-    /// - For a `PreconditionValidationData::Validity` variant, the method extracts its components:
-    ///   - `proposal_l2_head_number`: A reference to the global Layer 2 head number.
-    ///   - `proposal_output_count`: A reference to the count of proposal outputs.
-    ///   - `output_block_span`: A reference to the output block span.
-    ///   - `blobs`: A reference to a list of blobs.
-    /// - It then calculates the `blobs_hash` using the hashes of individual blobs in the list.
-    /// - The final precondition hash is derived by invoking the `equivalence_precondition_hash`
-    ///   function with the above components.
+    /// Computes the proposal precondition hash committed to in the proof journal.
     pub fn precondition_hash(&self) -> B256 {
         proposal_precondition_hash(
             &self.proposal_l2_head_number,
@@ -110,32 +77,8 @@ impl ProposalPrecondition {
     }
 }
 
-/// This function calculates a 256-bit hash that uniquely represents the precondition
-/// for a particular state transition in a Layer 2 scaling solution. The hash is
-/// computed based on the provided global L2 head number, the proposal output count,
-/// the block span, and a hash of the associated data blobs. It uses the SHA-256
-/// hashing algorithm to ensure the integrity of the state information.
-///
-/// # Parameters
-/// - `proposal_l2_head_number`: A reference to a `u64` representing the current L2 head
-///   block number in the rollup.
-/// - `proposal_output_count`: A reference to a `u64` indicating the count of outputs
-///   in the proposed block transition.
-/// - `output_block_span`: A reference to a `u64` that represents the block range or
-///   span covered by each output in the proposal.
-/// - `blobs_hash`: A `B256` hash representing the combined contents or metadata
-///   of data blobs associated with the proposal.
-///
-/// # Returns
-/// A `B256` hash, which is the computed precondition hash that captures the state
-/// transition requirements.
-///
-/// # Implementation
-/// 1. Convert the `proposal_l2_head_number`, `proposal_output_count`, and
-///    `output_block_span` to big-endian byte representations.
-/// 2. Concatenate these byte arrays with the bytes of the `blobs_hash`.
-/// 3. Hash the resulting concatenated byte array using the SHA-256 hashing algorithm.
-/// 4. Return the resulting 256-bit hash as a `B256` type.
+/// Computes the SHA-256 hash tying a proof to a specific proposal: its starting L2 block
+/// number, output count, block span per output, and the hash of its published blobs.
 pub fn proposal_precondition_hash(
     proposal_l2_head_number: &u64,
     proposal_output_count: &u64,
@@ -155,22 +98,7 @@ pub fn proposal_precondition_hash(
     B256::from_slice(digest.as_bytes())
 }
 
-/// Computes a single hash from an iterator of hashes.
-///
-/// This function accepts an iterator of references to `B256` hashes, concatenates their byte
-/// representations, and computes a SHA-256 hash of the concatenated bytes. The resulting hash
-/// is returned as a `B256`.
-///
-/// # Type Parameters
-/// - `'a`: The lifetime of the references contained in the iterator.
-///
-/// # Parameters
-/// - `blob_hashes`: An iterator over references to `B256` hashes.
-///   Each hash is converted to its byte slice, concatenated with others,
-///   and then hashed to produce the result.
-///
-/// # Returns
-/// - `B256`: A new `B256` value representing the SHA-256 hash of the concatenated hash bytes.
+/// Computes the SHA-256 hash of the concatenated blob hashes.
 pub fn blobs_hash<'a>(blob_hashes: impl Iterator<Item = &'a B256>) -> B256 {
     let blobs_hash_bytes = blob_hashes
         .map(|h| h.as_slice())
@@ -180,25 +108,9 @@ pub fn blobs_hash<'a>(blob_hashes: impl Iterator<Item = &'a B256>) -> B256 {
     B256::from_slice(digest.as_bytes())
 }
 
-/// This function retrieves and deserializes the precondition validation data from an oracle and fetches the associated blobs
-/// necessary for further processing. If the `precondition_data_hash` is zero, the function will return `None`.
-///
-/// # Parameters
-/// - `precondition_data_hash`: A hash of type `B256` representing the identifier of the precondition data to load.
-/// - `oracle`: An `Arc`-wrapped oracle that implements the `CommsClient`, used to retrieve the precondition validation data.
-/// - `beacon`: A mutable reference to an object implementing the `BlobProvider` used for fetching blob data.
-///
-/// # Returns
-/// A `Result` containing:
-/// - `Some((PreconditionValidationData, Vec<Blob>))` if the precondition data and blobs are successfully loaded.
-/// - `None` if the `precondition_data_hash` is zero (indicating no data needs to be loaded).
-///
-/// If an error occurs during the data fetching or deserialization process, it will return an error wrapped in `anyhow::Result`.
-///
-/// # Errors
-/// - Returns an error if there is an issue while retrieving the precondition validation data from the oracle.
-/// - Returns an error if deserialization of the data fails.
-/// - Returns an error if there is a problem fetching blobs from the blob provider.
+/// Loads the [ProposalPrecondition] referenced by `proposal_data_hash` from the oracle, along
+/// with every blob it commits to, each validated by the provider against its versioned hash.
+/// Returns `None` when the hash is zero, denoting the absence of a proposal precondition.
 pub async fn load_proposal_data<
     O: CommsClient + Send + Sync + Debug,
     B: BlobProvider + Send + Sync + Debug + Clone,
@@ -241,77 +153,16 @@ where
     Ok(Some((precondition_validation_data, blobs)))
 }
 
-/// Validates the precondition data against the provided output roots, blobs,
-/// and local/global layer-2 (L2) head block numbers.
+/// Verifies that the output roots computed by the proof match the intermediate outputs the
+/// proposal published in its blobs, returning the proposal precondition hash on success.
 ///
-/// This function performs multiple checks to ensure the integrity and consistency
-/// of the precondition data. If any validation rules are violated, errors are returned.
+/// The proof's block range must fall within the proposal's range. Every computed output root at
+/// an `output_block_span` boundary must equal, as a field element, the blob element at its
+/// offset, and the blob data trailing the final output must be all zeros. These mirror the
+/// output-fault and trail-fault conditions the `KailuaTournament` contract accepts, so no
+/// proposal can be proven both valid and faulty.
 ///
-/// # Parameters
-///
-/// - `precondition_validation_data`:
-///   The data encapsulating the precondition hash and other information
-///   necessary to validate the blocks. These represent the validity or state
-///   against which the blocks or outputs will be checked.
-///
-/// - `blobs`:
-///   A vector of blobs that hold intermediate output roots, structured
-///   in a specific manner for validation purposes. Each blob consists of
-///   multiple 32-byte chunks holding a field element for each published output root.
-///
-/// - `proof_l2_head_number`:
-///   The proof L2 head block number, which represents the current state of the locally
-///   agreed-upon highest L2 block in the current proof.
-///
-/// - `output_roots`:
-///   A slice of cryptographic hashes (B256) representing the expected output
-///   roots in a proposal.
-///
-/// # Returns
-///
-/// - `Ok(B256)`:
-///   Returns the precondition hash if all validations pass successfully.
-///
-/// - `Err(anyhow::Error)`:
-///   Returns an error if there are any mismatches or violations within the precondition
-///   validations, including value mismatches, out-of-bound conditions, or invalid data.
-///
-/// # Validation Steps
-///
-/// 1. **Block Range Verification**:
-///    - Ensures that the `proposal_l2_head_number` is less than or equal to
-///      the `proof_l2_head_number`. If the proposal L2 head number is ahead
-///      of that of the current proof, validation fails.
-///
-/// 2. **Output Root Checks**:
-///    - Skips validation if `output_roots` is empty.
-///    - Verifies each output block root:
-///      - Ensures that the block number does not exceed the maximum block number
-///        derived from the proposed output root claim.
-///      - Validates only blocks that are multiples of the specified `output_block_span`.
-///
-/// 3. **Blob Integrity Validation**:
-///    - Checks to ensure the field elements (fe) derived from blobs correspond to
-///      the expected field elements calculated from the output roots.
-///    - For the last output:
-///      - Ensures that the trail (remaining) blob data contains zeroed-out bytes,
-///        indicating no unexpected data after the meaningful field elements.
-///
-/// 4. **Assertions**:
-///    - If an inconsistency is logically impossible given the inputs, it indicates a
-///      programming or internal invariant violation, and the function panics.
-///
-/// # Behavior
-///
-/// - For each output block root, the corresponding blob data is compared to ensure it
-///   matches the field element representation of the hash.
-/// - In case of mismatching field element values, the specific error points to the
-///   exact field position, blob index, and block number where the mismatch occurs.
-///
-/// # Caveats
-///
-/// This method assumes that the provided blobs have been already verified to correspond to the
-/// blob hashes supplied in the precondition validation data.
+/// Assumes the supplied blobs were already validated against the precondition's blob hashes.
 pub fn validate_proposal_precondition(
     precondition_validation_data: ProposalPrecondition,
     blobs: Vec<Blob>,
@@ -345,7 +196,9 @@ pub fn validate_proposal_precondition(
         let output_block_number = proof_l2_head_number + i as u64 + 1;
         if output_block_number > proposal_root_claim_block_number {
             // We should not derive outputs beyond the proposal root claim
-            bail!("Output block #{output_block_number} > max block #{proposal_root_claim_block_number}.");
+            bail!(
+                "Output block #{output_block_number} > max block #{proposal_root_claim_block_number}."
+            );
         }
         let offset = output_block_number - proposal_l2_head_number;
         if !offset.is_multiple_of(output_block_span) {
@@ -407,14 +260,14 @@ pub fn validate_proposal_precondition(
 mod tests {
     use super::*;
     use crate::blobs::tests::gen_blobs;
-    use crate::blobs::{intermediate_outputs, BlobWitnessData, PreloadedBlobProvider};
-    use crate::oracle::vec::tests::prepare_vec_oracle;
+    use crate::blobs::{BlobWitnessData, PreloadedBlobProvider, intermediate_outputs};
     use crate::oracle::WitnessOracle;
+    use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::precondition::proposal::{
-        load_proposal_data, proposal_precondition_hash, validate_proposal_precondition,
-        ProposalPrecondition,
+        ProposalPrecondition, load_proposal_data, proposal_precondition_hash,
+        validate_proposal_precondition,
     };
-    use alloy_eips::eip4844::{kzg_to_versioned_hash, IndexedBlobHash, BYTES_PER_BLOB};
+    use alloy_eips::eip4844::{BYTES_PER_BLOB, IndexedBlobHash, kzg_to_versioned_hash};
     use kona_proof::block_on;
     use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
@@ -480,13 +333,15 @@ mod tests {
                     );
                     let oracle = Arc::new(oracle);
                     // load nothing when hash is zero
-                    assert!(block_on(load_proposal_data(
-                        B256::ZERO,
-                        oracle.clone(),
-                        &mut beacon.clone(),
-                    ))
-                    .unwrap()
-                    .is_none());
+                    assert!(
+                        block_on(load_proposal_data(
+                            B256::ZERO,
+                            oracle.clone(),
+                            &mut beacon.clone(),
+                        ))
+                        .unwrap()
+                        .is_none()
+                    );
                     // successfully load with proper hash
                     let reloaded = block_on(load_proposal_data(
                         precondition_data_hash,
@@ -504,20 +359,22 @@ mod tests {
 
     #[test]
     fn test_validate_precondition_bad_start() {
-        assert!(validate_proposal_precondition(
-            ProposalPrecondition {
-                proposal_l2_head_number: 100,
-                proposal_output_count: 100,
-                output_block_span: 1,
-                blob_hashes: vec![],
-            },
-            vec![],
-            1,
-            &[]
-        )
-        .is_err_and(|e| e
-            .to_string()
-            .contains("proposal starting block #100 > proof agreed l2 head #1")));
+        assert!(
+            validate_proposal_precondition(
+                ProposalPrecondition {
+                    proposal_l2_head_number: 100,
+                    proposal_output_count: 100,
+                    output_block_span: 1,
+                    blob_hashes: vec![],
+                },
+                vec![],
+                1,
+                &[]
+            )
+            .is_err_and(|e| e
+                .to_string()
+                .contains("proposal starting block #100 > proof agreed l2 head #1"))
+        );
     }
 
     #[test]
@@ -541,9 +398,10 @@ mod tests {
             1,
             &output_roots,
         );
-        assert!(result.is_err_and(|e| e
-            .to_string()
-            .contains("Expected trail data to begin at blob 0/2")));
+        assert!(result.is_err_and(|e| {
+            e.to_string()
+                .contains("Expected trail data to begin at blob 0/2")
+        }));
         // fail to validate non-zero trail data after 1023 * 32 = 32768 bytes
         let result = validate_proposal_precondition(
             ProposalPrecondition {
@@ -556,9 +414,10 @@ mod tests {
             1,
             &output_roots,
         );
-        assert!(result.is_err_and(|e| e
-            .to_string()
-            .contains("Found non-zero trail data in blob 0 after 32736")));
+        assert!(result.is_err_and(|e| {
+            e.to_string()
+                .contains("Found non-zero trail data in blob 0 after 32736")
+        }));
         // fail to validate extra output roots
         let mut blobs = blobs[..1].to_vec();
         let blobs_fetch_requests = gen_blobs_requests(blobs.clone());
@@ -576,9 +435,10 @@ mod tests {
             1,
             &output_roots,
         );
-        assert!(result.is_err_and(|e| e
-            .to_string()
-            .contains("Bad fe #500 in blob 0 for block #502")));
+        assert!(result.is_err_and(|e| {
+            e.to_string()
+                .contains("Bad fe #500 in blob 0 for block #502")
+        }));
     }
 
     #[tokio::test]
@@ -685,9 +545,9 @@ mod tests {
                                 );
                             } else {
                                 // fail the attempt to start validating beyond max block
-                                assert!(result.is_err_and(|e| e
-                                    .to_string()
-                                    .contains("< proof agreed l2 head")));
+                                assert!(result.is_err_and(|e| {
+                                    e.to_string().contains("< proof agreed l2 head")
+                                }));
                             }
                         }
                     }

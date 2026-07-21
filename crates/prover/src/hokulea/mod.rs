@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// EigenDA proxy CLI arguments.
 pub mod args;
+/// Steel-based Canoe provider for EigenDA cert validity proofs.
 pub mod provider;
+/// Witness generation for the EigenDA-enabled guest.
 pub mod witgen;

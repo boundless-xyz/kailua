@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,12 +19,12 @@ use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::create_disk_kv_store;
 use crate::preflight::{concurrent_preflight, fetch_precondition_data};
 use crate::profiling::ProfiledReceipt;
-use crate::tasks::{handle_oneshot_tasks, CachedTask, Oneshot, OneshotResult};
-use crate::{current_time, ProvingError};
+use crate::tasks::{CachedTask, Oneshot, OneshotResult, handle_oneshot_tasks};
+use crate::{ProvingError, current_time};
 use alloy::eips::BlockNumberOrTag;
 use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::B256;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use human_bytes::human_bytes;
 use itertools::Itertools;
 use kailua_kona::boot::StitchedBootInfo;
@@ -51,13 +51,25 @@ use {
     std::sync::Arc,
 };
 
+/// Computes a proof of the claim described by `args`, decomposing the workload as needed.
+///
+/// After preflight, the claim is divided into jobs of at most `max_block_derivations` L2 blocks,
+/// each proven via [crate::tasks::compute_fpvm_proof] and bisected whenever its witness exceeds
+/// the size limit, with derivation pipeline snapshots relayed between adjacent jobs. The
+/// resulting proofs are then recursively stitched, at most `max_proof_stitches` at a time, into
+/// a single receipt. Under the experimental feature, partial (chunked) execution proofs are
+/// computed up front and made available to all jobs.
+///
+/// Returns `None` when the L1 head is insufficient to derive the claim or stitching is skipped.
 pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt>> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("prove"));
     let start_time = current_time();
 
     #[cfg(feature = "experimental")]
-    warn!("You are running the EXPERIMENTAL version. Some features have not yet been audited for production.");
+    warn!(
+        "You are running the EXPERIMENTAL version. Some features have not yet been audited for production."
+    );
 
     // fetch starting block number
     let l2_provider = if args.kona.is_offline() {
@@ -126,10 +138,13 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         {
             Some(data) => {
                 let precondition_validation_data_hash = data.hash();
-                set_var(
-                    "PRECONDITION_VALIDATION_DATA_HASH",
-                    precondition_validation_data_hash.to_string(),
-                );
+                // SAFETY: set before the kona host tasks that read this variable are spawned.
+                unsafe {
+                    set_var(
+                        "PRECONDITION_VALIDATION_DATA_HASH",
+                        precondition_validation_data_hash.to_string(),
+                    )
+                };
                 (data.precondition_hash(), precondition_validation_data_hash)
             }
             None => (B256::ZERO, B256::ZERO),
@@ -178,11 +193,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         info!("Dispatching partial execution proving tasks.");
         let mut expected_partials = 0;
         let mut partial_proof_cache: PartialsCache = Default::default();
-        for (exec, mut partials) in block_executions
-            .clone()
-            .into_iter()
-            .zip(partial_executions.into_iter())
-        {
+        for (exec, mut partials) in block_executions.clone().into_iter().zip(partial_executions) {
             // Skip system-tx-only blocks
             if exec
                 .attributes
@@ -524,7 +535,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                 };
                 if result.is_some() {
                     info!(
-                        "Successfully proved {num_blocks} blocks ({starting_block}..{last_block}) ({} -> {})", precondition.derivation_cache, precondition.derivation_trace,
+                        "Successfully proved {num_blocks} blocks ({starting_block}..{last_block}) ({} -> {})",
+                        precondition.derivation_cache, precondition.derivation_trace,
                     );
                 } else {
                     error!(
@@ -874,6 +886,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     Ok(final_result)
 }
 
+/// Deletes the data directory if `clear_cache_data` is set; otherwise reports its persistence.
 pub async fn cleanup_cache_data(args: &ProveArgs) {
     let Some(data_dir) = args.kona.data_dir.as_ref() else {
         return;

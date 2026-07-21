@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2024 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,23 +13,23 @@
 // limitations under the License.
 
 use alloy::network::{Ethereum, Network, ReceiptResponse, TxSigner};
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::providers::{Provider, RootProvider};
 use alloy::sol;
 use alloy::sol_types::SolValue;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use kailua_build::KAILUA_FPVM_KONA_ID;
 use kailua_contracts::*;
 use kailua_kona::config::config_hash;
-use kailua_sync::provider::optimism::fetch_rollup_config;
-use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::provider::ProviderTimeoutArgs;
+use kailua_sync::provider::optimism::OpNodeProvider;
+use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::stall::Stall;
 use kailua_sync::telemetry::TelemetryArgs;
 use kailua_sync::transact::safe::exec_safe_txn;
 use kailua_sync::transact::signer::{DeployerSignerArgs, GuardianSignerArgs, OwnerSignerArgs};
 use kailua_sync::transact::{Transact, TransactArgs};
-use kailua_sync::{await_tel, await_tel_res, retry_res_ctx_timeout, KAILUA_GAME_TYPE};
+use kailua_sync::{KAILUA_GAME_TYPE, await_tel, await_tel_res, retry_res_ctx_timeout};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, Status, TraceContextExt, Tracer};
 use risc0_circuit_recursion::control_id::BN254_IDENTITY_CONTROL_ID;
@@ -119,12 +119,20 @@ pub struct FastTrackArgs {
     #[clap(long, env)]
     pub respect_kailua_proposals: bool,
 
+    /// Telemetry arguments.
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
+    /// Provider timeout arguments.
     #[clap(flatten)]
     pub timeouts: ProviderTimeoutArgs,
 }
 
+/// Deploys and installs the complete Kailua contract suite on a running rollup: RISC Zero
+/// verifier contracts (unless an existing verifier is provided), the `KailuaVerifier`
+/// behind a proxy, the `KailuaTreasury` and `KailuaGame` implementations (registered in the
+/// `DisputeGameFactory` through owner Safe transactions), a treasury anchor instance at the
+/// configured starting block, the participation bond, optional vanguard parameters, and —
+/// if requested — the guardian's `respectedGameType` switch to Kailua.
 pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("fast_track"));
@@ -627,7 +635,9 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
             )
             .await;
         if portal_guardian_address != guardian_address {
-            bail!("OptimismPortal2 Guardian is {portal_guardian_address}. Provided private key has account address {guardian_address}.");
+            bail!(
+                "OptimismPortal2 Guardian is {portal_guardian_address}. Provided private key has account address {guardian_address}."
+            );
         }
 
         let optimism_portal_registry =
@@ -671,6 +681,9 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Deploys a `RiscZeroVerifierRouter` owned by `owner_address`, registers a freshly
+/// deployed `RiscZeroGroth16Verifier` in it — plus a mock verifier accepting fake proofs
+/// when running a devnet in dev mode — and returns the router's address.
 #[allow(deprecated)]
 pub async fn deploy_verifier<P1: Provider<N>, P2: Provider<N>, N: Network>(
     deployer_provider: P1,
@@ -743,7 +756,9 @@ pub async fn deploy_verifier<P1: Provider<N>, P2: Provider<N>, N: Network>(
     #[cfg(feature = "devnet")]
     if risc0_zkvm::is_dev_mode() {
         // Deploy MockVerifier contract
-        tracing::warn!("Deploying RiscZeroMockVerifier contract to L1. This will accept fake proofs which are not cryptographically secure!");
+        tracing::warn!(
+            "Deploying RiscZeroMockVerifier contract to L1. This will accept fake proofs which are not cryptographically secure!"
+        );
         let receipt = RiscZeroMockVerifier::deploy_builder(&deployer_provider, [0xFFu8; 4].into())
             .transact_with_context(context.clone(), "RiscZeroMockVerifier::deploy")
             .await

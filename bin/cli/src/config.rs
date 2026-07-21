@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2024 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,17 +18,17 @@ use anyhow::Context;
 use human_bytes::human_bytes;
 use kailua_contracts::SystemConfig;
 use kailua_kona::config::config_hash;
+use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::provider::optimism::load_registry_config;
-use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::stall::Stall;
 use kailua_sync::telemetry::TelemetryArgs;
-use kailua_sync::{await_tel, KAILUA_GAME_TYPE};
+use kailua_sync::{KAILUA_GAME_TYPE, await_tel};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, Status, TraceContextExt, Tracer};
 use risc0_circuit_recursion::control_id::BN254_IDENTITY_CONTROL_ID;
 use risc0_zkvm::sha::Digest;
-use risc0_zkvm::{compute_image_id, ALLOWED_CONTROL_ROOT};
+use risc0_zkvm::{ALLOWED_CONTROL_ROOT, compute_image_id};
 use tracing::{debug, warn};
 
 /// Inspect the configuration of a running rollup
@@ -47,12 +47,18 @@ pub struct ConfigArgs {
     #[clap(long, env, default_value_t = false)]
     pub bypass_chain_registry: bool,
 
+    /// Telemetry arguments.
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
+    /// Provider timeout arguments.
     #[clap(flatten)]
     pub timeouts: ProviderTimeoutArgs,
 }
 
+/// Prints the parameters needed to configure a Kailua deployment for the target rollup:
+/// FPVM image IDs (recomputed from the embedded ELFs), Groth16 verifier control parameters
+/// and the known verifier address for the L1 chain, the rollup config hash, genesis and
+/// block times, and the rollup's `DisputeGameFactory` and `OptimismPortal` addresses.
 pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("config"));
@@ -215,6 +221,8 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Prints an embedded guest ELF's image ID and size, panicking if the stored ID does not
+/// match the one recomputed from the ELF.
 pub fn report_image_id(stored_image_id: [u32; 8], stored_elf: &[u8], label: &str) {
     let stored_image_id = Digest::new(stored_image_id);
     println!(

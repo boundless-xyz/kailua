@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,15 +20,17 @@ use kona_genesis::RollupConfig;
 use kona_registry::Registry;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::str::FromStr;
 use tracing::log::warn;
 use tracing::{debug, info};
 
+/// RPC client for the `optimism` namespace of an op-node endpoint.
 #[derive(Clone)]
 pub struct OpNodeProvider(pub RootProvider);
 
 impl OpNodeProvider {
+    /// Queries the output root claimable at the given L2 block height.
     pub async fn output_at_block(&self, output_block_number: u64) -> anyhow::Result<B256> {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(
@@ -51,6 +53,7 @@ impl OpNodeProvider {
         )?)
     }
 
+    /// Queries the op-node's current sync status object.
     pub async fn sync_status(&self) -> anyhow::Result<Value> {
         let tracer = tracer("kailua");
         let context =
@@ -64,6 +67,7 @@ impl OpNodeProvider {
         )?)
     }
 
+    /// Queries the op-node's rollup configuration as raw JSON.
     pub async fn rollup_config(&self) -> anyhow::Result<Value> {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(
@@ -79,6 +83,9 @@ impl OpNodeProvider {
     }
 }
 
+/// Retrieves the rollup configuration, preferring the kona-registry entry for the chain id
+/// unless bypassed. Otherwise the op-node's config is used, with fork activation times
+/// patched in from the L2 node's `debug_chainConfig`.
 pub async fn fetch_rollup_config(
     op_node_address: &str,
     l2_node_address: &str,
@@ -169,6 +176,7 @@ pub async fn fetch_rollup_config(
     Ok(serde_json::from_value(rollup_config)?)
 }
 
+/// Looks up the rollup configuration registered for a chain id in the superchain registry.
 pub fn load_registry_config(chain_id: u64) -> Option<RollupConfig> {
     let registry = Registry::from_chain_list();
     registry.rollup_configs.get(&chain_id).cloned()

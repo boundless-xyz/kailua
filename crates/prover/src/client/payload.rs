@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::kv::{create_split_kv_store, RWLKeyValueStore};
 use crate::ProvingError;
+use crate::kv::{RWLKeyValueStore, create_split_kv_store};
 use alloy::eips::BlockNumberOrTag;
 use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::hex::FromHex;
@@ -27,7 +27,11 @@ use kona_proof::BootInfo;
 use std::ops::DerefMut;
 use tracing::{error, info};
 
-/// Returns true iff preflight using `debug_executionWitness` was successful.
+/// Preloads execution-witness preimages for every block in the claim into the KV store.
+///
+/// Walks backwards from the claimed block to the agreed block, querying `debug_executionWitness`
+/// (retrying indefinitely) and hashing every hex string in the response into the store as a
+/// keccak preimage. Processed blocks are marked with a global-generic key to avoid rework.
 pub async fn run_payload_client(
     mut boot_info: BootInfo,
     l2_provider: RootProvider,
@@ -109,6 +113,8 @@ pub async fn run_payload_client(
     Ok(true)
 }
 
+/// Recursively saves every hex string in the JSON value as a keccak preimage, returning the
+/// total bytes saved.
 fn dump_payload_to_kv_store(payload: &serde_json::Value, kv: &mut dyn KeyValueStore) -> u64 {
     if let Some(obj) = payload.as_object() {
         obj.iter()

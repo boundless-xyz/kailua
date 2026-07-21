@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,13 +14,13 @@
 
 use crate::args::{PermitPolicy, ValidateArgs};
 use crate::channel::{DuplexChannel, Message};
-use crate::tasks::{handle_proving_tasks, Task};
+use crate::tasks::{Task, handle_proving_tasks};
 use alloy::eips::eip4844::IndexedBlobHash;
 use alloy::network::primitives::HeaderResponse;
 use alloy::network::{BlockResponse, TxSigner};
 use alloy::primitives::B256;
 use alloy::providers::Provider;
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use kailua_kona::blobs::BlobFetchRequest;
 use kailua_kona::config::config_hash;
 use kailua_kona::journal::ProofJournal;
@@ -32,8 +32,8 @@ use kailua_prover::proof::proof_file_name;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::await_tel;
 use kailua_sync::proposal::Proposal;
-use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::provider::ProviderTimeoutArgs;
+use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::transact::rpc::{get_block_by_number, get_next_block};
 use kona_protocol::BlockInfo;
 use lazy_static::lazy_static;
@@ -49,23 +49,32 @@ lazy_static! {
     static ref NUM_ACTIVE_PROVERS: Arc<Mutex<u64>> = Default::default();
 }
 
+/// Returns the number of proof requests currently in flight.
 pub async fn num_active_provers() -> u64 {
     let nap = NUM_ACTIVE_PROVERS.lock().await;
     *nap
 }
 
+/// Increments the in-flight proof request count.
 pub async fn increment_active_provers() {
     // Increment active provers count
     let mut nap = NUM_ACTIVE_PROVERS.lock().await;
     *nap += 1;
 }
 
+/// Decrements the in-flight proof request count.
 pub async fn decrement_active_provers() {
-    // Increment active provers count
+    // Decrement active provers count
     let mut nap = NUM_ACTIVE_PROVERS.lock().await;
     *nap -= 1;
 }
 
+/// Consumes [Message::Proposal] requests from the duplex channel, packaging each into a
+/// [Task] for a pool of `num_concurrent_provers` proving workers.
+///
+/// The expected proof journal — payout recipient, precondition hash, rollup config hash,
+/// and FPVM image ID — determines the file name each task's receipt must be written to.
+/// Runs until the request channel closes, then waits for the workers to drain the queue.
 pub async fn handle_proof_requests(
     mut channel: DuplexChannel<Message>,
     args: ValidateArgs,
@@ -171,8 +180,8 @@ pub async fn handle_proof_requests(
                 .unwrap_or_default();
         let data_dir = data_dir.join(format!(
             "{}-{}",
-            &agreed_l2_output_root.to_string()[..10].to_string(),
-            &claimed_l2_output_root.to_string()[..10].to_string()
+            &agreed_l2_output_root.to_string()[..10],
+            &claimed_l2_output_root.to_string()[..10]
         ));
         let prove_args = ProveArgs {
             kona: kona_host::single::SingleChainHost {
@@ -231,6 +240,12 @@ pub async fn handle_proof_requests(
     Ok(())
 }
 
+/// Requests a fault proof of the first incorrect output transition in a diverging proposal,
+/// starting from the last output it shares with the canonical chain.
+///
+/// Unless the permit policy is `SKIPPED`, first attempts to acquire (or reuse) a fault
+/// proving permit, bailing if the policy is `MANDATORY` and none could be acquired, or if
+/// all provers are already busy.
 pub async fn request_fault_proof<P: Provider>(
     agent: &mut SyncAgent,
     channel: &mut DuplexChannel<Message>,
@@ -340,6 +355,9 @@ pub async fn request_fault_proof<P: Provider>(
     Ok(())
 }
 
+/// Requests a validity proof covering the entire transition from the parent proposal's
+/// output to the proposal's claimed output, with a precondition binding the proof to the
+/// intermediate outputs the proposal published as blobs.
 pub async fn request_validity_proof(
     agent: &SyncAgent,
     channel: &mut DuplexChannel<Message>,

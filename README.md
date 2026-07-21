@@ -46,12 +46,12 @@ Kailua has undergone the following audits throughout its development:
 * [2026 FEB 12](audits/veridise-260212.pdf)
 
 ## Prerequisites
-1. [rust](https://www.rust-lang.org/tools/install)
-2. [just](https://just.systems/man/en/)
-3. [docker](https://www.docker.com/)
-4. [kurtosis](https://docs.kurtosis.com/install)
-5. [svm](https://github.com/alloy-rs/svm-rs)
-6. [foundry](https://book.getfoundry.sh/getting-started/installation)
+1. [rust](https://www.rust-lang.org/tools/install) — rustup installs the pinned toolchain from `rust-toolchain.toml` automatically.
+2. [just](https://just.systems/man/en/) — runs all development workflows; `just` lists the available recipes.
+3. [docker](https://www.docker.com/) — required for the local devnet and reproducible FPVM guest builds.
+4. [kurtosis](https://docs.kurtosis.com/install) — required for the local devnet only.
+5. [svm](https://github.com/alloy-rs/svm-rs) — installs the solc version used by the contracts.
+6. [foundry](https://book.getfoundry.sh/getting-started/installation) — builds and tests the contracts.
 
 ## Proving Demo
 
@@ -61,7 +61,7 @@ You can test out Kailua's validity proving on a running chain through the follow
     * Compiles a release build of Kailua
 2. `just demo [BLOCKS_PER_PROOF] [L1_RPC] [BEACON_RPC] [L2_RPC] [OP_NODE_RPC]:`
     * Runs the release build against the target chain endpoints.
-    * See [here](validator.md#delegated-proof-generation) for advanced proving configuration
+    * See [here](https://boundless-xyz.github.io/kailua/validator.html#delegated-proof-generation) for advanced proving configuration
 
 ## Local Devnet
 
@@ -99,24 +99,23 @@ You can deploy a local optimism devnet equipped with Kailua through the followin
     * `just devnet-down` to remove the running Kurtosis enclave.
     * `just devnet-clean` to remove the local descriptor and logs.
 
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow, and the
+[Project](https://boundless-xyz.github.io/kailua/project.html) chapter of the book for a map of the crates in this
+repository. The most common commands:
+
+* `just build` — compile a release build of the Kailua CLI.
+* `just test` — run the Rust test suites using dev-mode proofs.
+* `just fmt` — format all Rust workspaces and the Solidity contracts.
+* `just clippy` — lint all Rust workspaces.
+
+Security vulnerabilities should be reported as described in [SECURITY.md](SECURITY.md).
+
 ## Questions, Feedback, and Collaborations
 
 We'd love to hear from you on [Discord][discord] or [Twitter][twitter].
 
-[bonsai access]: https://bonsai.xyz/apply
-[cargo-risczero]: https://docs.rs/cargo-risczero
-[crates]: https://github.com/risc0/risc0/blob/main/README.md#rust-binaries
-[dev-docs]: https://dev.risczero.com
-[dev-mode]: https://dev.risczero.com/api/generating-proofs/dev-mode
 [discord]: https://discord.gg/risczero
-[docs.rs]: https://docs.rs/releases/search?query=risc0
-[examples]: https://github.com/risc0/risc0/tree/main/examples
-[risc0-build]: https://docs.rs/risc0-build
-[risc0-repo]: https://www.github.com/risc0/risc0
-[risc0-zkvm]: https://docs.rs/risc0-zkvm
-[rustup]: https://rustup.rs
-[rust-toolchain]: rust-toolchain.toml
 [twitter]: https://twitter.com/risczero
-[zkvm-overview]: https://dev.risczero.com/zkvm
-[zkhack-iii]: https://www.youtube.com/watch?v=Yg_BGqj_6lg&list=PLcPzhUaCxlCgig7ofeARMPwQ8vbuD6hC5&index=5
-[kona]: https://github.com/anton-rs/kona
+[kona]: https://github.com/op-rs/kona

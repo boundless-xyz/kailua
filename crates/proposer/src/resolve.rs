@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,22 +16,30 @@ use crate::fetch::fetch_current_challenger_duration;
 use alloy::network::{Network, ReceiptResponse};
 use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use kailua_contracts::*;
 use kailua_sync::agent::SyncAgent;
-use kailua_sync::proposal::{Proposal, ELIMINATIONS_LIMIT};
+use kailua_sync::proposal::{ELIMINATIONS_LIMIT, Proposal};
 use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::{Transact, TransactArgs};
 use kailua_sync::{await_tel, await_tel_res};
+use opentelemetry::KeyValue;
 use opentelemetry::global::tracer;
 use opentelemetry::metrics::{Counter, Gauge};
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
-use opentelemetry::KeyValue;
 use std::future::IntoFuture;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
+/// Attempts to finalize the canonical successor of the last resolved proposal, returning
+/// whether a resolution transaction was confirmed.
+///
+/// Returns `false` without resolving if no successor exists yet, it is already finalized,
+/// its challenge period is still running without a validity proof, its parent tournament
+/// has undecided disputes blocking elimination of all opponents, or it is not the parent's
+/// surviving child. Opponents are eliminated in batches of [ELIMINATIONS_LIMIT] through
+/// `pruneChildren` transactions until resolution can succeed.
 #[allow(clippy::too_many_arguments)]
 pub async fn resolve_next_pending_proposal<P: Provider>(
     agent: &SyncAgent,
@@ -90,7 +98,9 @@ pub async fn resolve_next_pending_proposal<P: Provider>(
         )
     );
     if !is_validity_proven && challenger_duration > 0 {
-        info!("Waiting for {challenger_duration} more seconds of chain time before resolution of proposal {unresolved_successor_index}.");
+        info!(
+            "Waiting for {challenger_duration} more seconds of chain time before resolution of proposal {unresolved_successor_index}."
+        );
         return Ok(false);
     }
 
@@ -262,6 +272,9 @@ pub async fn resolve_next_pending_proposal<P: Provider>(
     }
 }
 
+/// Resolves the given proposal, first submitting as many batched `pruneChildren`
+/// transactions as its parent tournament needs to determine a survivor, and returns the
+/// `resolve` call's receipt.
 pub async fn resolve_proposal<P: Provider<N>, N: Network>(
     proposal: &Proposal,
     provider: P,

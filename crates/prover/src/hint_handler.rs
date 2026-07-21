@@ -1,4 +1,4 @@
-// Copyright 2026 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,12 +17,12 @@
 //! `/eth/v1/beacon/blob_sidecars/{slot}` endpoint for L1 blob hints.
 
 use alloy::eips::eip4844::{
-    kzg_to_versioned_hash, BlobTransactionSidecarItem, IndexedBlobHash, FIELD_ELEMENTS_PER_BLOB,
+    BlobTransactionSidecarItem, FIELD_ELEMENTS_PER_BLOB, IndexedBlobHash, kzg_to_versioned_hash,
 };
-use alloy_primitives::keccak256;
 use alloy_primitives::B256;
+use alloy_primitives::keccak256;
 use alloy_rpc_types_beacon::sidecar::BeaconBlobBundle;
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{Result, anyhow, ensure};
 use ark_ff::{BigInteger, PrimeField};
 use async_trait::async_trait;
 use kona_host::single::{SingleChainHintHandler, SingleChainHost, SingleChainProviders};
@@ -186,14 +186,18 @@ impl BlobFallbackAdapter for hana_host::celestia::CelestiaChainHost {
     }
 }
 
+/// Kona's [SingleChainHintHandler] with the blob-sidecars fallback.
 pub type FallbackBlobHintHandler = BlobFallbackWrapper<SingleChainHintHandler, SingleChainHost>;
 
+/// Hokulea's EigenDA hint handler with the blob-sidecars fallback.
 #[cfg(feature = "eigen")]
 pub type FallbackBlobHintHandlerWithEigenDA = BlobFallbackWrapper<
     hokulea_host_bin::handler::SingleChainHintHandlerWithEigenDA,
     hokulea_host_bin::cfg::SingleChainHostWithEigenDA,
 >;
 
+/// The Celestia-enabled [HanaHintHandler](crate::hana::handler::HanaHintHandler) with the
+/// blob-sidecars fallback.
 #[cfg(feature = "celestia")]
 pub type FallbackHanaHintHandler = BlobFallbackWrapper<
     crate::hana::handler::HanaHintHandler,
@@ -351,7 +355,7 @@ async fn fetch_blob_fallback(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::eips::eip4844::{env_settings::EnvKzgSettings, Blob, BlobTransactionSidecar};
+    use alloy::eips::eip4844::{Blob, BlobTransactionSidecar, env_settings::EnvKzgSettings};
 
     fn sample_sidecar(index: u64) -> (BlobTransactionSidecarItem, B256) {
         let mut sidecar = BlobTransactionSidecar::try_from_blobs_with_settings(

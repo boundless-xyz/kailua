@@ -1,4 +1,4 @@
-// Copyright 2026 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,10 +15,10 @@
 //! Transport layer that answers blocklisted RPC methods locally instead of sending them.
 //!
 //! Blocked methods receive a JSON-RPC "method not found" error (-32601) carrying
-//! [BLOCKED_METHOD_MARKER], without the request ever reaching the provider. Callers with an
+//! `BLOCKED_METHOD_MARKER`, without the request ever reaching the provider. Callers with an
 //! existing unsupported-method fallback (such as kona's payload witness hint falling through
 //! to fine-grained hints) then take that path. The marker lets retry loops distinguish an
-//! intentional, permanent block (give up, via [crate::hint_backoff::is_method_blacklisted])
+//! intentional, permanent block (give up, via `crate::hint_backoff::is_method_blacklisted`)
 //! from a generic "method not found" that might recover across a load-balanced pool (retry).
 
 use alloy::rpc::json_rpc::{
@@ -46,6 +46,7 @@ pub struct BlockedMethodsLayer {
 }
 
 impl BlockedMethodsLayer {
+    /// Creates a layer that locally answers the given RPC method names with an error.
     pub fn new(methods: impl IntoIterator<Item = String>) -> Self {
         Self {
             blocked: Arc::new(methods.into_iter().collect()),

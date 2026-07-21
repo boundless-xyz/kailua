@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,15 +15,15 @@
 use crate::boot::L1_HEAD_EXEC_ONLY_SENTINEL;
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
+use crate::executor::{CachedExecutor, Execution, new_execution_cursor};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
 use crate::precondition::execution::exec_precondition_hash;
-use crate::precondition::{proposal, Precondition};
+use crate::precondition::{Precondition, proposal};
 #[cfg(not(feature = "experimental"))]
 use alloy_op_evm::OpEvmFactory;
-use alloy_primitives::{Sealed, B256};
-use anyhow::{bail, Context};
+use alloy_primitives::{B256, Sealed};
+use anyhow::{Context, bail};
 use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
 use kona_driver::{Driver, Executor};
 use kona_executor::TrieDBProvider;
@@ -52,40 +52,45 @@ use {
     crate::precondition::evm::{
         compute_pe_trace, hash_block_ctx, hash_expected_state, hash_results,
     },
-    alloy_consensus::{transaction::SignerRecoverable, Header},
+    alloy_consensus::{Header, transaction::SignerRecoverable},
     alloy_eips::eip2718::{Decodable2718, WithEncoded},
     alloy_evm::{
+        EvmFactory,
         block::BlockExecutor,
         revm::{
             bytecode::Bytecode,
             database::{CacheState, State},
         },
-        EvmFactory,
     },
     alloy_op_evm::{
-        block::OpAlloyReceiptBuilder, post_exec::PostExecEvmFactoryAdapter, OpBlockExecutor,
+        OpBlockExecutor, block::OpAlloyReceiptBuilder, post_exec::PostExecEvmFactoryAdapter,
     },
     kona_executor::TrieDB,
     op_alloy_consensus::OpTxEnvelope,
 };
 
+/// Factory abstracting how the derivation pipeline's data availability source is built, letting
+/// alternative DA integrations (Celestia, EigenDA) layer themselves over the standard Ethereum
+/// source.
 pub trait DASourceProvider<
     C: ChainProvider + Send + Sync + Clone + Debug,
     B: BlobProvider + Send + Sync + Clone + Debug,
 >
 {
+    /// The data availability source this factory produces.
     type DAS: DataAvailabilityProvider + Send + Sync + Debug + Clone;
 
+    /// Builds the DA source from an L1 chain provider, a blob provider, and the rollup config.
     fn new_from_parts(self, l1_provider: C, blobs: B, cfg: &RollupConfig) -> Self::DAS;
 }
 
+/// [DASourceProvider] for the standard OP Stack [EthereumDataSource]: batch data from L1
+/// calldata and EIP-4844 blobs.
 #[derive(Clone, Copy, Debug)]
 pub struct EthereumDataSourceProvider;
 
-impl<
-        C: ChainProvider + Send + Sync + Clone + Debug,
-        B: BlobProvider + Send + Sync + Clone + Debug,
-    > DASourceProvider<C, B> for EthereumDataSourceProvider
+impl<C: ChainProvider + Send + Sync + Clone + Debug, B: BlobProvider + Send + Sync + Clone + Debug>
+    DASourceProvider<C, B> for EthereumDataSourceProvider
 {
     type DAS = EthereumDataSource<C, B>;
 
@@ -94,23 +99,30 @@ impl<
     }
 }
 
-/// Runs the Kailua client to drive rollup state transition derivation using Kona.
+/// Runs the core Kailua client — kona derivation and execution over authenticated oracle data —
+/// returning the proven boot record and the accumulated [Precondition].
+///
+/// The boot record's L1 head selects one of three modes:
+/// - The txn-only sentinel (experimental) replays one block's transactions over a witness
+///   pre-state and returns a partial-execution (chunk) precondition.
+/// - The exec-only sentinel replays the cached executions, asserting that they chain the agreed
+///   output root to the claimed one, and returns an execution-trace precondition.
+/// - Any real L1 head derives batches from L1 (resuming from `derivation_cache` if given) and
+///   executes them — reusing matching `execution_cache` entries — until the claimed block is
+///   reached, or L1 data runs out and the boot claim is truncated to what was derived. The
+///   returned precondition binds the proposal blobs validated against the derived outputs plus
+///   the derivation cache/trace digests.
 ///
 /// # Arguments
-/// * `proposal_data_hash` - The hash of the proposal blob precondition data.
+/// * `proposal_data_hash` - The hash referencing the proposal blob precondition data, if any.
 /// * `oracle` - The client for preloaded communication with the host.
 /// * `stream` - The client for streamed communication with the host.
 /// * `beacon` - The blob provider.
-/// * `da_source_provider` - The provider for a data availability source.
-/// * `execution_cache` - A vector of cached executions to reuse.
-/// * `execution_trace` - An optional target to dump uncached executions.
-/// * `derivation_cache` - An initial snapshot of the derivation pipeline to resume from.
-/// * `derivation_trace` - An optional target for saving a final snapshot of the derivation pipeline.
-///
-/// # Returns
-/// A result containing a tuple (`BootInfo`, `Precondition`) upon success, or an error of type `anyhow::Error`.
-/// - `BootInfo` contains essential configuration information for bootstrapping the rollup client.
-/// - `Precondition` represents the full precondition for the validity of the boot record.
+/// * `da_source_provider` - The factory for the derivation pipeline's data availability source.
+/// * `execution_cache` - Already-proven executions to reuse instead of re-executing.
+/// * `execution_trace` - An optional sink for recording uncached executions.
+/// * `derivation_cache` - A derivation pipeline snapshot to resume from, if any.
+/// * `derivation_trace` - An optional sink for the final derivation pipeline snapshot.
 #[allow(clippy::too_many_arguments)]
 pub fn run_core_client<
     O: CommsClient + FlushableCache + Send + Sync + Debug,
@@ -565,7 +577,9 @@ where
         .map_err(OracleProviderError::SliceConversion)
 }
 
-/// Recovers a continuous execution trace from the collection target
+/// Drains the collection target into a continuous execution trace, back-filling each
+/// execution's claimed output from its successor's agreed output, and the final one from the
+/// given claim.
 pub fn recover_collected_executions(
     collection_target: Arc<Mutex<Vec<Execution>>>,
     claimed_l2_output_root: B256,
@@ -580,6 +594,8 @@ pub fn recover_collected_executions(
     take::<Vec<Execution>>(executions.as_mut())
 }
 
+/// Pairs each block's collected transaction traces with its execution to build one
+/// [PartialExecution] chunk per block, threading the parent header through in block order.
 #[cfg(feature = "experimental")]
 pub fn recover_collected_partials(
     boot_info: &BootInfo,
@@ -605,6 +621,7 @@ pub fn recover_collected_partials(
     partial_executions
 }
 
+/// Splits each block's single collected chunk into `partials_per_block` smaller chunks.
 #[cfg(feature = "experimental")]
 pub fn split_collected_partials(
     partials: Vec<Vec<PartialExecution>>,
@@ -621,6 +638,7 @@ pub fn split_collected_partials(
         .collect()
 }
 
+/// Asserts that the bytecode matches its expected hash, treating a zero hash as empty code.
 #[cfg(feature = "experimental")]
 pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
     if expected_hash.is_zero() {
@@ -636,7 +654,8 @@ pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
     }
 }
 
-/// Validates every [`Bytecode`] entry
+/// Authenticates every bytecode entry in the witness pre-state cache against its declared hash,
+/// covering both the top-level contracts map and code inlined into pre-state accounts.
 #[cfg(feature = "experimental")]
 pub fn validate_cache(cache: &CacheState) {
     // Top-level contracts map (bytecode served via `code_by_hash`).
@@ -645,10 +664,10 @@ pub fn validate_cache(cache: &CacheState) {
     }
     // Inline bytecode attached to any pre-state account.
     for cache_account in cache.accounts.values() {
-        if let Some(plain) = &cache_account.account {
-            if let Some(bytecode) = &plain.info.code {
-                validate_contract_hash(&plain.info.code_hash, bytecode);
-            }
+        if let Some(plain) = &cache_account.account
+            && let Some(bytecode) = &plain.info.code
+        {
+            validate_contract_hash(&plain.info.code_hash, bytecode);
         }
     }
 }
@@ -660,9 +679,9 @@ pub mod tests {
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
     use alloy_consensus::Header;
-    use alloy_primitives::{b256, B256};
-    use kona_proof::l1::OracleBlobProvider;
+    use alloy_primitives::{B256, b256};
     use kona_proof::BootInfo;
+    use kona_proof::l1::OracleBlobProvider;
     use std::sync::{Arc, Mutex};
 
     pub async fn test_derivation(
@@ -989,9 +1008,11 @@ pub mod tests {
         .unwrap();
 
         // Assert all results were served cached (no fresh captured)
-        assert!(post_captured
-            .iter()
-            .all(|c| c.first().unwrap().results.is_empty()));
+        assert!(
+            post_captured
+                .iter()
+                .all(|c| c.first().unwrap().results.is_empty())
+        );
         // Assert both executions yield the same blocks
         for (pre, post) in pre_executions.into_iter().zip(post_executions.into_iter()) {
             assert_eq!(pre.artifacts.header, post.artifacts.header);
@@ -1026,9 +1047,11 @@ pub mod tests {
         .unwrap();
 
         // Assert all results were served cached (no fresh captured)
-        assert!(post_captured
-            .iter()
-            .all(|c| c.first().unwrap().results.is_empty()));
+        assert!(
+            post_captured
+                .iter()
+                .all(|c| c.first().unwrap().results.is_empty())
+        );
         // Assert both executions yield the same blocks
         for (pre, post) in pre_executions.into_iter().zip(post_executions.into_iter()) {
             assert_eq!(pre.artifacts.header, post.artifacts.header);
@@ -1120,9 +1143,11 @@ pub mod tests {
         .await
         .unwrap();
         // Assert all results were served cached (no fresh captured)
-        assert!(post_captured
-            .iter()
-            .all(|c| c.first().unwrap().results.is_empty()));
+        assert!(
+            post_captured
+                .iter()
+                .all(|c| c.first().unwrap().results.is_empty())
+        );
         // Assert both executions yield the same blocks
         for (pre, post) in pre_executions.into_iter().zip(post_executions.into_iter()) {
             assert_eq!(pre.artifacts.header, post.artifacts.header);
@@ -1138,9 +1163,11 @@ pub mod tests {
         )
         .await
         .unwrap();
-        assert!(post_split_captured
-            .iter()
-            .all(|c| c.first().unwrap().results.is_empty()));
+        assert!(
+            post_split_captured
+                .iter()
+                .all(|c| c.first().unwrap().results.is_empty())
+        );
     }
 
     #[cfg(feature = "experimental")]
@@ -1200,12 +1227,12 @@ pub mod tests {
                         continue;
                     };
                     let sender = recovered.signer();
-                    if let Some(cache_account) = witness.cache.accounts.get_mut(&sender) {
-                        if let Some(plain) = cache_account.account.as_mut() {
-                            plain.info.nonce = plain.info.nonce.saturating_add(1);
-                            tampered = Some(witness);
-                            break 'outer;
-                        }
+                    if let Some(cache_account) = witness.cache.accounts.get_mut(&sender)
+                        && let Some(plain) = cache_account.account.as_mut()
+                    {
+                        plain.info.nonce = plain.info.nonce.saturating_add(1);
+                        tampered = Some(witness);
+                        break 'outer;
                     }
                 }
             }
@@ -1411,8 +1438,8 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_fetch_safe_head_hash_unknown_output_version() {
-        use crate::oracle::vec::VecOracle;
         use crate::oracle::WitnessOracle;
+        use crate::oracle::vec::VecOracle;
 
         // A non-zero version prefix must be rejected as an unknown output root version.
         let mut preimage = vec![0u8; 128];

@@ -20,22 +20,10 @@
   - [Validator](./validator.md)
   - [RPC](./rpc.md)
 
-# Specification
-- [Sequencing]()
-- [Validating]()
+# Maintenance
+- [Dependency Upgrades](./dependency-upgrades.md)
+- [Testing Tools](./testing.md)
 
-# Implementation
-- [Prover]()
-  - [Host]()
-  - [Client]()
-  - [FPVM]()
-- [Contracts]()
-  - [Verifier]()
-  - [Treasury]()
-  - [Tournament]()
-  - [Game]()
-- [CLI]()
-  - [Upgrade]()
-  - [Propose]()
-  - [Validate]()
-  - [Fault]()
+# Specification
+- [Sequencing](./sequencing.md)
+- [Validating](./validating.md)

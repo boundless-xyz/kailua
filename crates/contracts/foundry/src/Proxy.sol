@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ contract Proxy {
     }
 
     /// @notice Sets the initial admin. Admin address is stored at the EIP-1967 admin slot.
+    /// @param _admin The address granted upgrade and admin rights over the proxy
     constructor(address _admin) {
         _changeAdmin(_admin);
     }
@@ -49,11 +50,15 @@ contract Proxy {
     }
 
     /// @notice Set the implementation contract address.
+    /// @param _implementation The new implementation contract address
     function upgradeTo(address _implementation) public virtual proxyCallIfNotAdmin {
         _setImplementation(_implementation);
     }
 
     /// @notice Set the implementation and call a function in a single transaction.
+    /// @param _implementation The new implementation contract address
+    /// @param _data The calldata to delegatecall the new implementation with
+    /// @return The return data of the delegatecall
     function upgradeToAndCall(address _implementation, bytes calldata _data)
         public
         payable
@@ -68,16 +73,19 @@ contract Proxy {
     }
 
     /// @notice Changes the owner of the proxy contract.
+    /// @param _admin The new admin address
     function changeAdmin(address _admin) public virtual proxyCallIfNotAdmin {
         _changeAdmin(_admin);
     }
 
     /// @notice Gets the owner of the proxy contract.
+    /// @return The admin address stored at the EIP-1967 admin slot
     function admin() public virtual proxyCallIfNotAdmin returns (address) {
         return _getAdmin();
     }
 
     /// @notice Queries the implementation address.
+    /// @return The implementation address stored at the EIP-1967 implementation slot
     function implementation() public virtual proxyCallIfNotAdmin returns (address) {
         return _getImplementation();
     }
@@ -101,6 +109,7 @@ contract Proxy {
         emit AdminChanged(previous, _admin);
     }
 
+    /// @notice Delegatecalls the implementation with the incoming calldata and bubbles up the result
     function _doProxyCall() internal {
         address impl = _getImplementation();
         require(impl != address(0), "Proxy: implementation not initialized");

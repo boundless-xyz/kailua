@@ -1,4 +1,4 @@
-// Copyright 2026 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// EVM factory that replays cached per-transaction results instead of re-executing.
 pub mod cached;
+/// The out-of-transaction state read by OP execution logic (the L1Block predeploy).
 pub mod expected;
+/// Chunk data structures for proving transaction subsequences within a block.
 pub mod partial;
+/// Witness data for running a partial block execution in-guest.
 pub mod witness;
 
 #[cfg(test)]
@@ -23,24 +27,25 @@ mod tests {
     use crate::boot::L1_HEAD_TXN_ONLY_SENTINEL;
     use crate::evm::cached::CachedEvmFactory;
     use crate::evm::expected::{
-        apply_result_to_expected_state, canonicalize_expected_state,
-        capture_required_expected_state, ExpectedAccount, ExpectedStateEntry, ExpectedStorageEntry,
-        EXPECTED_STATE_ADDRESSES, EXPECTED_STORAGE_SLOTS,
+        EXPECTED_STATE_ADDRESSES, EXPECTED_STORAGE_SLOTS, ExpectedAccount, ExpectedStateEntry,
+        ExpectedStorageEntry, apply_result_to_expected_state, canonicalize_expected_state,
+        capture_required_expected_state,
     };
     use crate::evm::partial::{
         PartialAccount, PartialExecution, PartialResultAndState, PartialStateEntry,
         PartialStorageEntry, TransactionResultCollector,
     };
-    use crate::evm::witness::{cache_results, PartialExecutionWitness};
+    use crate::evm::witness::{PartialExecutionWitness, cache_results};
+    use alloy_evm::revm::DatabaseCommit;
     use alloy_evm::revm::context::CfgEnv;
     use alloy_evm::revm::context::{BlockEnv, TxEnv};
     use alloy_evm::revm::context_interface::result::ResultAndState;
     use alloy_evm::revm::context_interface::result::{
         ExecutionResult, Output, ResultGas, SuccessReason,
     };
+    use alloy_evm::revm::database::CacheState;
     use alloy_evm::revm::database::in_memory_db::InMemoryDB;
     use alloy_evm::revm::database::states::CacheAccount;
-    use alloy_evm::revm::database::CacheState;
     use alloy_evm::revm::primitives::HashMap as RevmHashMap;
     use alloy_evm::revm::state::Account;
     use alloy_evm::revm::state::AccountInfo;
@@ -48,15 +53,14 @@ mod tests {
     use alloy_evm::revm::state::Bytecode;
     use alloy_evm::revm::state::EvmStorageSlot;
     use alloy_evm::revm::state::{EvmState, EvmStorage};
-    use alloy_evm::revm::DatabaseCommit;
     use alloy_evm::{Evm, EvmEnv, EvmFactory};
-    use alloy_op_evm::block::{OpBlockExecutionCtx, PostExecMode};
     use alloy_op_evm::OpTx;
+    use alloy_op_evm::block::{OpBlockExecutionCtx, PostExecMode};
     use alloy_primitives::Address;
-    use alloy_primitives::{address, TxKind, U256};
-    use alloy_primitives::{Bytes, B256};
+    use alloy_primitives::{B256, Bytes};
+    use alloy_primitives::{TxKind, U256, address};
     use kona_proof::BootInfo;
-    use op_revm::{constants::L1_BLOCK_CONTRACT, OpHaltReason, OpSpecId, OpTransaction};
+    use op_revm::{OpHaltReason, OpSpecId, OpTransaction, constants::L1_BLOCK_CONTRACT};
     use risc0_zkvm::sha::{Impl as SHA2, Sha256};
     use std::sync::{Arc, Mutex};
 
@@ -292,11 +296,12 @@ mod tests {
         ];
 
         for case in scenarios {
-            let chunks = vec![case
-                .marker_groups
-                .iter()
-                .map(|m| stub_chunk(1, m))
-                .collect::<Vec<_>>()];
+            let chunks = vec![
+                case.marker_groups
+                    .iter()
+                    .map(|m| stub_chunk(1, m))
+                    .collect::<Vec<_>>(),
+            ];
             let factory = CachedEvmFactory::new(chunks);
             let (db, sender, recipient) = funded_db();
             let mut evm = factory.create_evm(db, test_env_for_block(1));
@@ -768,11 +773,13 @@ mod tests {
             .iter()
             .find(|e| e.address == address!("0xCCCC000000000000000000000000000000000000"))
             .expect("CCCC entry must exist after canonicalize");
-        assert!(cccc_entry
-            .account
-            .storage
-            .windows(2)
-            .all(|w| w[0].slot < w[1].slot));
+        assert!(
+            cccc_entry
+                .account
+                .storage
+                .windows(2)
+                .all(|w| w[0].slot < w[1].slot)
+        );
         assert_eq!(cccc_entry.account.storage[0].slot, U256::from(1));
         assert_eq!(cccc_entry.account.storage[1].slot, U256::from(5));
     }
@@ -1076,16 +1083,20 @@ mod tests {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&partial).unwrap();
         let recoded: PartialResultAndState =
             rkyv::from_bytes::<PartialResultAndState, rkyv::rancor::Error>(&bytes).unwrap();
-        assert!(recoded
-            .state
-            .windows(2)
-            .all(|w| w[0].address < w[1].address));
-        for entry in &recoded.state {
-            assert!(entry
-                .account
-                .storage
+        assert!(
+            recoded
+                .state
                 .windows(2)
-                .all(|w| w[0].slot < w[1].slot));
+                .all(|w| w[0].address < w[1].address)
+        );
+        for entry in &recoded.state {
+            assert!(
+                entry
+                    .account
+                    .storage
+                    .windows(2)
+                    .all(|w| w[0].slot < w[1].slot)
+            );
         }
 
         match (&partial.result, &recoded.result) {

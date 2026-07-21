@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::ProvingError;
 use crate::args::ProvingArgs;
 use crate::client::witgen;
 use crate::driver::{driver_file_name, signal_derivation_trace};
 use crate::profiling::{Profile, ProfiledReceipt};
 use crate::proof::save_to_bincoded_file;
 use crate::risczero::boundless::BoundlessArgs;
-use crate::ProvingError;
 use alloy_primitives::B256;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use async_channel::Sender;
 use human_bytes::human_bytes;
-use kailua_kona::boot::StitchedBootInfo;
 #[cfg(feature = "eigen")]
 use kailua_kona::boot::L1_HEAD_SENTINELS;
+use kailua_kona::boot::StitchedBootInfo;
 #[cfg(feature = "experimental")]
 use kailua_kona::boot::{L1_HEAD_EXEC_ONLY_SENTINEL, L1_HEAD_TXN_ONLY_SENTINEL};
 use kailua_kona::client::core::EthereumDataSourceProvider;
@@ -39,8 +39,8 @@ use kona_preimage::{HintWriterClient, PreimageOracleClient};
 use kona_proof::l1::OracleBlobProvider;
 use kona_proof::{BootInfo, CachingOracle};
 use lazy_static::lazy_static;
-use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Journal;
+use risc0_zkvm::sha::Digestible;
 use rkyv::rancor::BoxedError;
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -63,8 +63,10 @@ use {
 };
 
 lazy_static! {
+    /// Semaphore bounding concurrent witness generation runs across the process.
     pub static ref SEMAPHORE_WITGEN: Arc<Mutex<Arc<Semaphore>>> =
         Arc::new(Mutex::new(Arc::new(Semaphore::new(Semaphore::MAX_PERMITS))));
+    /// Semaphore bounding concurrent zkVM executor runs across the process.
     pub static ref SEMAPHORE_R0VM: Arc<Mutex<Arc<Semaphore>>> =
         Arc::new(Mutex::new(Arc::new(Semaphore::new(Semaphore::MAX_PERMITS))));
 }
@@ -72,6 +74,13 @@ lazy_static! {
 /// The size of the LRU cache in the oracle.
 pub const ORACLE_LRU_SIZE: usize = 1024;
 
+/// Generates the witness for the boot claim served by the oracle and seeks a matching proof.
+///
+/// Runs the DA-appropriate witgen client under the witgen semaphore, persists any traced
+/// derivation snapshot to its driver cache file, enforces the witness-size and block-count
+/// limits via [process_witness], and forwards the encoded frames to [crate::risczero::seek_proof].
+/// Under the experimental feature, cached partial-execution proofs covering the claim are
+/// loaded from disk and stitched in.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_proving_client<P, H>(
     _l1_node_address: Option<String>,
@@ -461,6 +470,7 @@ where
     Ok(())
 }
 
+/// Acquires an owned permit from the current incarnation of the semaphore.
 pub async fn acquire_owned_permit(
     semaphore: Arc<Mutex<Arc<Semaphore>>>,
 ) -> anyhow::Result<OwnedSemaphorePermit> {
@@ -473,18 +483,24 @@ pub async fn acquire_owned_permit(
         .context("Could not acquire witgen permit.")
 }
 
-/// Update the number of available permits
+/// Limits the number of concurrent witness generation runs to `count`.
 pub async fn restrict_witgen_permits(count: usize) {
     let mut witgen_sem_lock = SEMAPHORE_WITGEN.lock().await;
     *witgen_sem_lock = Arc::new(Semaphore::new(count));
 }
 
-/// Update the number of available permits
+/// Limits the number of concurrent zkVM executor runs to `count`.
 pub async fn restrict_r0vm_permits(count: usize) {
     let mut execute_sem_lock = SEMAPHORE_R0VM.lock().await;
     *execute_sem_lock = Arc::new(Semaphore::new(count));
 }
 
+/// Enforces the proving limits on the witness and encodes it into input frames.
+///
+/// Restores the original execution (and partial) inputs into the witness, then aborts with a
+/// splittable [ProvingError] variant when the witness size or block count exceeds its limit
+/// (unless `force_attempt`), or with [ProvingError::NotSeekingProof] when only traces were
+/// wanted. The error payloads carry the traces so the caller can divide the workload.
 #[allow(clippy::too_many_arguments)]
 pub fn process_witness(
     proving: &ProvingArgs,
@@ -583,6 +599,8 @@ pub fn process_witness(
     Ok([extra_frames, preloaded_frames, streamed_frames].concat())
 }
 
+/// Encodes the witness into (preloaded, streamed) rkyv frame lists: the main witness object
+/// followed by its preimage shards, and the streamed shards in reverse access order.
 #[allow(clippy::type_complexity)]
 pub fn encode_witness_frames(
     witness_vec: Witness<VecOracle>,
@@ -606,6 +624,7 @@ pub fn encode_witness_frames(
     Ok((preloaded_data, streams))
 }
 
+/// Serializes each preimage shard into its own rkyv frame, draining the entries.
 pub fn shard_witness_data(data: &mut [PreimageVecEntry]) -> anyhow::Result<Vec<Vec<u8>>> {
     let mut shards = vec![];
     for entry in data {
@@ -619,6 +638,7 @@ pub fn shard_witness_data(data: &mut [PreimageVecEntry]) -> anyhow::Result<Vec<V
     Ok(shards)
 }
 
+/// Returns the (preloaded, streamed) byte sizes of the encoded witness, measured on a deep clone.
 pub fn sum_witness_size(witness: &Witness<VecOracle>) -> (usize, usize) {
     let (witness_frames, streamed_frames) =
         encode_witness_frames(witness.deep_clone()).expect("Failed to encode VecOracle");

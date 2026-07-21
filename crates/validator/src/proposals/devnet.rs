@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,9 @@
 use risc0_zkvm::{Digest, InnerReceipt, MaybePruned, Receipt};
 use tracing::warn;
 
+/// In dev mode, patches a fake receipt's claimed image ID and the image ID trailing its
+/// journal to match the on-chain FPVM image ID, so contract checks accept it; outside dev
+/// mode, returns the receipt unchanged.
 #[allow(deprecated)]
 pub fn maybe_patch_proof(
     mut receipt: Receipt,
@@ -28,18 +31,17 @@ pub fn maybe_patch_proof(
     let expected_fpvm_image_id = Digest::from(expected_fpvm_image_id);
 
     // Patch the image id of the receipt to match the expected one
-    if let InnerReceipt::Fake(fake_inner_receipt) = &mut receipt.inner {
-        if let MaybePruned::Value(claim) = &mut fake_inner_receipt.claim {
-            warn!("DEV-MODE ONLY: Patching fake receipt image id to match game contract.");
-            claim.pre = MaybePruned::Pruned(expected_fpvm_image_id);
-            if let MaybePruned::Value(Some(output)) = &mut claim.output {
-                if let MaybePruned::Value(journal) = &mut output.journal {
-                    let n = journal.len();
-                    journal[n - 32..n].copy_from_slice(expected_fpvm_image_id.as_bytes());
-                    receipt.journal.bytes[n - 32..n]
-                        .copy_from_slice(expected_fpvm_image_id.as_bytes());
-                }
-            }
+    if let InnerReceipt::Fake(fake_inner_receipt) = &mut receipt.inner
+        && let MaybePruned::Value(claim) = &mut fake_inner_receipt.claim
+    {
+        warn!("DEV-MODE ONLY: Patching fake receipt image id to match game contract.");
+        claim.pre = MaybePruned::Pruned(expected_fpvm_image_id);
+        if let MaybePruned::Value(Some(output)) = &mut claim.output
+            && let MaybePruned::Value(journal) = &mut output.journal
+        {
+            let n = journal.len();
+            journal[n - 32..n].copy_from_slice(expected_fpvm_image_id.as_bytes());
+            receipt.journal.bytes[n - 32..n].copy_from_slice(expected_fpvm_image_id.as_bytes());
         }
     }
     Ok(receipt)

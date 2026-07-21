@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@ use alloy::primitives::Address;
 use alloy::providers::Provider;
 use clap::Parser;
 use kailua_sync::provider::beacon::blob_sidecar;
+use kailua_sync::transact::TransactArgs;
 use kailua_sync::transact::provider::KailuaProvider;
 use kailua_sync::transact::signer::ProposerSignerArgs;
-use kailua_sync::transact::TransactArgs;
 use std::ffi::OsString;
 use std::time::Duration;
 use tracing::info;

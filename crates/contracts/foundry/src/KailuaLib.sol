@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -85,18 +85,26 @@ error VanguardError(address parentGame);
 /// @notice Thrown when a non-factory owner calls an owner-only function.
 error NotFactoryOwner();
 
+/// @title IKailuaTreasury
+/// @notice Interface for the treasury contract that tracks proposers, bonds, and eliminations
 interface IKailuaTreasury {
     /// @notice Emitted when the participation bond is updated
     /// @param amount The new required bond amount
     event BondUpdated(uint256 amount);
 
     /// @notice Returns the game index at which proposer was proven faulty
+    /// @param proposer The proposer address to look up
+    /// @return The game index of the eliminating proposal, or zero if the proposer was not eliminated
     function eliminationRound(address proposer) external view returns (uint256);
 
     /// @notice Returns the proposer of a game
+    /// @param game The proposal contract address to look up
+    /// @return The address that created the proposal, or the zero address for unknown games
     function proposerOf(address game) external view returns (address);
 
     /// @notice Eliminates a child's proposer and allocates their bond to the prover
+    /// @param child The eliminated child proposal contract
+    /// @param prover The address credited with the prover share of the slashed bond
     function eliminate(address child, address prover) external;
 
     /// @notice Returns true iff a proposal is currently being submitted
@@ -118,6 +126,8 @@ interface IKailuaTreasury {
     function ELIMINATION_SPLIT_DENOM() external view returns (uint256);
 }
 
+/// @title IKailuaTournament
+/// @notice Interface for the tournament played between the child proposals extending a proposal
 interface IKailuaTournament {
     /// @notice Emitted when a proof is submitted.
     /// @param signature The proposal signature
@@ -127,23 +137,33 @@ interface IKailuaTournament {
     /// @notice Returns the KailuaTreasury of this tournament
     function KAILUA_TREASURY() external view returns (IKailuaTreasury);
     /// @notice The timestamp of when the first proof for a proposal signature was made
-    function provenAt(bytes32) external view returns (Timestamp);
+    /// @param signature The proposal signature to look up
+    function provenAt(bytes32 signature) external view returns (Timestamp);
     /// @notice Returns the hash of the output claim and all blob hashes associated with this proposal
     function signature() external view returns (bytes32);
     /// @notice Returns whether a child can be considered valid
+    /// @param childSignature The signature of the child proposal to check
     function isViableSignature(bytes32 childSignature) external view returns (bool);
     /// @notice Returns the signature of the child proven valid
     function validChildSignature() external view returns (bytes32);
 }
 
+/// @title KailuaPayLib
+/// @notice Helper library for ETH transfers
 library KailuaPayLib {
     /// @notice Transfers ETH from the contract's balance to the recipient
+    /// @dev Reverts with `BondTransferFailed` if the transfer fails
+    /// @param amount The amount of ETH to transfer, in wei
+    /// @param recipient The address to receive the transfer
     function pay(uint256 amount, address recipient) internal {
         (bool success,) = recipient.call{value: amount}(hex"");
         if (!success) revert BondTransferFailed();
     }
 }
 
+/// @title KailuaKZGLib
+/// @notice Helper library for verifying the publication of individual field elements in EIP-4844 blobs using the
+///         point evaluation precompile
 library KailuaKZGLib {
     /// @notice The KZG commitment version
     bytes32 internal constant KZG_COMMITMENT_VERSION =
@@ -173,27 +193,43 @@ library KailuaKZGLib {
     uint256 internal constant FIELD_ELEMENTS_PER_BLOB = uint64(1 << FIELD_ELEMENTS_PER_BLOB_PO2);
 
     /// @notice The index of the blob containing the FE at the provided offset
+    /// @param outputOffset The global field element offset across all proposal blobs
+    /// @return index The index of the containing blob
     function blobIndex(uint256 outputOffset) internal pure returns (uint256 index) {
         index = outputOffset / FIELD_ELEMENTS_PER_BLOB;
     }
 
     /// @notice The index of the FE at the provided offset in the blob that contains it
+    /// @param outputOffset The global field element offset across all proposal blobs
+    /// @return position The field element's position within its containing blob
     function fieldElementIndex(uint256 outputOffset) internal pure returns (uint32 position) {
         position = uint32(outputOffset % FIELD_ELEMENTS_PER_BLOB);
     }
 
     /// @notice The versioned KZG hash of the provided blob commitment
+    /// @param blobCommitment The 48-byte KZG commitment of the blob
+    /// @return hash The EIP-4844 versioned blob hash
     function versionedKZGHash(bytes calldata blobCommitment) internal pure returns (bytes32 hash) {
         require(blobCommitment.length == 48);
         hash = ((sha256(blobCommitment) << 8) >> 8) | KZG_COMMITMENT_VERSION;
     }
 
     /// @notice The mapped FE corresponding to the input hash
+    /// @param hash The 32-byte hash to map
+    /// @return fe The canonical field element obtained by reduction modulo the BLS scalar field
     function hashToFe(bytes32 hash) internal pure returns (uint256 fe) {
         fe = uint256(hash) % BLS_MODULUS;
     }
 
     /// @notice Returns true iff the proof shows that the FE is part of the blob at the provided position
+    /// @dev Blobs index their field elements in bit-reversed order, so the evaluation point is the root of unity
+    ///      raised to the bit-reversal of the index
+    /// @param versionedBlobHash The EIP-4844 versioned hash of the blob
+    /// @param index The position of the field element within the blob
+    /// @param value The claimed field element value; must be canonical or the precompile call fails
+    /// @param blobCommitment The 48-byte KZG commitment of the blob
+    /// @param proof The KZG evaluation proof
+    /// @return success Whether the point evaluation precompile accepted the proof
     function verifyKZGBlobProof(
         bytes32 versionedBlobHash,
         uint32 index,
@@ -218,6 +254,8 @@ library KailuaKZGLib {
     }
 
     /// @notice Calls the modular exponentiation precompile with a fixed base and modulus
+    /// @param exponent The power to raise the base root of unity to, modulo the BLS scalar field
+    /// @return result The computed power of the root of unity
     function modExp(uint256 exponent) internal view returns (uint256 result) {
         bytes memory modExpData =
             abi.encodePacked(uint256(32), uint256(32), uint256(32), ROOT_OF_UNITY, exponent, BLS_MODULUS);
@@ -227,6 +265,8 @@ library KailuaKZGLib {
     }
 
     /// @notice Reverses the bits of the input index
+    /// @param index The blob field element index to bit-reverse
+    /// @return result The reversal of the index's low `FIELD_ELEMENTS_PER_BLOB_PO2` bits
     function reverseBits(uint32 index) internal pure returns (uint256 result) {
         for (uint256 i = 0; i < FIELD_ELEMENTS_PER_BLOB_PO2; i++) {
             result <<= 1;

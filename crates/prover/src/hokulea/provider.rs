@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,27 +15,31 @@
 use alloy::providers::Provider;
 use alloy::transports::http::reqwest::Url;
 use alloy_primitives::B256;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use async_trait::async_trait;
 use canoe_bindings::StatusCode;
 use canoe_provider::{CanoeInput, CanoeProvider, CertVerifierCall};
 use kailua_sync::retry_res_timeout;
+use risc0_steel::Contract;
 use risc0_steel::alloy::providers::ProviderBuilder;
 use risc0_steel::ethereum::{
-    EthChainSpec, EthEvmEnv, EthEvmInput, ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC,
-    ETH_SEPOLIA_CHAIN_SPEC,
+    ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC, ETH_SEPOLIA_CHAIN_SPEC, EthChainSpec, EthEvmEnv,
+    EthEvmInput,
 };
 use risc0_steel::host::BlockNumberOrTag;
-use risc0_steel::Contract;
 use std::str::FromStr;
 use tracing::info;
 
-/// A canoe provider implementation with steel
+/// Canoe provider proving EigenDA cert validity through a Steel EVM call.
+///
+/// Preflights each cert verifier call against L1 state at the proposal's L1 head block and
+/// returns the [EthEvmInput] the guest replays to reproduce the verdicts, failing if any
+/// preflighted verdict contradicts the claimed validity.
 #[derive(Debug, Clone)]
 pub struct KailuaCanoeSteelProvider {
-    /// hash of l1 head block
+    /// Hash of the proposal's L1 head block anchoring the Steel call.
     pub l1_head: B256,
-    /// rpc to l1 geth node
+    /// URL of the L1 execution node RPC endpoint.
     pub eth_rpc_url: String,
 }
 

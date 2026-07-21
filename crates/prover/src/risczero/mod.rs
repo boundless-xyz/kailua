@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,34 +16,49 @@ use crate::args::ProvingArgs;
 use crate::profiling::{Profile, ProfiledReceipt};
 use crate::proof::proof_file_name;
 use crate::risczero::boundless::BoundlessArgs;
-use crate::{current_time, proof, ProvingError};
+use crate::{ProvingError, current_time, proof};
 use anyhow::Context;
 use risc0_zkvm::{Journal, Receipt};
 use std::convert::identity;
 use std::path::{Path, PathBuf};
 use tracing::{error, info};
 
+/// Proving via the Bonsai remote proving service.
 pub mod bonsai;
+/// Proving via the Boundless proving market.
 pub mod boundless;
+/// Proving via the local zkVM prover.
 pub mod zkvm;
 
-/// Use our own version of SessionStats to avoid non-exhaustive issues (risc0_zkvm::SessionStats)
+/// Exhaustive stand-in for the non-exhaustive [risc0_zkvm::SessionStats].
 #[derive(Debug, Clone)]
 pub struct KailuaSessionStats {
+    /// Number of proven segments.
     pub segments: usize,
+    /// Total cycles proven.
     pub total_cycles: u64,
+    /// Cycles spent executing user code.
     pub user_cycles: u64,
+    /// Cycles spent paging memory in and out.
     pub paging_cycles: u64,
+    /// Cycles reserved by the prover.
     pub reserved_cycles: u64,
 }
 
-/// Our own version of ProveInfo to avoid non-exhaustive issues (risc0_zkvm::ProveInfo)
+/// Exhaustive stand-in for the non-exhaustive [risc0_zkvm::ProveInfo].
 #[derive(Debug)]
 pub struct KailuaProveInfo {
+    /// The computed receipt.
     pub receipt: Receipt,
+    /// The proving session statistics.
     pub stats: KailuaSessionStats,
 }
 
+/// Computes and saves a proof of the journal through the appropriate backend.
+///
+/// Uses the Boundless market when configured (outside dev mode), otherwise Bonsai when its API
+/// env vars are set, and the local zkVM prover as the fallback. The resulting receipt is
+/// checked against the expected journal and written to its proof file with its profile.
 #[allow(clippy::too_many_arguments)]
 #[allow(deprecated)]
 pub async fn seek_proof(
