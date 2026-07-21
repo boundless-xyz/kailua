@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use opentelemetry::KeyValue;
 use opentelemetry::global::{meter, set_meter_provider, set_tracer_provider};
 use opentelemetry::metrics::{Gauge, Meter};
-use opentelemetry::KeyValue;
 use opentelemetry_otlp::{MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider, Temporality};
-use opentelemetry_sdk::{runtime::Tokio, trace::TracerProvider, Resource};
+use opentelemetry_sdk::{Resource, runtime::Tokio, trace::TracerProvider};
 
 /// OTLP telemetry export arguments.
 #[derive(clap::Args, Debug, Clone, Default)]

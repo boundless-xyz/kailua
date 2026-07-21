@@ -19,9 +19,9 @@ use crate::stall::Stall;
 use alloy::primitives::Address;
 use anyhow::bail;
 use kailua_contracts::*;
+use opentelemetry::Context;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use opentelemetry::Context;
 use std::collections::VecDeque;
 
 /// A collection of pointers to statefully track synchrony information

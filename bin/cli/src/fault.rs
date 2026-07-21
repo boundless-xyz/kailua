@@ -14,7 +14,7 @@
 
 use alloy::eips::eip4844::FIELD_ELEMENTS_PER_BLOB;
 use alloy::network::Ethereum;
-use alloy::primitives::{Bytes, B256, U256};
+use alloy::primitives::{B256, Bytes, U256};
 use alloy::providers::RootProvider;
 use alloy::sol_types::SolValue;
 use anyhow::Context;
@@ -23,11 +23,11 @@ use kailua_kona::blobs::hash_to_fe;
 use kailua_kona::config::config_hash;
 use kailua_proposer::args::ProposeArgs;
 use kailua_sync::proposal::Proposal;
-use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::provider::optimism::OpNodeProvider;
+use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::Transact;
-use kailua_sync::{await_tel, await_tel_res, retry_res_ctx_timeout, KAILUA_GAME_TYPE};
+use kailua_sync::{KAILUA_GAME_TYPE, await_tel, await_tel_res, retry_res_ctx_timeout};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 use tracing::{error, info, warn};

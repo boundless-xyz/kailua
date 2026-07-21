@@ -146,7 +146,7 @@ impl From<&ProofJournal> for Journal {
 pub mod tests {
     use super::*;
     use crate::boot::tests::gen_boot_infos;
-    use alloy_primitives::{keccak256, Address, B256};
+    use alloy_primitives::{Address, B256, keccak256};
     use risc0_zkvm::{FakeReceipt, InnerReceipt, ReceiptClaim};
 
     pub fn gen_proof_journals(count: usize, gap: u64, config_hash: B256) -> Vec<ProofJournal> {

@@ -14,8 +14,8 @@
 
 use crate::rkyv::primitives::B256Def;
 use alloy_primitives::B256;
-use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Digest;
+use risc0_zkvm::sha::Digestible;
 
 /// Canonical encodings and digests for cached derivation pipeline state.
 pub mod derivation;

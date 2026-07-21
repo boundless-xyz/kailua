@@ -19,11 +19,11 @@ use alloy::providers::Provider;
 use kailua_contracts::*;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::stall::Stall;
+use opentelemetry::KeyValue;
 use opentelemetry::global::tracer;
 use opentelemetry::metrics::Counter;
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use opentelemetry::KeyValue;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 use tracing::{error, info, warn};
@@ -71,7 +71,9 @@ pub async fn dispatch_proof_requests<P: Provider>(
                 error!("Proposal {proposal_index} missing from database.");
                 buffer.push((retry_time, proposal_index));
             } else {
-                warn!("Skipping (is_fault={is_fault}) proof request for freed proposal {proposal_index}");
+                warn!(
+                    "Skipping (is_fault={is_fault}) proof request for freed proposal {proposal_index}"
+                );
             }
             continue;
         };
@@ -136,7 +138,9 @@ pub async fn dispatch_proof_requests<P: Provider>(
             #[cfg(feature = "devnet")]
             args.l1_head_jump_back,
         ) else {
-            error!("Could not choose an L1 head to (is_fault={is_fault}) prove proposal {proposal_index}");
+            error!(
+                "Could not choose an L1 head to (is_fault={is_fault}) prove proposal {proposal_index}"
+            );
             buffer.push((retry_time, proposal_index));
             continue;
         };

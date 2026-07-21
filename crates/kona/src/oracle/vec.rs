@@ -125,7 +125,10 @@ impl WitnessOracle for VecOracle {
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
-        info!("Finalizing {} preimages with shard size {shard_size} and validation ptrs {with_validation_ptrs}", flat_vec.len());
+        info!(
+            "Finalizing {} preimages with shard size {shard_size} and validation ptrs {with_validation_ptrs}",
+            flat_vec.len()
+        );
         // sort by expected access
         flat_vec.reverse();
         // shard vectors by size limit
@@ -205,11 +208,7 @@ impl PreimageOracleClient for VecOracle {
             }
 
             let entry = preimages.last_mut().unwrap();
-            loop {
-                let Some((last_key, value, _)) = entry.pop() else {
-                    break;
-                };
-
+            while let Some((last_key, value, _)) = entry.pop() {
                 if key == last_key {
                     if !queue.is_empty() {
                         log(&format!("TEMP ELEMENTS: {}", queue.len()));

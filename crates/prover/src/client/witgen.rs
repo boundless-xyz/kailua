@@ -18,7 +18,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use kailua_kona::blobs::BlobWitnessData;
 use kailua_kona::boot::StitchedBootInfo;
-use kailua_kona::client::core::{recover_collected_executions, DASourceProvider};
+use kailua_kona::client::core::{DASourceProvider, recover_collected_executions};
 use kailua_kona::client::stitching::stitch_boot_info;
 use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;

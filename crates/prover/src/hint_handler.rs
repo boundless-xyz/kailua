@@ -17,12 +17,12 @@
 //! `/eth/v1/beacon/blob_sidecars/{slot}` endpoint for L1 blob hints.
 
 use alloy::eips::eip4844::{
-    kzg_to_versioned_hash, BlobTransactionSidecarItem, IndexedBlobHash, FIELD_ELEMENTS_PER_BLOB,
+    BlobTransactionSidecarItem, FIELD_ELEMENTS_PER_BLOB, IndexedBlobHash, kzg_to_versioned_hash,
 };
-use alloy_primitives::keccak256;
 use alloy_primitives::B256;
+use alloy_primitives::keccak256;
 use alloy_rpc_types_beacon::sidecar::BeaconBlobBundle;
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{Result, anyhow, ensure};
 use ark_ff::{BigInteger, PrimeField};
 use async_trait::async_trait;
 use kona_host::single::{SingleChainHintHandler, SingleChainHost, SingleChainProviders};
@@ -355,7 +355,7 @@ async fn fetch_blob_fallback(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::eips::eip4844::{env_settings::EnvKzgSettings, Blob, BlobTransactionSidecar};
+    use alloy::eips::eip4844::{Blob, BlobTransactionSidecar, env_settings::EnvKzgSettings};
 
     fn sample_sidecar(index: u64) -> (BlobTransactionSidecarItem, B256) {
         let mut sidecar = BlobTransactionSidecar::try_from_blobs_with_settings(

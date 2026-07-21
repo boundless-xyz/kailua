@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use alloy::primitives::map::{Entry, HashMap};
-use alloy::primitives::{keccak256, U256};
+use alloy::primitives::{U256, keccak256};
 use alloy::providers::{Provider, ProviderBuilder};
 use kailua_prover::current_time;
 use kailua_prover::profiling::{Profile, ProfiledReceipt};

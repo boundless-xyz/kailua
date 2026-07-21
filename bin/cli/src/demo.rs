@@ -14,14 +14,14 @@
 
 use alloy::eips::BlockNumberOrTag;
 use alloy::providers::Provider;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use kailua_prover::args::ProvingArgs;
 use kailua_prover::risczero::boundless::BoundlessArgs;
 use kailua_sync::args::SyncArgs;
 use kailua_sync::provider::{ProviderArgs, SyncProvider};
 use kailua_sync::telemetry::TelemetryArgs;
-use kailua_sync::transact::signer::ValidatorSignerArgs;
 use kailua_sync::transact::TransactArgs;
+use kailua_sync::transact::signer::ValidatorSignerArgs;
 use kailua_sync::{await_tel, await_tel_res, retry_res_ctx_timeout};
 use kailua_validator::args::{PermitPolicy, ValidateArgs};
 use kailua_validator::channel::{DuplexChannel, Message};

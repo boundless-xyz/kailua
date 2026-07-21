@@ -4,7 +4,7 @@ pub const KAILUA_FPVM_KONA_ELF: &[u8] = include_bytes!("bin/kailua-fpvm-kona.bin
 /// Path to the [KAILUA_FPVM_KONA_ELF] binary, relative to this file.
 pub const KAILUA_FPVM_KONA_PATH: &str = "bin/kailua-fpvm-kona.bin";
 /// RISC Zero image ID committing to [KAILUA_FPVM_KONA_ELF].
-pub const KAILUA_FPVM_KONA_ID: [u32; 8] = [0xBA46C00B, 0x9228532C, 0x9B818E8, 0x17EE812E, 0x71C7C3BF, 0x22102371, 0xB968E213, 0x68865CEA];
+pub const KAILUA_FPVM_KONA_ID: [u32; 8] = [0x31C97CD4, 0x54A69398, 0xD44E77CB, 0xE5EA6BA6, 0xC346F05, 0xA3F63F0C, 0x78121727, 0xBE8B901A];
 
 /// FPVM guest program variant with EigenDA support via hokulea.
 #[cfg(feature = "eigen")]
@@ -14,7 +14,7 @@ pub const KAILUA_FPVM_HOKULEA_ELF: &[u8] = include_bytes!("bin/kailua-fpvm-hokul
 pub const KAILUA_FPVM_HOKULEA_PATH: &str = "bin/kailua-fpvm-hokulea.bin";
 /// RISC Zero image ID committing to [KAILUA_FPVM_HOKULEA_ELF].
 #[cfg(feature = "eigen")]
-pub const KAILUA_FPVM_HOKULEA_ID: [u32; 8] = [0x1C94D8BB, 0xD824F947, 0x919DE395, 0x21797A8B, 0xF441C1C9, 0x23E188DE, 0x7ADA592E, 0x8754FC93];
+pub const KAILUA_FPVM_HOKULEA_ID: [u32; 8] = [0x20260FA0, 0xEE4CE6A1, 0x5AA1E1F4, 0x42D151E, 0xF707E1D5, 0x17A1DBAF, 0x923D0674, 0x471C877B];
 
 /// FPVM guest program variant with Celestia DA support via hana.
 #[cfg(feature = "celestia")]
@@ -24,4 +24,4 @@ pub const KAILUA_FPVM_HANA_ELF: &[u8] = include_bytes!("bin/kailua-fpvm-hana.bin
 pub const KAILUA_FPVM_HANA_PATH: &str = "bin/kailua-fpvm-hana.bin";
 /// RISC Zero image ID committing to [KAILUA_FPVM_HANA_ELF].
 #[cfg(feature = "celestia")]
-pub const KAILUA_FPVM_HANA_ID: [u32; 8] = [0xAD0BCE5D, 0x5B6C432B, 0xC2533FC2, 0xC8C9D5C9, 0x74BEBFD5, 0xFD4E979, 0xCA940DD5, 0x90258C3F];
+pub const KAILUA_FPVM_HANA_ID: [u32; 8] = [0x8F35C637, 0x5523B572, 0x1FDCC613, 0xFD180CC9, 0x9D691D3B, 0xE0842FD3, 0xD3C68777, 0x7A46129F];

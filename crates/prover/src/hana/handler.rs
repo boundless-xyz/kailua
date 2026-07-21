@@ -14,11 +14,11 @@
 
 use alloy::eips::BlockId;
 use alloy::providers::{Provider, RootProvider};
-use alloy_primitives::{keccak256, Address, B256};
-use anyhow::{bail, Context};
+use alloy_primitives::{Address, B256, keccak256};
+use anyhow::{Context, bail};
 use async_trait::async_trait;
 use hana_blobstream::blobstream::SP1Blobstream::SP1BlobstreamInstance;
-use hana_blobstream::blobstream::{blobstream_address, SP1Blobstream};
+use hana_blobstream::blobstream::{SP1Blobstream, blobstream_address};
 use hana_host::celestia::{CelestiaChainHintHandler, CelestiaChainHost};
 use hana_oracle::hint::HintWrapper;
 use kailua_sync::stall::Stall;
@@ -26,8 +26,8 @@ use kona_host::{HintHandler, OnlineHostBackendCfg, SharedKeyValueStore};
 use kona_preimage::{PreimageKey, PreimageKeyType};
 use kona_proof::Hint;
 use risc0_steel::ethereum::{
-    EthChainSpec, EthEvmEnv, EthEvmFactory, ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC,
-    ETH_SEPOLIA_CHAIN_SPEC,
+    ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC, ETH_SEPOLIA_CHAIN_SPEC, EthChainSpec, EthEvmEnv,
+    EthEvmFactory,
 };
 use risc0_steel::{Contract, EvmInput};
 use tracing::info;

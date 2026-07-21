@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::rkyv::primitives::{AddressDef, B256Def, B64Def};
-use alloy_primitives::{Address, B256, B64};
+use crate::rkyv::primitives::{AddressDef, B64Def, B256Def};
+use alloy_primitives::{Address, B64, B256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use rkyv::rancor::Fallible;

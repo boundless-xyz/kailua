@@ -19,12 +19,12 @@ use crate::driver::{driver_file_name, try_read_driver};
 use crate::kv::create_disk_kv_store;
 use crate::preflight::{concurrent_preflight, fetch_precondition_data};
 use crate::profiling::ProfiledReceipt;
-use crate::tasks::{handle_oneshot_tasks, CachedTask, Oneshot, OneshotResult};
-use crate::{current_time, ProvingError};
+use crate::tasks::{CachedTask, Oneshot, OneshotResult, handle_oneshot_tasks};
+use crate::{ProvingError, current_time};
 use alloy::eips::BlockNumberOrTag;
 use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::B256;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use human_bytes::human_bytes;
 use itertools::Itertools;
 use kailua_kona::boot::StitchedBootInfo;
@@ -67,7 +67,9 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
     let start_time = current_time();
 
     #[cfg(feature = "experimental")]
-    warn!("You are running the EXPERIMENTAL version. Some features have not yet been audited for production.");
+    warn!(
+        "You are running the EXPERIMENTAL version. Some features have not yet been audited for production."
+    );
 
     // fetch starting block number
     let l2_provider = if args.kona.is_offline() {
@@ -136,10 +138,13 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         {
             Some(data) => {
                 let precondition_validation_data_hash = data.hash();
-                set_var(
-                    "PRECONDITION_VALIDATION_DATA_HASH",
-                    precondition_validation_data_hash.to_string(),
-                );
+                // SAFETY: set before the kona host tasks that read this variable are spawned.
+                unsafe {
+                    set_var(
+                        "PRECONDITION_VALIDATION_DATA_HASH",
+                        precondition_validation_data_hash.to_string(),
+                    )
+                };
                 (data.precondition_hash(), precondition_validation_data_hash)
             }
             None => (B256::ZERO, B256::ZERO),
@@ -188,11 +193,7 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
         info!("Dispatching partial execution proving tasks.");
         let mut expected_partials = 0;
         let mut partial_proof_cache: PartialsCache = Default::default();
-        for (exec, mut partials) in block_executions
-            .clone()
-            .into_iter()
-            .zip(partial_executions.into_iter())
-        {
+        for (exec, mut partials) in block_executions.clone().into_iter().zip(partial_executions) {
             // Skip system-tx-only blocks
             if exec
                 .attributes
@@ -534,7 +535,8 @@ pub async fn prove(mut args: ProveArgs) -> anyhow::Result<Option<ProfiledReceipt
                 };
                 if result.is_some() {
                     info!(
-                        "Successfully proved {num_blocks} blocks ({starting_block}..{last_block}) ({} -> {})", precondition.derivation_cache, precondition.derivation_trace,
+                        "Successfully proved {num_blocks} blocks ({starting_block}..{last_block}) ({} -> {})",
+                        precondition.derivation_cache, precondition.derivation_trace,
                     );
                 } else {
                     error!(

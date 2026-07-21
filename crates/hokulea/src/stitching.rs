@@ -14,13 +14,13 @@
 
 use crate::canoe::KailuaCanoeVerifier;
 use crate::da::EigenDADataSourceProvider;
-use alloy_primitives::aliases::B256;
 use alloy_primitives::Address;
+use alloy_primitives::aliases::B256;
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_proof::eigenda_witness::EigenDAWitness;
 use hokulea_proof::preloaded_eigenda_provider::PreloadedEigenDAPreimageProvider;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
-use kailua_kona::boot::{StitchedBootInfo, L1_HEAD_SENTINELS};
+use kailua_kona::boot::{L1_HEAD_SENTINELS, StitchedBootInfo};
 use kailua_kona::client::stitching::{KonaStitchingClient, StitchingClient};
 use kailua_kona::driver::CachedDriver;
 #[cfg(feature = "experimental")]
@@ -31,8 +31,8 @@ use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::precondition::Precondition;
 use kona_derive::BlobProvider;
 use kona_preimage::CommsClient;
-use kona_proof::boot::BootInfo;
 use kona_proof::FlushableCache;
+use kona_proof::boot::BootInfo;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -56,10 +56,10 @@ impl<T: CommsClient + FlushableCache + Clone> HokuleaStitchingClient<T> {
 }
 
 impl<
-        O: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
-        B: BlobProvider + Send + Sync + Debug + Clone,
-        T: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
-    > StitchingClient<O, B> for HokuleaStitchingClient<T>
+    O: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
+    B: BlobProvider + Send + Sync + Debug + Clone,
+    T: CommsClient + FlushableCache + Send + Sync + Debug + 'static,
+> StitchingClient<O, B> for HokuleaStitchingClient<T>
 {
     /// Validates the EigenDA witness into a preloaded preimage provider via [KailuaCanoeVerifier],
     /// then delegates to [KonaStitchingClient] with the EigenDA data source. A sentinel L1 head

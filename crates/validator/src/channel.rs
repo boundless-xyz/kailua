@@ -15,7 +15,7 @@
 use alloy::primitives::FixedBytes;
 use kailua_kona::precondition::proposal::ProposalPrecondition;
 use risc0_zkvm::Receipt;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 /// A channel for two-way communication
 #[derive(Debug)]

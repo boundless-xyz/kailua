@@ -16,7 +16,7 @@ use crate::config::{opt_byte_arr, safe_default};
 use crate::executor::Execution;
 use crate::precondition::derivation::flatten_block_build_outcome;
 use alloy_eips::eip4895::Withdrawal;
-use alloy_primitives::{Bytes, B256, B64};
+use alloy_primitives::{B64, B256, Bytes};
 use anyhow::Context;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};

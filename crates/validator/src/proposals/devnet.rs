@@ -31,18 +31,17 @@ pub fn maybe_patch_proof(
     let expected_fpvm_image_id = Digest::from(expected_fpvm_image_id);
 
     // Patch the image id of the receipt to match the expected one
-    if let InnerReceipt::Fake(fake_inner_receipt) = &mut receipt.inner {
-        if let MaybePruned::Value(claim) = &mut fake_inner_receipt.claim {
-            warn!("DEV-MODE ONLY: Patching fake receipt image id to match game contract.");
-            claim.pre = MaybePruned::Pruned(expected_fpvm_image_id);
-            if let MaybePruned::Value(Some(output)) = &mut claim.output {
-                if let MaybePruned::Value(journal) = &mut output.journal {
-                    let n = journal.len();
-                    journal[n - 32..n].copy_from_slice(expected_fpvm_image_id.as_bytes());
-                    receipt.journal.bytes[n - 32..n]
-                        .copy_from_slice(expected_fpvm_image_id.as_bytes());
-                }
-            }
+    if let InnerReceipt::Fake(fake_inner_receipt) = &mut receipt.inner
+        && let MaybePruned::Value(claim) = &mut fake_inner_receipt.claim
+    {
+        warn!("DEV-MODE ONLY: Patching fake receipt image id to match game contract.");
+        claim.pre = MaybePruned::Pruned(expected_fpvm_image_id);
+        if let MaybePruned::Value(Some(output)) = &mut claim.output
+            && let MaybePruned::Value(journal) = &mut output.journal
+        {
+            let n = journal.len();
+            journal[n - 32..n].copy_from_slice(expected_fpvm_image_id.as_bytes());
+            receipt.journal.bytes[n - 32..n].copy_from_slice(expected_fpvm_image_id.as_bytes());
         }
     }
     Ok(receipt)

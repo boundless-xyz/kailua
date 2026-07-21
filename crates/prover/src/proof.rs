@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_primitives::{keccak256, B256};
-use anyhow::{bail, Context};
+use alloy_primitives::{B256, keccak256};
+use anyhow::{Context, bail};
 use bytemuck::NoUninit;
 use risc0_zkvm::Journal;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

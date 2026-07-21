@@ -162,7 +162,7 @@ where
 pub mod tests {
     use super::*;
     use crate::{from_bytes_with, to_bytes_with};
-    use alloy_primitives::{keccak256, Address, Bloom, B64, U256};
+    use alloy_primitives::{Address, B64, Bloom, U256, keccak256};
     use op_alloy_consensus::OpTxType;
 
     pub fn gen_execution_results(count: usize) -> Vec<BlockExecutionResult<OpReceiptEnvelope>> {

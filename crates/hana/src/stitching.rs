@@ -40,10 +40,10 @@ pub struct HanaStitchingClient<T: CommsClient + FlushableCache + Clone>(
 );
 
 impl<
-        O: CommsClient + FlushableCache + Send + Sync + Debug,
-        B: BlobProvider + Send + Sync + Debug + Clone,
-        T: CommsClient + FlushableCache + Send + Sync + Debug + Clone,
-    > StitchingClient<O, B> for HanaStitchingClient<T>
+    O: CommsClient + FlushableCache + Send + Sync + Debug,
+    B: BlobProvider + Send + Sync + Debug + Clone,
+    T: CommsClient + FlushableCache + Send + Sync + Debug + Clone,
+> StitchingClient<O, B> for HanaStitchingClient<T>
 {
     /// Builds a Blobstream-bounded [HanaProvider] from a dedicated oracle, then delegates to
     /// [KonaStitchingClient] with the Celestia data source. Panics if the two oracles disagree

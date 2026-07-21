@@ -12,33 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::ProvingError;
 use crate::args::ProveArgs;
 use crate::kv::RWLKeyValueStore;
-use crate::ProvingError;
 use alloy::consensus::{Header, Transaction};
-use alloy::eips::eip4844::{kzg_to_versioned_hash, IndexedBlobHash, FIELD_ELEMENTS_PER_BLOB};
+use alloy::eips::eip4844::{FIELD_ELEMENTS_PER_BLOB, IndexedBlobHash, kzg_to_versioned_hash};
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::providers::{Provider, RootProvider};
+use alloy_primitives::B256;
 use alloy_primitives::hex::FromHex;
 use alloy_primitives::keccak256;
-use alloy_primitives::B256;
 use alloy_rlp::Decodable;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use ark_ff::{BigInteger, PrimeField};
 use kailua_kona::blobs::BlobFetchRequest;
 #[cfg(feature = "experimental")]
 use kailua_kona::evm::partial::PartialExecution;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
-use kailua_kona::precondition::proposal::ProposalPrecondition;
 use kailua_kona::precondition::Precondition;
+use kailua_kona::precondition::proposal::ProposalPrecondition;
 use kailua_sync::provider::beacon::BlobProvider;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::{await_tel, retry_res_ctx, retry_res_ctx_timeout};
 use kona_derive::L2ChainProvider;
 use kona_genesis::{L1ChainConfig, RollupConfig};
-use kona_host::single::SingleChainProviders;
 use kona_host::KeyValueStore;
+use kona_host::single::SingleChainProviders;
 use kona_preimage::{PreimageKey, PreimageKeyType};
 use kona_proof::l1::ROOTS_OF_UNITY;
 use kona_protocol::BlockInfo;
@@ -176,7 +176,8 @@ pub async fn fetch_precondition_data(
                 "No data directory; precondition data preimage is unavailable to client oracles."
             );
         }
-        set_var("PRECONDITION_VALIDATION_DATA_HASH", hash.to_string());
+        // SAFETY: set before the kona host tasks that read this variable are spawned.
+        unsafe { set_var("PRECONDITION_VALIDATION_DATA_HASH", hash.to_string()) };
         info!("Precondition data hash: {hash}");
         Ok(Some(precondition_validation_data))
     } else if hash_arguments.iter().any(|arg| !arg) {
@@ -307,178 +308,158 @@ pub async fn concurrent_preflight(
 
     // Pre-fetch L1 headers into disk KV store
     let mut l1_jobs = vec![];
-    if let Some(l1_origin_number) = l1_origin_number {
-        if let Some(ref disk_kv_store) = disk_kv_store {
-            // 1. Get L1 head block number from the l1_head hash
-            let l1_head_num = await_tel!(
-                context,
-                tracer,
-                "l1_provider get_block_by_hash l1_head",
-                retry_res_ctx_timeout!(
-                    args.timeouts.eth_rpc_timeout,
-                    l1_provider
-                        .get_block_by_hash(args.kona.l1_head)
-                        .await
-                        .context("l1_provider get_block_by_hash l1_head")?
-                        .ok_or_else(|| anyhow!("Failed to fetch L1 head block"))
-                )
+    if let Some(l1_origin_number) = l1_origin_number
+        && let Some(ref disk_kv_store) = disk_kv_store
+    {
+        // 1. Get L1 head block number from the l1_head hash
+        let l1_head_num = await_tel!(
+            context,
+            tracer,
+            "l1_provider get_block_by_hash l1_head",
+            retry_res_ctx_timeout!(
+                args.timeouts.eth_rpc_timeout,
+                l1_provider
+                    .get_block_by_hash(args.kona.l1_head)
+                    .await
+                    .context("l1_provider get_block_by_hash l1_head")?
+                    .ok_or_else(|| anyhow!("Failed to fetch L1 head block"))
             )
-            .header
-            .number;
+        )
+        .header
+        .number;
 
-            // 2. Split range among num_concurrent_preflights worker tasks
-            if l1_origin_number <= l1_head_num {
-                let total_headers = l1_head_num - l1_origin_number + 1;
-                let num_workers = args.proving.num_concurrent_preflights;
-                let headers_per_worker = total_headers / num_workers;
-                let mut extra = total_headers % num_workers;
-                info!(
-                    "Prefetching {total_headers} blob data from block {l1_origin_number} to {l1_head_num} with {num_workers} workers"
-                );
+        // 2. Split range among num_concurrent_preflights worker tasks
+        if l1_origin_number <= l1_head_num {
+            let total_headers = l1_head_num - l1_origin_number + 1;
+            let num_workers = args.proving.num_concurrent_preflights;
+            let headers_per_worker = total_headers / num_workers;
+            let mut extra = total_headers % num_workers;
+            info!(
+                "Prefetching {total_headers} blob data from block {l1_origin_number} to {l1_head_num} with {num_workers} workers"
+            );
 
-                let mut start = l1_origin_number;
-                for _ in 0..num_workers {
-                    let chunk_size = if extra > 0 {
-                        extra -= 1;
-                        headers_per_worker + 1
-                    } else {
-                        headers_per_worker
-                    };
-                    let end = start + chunk_size - 1;
-                    let l1_provider = l1_provider.clone();
-                    let blob_provider = blob_provider.clone();
-                    let kv = disk_kv_store.clone();
-                    let timeout = args.timeouts.eth_rpc_timeout;
-                    l1_jobs.push(tokio::spawn(async move {
-                        let mut expected_hash: Option<B256> = None;
-                        let mut expected_nonce: Option<u64> = None;
-                        let mut blob_timestamp: Option<u64> = None;
+            let mut start = l1_origin_number;
+            for _ in 0..num_workers {
+                let chunk_size = if extra > 0 {
+                    extra -= 1;
+                    headers_per_worker + 1
+                } else {
+                    headers_per_worker
+                };
+                let end = start + chunk_size - 1;
+                let l1_provider = l1_provider.clone();
+                let blob_provider = blob_provider.clone();
+                let kv = disk_kv_store.clone();
+                let timeout = args.timeouts.eth_rpc_timeout;
+                l1_jobs.push(tokio::spawn(async move {
+                    let mut expected_hash: Option<B256> = None;
+                    let mut expected_nonce: Option<u64> = None;
+                    let mut blob_timestamp: Option<u64> = None;
 
-                        for block_num in (start..=end).rev() {
-                            let mut header = if let Some(hash) = expected_hash {
-                                if let Some(cached) = kv.read().unwrap().get(hash) {
-                                    // Cached — decode directly
-                                    Some(
-                                        Header::decode(&mut cached.as_slice())
-                                            .context("Failed to RLP-decode cached L1 header")?,
-                                    )
-                                } else {
-                                    None
-                                }
+                    for block_num in (start..=end).rev() {
+                        let mut header = if let Some(hash) = expected_hash {
+                            if let Some(cached) = kv.read().unwrap().get(hash) {
+                                // Cached — decode directly
+                                Some(
+                                    Header::decode(&mut cached.as_slice())
+                                        .context("Failed to RLP-decode cached L1 header")?,
+                                )
                             } else {
                                 None
-                            };
-                            // query rpc
-                            if header.is_none() {
-                                let raw_header_hex: String = retry_res_ctx_timeout!(
-                                    timeout,
-                                    l1_provider
-                                        .client()
-                                        .request::<(BlockNumberOrTag,), String>(
-                                            "debug_getRawHeader",
-                                            (BlockNumberOrTag::Number(block_num),),
-                                        )
-                                        .await
-                                        .context("debug_getRawHeader")
-                                )
-                                .await;
-                                let raw_bytes = alloy_primitives::Bytes::from_hex(&raw_header_hex)?;
-                                let hash = keccak256(raw_bytes.as_ref());
-                                let key = PreimageKey::new_keccak256(*hash);
-
-                                // Decode header to get parent_hash for next iteration
-                                header = Some(
-                                    Header::decode(&mut raw_bytes.as_ref())
-                                        .context("Failed to RLP-decode L1 header")?,
-                                );
-                                kv.write().unwrap().set(key.into(), raw_bytes.into())?;
                             }
-                            // set next header
-                            let header = header.unwrap();
-                            expected_hash = Some(header.parent_hash);
-                            // skip if blobs preloaded
-                            let inverse_header_hash = !header.hash_slow();
-                            if kv.read().unwrap().get(inverse_header_hash).is_some() {
-                                continue;
-                            }
-                            kv.write().unwrap().set(inverse_header_hash, vec![])?;
-                            // check batcher's nonce at block height
-                            let batcher_nonce = retry_res_ctx_timeout!(
+                        } else {
+                            None
+                        };
+                        // query rpc
+                        if header.is_none() {
+                            let raw_header_hex: String = retry_res_ctx_timeout!(
                                 timeout,
                                 l1_provider
-                                    .get_transaction_count(batcher_address,)
-                                    .block_id(BlockId::Number(BlockNumberOrTag::Number(block_num)))
+                                    .client()
+                                    .request::<(BlockNumberOrTag,), String>(
+                                        "debug_getRawHeader",
+                                        (BlockNumberOrTag::Number(block_num),),
+                                    )
                                     .await
-                                    .context("get_transaction_count")
+                                    .context("debug_getRawHeader")
                             )
                             .await;
-                            // replace old expected nonce or skip if first block to process
-                            let Some(expected_nonce) = expected_nonce.replace(batcher_nonce) else {
-                                blob_timestamp = Some(header.timestamp);
-                                continue;
-                            };
-                            let blob_timestamp = blob_timestamp.replace(header.timestamp).unwrap();
+                            let raw_bytes = alloy_primitives::Bytes::from_hex(&raw_header_hex)?;
+                            let hash = keccak256(raw_bytes.as_ref());
+                            let key = PreimageKey::new_keccak256(*hash);
 
-                            // nothing to do if no transactions were done
-                            if batcher_nonce == expected_nonce {
-                                info!("No transactions for {batcher_address} in {}", block_num + 1);
-                                continue;
-                            }
+                            // Decode header to get parent_hash for next iteration
+                            header = Some(
+                                Header::decode(&mut raw_bytes.as_ref())
+                                    .context("Failed to RLP-decode L1 header")?,
+                            );
+                            kv.write().unwrap().set(key.into(), raw_bytes.into())?;
+                        }
+                        // set next header
+                        let header = header.unwrap();
+                        expected_hash = Some(header.parent_hash);
+                        // skip if blobs preloaded
+                        let inverse_header_hash = !header.hash_slow();
+                        if kv.read().unwrap().get(inverse_header_hash).is_some() {
+                            continue;
+                        }
+                        kv.write().unwrap().set(inverse_header_hash, vec![])?;
+                        // check batcher's nonce at block height
+                        let batcher_nonce = retry_res_ctx_timeout!(
+                            timeout,
+                            l1_provider
+                                .get_transaction_count(batcher_address,)
+                                .block_id(BlockId::Number(BlockNumberOrTag::Number(block_num)))
+                                .await
+                                .context("get_transaction_count")
+                        )
+                        .await;
+                        // replace old expected nonce or skip if first block to process
+                        let Some(expected_nonce) = expected_nonce.replace(batcher_nonce) else {
+                            blob_timestamp = Some(header.timestamp);
+                            continue;
+                        };
+                        let blob_timestamp = blob_timestamp.replace(header.timestamp).unwrap();
 
-                            // fetch all slot blobs
-                            let blobs = retry_res_ctx_timeout!(
-                                blob_provider.timeout,
-                                blob_provider
-                                    .get_blobs(blob_provider.slot(blob_timestamp))
-                                    .await
-                            )
-                            .await;
+                        // nothing to do if no transactions were done
+                        if batcher_nonce == expected_nonce {
+                            info!("No transactions for {batcher_address} in {}", block_num + 1);
+                            continue;
+                        }
 
-                            // save each blob to kv
-                            let mut kv_lock = kv.write().unwrap();
-                            for blob in blobs {
-                                // Save this blob in the kv store
-                                let versioned_hash =
-                                    kzg_to_versioned_hash(blob.kzg_commitment.as_slice());
+                        // fetch all slot blobs
+                        let blobs = retry_res_ctx_timeout!(
+                            blob_provider.timeout,
+                            blob_provider
+                                .get_blobs(blob_provider.slot(blob_timestamp))
+                                .await
+                        )
+                        .await;
 
-                                // Set the preimage for the blob commitment.
-                                kv_lock.set(
-                                    PreimageKey::new(*versioned_hash, PreimageKeyType::Sha256)
-                                        .into(),
-                                    blob.kzg_commitment.to_vec(),
-                                )?;
+                        // save each blob to kv
+                        let mut kv_lock = kv.write().unwrap();
+                        for blob in blobs {
+                            // Save this blob in the kv store
+                            let versioned_hash =
+                                kzg_to_versioned_hash(blob.kzg_commitment.as_slice());
 
-                                // Write all the field elements to the key-value store. There should be 4096.
-                                // The preimage oracle key for each field element is the keccak256 hash of
-                                // `abi.encodePacked(sidecar.KZGCommitment, bytes32(ROOTS_OF_UNITY[i]))`.
-                                let mut blob_key = [0u8; 80];
-                                blob_key[..48].copy_from_slice(blob.kzg_commitment.as_ref());
-                                for i in 0..FIELD_ELEMENTS_PER_BLOB {
-                                    blob_key[48..].copy_from_slice(
-                                        ROOTS_OF_UNITY[i as usize]
-                                            .into_bigint()
-                                            .to_bytes_be()
-                                            .as_ref(),
-                                    );
-                                    let blob_key_hash = keccak256(blob_key.as_ref());
+                            // Set the preimage for the blob commitment.
+                            kv_lock.set(
+                                PreimageKey::new(*versioned_hash, PreimageKeyType::Sha256).into(),
+                                blob.kzg_commitment.to_vec(),
+                            )?;
 
-                                    kv_lock.set(
-                                        PreimageKey::new_keccak256(*blob_key_hash).into(),
-                                        blob_key.into(),
-                                    )?;
-                                    kv_lock.set(
-                                        PreimageKey::new(*blob_key_hash, PreimageKeyType::Blob)
-                                            .into(),
-                                        blob.blob[(i as usize) << 5..(i as usize + 1) << 5]
-                                            .to_vec(),
-                                    )?;
-                                }
-
-                                // Write the KZG Proof as the 4096th element.
-                                // Note: This is not associated with a root of unity, as to be backwards compatible
-                                // with ZK users of kona that use this proof for the overall blob.
-                                blob_key[72..].copy_from_slice(
-                                    FIELD_ELEMENTS_PER_BLOB.to_be_bytes().as_ref(),
+                            // Write all the field elements to the key-value store. There should be 4096.
+                            // The preimage oracle key for each field element is the keccak256 hash of
+                            // `abi.encodePacked(sidecar.KZGCommitment, bytes32(ROOTS_OF_UNITY[i]))`.
+                            let mut blob_key = [0u8; 80];
+                            blob_key[..48].copy_from_slice(blob.kzg_commitment.as_ref());
+                            for i in 0..FIELD_ELEMENTS_PER_BLOB {
+                                blob_key[48..].copy_from_slice(
+                                    ROOTS_OF_UNITY[i as usize]
+                                        .into_bigint()
+                                        .to_bytes_be()
+                                        .as_ref(),
                                 );
                                 let blob_key_hash = keccak256(blob_key.as_ref());
 
@@ -488,19 +469,35 @@ pub async fn concurrent_preflight(
                                 )?;
                                 kv_lock.set(
                                     PreimageKey::new(*blob_key_hash, PreimageKeyType::Blob).into(),
-                                    blob.kzg_proof.to_vec(),
+                                    blob.blob[(i as usize) << 5..(i as usize + 1) << 5].to_vec(),
                                 )?;
-
-                                info!(
-                                    "Preloaded blob {versioned_hash} from block {}",
-                                    block_num + 1
-                                );
                             }
+
+                            // Write the KZG Proof as the 4096th element.
+                            // Note: This is not associated with a root of unity, as to be backwards compatible
+                            // with ZK users of kona that use this proof for the overall blob.
+                            blob_key[72..]
+                                .copy_from_slice(FIELD_ELEMENTS_PER_BLOB.to_be_bytes().as_ref());
+                            let blob_key_hash = keccak256(blob_key.as_ref());
+
+                            kv_lock.set(
+                                PreimageKey::new_keccak256(*blob_key_hash).into(),
+                                blob_key.into(),
+                            )?;
+                            kv_lock.set(
+                                PreimageKey::new(*blob_key_hash, PreimageKeyType::Blob).into(),
+                                blob.kzg_proof.to_vec(),
+                            )?;
+
+                            info!(
+                                "Preloaded blob {versioned_hash} from block {}",
+                                block_num + 1
+                            );
                         }
-                        Ok::<(), anyhow::Error>(())
-                    }));
-                    start = end + 1;
-                }
+                    }
+                    Ok::<(), anyhow::Error>(())
+                }));
+                start = end + 1;
             }
         }
     }
@@ -639,10 +636,14 @@ pub async fn concurrent_preflight(
         };
 
         if claimed_l2_block_number < target_l2_height {
-            error!("L1 Head insufficient to derive L2 block {target_l2_height}. Stopped at {claimed_l2_block_number}.");
+            error!(
+                "L1 Head insufficient to derive L2 block {target_l2_height}. Stopped at {claimed_l2_block_number}."
+            );
             l1_head_sufficient = false;
         } else {
-            info!("Preflight job for target {target_l2_height} terminated at {claimed_l2_block_number}.");
+            info!(
+                "Preflight job for target {target_l2_height} terminated at {claimed_l2_block_number}."
+            );
         };
     }
 

@@ -16,7 +16,7 @@ use crate::args::ValidateArgs;
 use crate::channel::{DuplexChannel, Message};
 use crate::proposals::encode_seal;
 use crate::requests::decrement_active_provers;
-use alloy::primitives::{Bytes, B256};
+use alloy::primitives::{B256, Bytes};
 use alloy::providers::Provider;
 use anyhow::Context;
 use chrono::TimeZone;
@@ -29,11 +29,11 @@ use kailua_sync::agent::SyncAgent;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::Transact;
 use kailua_sync::{await_tel, retry_res_ctx_timeout};
+use opentelemetry::KeyValue;
 use opentelemetry::global::tracer;
 use opentelemetry::metrics::Counter;
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use opentelemetry::KeyValue;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 use std::time::Duration;
@@ -217,7 +217,9 @@ pub async fn publish_receipt_proofs<P: Provider>(
                 let submission_time = chrono::Local
                     .timestamp_opt(args.min_validity_proving_timestamp as i64, 0)
                     .unwrap();
-                info!("Preventing validity proof submission for proposal {proposal_index} for {submission_delay} until {submission_time}.");
+                info!(
+                    "Preventing validity proof submission for proposal {proposal_index} for {submission_delay} until {submission_time}."
+                );
                 computed_proof_buffer.push_back(Message::Proof(proposal_index, Some(receipt)));
                 continue;
             }
@@ -457,7 +459,9 @@ pub async fn publish_receipt_proofs<P: Provider>(
             // Decrement active provers count
             decrement_active_provers().await;
             // Report proof skip
-            warn!("Skipping proof submission for already proven game at local index {proposal_index}.");
+            warn!(
+                "Skipping proof submission for already proven game at local index {proposal_index}."
+            );
             meter_proofs_discarded.add(
                 1,
                 &[
@@ -623,38 +627,36 @@ pub async fn publish_receipt_proofs<P: Provider>(
 
         // Check permit activation before submitting fault proof
         let permits = agent.get_fp_permits(proposal.contract, proof_journal.payout_recipient);
-        if let Some(&(expiry, permit_index)) = permits.last() {
-            if permit_index > 0 {
-                let activation_time =
-                    expiry - agent.deployment.permit_duration + agent.deployment.permit_delay;
-                match validator_provider
-                    .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
-                    .await
-                {
-                    Ok(Some(latest_block)) => {
-                        let l1_timestamp = latest_block.header.timestamp;
-                        if l1_timestamp < activation_time {
-                            info!(
-                                "Waiting {}s for permit activation before submitting output fault proof for proposal {proposal_index} (L1 time: {l1_timestamp}, activation: {activation_time}).",
-                                activation_time - l1_timestamp
-                            );
-                            computed_proof_buffer
-                                .push_back(Message::Proof(proposal_index, Some(receipt)));
-                            continue;
-                        }
-                    }
-                    Ok(None) => {
-                        error!("Failed to fetch latest block for permit activation check");
+        if let Some(&(expiry, permit_index)) = permits.last()
+            && permit_index > 0
+        {
+            let activation_time =
+                expiry - agent.deployment.permit_duration + agent.deployment.permit_delay;
+            match validator_provider
+                .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
+                .await
+            {
+                Ok(Some(latest_block)) => {
+                    let l1_timestamp = latest_block.header.timestamp;
+                    if l1_timestamp < activation_time {
+                        info!(
+                            "Waiting {}s for permit activation before submitting output fault proof for proposal {proposal_index} (L1 time: {l1_timestamp}, activation: {activation_time}).",
+                            activation_time - l1_timestamp
+                        );
                         computed_proof_buffer
                             .push_back(Message::Proof(proposal_index, Some(receipt)));
                         continue;
                     }
-                    Err(e) => {
-                        error!("Failed to fetch latest block for permit activation check: {e:?}");
-                        computed_proof_buffer
-                            .push_back(Message::Proof(proposal_index, Some(receipt)));
-                        continue;
-                    }
+                }
+                Ok(None) => {
+                    error!("Failed to fetch latest block for permit activation check");
+                    computed_proof_buffer.push_back(Message::Proof(proposal_index, Some(receipt)));
+                    continue;
+                }
+                Err(e) => {
+                    error!("Failed to fetch latest block for permit activation check: {e:?}");
+                    computed_proof_buffer.push_back(Message::Proof(proposal_index, Some(receipt)));
+                    continue;
                 }
             }
         }

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::kv::{create_split_kv_store, RWLKeyValueStore};
 use crate::ProvingError;
+use crate::kv::{RWLKeyValueStore, create_split_kv_store};
 use alloy::eips::BlockNumberOrTag;
 use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::hex::FromHex;

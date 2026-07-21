@@ -16,18 +16,18 @@ use crate::fetch::fetch_current_challenger_duration;
 use alloy::network::{Network, ReceiptResponse};
 use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use kailua_contracts::*;
 use kailua_sync::agent::SyncAgent;
-use kailua_sync::proposal::{Proposal, ELIMINATIONS_LIMIT};
+use kailua_sync::proposal::{ELIMINATIONS_LIMIT, Proposal};
 use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::{Transact, TransactArgs};
 use kailua_sync::{await_tel, await_tel_res};
+use opentelemetry::KeyValue;
 use opentelemetry::global::tracer;
 use opentelemetry::metrics::{Counter, Gauge};
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
-use opentelemetry::KeyValue;
 use std::future::IntoFuture;
 use std::time::Duration;
 use tracing::{debug, error, info};
@@ -98,7 +98,9 @@ pub async fn resolve_next_pending_proposal<P: Provider>(
         )
     );
     if !is_validity_proven && challenger_duration > 0 {
-        info!("Waiting for {challenger_duration} more seconds of chain time before resolution of proposal {unresolved_successor_index}.");
+        info!(
+            "Waiting for {challenger_duration} more seconds of chain time before resolution of proposal {unresolved_successor_index}."
+        );
         return Ok(false);
     }
 

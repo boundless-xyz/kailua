@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_eips::eip4844::{Blob, BYTES_PER_BLOB};
+use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob};
 use c_kzg::Bytes48;
 
 /// rkyv mirror of an EIP-4844 [Blob].

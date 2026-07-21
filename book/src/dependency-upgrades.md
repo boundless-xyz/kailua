@@ -233,6 +233,13 @@ two variants back-to-back. Check `docker system df` first and reclaim space with
 needed — a full VM disk surfaces as an opaque `risc0-build` panic ("docker build failed") with the real
 "no space left on device" error buried in the log. Losing the cache only costs time; reproducibility comes from the
 pinned toolchain image and `--locked`, not the cache.
+
+The pinned `risczero/risc0-guest-builder` images are amd64-only (and, as of `r0.1.97.0`, published as manifest
+lists that buildkit platform-matches strictly), so `build/risczero/build.rs` sets
+`DOCKER_DEFAULT_PLATFORM=linux/amd64` for the docker build unless the caller already set it — on arm64 hosts the
+build runs under emulation, which is slower but produces the same reproducible output. The builder tag itself is
+pinned in the same file (`docker_container_tag`), not by the guest `rust-toolchain.toml` files, which only govern
+native (non-Docker) builds.
 ```
 
 For the standard build:

@@ -19,17 +19,17 @@ use crate::rkyv::primitives::B256Def;
 use alloy_consensus::Header;
 use alloy_evm::EvmFactory;
 use alloy_op_evm::block::OpAlloyReceiptBuilder;
-use alloy_primitives::{Sealed, B256};
+use alloy_primitives::{B256, Sealed};
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
 use kona_executor::{BlockBuildingOutcome, TrieDBProvider};
 use kona_genesis::RollupConfig;
 use kona_mpt::TrieHinter;
 use kona_preimage::CommsClient;
+use kona_proof::FlushableCache;
 use kona_proof::errors::OracleProviderError;
 use kona_proof::executor::KonaExecutor;
 use kona_proof::l2::OracleL2ChainProvider;
-use kona_proof::FlushableCache;
 use kona_protocol::{BatchValidationProvider, BlockInfo};
 use op_alloy_consensus::OpReceiptEnvelope;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
@@ -122,11 +122,11 @@ where
         RollupConfig,
         Evm,
     >: for<'b> alloy_evm::block::BlockExecutorFactory<
-        EvmFactory = Evm,
-        ExecutionCtx<'b> = alloy_op_evm::OpBlockExecutionCtx,
-        Transaction = op_alloy_consensus::OpTxEnvelope,
-        Receipt = op_alloy_consensus::OpReceiptEnvelope,
-    >,
+            EvmFactory = Evm,
+            ExecutionCtx<'b> = alloy_op_evm::OpBlockExecutionCtx,
+            Transaction = op_alloy_consensus::OpTxEnvelope,
+            Receipt = op_alloy_consensus::OpReceiptEnvelope,
+        >,
 {
     /// Wraps a new [KonaExecutor] with the given execution cache, reversing the cache for
     /// consumption by pops.
@@ -333,12 +333,12 @@ pub fn build_single_partial_for_block(
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::oracle::WitnessOracle;
+    use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::precondition::execution::{attributes_hash, exec_precondition_hash};
     use crate::rkyv::execution::tests::gen_execution_outcomes;
     use alloy_eips::eip4895::Withdrawal;
-    use alloy_primitives::{keccak256, Address, Sealable, B64};
+    use alloy_primitives::{Address, B64, Sealable, keccak256};
     use alloy_rpc_types_engine::PayloadAttributes;
     use kona_mpt::TrieNode;
     use kona_preimage::PreimageKey;
@@ -406,10 +406,9 @@ pub mod tests {
                             ))),
                             slot_number: Some(i as u64),
                         },
-                        transactions: Some(vec![format!("transactions {i}")
-                            .as_bytes()
-                            .to_vec()
-                            .into()]),
+                        transactions: Some(vec![
+                            format!("transactions {i}").as_bytes().to_vec().into(),
+                        ]),
                         no_tx_pool: Some(true),
                         gas_limit: Some(u64::MAX / 2),
                         eip_1559_params: Some(B64::new([0xb0; 8])),

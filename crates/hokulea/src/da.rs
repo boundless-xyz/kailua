@@ -27,10 +27,10 @@ pub struct EigenDADataSourceProvider<E: EigenDAPreimageProvider + Send + Sync + 
 );
 
 impl<
-        C: ChainProvider + Send + Sync + Clone + Debug,
-        B: BlobProvider + Send + Sync + Clone + Debug,
-        E: EigenDAPreimageProvider + Send + Sync + Clone + Debug,
-    > DASourceProvider<C, B> for EigenDADataSourceProvider<E>
+    C: ChainProvider + Send + Sync + Clone + Debug,
+    B: BlobProvider + Send + Sync + Clone + Debug,
+    E: EigenDAPreimageProvider + Send + Sync + Clone + Debug,
+> DASourceProvider<C, B> for EigenDADataSourceProvider<E>
 {
     type DAS = EigenDADataSource<C, B, E>;
 

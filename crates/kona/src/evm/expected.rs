@@ -15,8 +15,8 @@
 use crate::evm::partial::PartialResultAndState;
 use crate::rkyv::evm::AccountInfoRkyv;
 use crate::rkyv::primitives::{AddressDef, U256Def};
-use alloy_evm::revm::state::{AccountInfo, AccountStatus};
 use alloy_evm::revm::Database as RevmDatabase;
+use alloy_evm::revm::state::{AccountInfo, AccountStatus};
 use alloy_primitives::{Address, U256};
 use op_revm::constants::{
     ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT,

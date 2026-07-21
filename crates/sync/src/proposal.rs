@@ -14,17 +14,17 @@
 
 use crate::blobs::blob_fe_proof;
 use crate::fault::Fault;
-use crate::provider::beacon::blob_sidecar;
 use crate::provider::SyncProvider;
+use crate::provider::beacon::blob_sidecar;
 use crate::stall::Stall;
 use crate::{await_tel, await_tel_res};
 use alloy::consensus::{Blob, BlobTransactionSidecar};
 use alloy::eips::eip4844::FIELD_ELEMENTS_PER_BLOB;
 use alloy::network::Network;
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::providers::Provider;
 use alloy_rpc_types_beacon::sidecar::BlobData;
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use kailua_contracts::{KailuaTournament::KailuaTournamentInstance, *};
 use kailua_kona::blobs::{hash_to_fe, intermediate_outputs, trail_data};
 use kailua_kona::precondition::proposal::blobs_hash;

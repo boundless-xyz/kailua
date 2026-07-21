@@ -36,7 +36,9 @@ pub async fn validate(
     let context = opentelemetry::Context::current_with_span(tracer.start("validate"));
 
     #[cfg(feature = "experimental")]
-    warn!("You are running the EXPERIMENTAL version. Some features have not yet been audited for production.");
+    warn!(
+        "You are running the EXPERIMENTAL version. Some features have not yet been audited for production."
+    );
 
     // Sanitize proving arguments
     if args.proving.skip_await_proof {

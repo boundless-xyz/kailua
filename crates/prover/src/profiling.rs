@@ -261,10 +261,9 @@ impl Profile {
         for proof_id in &self.children {
             let file_name = proof_id_file_name(*proof_id);
             if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
+                && let Some(child_value) = prior_receipt.1.gas
             {
-                if let Some(child_value) = prior_receipt.1.gas {
-                    gas -= child_value;
-                }
+                gas -= child_value;
             }
         }
         if gas == 0 {
@@ -279,10 +278,9 @@ impl Profile {
         for proof_id in &self.children {
             let file_name = proof_id_file_name(*proof_id);
             if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
+                && let Some(child_value) = prior_receipt.1.input_bytes
             {
-                if let Some(child_value) = prior_receipt.1.input_bytes {
-                    input_bytes -= child_value;
-                }
+                input_bytes -= child_value;
             }
         }
         if input_bytes == 0 {
@@ -297,10 +295,9 @@ impl Profile {
         for proof_id in &self.children {
             let file_name = proof_id_file_name(*proof_id);
             if let Ok(prior_receipt) = read_bincoded_file::<ProfiledReceipt>(None, &file_name).await
+                && let Some(child_value) = prior_receipt.1.snarks
             {
-                if let Some(child_value) = prior_receipt.1.snarks {
-                    snarks -= child_value;
-                }
+                snarks -= child_value;
             }
         }
         if snarks == 0 {
@@ -318,10 +315,10 @@ impl Profile {
             self.gas.unwrap_or_default().separate_with_commas(),
             self.cycles().separate_with_commas(),
             self.proofs().separate_with_commas(),
-            self.time_finished.zip(self.time_started).map(|(f, s)|
-                humantime::format_duration(Duration::from_secs(f - s))
-                    .to_string())
-                    .unwrap_or_default()
+            self.time_finished
+                .zip(self.time_started)
+                .map(|(f, s)| humantime::format_duration(Duration::from_secs(f - s)).to_string())
+                .unwrap_or_default()
         );
     }
 

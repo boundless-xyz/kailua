@@ -22,7 +22,7 @@ use alloy::signers::{
 use anyhow::Context;
 use aws_config::BehaviorVersion;
 use gcloud_sdk::{
-    google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient, GoogleApi,
+    GoogleApi, google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
 };
 use std::str::FromStr;
 

@@ -22,7 +22,7 @@ use alloy_evm::revm::context_interface::result::{
     ExecutionResult, HaltReason, OutOfGasError, Output, ResultGas, SuccessReason,
 };
 use alloy_op_evm::block::OpBlockExecutionCtx;
-use alloy_primitives::{Address, Log, B256};
+use alloy_primitives::{Address, B256, Log};
 use op_revm::OpHaltReason;
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 

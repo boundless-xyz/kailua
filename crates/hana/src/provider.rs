@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_primitives::{keccak256, Bytes};
+use alloy_primitives::{Bytes, keccak256};
 use async_trait::async_trait;
 use celestia_types::Commitment;
-use hana_blobstream::blobstream::{blobstream_address, SP1Blobstream};
+use hana_blobstream::blobstream::{SP1Blobstream, blobstream_address};
 use hana_celestia::CelestiaProvider;
 use hana_oracle::hint::HintWrapper;
 use hana_oracle::provider::OracleCelestiaProvider;
@@ -23,10 +23,10 @@ use kailua_kona::client::log;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use kona_proof::errors::OracleProviderError;
 use kona_proof::{BootInfo, FlushableCache, Hint};
-use risc0_steel::ethereum::{
-    EthChainSpec, EthEvmInput, ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC, ETH_SEPOLIA_CHAIN_SPEC,
-};
 use risc0_steel::Contract;
+use risc0_steel::ethereum::{
+    ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC, ETH_SEPOLIA_CHAIN_SPEC, EthChainSpec, EthEvmInput,
+};
 use std::fmt::Debug;
 use std::sync::Arc;
 

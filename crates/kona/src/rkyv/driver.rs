@@ -648,26 +648,26 @@ impl SpanBatchRkyv {
             origin_bits: SpanBatchBits(rkyved.5),
             block_tx_counts: rkyved.6,
             txs: SpanBatchTransactions {
-                total_block_tx_count: rkyved.7 .0,
-                contract_creation_bits: SpanBatchBits(rkyved.7 .1),
+                total_block_tx_count: rkyved.7.0,
+                contract_creation_bits: SpanBatchBits(rkyved.7.1),
                 tx_sigs: rkyved
                     .7
-                     .2
+                    .2
                     .into_iter()
                     .map(|s| Signature::from_raw_array(&s).unwrap())
                     .collect(),
-                tx_nonces: rkyved.7 .3,
-                tx_gases: rkyved.7 .4,
-                tx_tos: rkyved.7 .5.into_iter().map(|a| a.into()).collect(),
-                tx_data: rkyved.7 .6,
-                protected_bits: SpanBatchBits(rkyved.7 .7),
+                tx_nonces: rkyved.7.3,
+                tx_gases: rkyved.7.4,
+                tx_tos: rkyved.7.5.into_iter().map(|a| a.into()).collect(),
+                tx_data: rkyved.7.6,
+                protected_bits: SpanBatchBits(rkyved.7.7),
                 tx_types: rkyved
                     .7
-                     .8
+                    .8
                     .into_iter()
                     .map(|t| t.try_into().unwrap())
                     .collect(),
-                legacy_tx_count: rkyved.7 .9,
+                legacy_tx_count: rkyved.7.9,
             },
         }
     }
@@ -1090,15 +1090,15 @@ impl HeaderRkyv {
     /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedHeader) -> Header {
         Header {
-            parent_hash: rkyved.0 .0.into(),
-            ommers_hash: rkyved.0 .1.into(),
-            beneficiary: rkyved.0 .2.into(),
-            state_root: rkyved.0 .3.into(),
-            transactions_root: rkyved.0 .4.into(),
-            receipts_root: rkyved.0 .5.into(),
-            logs_bloom: rkyved.0 .6.into(),
-            mix_hash: rkyved.0 .7.into(),
-            withdrawals_root: rkyved.0 .8.map(|v| v.into()),
+            parent_hash: rkyved.0.0.into(),
+            ommers_hash: rkyved.0.1.into(),
+            beneficiary: rkyved.0.2.into(),
+            state_root: rkyved.0.3.into(),
+            transactions_root: rkyved.0.4.into(),
+            receipts_root: rkyved.0.5.into(),
+            logs_bloom: rkyved.0.6.into(),
+            mix_hash: rkyved.0.7.into(),
+            withdrawals_root: rkyved.0.8.map(|v| v.into()),
             difficulty: U256::from_be_bytes(rkyved.1),
             number: rkyved.2,
             gas_limit: rkyved.3,
@@ -1109,10 +1109,10 @@ impl HeaderRkyv {
             base_fee_per_gas: rkyved.8,
             blob_gas_used: rkyved.9,
             excess_blob_gas: rkyved.10,
-            parent_beacon_block_root: rkyved.11 .0.map(|v| v.into()),
-            requests_hash: rkyved.11 .1.map(|v| v.into()),
-            block_access_list_hash: rkyved.11 .2.map(|v| v.into()),
-            slot_number: rkyved.11 .3,
+            parent_beacon_block_root: rkyved.11.0.map(|v| v.into()),
+            requests_hash: rkyved.11.1.map(|v| v.into()),
+            block_access_list_hash: rkyved.11.2.map(|v| v.into()),
+            slot_number: rkyved.11.3,
         }
     }
 }

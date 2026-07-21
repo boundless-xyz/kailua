@@ -13,23 +13,23 @@
 // limitations under the License.
 
 use alloy::network::{Ethereum, Network, ReceiptResponse, TxSigner};
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::providers::{Provider, RootProvider};
 use alloy::sol;
 use alloy::sol_types::SolValue;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use kailua_build::KAILUA_FPVM_KONA_ID;
 use kailua_contracts::*;
 use kailua_kona::config::config_hash;
-use kailua_sync::provider::optimism::fetch_rollup_config;
-use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::provider::ProviderTimeoutArgs;
+use kailua_sync::provider::optimism::OpNodeProvider;
+use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::stall::Stall;
 use kailua_sync::telemetry::TelemetryArgs;
 use kailua_sync::transact::safe::exec_safe_txn;
 use kailua_sync::transact::signer::{DeployerSignerArgs, GuardianSignerArgs, OwnerSignerArgs};
 use kailua_sync::transact::{Transact, TransactArgs};
-use kailua_sync::{await_tel, await_tel_res, retry_res_ctx_timeout, KAILUA_GAME_TYPE};
+use kailua_sync::{KAILUA_GAME_TYPE, await_tel, await_tel_res, retry_res_ctx_timeout};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, Status, TraceContextExt, Tracer};
 use risc0_circuit_recursion::control_id::BN254_IDENTITY_CONTROL_ID;
@@ -635,7 +635,9 @@ pub async fn fast_track(args: FastTrackArgs) -> anyhow::Result<()> {
             )
             .await;
         if portal_guardian_address != guardian_address {
-            bail!("OptimismPortal2 Guardian is {portal_guardian_address}. Provided private key has account address {guardian_address}.");
+            bail!(
+                "OptimismPortal2 Guardian is {portal_guardian_address}. Provided private key has account address {guardian_address}."
+            );
         }
 
         let optimism_portal_registry =
@@ -754,7 +756,9 @@ pub async fn deploy_verifier<P1: Provider<N>, P2: Provider<N>, N: Network>(
     #[cfg(feature = "devnet")]
     if risc0_zkvm::is_dev_mode() {
         // Deploy MockVerifier contract
-        tracing::warn!("Deploying RiscZeroMockVerifier contract to L1. This will accept fake proofs which are not cryptographically secure!");
+        tracing::warn!(
+            "Deploying RiscZeroMockVerifier contract to L1. This will accept fake proofs which are not cryptographically secure!"
+        );
         let receipt = RiscZeroMockVerifier::deploy_builder(&deployer_provider, [0xFFu8; 4].into())
             .transact_with_context(context.clone(), "RiscZeroMockVerifier::deploy")
             .await

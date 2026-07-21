@@ -18,7 +18,7 @@ use alloy_primitives::{Address, B256};
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use kailua_hokulea::canoe::KailuaCanoeVerifier;
-use kailua_kona::boot::{StitchedBootInfo, L1_HEAD_SENTINELS};
+use kailua_kona::boot::{L1_HEAD_SENTINELS, StitchedBootInfo};
 use kailua_kona::driver::CachedDriver;
 #[cfg(feature = "experimental")]
 use kailua_kona::evm::partial::PartialExecution;
@@ -26,8 +26,8 @@ use kailua_kona::evm::partial::PartialExecution;
 use kailua_kona::evm::witness::PartialExecutionWitness;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
-use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::oracle::WitnessOracle;
+use kailua_kona::oracle::local::LocalOnceOracle;
 use kailua_kona::precondition::Precondition;
 use kailua_kona::witness::Witness;
 use kona_derive::BlobProvider;

@@ -29,16 +29,16 @@ use crate::channel::DuplexChannel;
 use crate::channel::Message;
 use alloy::network::{Ethereum, TxSigner};
 use alloy::primitives::B256;
-use anyhow::{bail, Context};
-use kailua_sync::agent::{SyncAgent, FINAL_L2_BLOCK_RESOLVED};
+use anyhow::{Context, bail};
+use kailua_sync::agent::{FINAL_L2_BLOCK_RESOLVED, SyncAgent};
 use kailua_sync::proposal::Proposal;
 use kailua_sync::transact::provider::KailuaProvider;
 use kailua_sync::{await_tel, await_tel_res};
 use opentelemetry::global::{meter, tracer};
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::InnerReceipt;
+use risc0_zkvm::sha::Digestible;
 use std::collections::{BTreeMap, BinaryHeap, VecDeque};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -243,7 +243,9 @@ pub fn get_next_l1_head(
             .map(|(_, (_, delayed_head))| *delayed_head)
             .unwrap_or(l1_head);
         if delayed_l1_head != l1_head {
-            warn!("(DEVNET ONLY) Forced l1 head rollback from {l1_head} to {delayed_l1_head}. Expect a proving error.");
+            warn!(
+                "(DEVNET ONLY) Forced l1 head rollback from {l1_head} to {delayed_l1_head}. Expect a proving error."
+            );
         }
         delayed_l1_head
     };

@@ -16,14 +16,14 @@ use crate::boot::L1_HEAD_SENTINELS;
 use alloy_consensus::{Header, Receipt, ReceiptEnvelope, TxEnvelope};
 use alloy_eips::Decodable2718;
 use alloy_primitives::map::B256Map;
-use alloy_primitives::{Sealed, B256};
+use alloy_primitives::{B256, Sealed};
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
 use kona_derive::ChainProvider;
 use kona_mpt::{OrderedListWalker, TrieNode, TrieProvider};
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use kona_proof::errors::OracleProviderError;
 use kona_proof::HintType;
+use kona_proof::errors::OracleProviderError;
 use kona_protocol::BlockInfo;
 use std::sync::Arc;
 
@@ -215,11 +215,11 @@ impl<T: CommsClient> TrieProvider for OracleL1ChainProvider<T> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::oracle::WitnessOracle;
+    use crate::oracle::vec::tests::prepare_vec_oracle;
     use alloy_consensus::{ReceiptWithBloom, SignableTransaction, TxEip1559};
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{bytes, keccak256, Log, Signature, U256};
+    use alloy_primitives::{Log, Signature, U256, bytes, keccak256};
     use kona_mpt::{Nibbles, NoopTrieProvider};
 
     #[tokio::test(flavor = "multi_thread")]
@@ -370,10 +370,12 @@ pub mod tests {
             .await
             .unwrap();
         // fail to query future block
-        assert!(provider
-            .block_info_by_number(2)
-            .await
-            .is_err_and(|e| matches!(e, OracleProviderError::BlockNumberPastHead(_, _))));
+        assert!(
+            provider
+                .block_info_by_number(2)
+                .await
+                .is_err_and(|e| matches!(e, OracleProviderError::BlockNumberPastHead(_, _)))
+        );
         // query genesis
         assert_eq!(
             provider.block_info_by_number(0).await.unwrap(),

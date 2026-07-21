@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::ProvingError;
 use crate::args::ProvingArgs;
 use crate::client::witgen;
 use crate::driver::{driver_file_name, signal_derivation_trace};
 use crate::profiling::{Profile, ProfiledReceipt};
 use crate::proof::save_to_bincoded_file;
 use crate::risczero::boundless::BoundlessArgs;
-use crate::ProvingError;
 use alloy_primitives::B256;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use async_channel::Sender;
 use human_bytes::human_bytes;
-use kailua_kona::boot::StitchedBootInfo;
 #[cfg(feature = "eigen")]
 use kailua_kona::boot::L1_HEAD_SENTINELS;
+use kailua_kona::boot::StitchedBootInfo;
 #[cfg(feature = "experimental")]
 use kailua_kona::boot::{L1_HEAD_EXEC_ONLY_SENTINEL, L1_HEAD_TXN_ONLY_SENTINEL};
 use kailua_kona::client::core::EthereumDataSourceProvider;
@@ -39,8 +39,8 @@ use kona_preimage::{HintWriterClient, PreimageOracleClient};
 use kona_proof::l1::OracleBlobProvider;
 use kona_proof::{BootInfo, CachingOracle};
 use lazy_static::lazy_static;
-use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::Journal;
+use risc0_zkvm::sha::Digestible;
 use rkyv::rancor::BoxedError;
 use std::fmt::Debug;
 use std::path::PathBuf;

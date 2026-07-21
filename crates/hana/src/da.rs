@@ -27,10 +27,10 @@ pub struct CelestiaDataSourceProvider<A: CelestiaProvider + Send + Sync + Clone 
 );
 
 impl<
-        C: ChainProvider + Send + Sync + Clone + Debug,
-        B: BlobProvider + Send + Sync + Clone + Debug,
-        A: CelestiaProvider + Send + Sync + Clone + Debug,
-    > DASourceProvider<C, B> for CelestiaDataSourceProvider<A>
+    C: ChainProvider + Send + Sync + Clone + Debug,
+    B: BlobProvider + Send + Sync + Clone + Debug,
+    A: CelestiaProvider + Send + Sync + Clone + Debug,
+> DASourceProvider<C, B> for CelestiaDataSourceProvider<A>
 {
     type DAS = CelestiaDADataSource<C, B, A>;
 

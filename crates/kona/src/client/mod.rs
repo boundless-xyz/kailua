@@ -44,7 +44,7 @@ pub mod tests {
     use kona_proof::{BootInfo, FlushableCache};
     use std::fmt::Debug;
     use std::sync::Arc;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{TempDir, tempdir};
     use tokio::sync::RwLock;
     use tokio::task::block_in_place;
 

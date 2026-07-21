@@ -57,10 +57,10 @@ pub fn validate_preimage(key: &PreimageKey, value: &[u8]) -> PreimageOracleResul
         }
         PreimageKeyType::Local | PreimageKeyType::GlobalGeneric => None,
     };
-    if let Some(image) = image {
-        if key != &PreimageKey::new(image, key_type) {
-            return Err(PreimageOracleError::InvalidPreimageKey);
-        }
+    if let Some(image) = image
+        && key != &PreimageKey::new(image, key_type)
+    {
+        return Err(PreimageOracleError::InvalidPreimageKey);
     }
     Ok(())
 }

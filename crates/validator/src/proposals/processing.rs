@@ -18,11 +18,11 @@ use kailua_prover::current_time;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::await_tel;
 use kailua_sync::stall::Stall;
+use opentelemetry::KeyValue;
 use opentelemetry::global::tracer;
 use opentelemetry::metrics::{Counter, Gauge};
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use opentelemetry::KeyValue;
 use rand::Rng;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -114,14 +114,14 @@ pub async fn process_proposals(
         };
         let parent_contract = KailuaTournament::new(parent.contract, &agent.provider.l1_provider);
         // Check termination condition
-        if let Some(final_l2_block) = args.sync.final_l2_block {
-            if parent.output_block_number >= final_l2_block {
-                warn!(
-                    "Dropping proposal {} with parent output height {} past final l2 block {}.",
-                    proposal.index, parent.output_block_number, final_l2_block
-                );
-                continue;
-            }
+        if let Some(final_l2_block) = args.sync.final_l2_block
+            && parent.output_block_number >= final_l2_block
+        {
+            warn!(
+                "Dropping proposal {} with parent output height {} past final l2 block {}.",
+                proposal.index, parent.output_block_number, final_l2_block
+            );
+            continue;
         }
         // Check that a validity proof has not already been posted
         let is_validity_proven = await_tel!(
@@ -208,14 +208,16 @@ pub async fn process_proposals(
                 Some(p) if p == proposal.index && is_prior_fault => {
                     // Compute validity proof on arrival of correct proposal after faulty proposal
                     info!(
-                            "Computing validity proof for {proposal_index} to discard invalid predecessors."
-                        );
+                        "Computing validity proof for {proposal_index} to discard invalid predecessors."
+                    );
                     let random_wait = random_processing_time(args.max_fault_proving_delay);
                     proposal_validity_buffer.push((random_wait, p));
                 }
                 Some(p) if p == proposal.index => {
                     // Skip proving as no conflicts exist
-                    info!("Skipping proving for proposal {proposal_index} with no invalid predecessors.");
+                    info!(
+                        "Skipping proving for proposal {proposal_index} with no invalid predecessors."
+                    );
                 }
                 Some(p) if proposal.is_correct() == Some(false) && !is_prior_fault => {
                     // Compute validity proof on arrival of faulty proposal after correct proposal
@@ -226,8 +228,8 @@ pub async fn process_proposals(
                 Some(p) if proposal.is_correct() == Some(false) => {
                     // is_prior_fault is true and a successor exists, so some proof must be queued
                     info!(
-                            "Skipping proving for proposal {proposal_index} assuming ongoing validity proof for proposal {p}."
-                        );
+                        "Skipping proving for proposal {proposal_index} assuming ongoing validity proof for proposal {p}."
+                    );
                 }
                 Some(p) => {
                     info!(
@@ -236,8 +238,8 @@ pub async fn process_proposals(
                 }
                 None => {
                     info!(
-                            "Skipping fault proving for proposal {proposal_index} with no valid sibling."
-                        );
+                        "Skipping fault proving for proposal {proposal_index} with no valid sibling."
+                    );
                 }
             }
             continue;

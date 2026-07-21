@@ -21,26 +21,26 @@ use crate::provider::{ProviderArgs, SyncProvider};
 use crate::stall::Stall;
 use crate::telemetry::SyncTelemetry;
 use crate::transact::Transact;
-use crate::{await_tel, await_tel_res, retry_res_ctx_timeout, retry_res_timeout, KAILUA_GAME_TYPE};
+use crate::{KAILUA_GAME_TYPE, await_tel, await_tel_res, retry_res_ctx_timeout, retry_res_timeout};
 use alloy::eips::BlockNumberOrTag;
 use alloy::network::Network;
 use alloy::primitives::{Address, B256, U256};
 use alloy::providers::Provider;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use futures::future::join_all;
 use itertools::Itertools;
 use kailua_contracts::{
-    IDisputeGameFactory::{gameAtIndexReturn, IDisputeGameFactoryInstance},
+    IDisputeGameFactory::{IDisputeGameFactoryInstance, gameAtIndexReturn},
     *,
 };
 use kailua_kona::blobs::hash_to_fe;
 use kailua_kona::boot::L1_HEAD_EXEC_ONLY_SENTINEL;
 use kailua_kona::config::config_hash;
 use kona_genesis::RollupConfig;
+use opentelemetry::KeyValue;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use opentelemetry::KeyValue;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -414,7 +414,9 @@ impl SyncAgent {
             let Some(last_unresolved_proposal) =
                 self.proposals.get_mut(&last_unresolved_proposal_index)
             else {
-                bail!("Last unresolved proposal {last_unresolved_proposal_index} missing from database.");
+                bail!(
+                    "Last unresolved proposal {last_unresolved_proposal_index} missing from database."
+                );
             };
 
             let resolved_at = last_unresolved_proposal
@@ -625,10 +627,8 @@ impl SyncAgent {
             .context("Failed to determine if proposal is canonical.")?;
 
         // Determine if the proposal is its parent's successor
-        if is_proposal_canonical {
-            if let Some(parent) = self.proposals.get_mut(&proposal.parent) {
-                parent.successor = Some(proposal.index);
-            }
+        if is_proposal_canonical && let Some(parent) = self.proposals.get_mut(&proposal.parent) {
+            parent.successor = Some(proposal.index);
         }
 
         // Store proposal and return inclusion
@@ -1086,10 +1086,14 @@ impl SyncAgent {
                     {
                         Err(err) => {
                             if retries == 0 {
-                                error!("Failed to query permit {num_issued_permits} for {proposal_key}: {err:?}");
+                                error!(
+                                    "Failed to query permit {num_issued_permits} for {proposal_key}: {err:?}"
+                                );
                                 return None;
                             } else {
-                                warn!("(Retrying) Failed to query permit {num_issued_permits} for {proposal_key}: {err:?}");
+                                warn!(
+                                    "(Retrying) Failed to query permit {num_issued_permits} for {proposal_key}: {err:?}"
+                                );
                                 retries -= 1;
                             }
                         }
@@ -1189,7 +1193,9 @@ impl SyncAgent {
         for (expiry, index) in permits.into_iter() {
             // Skip if unreleasable
             if expiry < proof_time {
-                warn!("Skipping release of permit {index} which expired at {expiry} while proof time is {proof_time}.");
+                warn!(
+                    "Skipping release of permit {index} which expired at {expiry} while proof time is {proof_time}."
+                );
                 continue;
             }
 

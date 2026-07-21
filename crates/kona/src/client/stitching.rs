@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::boot::{StitchedBootInfo, L1_HEAD_EXEC_ONLY_SENTINEL, L1_HEAD_SENTINELS};
+use crate::boot::{L1_HEAD_EXEC_ONLY_SENTINEL, L1_HEAD_SENTINELS, StitchedBootInfo};
 use crate::client::core::DASourceProvider;
 use crate::client::log;
 use crate::config::config_hash;
@@ -38,7 +38,7 @@ use std::sync::Arc;
 #[cfg(target_os = "zkvm")]
 use {
     alloy_primitives::map::HashSet,
-    risc0_zkvm::{serde::Deserializer, sha::Digest, Receipt},
+    risc0_zkvm::{Receipt, serde::Deserializer, sha::Digest},
     serde::Deserialize,
 };
 
@@ -97,10 +97,10 @@ pub struct KonaStitchingClient<D: Clone + Debug>(
 );
 
 impl<
-        O: CommsClient + FlushableCache + Send + Sync + Debug,
-        B: BlobProvider + Send + Sync + Debug + Clone,
-        D: DASourceProvider<OracleL1ChainProvider<O>, B> + Clone + Debug,
-    > StitchingClient<O, B> for KonaStitchingClient<D>
+    O: CommsClient + FlushableCache + Send + Sync + Debug,
+    B: BlobProvider + Send + Sync + Debug + Clone,
+    D: DASourceProvider<OracleL1ChainProvider<O>, B> + Clone + Debug,
+> StitchingClient<O, B> for KonaStitchingClient<D>
 {
     /// Runs [crate::client::core::run_core_client], then stitches partial executions, exec-only
     /// proofs, and boot claims into the resulting journal. On zkVM targets, receipts streamed
@@ -514,8 +514,8 @@ pub async fn stitch_boot_info<O: CommsClient + FlushableCache + Send + Sync + De
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
-    use crate::client::core::tests::{op_sepolia_16491249_16491349, test_derivation};
     use crate::client::core::EthereumDataSourceProvider;
+    use crate::client::core::tests::{op_sepolia_16491249_16491349, test_derivation};
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
     use alloy_primitives::b256;

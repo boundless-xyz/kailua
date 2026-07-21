@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::ProvingError;
 use crate::args::ProvingArgs;
-use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
+use crate::client::proving::{SEMAPHORE_R0VM, acquire_owned_permit};
 use crate::profiling::{Profile, ProfiledReceipt};
 use crate::proof::save_to_bincoded_file;
 use crate::proof::{proof_id, read_bincoded_file};
-use crate::ProvingError;
 use alloy::signers::k256::sha2::{Digest as _, Sha256};
 use alloy::transports::http::reqwest::Url;
 use alloy_primitives::{Address, B256, U256};
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use aws_config::{BehaviorVersion, Region};
+use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::config::Credentials;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::Client as S3Client;
 use boundless_market::alloy::eips::BlockNumberOrTag;
 use boundless_market::alloy::providers::Provider;
 use boundless_market::alloy::signers::local::PrivateKeySigner;
@@ -45,7 +45,7 @@ use kailua_sync::{retry_res, retry_res_timeout};
 use lazy_static::lazy_static;
 use risc0_ethereum_contracts::selector::Selector;
 use risc0_zkvm::sha::Digestible;
-use risc0_zkvm::{default_executor, Digest, ExecutorEnv, Journal, Receipt};
+use risc0_zkvm::{Digest, ExecutorEnv, Journal, Receipt, default_executor};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -1017,7 +1017,9 @@ pub async fn retrieve_proof(
                         profile = profile.with_boundless_cost(cost);
                     }
                     Err(err) => {
-                        error!("Could not calculate boundless request {request_id} price at {timestamp}: {err:?}");
+                        error!(
+                            "Could not calculate boundless request {request_id} price at {timestamp}: {err:?}"
+                        );
                     }
                 }
 
@@ -1193,16 +1195,19 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                     human_bytes(image.1.len() as f64)
                 );
                 let program_url = if let Some(r2) = r2_storage {
-                    retry_res!(r2
-                        .upload_program(image.1)
-                        .await
-                        .context("R2Storage::upload_program"))
+                    retry_res!(
+                        r2.upload_program(image.1)
+                            .await
+                            .context("R2Storage::upload_program")
+                    )
                     .await
                 } else {
-                    retry_res!(boundless_client
-                        .upload_program(image.1)
-                        .await
-                        .context("Client::upload_program"))
+                    retry_res!(
+                        boundless_client
+                            .upload_program(image.1)
+                            .await
+                            .context("Client::upload_program")
+                    )
                     .await
                 };
                 if let Err(err) =
@@ -1261,16 +1266,19 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
                 // Upload input
                 info!("Uploading {} input data.", human_bytes(input.len() as f64));
                 let input_url = if let Some(r2) = r2_storage {
-                    retry_res!(r2
-                        .upload_input(&input)
-                        .await
-                        .context("R2Storage::upload_input"))
+                    retry_res!(
+                        r2.upload_input(&input)
+                            .await
+                            .context("R2Storage::upload_input")
+                    )
                     .await
                 } else {
-                    retry_res!(boundless_client
-                        .upload_input(&input)
-                        .await
-                        .context("Client::upload_input"))
+                    retry_res!(
+                        boundless_client
+                            .upload_input(&input)
+                            .await
+                            .context("Client::upload_input")
+                    )
                     .await
                 };
                 drop(boundless_net_lock);
@@ -1409,7 +1417,11 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
             request.offer.timeout = (prev_timeout as f64 * modifier) as u32;
             info!(
                 "Applied dynamic-pricing timeout modifier {}: lockTimeout {}s -> {}s, timeout {}s -> {}s",
-                modifier, prev_lock_timeout, request.offer.lockTimeout, prev_timeout, request.offer.timeout,
+                modifier,
+                prev_lock_timeout,
+                request.offer.lockTimeout,
+                prev_timeout,
+                request.offer.timeout,
             );
         }
 
@@ -1443,14 +1455,14 @@ pub async fn request_proof<A: NoUninit + Into<Digest>>(
     }
 
     // Apply max_price_cap safety (both paths)
-    if let Some(ref cap) = market.boundless_max_price_cap {
-        if request.offer.maxPrice > cap.value {
-            warn!(
-                "maxPrice {} exceeds cap {}, capping",
-                request.offer.maxPrice, cap
-            );
-            request.offer.maxPrice = cap.value;
-        }
+    if let Some(ref cap) = market.boundless_max_price_cap
+        && request.offer.maxPrice > cap.value
+    {
+        warn!(
+            "maxPrice {} exceeds cap {}, capping",
+            request.offer.maxPrice, cap
+        );
+        request.offer.maxPrice = cap.value;
     }
 
     // Submit the request (auto-selects offchain via order stream if available,
@@ -1668,17 +1680,21 @@ mod tests {
         assert!(parent.boundless_dynamic_pricing);
 
         let serialized = parent.to_arg_vec(&None);
-        assert!(serialized
-            .iter()
-            .any(|s| s == "--boundless-dynamic-pricing"));
+        assert!(
+            serialized
+                .iter()
+                .any(|s| s == "--boundless-dynamic-pricing")
+        );
     }
 
     #[test]
     fn dynamic_pricing_ramp_up_modifier_parses_and_propagates() {
         let default_cfg = parse_with(&["--boundless-dynamic-pricing"]);
-        assert!(default_cfg
-            .boundless_dynamic_pricing_ramp_up_modifier
-            .is_none());
+        assert!(
+            default_cfg
+                .boundless_dynamic_pricing_ramp_up_modifier
+                .is_none()
+        );
 
         let parent = parse_with(&[
             "--boundless-dynamic-pricing",

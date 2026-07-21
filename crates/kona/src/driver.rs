@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use crate::rkyv::driver::{
-    sorted_by_key, BatchReaderRkyv, BatchWithInclusionBlockRkyv, BlockInfoRkyv, FrameRkyv,
-    HeadArtifactsRkyv, IdChannelRkyv, OpAttributesWithParentRkyv, OrderedChannelRkyv,
-    PipelineCursorRkyv, SingleBatchRkyv, SpanBatchRkyv, SystemConfigRkyv,
+    BatchReaderRkyv, BatchWithInclusionBlockRkyv, BlockInfoRkyv, FrameRkyv, HeadArtifactsRkyv,
+    IdChannelRkyv, OpAttributesWithParentRkyv, OrderedChannelRkyv, PipelineCursorRkyv,
+    SingleBatchRkyv, SpanBatchRkyv, SystemConfigRkyv, sorted_by_key,
 };
 use alloy_primitives::Bytes;
 use kona_derive::{
@@ -28,8 +28,8 @@ use kona_driver::{Driver, Executor, PipelineCursor};
 use kona_executor::BlockBuildingOutcome;
 use kona_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use kona_preimage::CommsClient;
-use kona_proof::l1::{OraclePipeline, ProviderDerivationPipeline};
 use kona_proof::FlushableCache;
+use kona_proof::l1::{OraclePipeline, ProviderDerivationPipeline};
 use kona_protocol::{
     BatchReader, BatchWithInclusionBlock, BlockInfo, Channel, ChannelId, Frame,
     OpAttributesWithParent, OrderedChannel, SingleBatch, SpanBatch,
@@ -906,25 +906,25 @@ pub mod tests {
     use super::*;
     use crate::boot::StitchedBootInfo;
     use crate::client::core::tests::test_derivation;
-    use crate::client::core::{fetch_safe_head_hash, DASourceProvider, EthereumDataSourceProvider};
+    use crate::client::core::{DASourceProvider, EthereumDataSourceProvider, fetch_safe_head_hash};
     use crate::client::stitching::tests::test_stitching_client;
     use crate::client::tests::TestOracle;
     use crate::kona::OracleL1ChainProvider;
     use crate::precondition::Precondition;
     use crate::rkyv::execution::tests::{gen_execution_outcomes, gen_header};
-    use alloy_eips::eip4895::Withdrawal;
     use alloy_eips::BlockNumHash;
+    use alloy_eips::eip4895::Withdrawal;
     use alloy_op_evm::OpEvmFactory;
     use alloy_primitives::ruint::aliases::U256;
-    use alloy_primitives::{b256, keccak256, Address, Sealable, Signature, B256, B64};
+    use alloy_primitives::{Address, B64, B256, Sealable, Signature, b256, keccak256};
     use alloy_rpc_types_engine::PayloadAttributes;
     use anyhow::Context;
     use kona_driver::TipCursor;
     use kona_executor::TrieDBProvider;
+    use kona_proof::BootInfo;
     use kona_proof::executor::KonaExecutor;
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::l2::OracleL2ChainProvider;
-    use kona_proof::BootInfo;
     use kona_protocol::{
         Batch, BatchValidationProvider, L2BlockInfo, SpanBatchBits, SpanBatchElement,
         SpanBatchTransactions,
@@ -936,7 +936,7 @@ pub mod tests {
     use std::collections::hash_map::Entry;
     use std::collections::{BTreeMap, HashMap};
     use std::sync::Mutex;
-    use std::thread::{current, ThreadId};
+    use std::thread::{ThreadId, current};
 
     pub async fn check_traced_driver(traced_driver: &CachedDriver) {
         // Test serde
@@ -1287,9 +1287,11 @@ pub mod tests {
             epoch_num: gen_u64(),
             epoch_hash: gen_b256(),
             timestamp: gen_u64(),
-            transactions: vec![[*gen_b256(), *gen_b256(), *gen_b256(), *gen_b256()]
-                .concat()
-                .into()],
+            transactions: vec![
+                [*gen_b256(), *gen_b256(), *gen_b256(), *gen_b256()]
+                    .concat()
+                    .into(),
+            ],
         }
     }
 
@@ -1313,12 +1315,14 @@ pub mod tests {
             txs: SpanBatchTransactions {
                 total_block_tx_count: gen_u64(),
                 contract_creation_bits: SpanBatchBits([*gen_addr()].concat()),
-                tx_sigs: vec![Signature::from_raw(
-                    [gen_b256().as_slice(), gen_b256().as_slice(), &[0x00]]
-                        .concat()
-                        .as_slice(),
-                )
-                .unwrap()],
+                tx_sigs: vec![
+                    Signature::from_raw(
+                        [gen_b256().as_slice(), gen_b256().as_slice(), &[0x00]]
+                            .concat()
+                            .as_slice(),
+                    )
+                    .unwrap(),
+                ],
                 tx_nonces: vec![gen_u64()],
                 tx_gases: vec![gen_u64()],
                 tx_tos: vec![gen_addr()],

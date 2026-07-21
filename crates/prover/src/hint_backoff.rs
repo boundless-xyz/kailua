@@ -25,7 +25,7 @@
 //! generic "method not found" is not exempt, since behind a load balancer it can recover on
 //! retry (see `is_method_blacklisted`).
 
-use alloy_primitives::{keccak256, B256};
+use alloy_primitives::{B256, keccak256};
 use anyhow::Result;
 use async_trait::async_trait;
 use kailua_sync::retry::{MAX_DELAY_MS, MIN_DELAY_MS};
@@ -345,10 +345,12 @@ mod tests {
         .await
         .unwrap_err();
         assert!(started.elapsed() < Duration::from_millis(MIN_DELAY_MS));
-        assert!(!FAILURES
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains_key(&key));
+        assert!(
+            !FAILURES
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains_key(&key)
+        );
     }
 
     #[tokio::test]
@@ -383,9 +385,11 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!FAILURES
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains_key(&key));
+        assert!(
+            !FAILURES
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains_key(&key)
+        );
     }
 }

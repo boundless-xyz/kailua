@@ -18,17 +18,17 @@ use anyhow::Context;
 use human_bytes::human_bytes;
 use kailua_contracts::SystemConfig;
 use kailua_kona::config::config_hash;
+use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::provider::optimism::load_registry_config;
-use kailua_sync::provider::ProviderTimeoutArgs;
 use kailua_sync::stall::Stall;
 use kailua_sync::telemetry::TelemetryArgs;
-use kailua_sync::{await_tel, KAILUA_GAME_TYPE};
+use kailua_sync::{KAILUA_GAME_TYPE, await_tel};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, Status, TraceContextExt, Tracer};
 use risc0_circuit_recursion::control_id::BN254_IDENTITY_CONTROL_ID;
 use risc0_zkvm::sha::Digest;
-use risc0_zkvm::{compute_image_id, ALLOWED_CONTROL_ROOT};
+use risc0_zkvm::{ALLOWED_CONTROL_ROOT, compute_image_id};
 use tracing::{debug, warn};
 
 /// Inspect the configuration of a running rollup

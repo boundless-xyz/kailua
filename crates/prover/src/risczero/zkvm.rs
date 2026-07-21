@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::ProvingError;
 use crate::args::ProvingArgs;
-use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
+use crate::client::proving::{SEMAPHORE_R0VM, acquire_owned_permit};
 use crate::profiling::{Profile, ProfiledReceipt};
 use crate::risczero::{KailuaProveInfo, KailuaSessionStats};
-use crate::ProvingError;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use bytemuck::NoUninit;
-use risc0_zkvm::{default_prover, Digest, ExecutorEnv, InnerReceipt, ProverOpts, Receipt};
+use risc0_zkvm::{Digest, ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_prover};
 use tracing::info;
 use tracing::log::warn;
 

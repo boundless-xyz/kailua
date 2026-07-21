@@ -18,9 +18,9 @@ use alloy::network::Network;
 use alloy::providers::Provider;
 use alloy::sol_types::SolCall;
 use async_trait::async_trait;
+use opentelemetry::Context;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
-use opentelemetry::Context;
 use std::future::IntoFuture;
 use std::marker::PhantomData;
 

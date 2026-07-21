@@ -19,8 +19,8 @@ use crate::evm::partial::{
     ActivePartialExecution, PartialExecution, PartialResultAndState, TransactionResultCollector,
 };
 use alloy_evm::precompiles::PrecompilesMap;
-use alloy_evm::revm::context::result::{EVMError, ResultAndState};
 use alloy_evm::revm::context::BlockEnv;
+use alloy_evm::revm::context::result::{EVMError, ResultAndState};
 use alloy_evm::revm::inspector::NoOpInspector;
 use alloy_evm::revm::state::AccountStatus;
 use alloy_evm::revm::{Database as RevmDatabase, Inspector};
@@ -29,7 +29,7 @@ use alloy_op_evm::post_exec::{
     PostExecEvm, PostExecEvmFactoryHooks, PostExecExecutedTx, PostExecTxContext, WarmingState,
 };
 use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx, OpTxError};
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use op_revm::{OpHaltReason, OpSpecId};
 use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 use std::sync::{Arc, Mutex};
@@ -131,7 +131,7 @@ where
             .and_then(|c| c.partial.tx_hashes.last())
             .is_some_and(|expected| *expected == incoming_hash);
 
-        let result = if serve_cached {
+        if serve_cached {
             // SDM caveat: this branch bypasses `self.evm`, so the inner
             // post-exec inspector never observes the tx. Inert while the mode
             // is `Disabled` — see the `PostExecEvm` impl below for the work
@@ -255,8 +255,7 @@ where
             }
 
             result
-        };
-        result
+        }
     }
 
     /// Delegates system calls to the inner EVM.

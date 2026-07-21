@@ -18,15 +18,15 @@
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::network::BlockResponse;
 use alloy::providers::Provider;
-use anyhow::{anyhow, Context};
-use kailua_cli::fast_track::{fast_track, FastTrackArgs};
+use anyhow::{Context, anyhow};
+use kailua_cli::fast_track::{FastTrackArgs, fast_track};
 use kailua_prover::args::{ProveArgs, ProvingArgs};
 use kailua_prover::prove::prove;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::args::SyncArgs;
 use kailua_sync::provider::ProviderArgs;
-use kailua_sync::transact::signer::{DeployerSignerArgs, GuardianSignerArgs, OwnerSignerArgs};
 use kailua_sync::transact::TransactArgs;
+use kailua_sync::transact::signer::{DeployerSignerArgs, GuardianSignerArgs, OwnerSignerArgs};
 use lazy_static::lazy_static;
 use reqwest::Client;
 use serde::Deserialize;
@@ -46,7 +46,7 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 #[cfg(not(feature = "eigen"))]
 use {
-    kailua_cli::fault::{fault, FaultArgs},
+    kailua_cli::fault::{FaultArgs, fault},
     kailua_proposer::args::ProposeArgs,
     kailua_proposer::propose::propose,
     kailua_sync::transact::signer::{ProposerSignerArgs, ValidatorSignerArgs},
@@ -437,8 +437,11 @@ async fn deploy_kailua_contracts(
     challenge_timeout: u64,
 ) -> anyhow::Result<()> {
     // fast-track upgrade w/ devmode proof support
-    set_var("RISC0_DEV_MODE", "1");
-    set_var("RISC0_INFO", "1");
+    // SAFETY: set during test setup, before any reader of these variables is spawned.
+    unsafe {
+        set_var("RISC0_DEV_MODE", "1");
+        set_var("RISC0_INFO", "1");
+    }
     fast_track(FastTrackArgs {
         eth_rpc_url: devnet.l1_rpc_url()?,
         op_geth_url: devnet.l2_rpc_url()?,

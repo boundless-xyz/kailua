@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::args::ProveArgs;
-use crate::kv::{create_disk_kv_store, create_split_kv_store, RWLKeyValueStore};
-use crate::profiling::ProfiledReceipt;
 use crate::ProvingError;
+use crate::args::ProveArgs;
+use crate::kv::{RWLKeyValueStore, create_disk_kv_store, create_split_kv_store};
+use crate::profiling::ProfiledReceipt;
 use alloy_primitives::B256;
 use anyhow::anyhow;
 use async_channel::Sender;

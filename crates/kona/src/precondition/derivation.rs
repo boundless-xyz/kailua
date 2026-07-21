@@ -21,8 +21,8 @@ use crate::driver::{
     CachedL1Retrieval, CachedPollingTraversal,
 };
 use crate::rkyv::driver::sorted_by_key;
-use alloy_eips::eip4895::Withdrawal;
 use alloy_eips::Typed2718;
+use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_engine::PayloadAttributes;
 use kona_driver::PipelineCursor;
@@ -33,8 +33,8 @@ use kona_protocol::{
 };
 use op_alloy_consensus::OpReceiptEnvelope;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use risc0_zkvm::sha::{Digestible, Impl as SHA2, Sha256};
 use risc0_zkvm::Digest;
+use risc0_zkvm::sha::{Digestible, Impl as SHA2, Sha256};
 
 /// Canonically encodes a [PipelineCursor]: capacity, channel timeout, current origin, tracked
 /// origins (with infos sorted by block number), and the safe-head tip per origin.

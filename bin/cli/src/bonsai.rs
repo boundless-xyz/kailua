@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use bonsai_sdk::non_blocking::{Client, SessionId};
 use kailua_build::KAILUA_FPVM_KONA_ID;
+use kailua_prover::ProvingError;
 use kailua_prover::profiling::ProfiledReceipt;
 use kailua_prover::proof::save_to_bincoded_file;
 use kailua_prover::proof::{proof_file_name, read_bincoded_file};
 use kailua_prover::risczero::{KailuaProveInfo, KailuaSessionStats};
-use kailua_prover::ProvingError;
 use kailua_sync::telemetry::TelemetryArgs;
 use risc0_zkvm::Receipt;
 use std::time::Duration;

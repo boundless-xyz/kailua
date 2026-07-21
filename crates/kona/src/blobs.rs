@@ -15,12 +15,12 @@
 use crate::client::log;
 use crate::rkyv::kzg::{BlobDef, Bytes48Def};
 use alloy_eips::eip4844::{
-    kzg_to_versioned_hash, Blob, IndexedBlobHash, BLS_MODULUS, FIELD_ELEMENTS_PER_BLOB,
+    BLS_MODULUS, Blob, FIELD_ELEMENTS_PER_BLOB, IndexedBlobHash, kzg_to_versioned_hash,
 };
 use alloy_primitives::{B256, U256};
 use anyhow::bail;
 use async_trait::async_trait;
-use c_kzg::{ethereum_kzg_settings, Bytes48};
+use c_kzg::{Bytes48, ethereum_kzg_settings};
 use kona_derive::BlobProvider;
 use kona_derive::BlobProviderError;
 use kona_protocol::BlockInfo;

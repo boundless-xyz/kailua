@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use alloy::primitives::Address;
-use jsonrpsee::core::{async_trait, RpcResult};
+use jsonrpsee::core::{RpcResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
 use std::collections::BTreeMap;
 use std::sync::Arc;

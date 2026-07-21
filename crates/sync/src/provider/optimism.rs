@@ -20,7 +20,7 @@ use kona_genesis::RollupConfig;
 use kona_registry::Registry;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::str::FromStr;
 use tracing::log::warn;
 use tracing::{debug, info};

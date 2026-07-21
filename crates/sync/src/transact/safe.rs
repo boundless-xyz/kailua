@@ -15,7 +15,7 @@
 use crate::transact::Transact;
 use alloy::contract::SolCallBuilder;
 use alloy::network::{Network, TransactionBuilder};
-use alloy::primitives::{Address, Uint, U256};
+use alloy::primitives::{Address, U256, Uint};
 use alloy::providers::Provider;
 use anyhow::Context;
 

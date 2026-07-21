@@ -20,7 +20,7 @@ use alloy_evm::revm::database::states::{CacheAccount, PlainAccount};
 use alloy_evm::revm::database::{AccountStatus as CacheAccountStatus, CacheState};
 use alloy_evm::revm::state::{AccountInfo, Bytecode};
 use alloy_op_evm::block::{OpBlockExecutionCtx, PostExecMode};
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use rkyv::rancor::Fallible;
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Archived, Place, Resolver};

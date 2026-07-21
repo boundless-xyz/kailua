@@ -14,8 +14,8 @@
 
 use kailua_hana::stitching::HanaStitchingClient;
 use kailua_kona::client::stateless::run_stateless_client;
-use kailua_kona::oracle::vec::VecOracle;
 use kailua_kona::oracle::WitnessOracle;
+use kailua_kona::oracle::vec::VecOracle;
 use kailua_kona::{client::log, witness::Witness};
 use risc0_zkvm::guest::env;
 use rkyv::rancor::BoxedError;

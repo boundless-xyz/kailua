@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::KAILUA_GAME_TYPE;
 use crate::provider::SyncProvider;
 use crate::stall::Stall;
-use crate::KAILUA_GAME_TYPE;
 use alloy::primitives::{Address, B256};
 use kailua_contracts::*;
 use kona_genesis::RollupConfig;
+use opentelemetry::Context;
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use opentelemetry::Context;
 use std::process::exit;
 use tracing::{error, info, warn};
 
@@ -100,7 +100,9 @@ impl SyncDeployment {
         if game_impl_address.is_some() {
             warn!("Using provided KailuaGame implementation {kailua_game_implementation_address}.");
         } else {
-            info!("Using the latest KailuaGame implementation {kailua_game_implementation_address} from DisputeGameFactory.");
+            info!(
+                "Using the latest KailuaGame implementation {kailua_game_implementation_address} from DisputeGameFactory."
+            );
         }
 
         let kailua_game_implementation =

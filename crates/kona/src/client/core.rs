@@ -15,15 +15,15 @@
 use crate::boot::L1_HEAD_EXEC_ONLY_SENTINEL;
 use crate::client::log;
 use crate::driver::CachedDriver;
-use crate::executor::{new_execution_cursor, CachedExecutor, Execution};
+use crate::executor::{CachedExecutor, Execution, new_execution_cursor};
 use crate::kona::OracleL1ChainProvider;
 use crate::oracle::local::LocalOnceOracle;
 use crate::precondition::execution::exec_precondition_hash;
-use crate::precondition::{proposal, Precondition};
+use crate::precondition::{Precondition, proposal};
 #[cfg(not(feature = "experimental"))]
 use alloy_op_evm::OpEvmFactory;
-use alloy_primitives::{Sealed, B256};
-use anyhow::{bail, Context};
+use alloy_primitives::{B256, Sealed};
+use anyhow::{Context, bail};
 use kona_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, EthereumDataSource};
 use kona_driver::{Driver, Executor};
 use kona_executor::TrieDBProvider;
@@ -52,18 +52,18 @@ use {
     crate::precondition::evm::{
         compute_pe_trace, hash_block_ctx, hash_expected_state, hash_results,
     },
-    alloy_consensus::{transaction::SignerRecoverable, Header},
+    alloy_consensus::{Header, transaction::SignerRecoverable},
     alloy_eips::eip2718::{Decodable2718, WithEncoded},
     alloy_evm::{
+        EvmFactory,
         block::BlockExecutor,
         revm::{
             bytecode::Bytecode,
             database::{CacheState, State},
         },
-        EvmFactory,
     },
     alloy_op_evm::{
-        block::OpAlloyReceiptBuilder, post_exec::PostExecEvmFactoryAdapter, OpBlockExecutor,
+        OpBlockExecutor, block::OpAlloyReceiptBuilder, post_exec::PostExecEvmFactoryAdapter,
     },
     kona_executor::TrieDB,
     op_alloy_consensus::OpTxEnvelope,
@@ -89,10 +89,8 @@ pub trait DASourceProvider<
 #[derive(Clone, Copy, Debug)]
 pub struct EthereumDataSourceProvider;
 
-impl<
-        C: ChainProvider + Send + Sync + Clone + Debug,
-        B: BlobProvider + Send + Sync + Clone + Debug,
-    > DASourceProvider<C, B> for EthereumDataSourceProvider
+impl<C: ChainProvider + Send + Sync + Clone + Debug, B: BlobProvider + Send + Sync + Clone + Debug>
+    DASourceProvider<C, B> for EthereumDataSourceProvider
 {
     type DAS = EthereumDataSource<C, B>;
 
@@ -666,10 +664,10 @@ pub fn validate_cache(cache: &CacheState) {
     }
     // Inline bytecode attached to any pre-state account.
     for cache_account in cache.accounts.values() {
-        if let Some(plain) = &cache_account.account {
-            if let Some(bytecode) = &plain.info.code {
-                validate_contract_hash(&plain.info.code_hash, bytecode);
-            }
+        if let Some(plain) = &cache_account.account
+            && let Some(bytecode) = &plain.info.code
+        {
+            validate_contract_hash(&plain.info.code_hash, bytecode);
         }
     }
 }
@@ -681,9 +679,9 @@ pub mod tests {
     use crate::client::tests::TestOracle;
     use crate::precondition::proposal::ProposalPrecondition;
     use alloy_consensus::Header;
-    use alloy_primitives::{b256, B256};
-    use kona_proof::l1::OracleBlobProvider;
+    use alloy_primitives::{B256, b256};
     use kona_proof::BootInfo;
+    use kona_proof::l1::OracleBlobProvider;
     use std::sync::{Arc, Mutex};
 
     pub async fn test_derivation(
@@ -1010,9 +1008,11 @@ pub mod tests {
         .unwrap();
 
         // Assert all results were served cached (no fresh captured)
-        assert!(post_captured
-            .iter()
-            .all(|c| c.first().unwrap().results.is_empty()));
+        assert!(
+            post_captured
+                .iter()
+                .all(|c| c.first().unwrap().results.is_empty())
+        );
         // Assert both executions yield the same blocks
         for (pre, post) in pre_executions.into_iter().zip(post_executions.into_iter()) {
             assert_eq!(pre.artifacts.header, post.artifacts.header);
@@ -1047,9 +1047,11 @@ pub mod tests {
         .unwrap();
 
         // Assert all results were served cached (no fresh captured)
-        assert!(post_captured
-            .iter()
-            .all(|c| c.first().unwrap().results.is_empty()));
+        assert!(
+            post_captured
+                .iter()
+                .all(|c| c.first().unwrap().results.is_empty())
+        );
         // Assert both executions yield the same blocks
         for (pre, post) in pre_executions.into_iter().zip(post_executions.into_iter()) {
             assert_eq!(pre.artifacts.header, post.artifacts.header);
@@ -1141,9 +1143,11 @@ pub mod tests {
         .await
         .unwrap();
         // Assert all results were served cached (no fresh captured)
-        assert!(post_captured
-            .iter()
-            .all(|c| c.first().unwrap().results.is_empty()));
+        assert!(
+            post_captured
+                .iter()
+                .all(|c| c.first().unwrap().results.is_empty())
+        );
         // Assert both executions yield the same blocks
         for (pre, post) in pre_executions.into_iter().zip(post_executions.into_iter()) {
             assert_eq!(pre.artifacts.header, post.artifacts.header);
@@ -1159,9 +1163,11 @@ pub mod tests {
         )
         .await
         .unwrap();
-        assert!(post_split_captured
-            .iter()
-            .all(|c| c.first().unwrap().results.is_empty()));
+        assert!(
+            post_split_captured
+                .iter()
+                .all(|c| c.first().unwrap().results.is_empty())
+        );
     }
 
     #[cfg(feature = "experimental")]
@@ -1221,12 +1227,12 @@ pub mod tests {
                         continue;
                     };
                     let sender = recovered.signer();
-                    if let Some(cache_account) = witness.cache.accounts.get_mut(&sender) {
-                        if let Some(plain) = cache_account.account.as_mut() {
-                            plain.info.nonce = plain.info.nonce.saturating_add(1);
-                            tampered = Some(witness);
-                            break 'outer;
-                        }
+                    if let Some(cache_account) = witness.cache.accounts.get_mut(&sender)
+                        && let Some(plain) = cache_account.account.as_mut()
+                    {
+                        plain.info.nonce = plain.info.nonce.saturating_add(1);
+                        tampered = Some(witness);
+                        break 'outer;
                     }
                 }
             }
@@ -1432,8 +1438,8 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_fetch_safe_head_hash_unknown_output_version() {
-        use crate::oracle::vec::VecOracle;
         use crate::oracle::WitnessOracle;
+        use crate::oracle::vec::VecOracle;
 
         // A non-zero version prefix must be rejected as an unknown output root version.
         let mut preimage = vec![0u8; 128];

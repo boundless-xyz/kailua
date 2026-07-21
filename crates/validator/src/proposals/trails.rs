@@ -21,10 +21,10 @@ use kailua_prover::current_time;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::stall::Stall;
 use kailua_sync::transact::Transact;
+use opentelemetry::KeyValue;
 use opentelemetry::global::tracer;
 use opentelemetry::metrics::Counter;
 use opentelemetry::trace::{TraceContextExt, Tracer};
-use opentelemetry::KeyValue;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::time::Duration;
@@ -129,7 +129,9 @@ pub async fn publish_trail_proofs<P: Provider>(
             )
             .await;
         if fault_proof_status != 0 {
-            warn!("Skipping proof submission for already proven game at local index {proposal_index}.");
+            warn!(
+                "Skipping proof submission for already proven game at local index {proposal_index}."
+            );
             meter_proofs_discarded.add(
                 1,
                 &[
@@ -146,7 +148,9 @@ pub async fn publish_trail_proofs<P: Provider>(
         let kzg_proof = match proposal.io_proof_for(fe_position) {
             Ok(proof) => proof,
             Err(err) => {
-                error!("Failed to compute io proof for proposal {proposal_index} at {fe_position}: {err:?}");
+                error!(
+                    "Failed to compute io proof for proposal {proposal_index} at {fe_position}: {err:?}"
+                );
                 continue;
             }
         };
@@ -180,35 +184,35 @@ pub async fn publish_trail_proofs<P: Provider>(
 
         // Check permit activation before submitting trail fault proof
         let permits = agent.get_fp_permits(proposal.contract, validator_address);
-        if let Some(&(expiry, permit_index)) = permits.last() {
-            if permit_index > 0 {
-                let activation_time =
-                    expiry - agent.deployment.permit_duration + agent.deployment.permit_delay;
-                match validator_provider
-                    .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
-                    .await
-                {
-                    Ok(Some(latest_block)) => {
-                        let l1_timestamp = latest_block.header.timestamp;
-                        if l1_timestamp < activation_time {
-                            info!(
-                                "Waiting {}s for permit activation before submitting trail fault proof for proposal {proposal_index} (L1 time: {l1_timestamp}, activation: {activation_time}).",
-                                activation_time - l1_timestamp
-                            );
-                            trail_fault_buffer.push((retry_time, proposal_index));
-                            continue;
-                        }
-                    }
-                    Ok(None) => {
-                        error!("Failed to fetch latest block for permit activation check");
+        if let Some(&(expiry, permit_index)) = permits.last()
+            && permit_index > 0
+        {
+            let activation_time =
+                expiry - agent.deployment.permit_duration + agent.deployment.permit_delay;
+            match validator_provider
+                .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
+                .await
+            {
+                Ok(Some(latest_block)) => {
+                    let l1_timestamp = latest_block.header.timestamp;
+                    if l1_timestamp < activation_time {
+                        info!(
+                            "Waiting {}s for permit activation before submitting trail fault proof for proposal {proposal_index} (L1 time: {l1_timestamp}, activation: {activation_time}).",
+                            activation_time - l1_timestamp
+                        );
                         trail_fault_buffer.push((retry_time, proposal_index));
                         continue;
                     }
-                    Err(e) => {
-                        error!("Failed to fetch latest block for permit activation check: {e:?}");
-                        trail_fault_buffer.push((retry_time, proposal_index));
-                        continue;
-                    }
+                }
+                Ok(None) => {
+                    error!("Failed to fetch latest block for permit activation check");
+                    trail_fault_buffer.push((retry_time, proposal_index));
+                    continue;
+                }
+                Err(e) => {
+                    error!("Failed to fetch latest block for permit activation check: {e:?}");
+                    trail_fault_buffer.push((retry_time, proposal_index));
+                    continue;
                 }
             }
         }

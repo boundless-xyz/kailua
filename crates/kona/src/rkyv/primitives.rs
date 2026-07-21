@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_primitives::{Address, B256, B64, U256};
+use alloy_primitives::{Address, B64, B256, U256};
 
 /// rkyv mirror of [B256].
 #[derive(Clone, Debug, Copy, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]

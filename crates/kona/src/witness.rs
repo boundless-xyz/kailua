@@ -20,8 +20,8 @@ use crate::evm::partial::PartialExecution;
 #[cfg(feature = "experimental")]
 use crate::evm::witness::PartialExecutionWitness;
 use crate::executor::Execution;
-use crate::oracle::vec::VecOracle;
 use crate::oracle::WitnessOracle;
+use crate::oracle::vec::VecOracle;
 use crate::precondition::Precondition;
 use crate::rkyv::primitives::{AddressDef, B256Def};
 use alloy_primitives::{Address, B256};
@@ -96,10 +96,12 @@ pub mod tests {
             blobs_witness,
             payout_recipient_address: Address::from([0xb0; 20]),
             precondition_validation_data_hash: keccak256(b"precondition_validation_data_hash"),
-            stitched_executions: vec![gen_executions(64)
-                .into_iter()
-                .map(|e| e.deref().clone())
-                .collect()],
+            stitched_executions: vec![
+                gen_executions(64)
+                    .into_iter()
+                    .map(|e| e.deref().clone())
+                    .collect(),
+            ],
             derivation_cache: None,
             trace_derivation: false,
             stitched_preconditions: vec![

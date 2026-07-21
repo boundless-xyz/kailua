@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::ProvingError;
 use crate::args::ProveArgs;
 use crate::driver::{driver_file_name, signal_derivation_trace, try_read_driver};
 use crate::kv::RWLKeyValueStore;
 use crate::profiling::ProfiledReceipt;
 use crate::proof::{proof_file_name, read_bincoded_file};
-use crate::ProvingError;
 use alloy::providers::{Provider, RootProvider};
 use alloy_primitives::B256;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use async_channel::{Receiver, Sender};
 use human_bytes::human_bytes;
 use kailua_kona::boot::StitchedBootInfo;
@@ -29,8 +29,8 @@ use kailua_kona::driver::CachedDriver;
 use kailua_kona::executor::Execution;
 use kailua_kona::journal::ProofJournal;
 use kailua_kona::oracle::vec::VecOracle;
-use kailua_kona::precondition::execution::exec_precondition_hash;
 use kailua_kona::precondition::Precondition;
+use kailua_kona::precondition::execution::exec_precondition_hash;
 use kailua_sync::provider::optimism::OpNodeProvider;
 use kailua_sync::retry_res_ctx_timeout;
 use kona_genesis::{L1ChainConfig, RollupConfig};
@@ -827,9 +827,9 @@ pub async fn compute_fpvm_proof(
                 }
                 warn!(
                     "Execution-only proof witness size {} + {} above safety threshold {}. Splitting workload.",
-                        human_bytes(preloaded as f64),
-                        human_bytes(streamed as f64),
-                        human_bytes(limit as f64),
+                    human_bytes(preloaded as f64),
+                    human_bytes(streamed as f64),
+                    human_bytes(limit as f64),
                 )
             }
             ProvingError::NotAwaitingProof => {
@@ -1127,7 +1127,10 @@ pub async fn compute_cached_proof(
             if precondition.derivation_trace.is_zero() {
                 cached_precondition.derivation_trace = derivation_trace_hash;
             } else if precondition.derivation_trace != derivation_trace_hash {
-                warn!("Precondition derivation trace hash mismatch. Input: {}, Cached: {derivation_trace_hash}", precondition.derivation_trace);
+                warn!(
+                    "Precondition derivation trace hash mismatch. Input: {}, Cached: {derivation_trace_hash}",
+                    precondition.derivation_trace
+                );
             }
         }
     }

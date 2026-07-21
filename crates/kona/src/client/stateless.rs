@@ -80,10 +80,10 @@ pub fn run_stateless_client<O: WitnessOracle, S: StitchingClient<O, PreloadedBlo
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     use super::*;
+    use crate::client::core::EthereumDataSourceProvider;
     #[cfg(feature = "experimental")]
     use crate::client::core::tests::test_derivation_with_partials;
     use crate::client::core::tests::{op_sepolia_16491249_16491349, test_derivation};
-    use crate::client::core::EthereumDataSourceProvider;
     use crate::client::stitching::KonaStitchingClient;
     use crate::client::tests::TestOracle;
     use alloy_primitives::B256;

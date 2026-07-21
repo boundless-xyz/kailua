@@ -17,7 +17,7 @@ use alloy::consensus::{Blob, BlobTransactionSidecar};
 use alloy::eips::eip4844::kzg_to_versioned_hash;
 use alloy::primitives::B256;
 use alloy_rpc_types_beacon::sidecar::{BeaconBlobBundle, BlobData, GetBlobsResponse};
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use opentelemetry::global::tracer;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 use reqwest::Client;

@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::args::ProvingArgs;
-use crate::client::proving::{acquire_owned_permit, SEMAPHORE_R0VM};
-use crate::profiling::{Profile, ProfiledReceipt};
 use crate::ProvingError;
-use anyhow::{anyhow, Context};
+use crate::args::ProvingArgs;
+use crate::client::proving::{SEMAPHORE_R0VM, acquire_owned_permit};
+use crate::profiling::{Profile, ProfiledReceipt};
+use anyhow::{Context, anyhow};
 use bonsai_sdk::non_blocking::{Client, SessionId, SnarkId};
 use bonsai_sdk::responses::SessionStats;
 use bytemuck::NoUninit;

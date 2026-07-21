@@ -14,13 +14,13 @@
 
 use crate::args::{PermitPolicy, ValidateArgs};
 use crate::channel::{DuplexChannel, Message};
-use crate::tasks::{handle_proving_tasks, Task};
+use crate::tasks::{Task, handle_proving_tasks};
 use alloy::eips::eip4844::IndexedBlobHash;
 use alloy::network::primitives::HeaderResponse;
 use alloy::network::{BlockResponse, TxSigner};
 use alloy::primitives::B256;
 use alloy::providers::Provider;
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use kailua_kona::blobs::BlobFetchRequest;
 use kailua_kona::config::config_hash;
 use kailua_kona::journal::ProofJournal;
@@ -32,8 +32,8 @@ use kailua_prover::proof::proof_file_name;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::await_tel;
 use kailua_sync::proposal::Proposal;
-use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::provider::ProviderTimeoutArgs;
+use kailua_sync::provider::optimism::fetch_rollup_config;
 use kailua_sync::transact::rpc::{get_block_by_number, get_next_block};
 use kona_protocol::BlockInfo;
 use lazy_static::lazy_static;
@@ -180,8 +180,8 @@ pub async fn handle_proof_requests(
                 .unwrap_or_default();
         let data_dir = data_dir.join(format!(
             "{}-{}",
-            &agreed_l2_output_root.to_string()[..10].to_string(),
-            &claimed_l2_output_root.to_string()[..10].to_string()
+            &agreed_l2_output_root.to_string()[..10],
+            &claimed_l2_output_root.to_string()[..10]
         ));
         let prove_args = ProveArgs {
             kona: kona_host::single::SingleChainHost {

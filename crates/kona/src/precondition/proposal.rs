@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::blobs::hash_to_fe;
 use crate::blobs::BlobFetchRequest;
+use crate::blobs::hash_to_fe;
 use alloy_eips::eip4844::{Blob, FIELD_ELEMENTS_PER_BLOB};
 use alloy_primitives::B256;
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
 use kona_derive::BlobProvider;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use kona_proof::errors::OracleProviderError;
@@ -196,7 +196,9 @@ pub fn validate_proposal_precondition(
         let output_block_number = proof_l2_head_number + i as u64 + 1;
         if output_block_number > proposal_root_claim_block_number {
             // We should not derive outputs beyond the proposal root claim
-            bail!("Output block #{output_block_number} > max block #{proposal_root_claim_block_number}.");
+            bail!(
+                "Output block #{output_block_number} > max block #{proposal_root_claim_block_number}."
+            );
         }
         let offset = output_block_number - proposal_l2_head_number;
         if !offset.is_multiple_of(output_block_span) {
@@ -258,14 +260,14 @@ pub fn validate_proposal_precondition(
 mod tests {
     use super::*;
     use crate::blobs::tests::gen_blobs;
-    use crate::blobs::{intermediate_outputs, BlobWitnessData, PreloadedBlobProvider};
-    use crate::oracle::vec::tests::prepare_vec_oracle;
+    use crate::blobs::{BlobWitnessData, PreloadedBlobProvider, intermediate_outputs};
     use crate::oracle::WitnessOracle;
+    use crate::oracle::vec::tests::prepare_vec_oracle;
     use crate::precondition::proposal::{
-        load_proposal_data, proposal_precondition_hash, validate_proposal_precondition,
-        ProposalPrecondition,
+        ProposalPrecondition, load_proposal_data, proposal_precondition_hash,
+        validate_proposal_precondition,
     };
-    use alloy_eips::eip4844::{kzg_to_versioned_hash, IndexedBlobHash, BYTES_PER_BLOB};
+    use alloy_eips::eip4844::{BYTES_PER_BLOB, IndexedBlobHash, kzg_to_versioned_hash};
     use kona_proof::block_on;
     use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
@@ -331,13 +333,15 @@ mod tests {
                     );
                     let oracle = Arc::new(oracle);
                     // load nothing when hash is zero
-                    assert!(block_on(load_proposal_data(
-                        B256::ZERO,
-                        oracle.clone(),
-                        &mut beacon.clone(),
-                    ))
-                    .unwrap()
-                    .is_none());
+                    assert!(
+                        block_on(load_proposal_data(
+                            B256::ZERO,
+                            oracle.clone(),
+                            &mut beacon.clone(),
+                        ))
+                        .unwrap()
+                        .is_none()
+                    );
                     // successfully load with proper hash
                     let reloaded = block_on(load_proposal_data(
                         precondition_data_hash,
@@ -355,20 +359,22 @@ mod tests {
 
     #[test]
     fn test_validate_precondition_bad_start() {
-        assert!(validate_proposal_precondition(
-            ProposalPrecondition {
-                proposal_l2_head_number: 100,
-                proposal_output_count: 100,
-                output_block_span: 1,
-                blob_hashes: vec![],
-            },
-            vec![],
-            1,
-            &[]
-        )
-        .is_err_and(|e| e
-            .to_string()
-            .contains("proposal starting block #100 > proof agreed l2 head #1")));
+        assert!(
+            validate_proposal_precondition(
+                ProposalPrecondition {
+                    proposal_l2_head_number: 100,
+                    proposal_output_count: 100,
+                    output_block_span: 1,
+                    blob_hashes: vec![],
+                },
+                vec![],
+                1,
+                &[]
+            )
+            .is_err_and(|e| e
+                .to_string()
+                .contains("proposal starting block #100 > proof agreed l2 head #1"))
+        );
     }
 
     #[test]
@@ -392,9 +398,10 @@ mod tests {
             1,
             &output_roots,
         );
-        assert!(result.is_err_and(|e| e
-            .to_string()
-            .contains("Expected trail data to begin at blob 0/2")));
+        assert!(result.is_err_and(|e| {
+            e.to_string()
+                .contains("Expected trail data to begin at blob 0/2")
+        }));
         // fail to validate non-zero trail data after 1023 * 32 = 32768 bytes
         let result = validate_proposal_precondition(
             ProposalPrecondition {
@@ -407,9 +414,10 @@ mod tests {
             1,
             &output_roots,
         );
-        assert!(result.is_err_and(|e| e
-            .to_string()
-            .contains("Found non-zero trail data in blob 0 after 32736")));
+        assert!(result.is_err_and(|e| {
+            e.to_string()
+                .contains("Found non-zero trail data in blob 0 after 32736")
+        }));
         // fail to validate extra output roots
         let mut blobs = blobs[..1].to_vec();
         let blobs_fetch_requests = gen_blobs_requests(blobs.clone());
@@ -427,9 +435,10 @@ mod tests {
             1,
             &output_roots,
         );
-        assert!(result.is_err_and(|e| e
-            .to_string()
-            .contains("Bad fe #500 in blob 0 for block #502")));
+        assert!(result.is_err_and(|e| {
+            e.to_string()
+                .contains("Bad fe #500 in blob 0 for block #502")
+        }));
     }
 
     #[tokio::test]
@@ -536,9 +545,9 @@ mod tests {
                                 );
                             } else {
                                 // fail the attempt to start validating beyond max block
-                                assert!(result.is_err_and(|e| e
-                                    .to_string()
-                                    .contains("< proof agreed l2 head")));
+                                assert!(result.is_err_and(|e| {
+                                    e.to_string().contains("< proof agreed l2 head")
+                                }));
                             }
                         }
                     }

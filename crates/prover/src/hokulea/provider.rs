@@ -15,18 +15,18 @@
 use alloy::providers::Provider;
 use alloy::transports::http::reqwest::Url;
 use alloy_primitives::B256;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use async_trait::async_trait;
 use canoe_bindings::StatusCode;
 use canoe_provider::{CanoeInput, CanoeProvider, CertVerifierCall};
 use kailua_sync::retry_res_timeout;
+use risc0_steel::Contract;
 use risc0_steel::alloy::providers::ProviderBuilder;
 use risc0_steel::ethereum::{
-    EthChainSpec, EthEvmEnv, EthEvmInput, ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC,
-    ETH_SEPOLIA_CHAIN_SPEC,
+    ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC, ETH_SEPOLIA_CHAIN_SPEC, EthChainSpec, EthEvmEnv,
+    EthEvmInput,
 };
 use risc0_steel::host::BlockNumberOrTag;
-use risc0_steel::Contract;
 use std::str::FromStr;
 use tracing::info;
 

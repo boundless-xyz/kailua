@@ -14,7 +14,7 @@
 
 use crate::boot::L1_HEAD_TXN_ONLY_SENTINEL;
 use crate::evm::expected::{
-    apply_result_to_expected_state, canonicalize_expected_state, ExpectedStateEntry,
+    ExpectedStateEntry, apply_result_to_expected_state, canonicalize_expected_state,
 };
 use crate::precondition::evm::{
     compute_pe_trace, hash_block_ctx, hash_expected_state, hash_results,
@@ -24,8 +24,8 @@ use crate::rkyv::evm::{
     OpBlockExecutionCtxRkyv,
 };
 use crate::rkyv::primitives::{AddressDef, B256Def, U256Def};
-use alloy_evm::revm::context::result::{ExecutionResult, ResultAndState};
 use alloy_evm::revm::context::BlockEnv;
+use alloy_evm::revm::context::result::{ExecutionResult, ResultAndState};
 use alloy_evm::revm::state::{Account, AccountInfo, AccountStatus, EvmStorageSlot};
 use alloy_op_evm::OpBlockExecutionCtx;
 use alloy_primitives::{Address, B256, U256};

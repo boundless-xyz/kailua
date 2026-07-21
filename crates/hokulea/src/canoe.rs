@@ -21,10 +21,10 @@ use canoe_verifier_address_fetcher::{
 use eigenda_cert::AltDACommitment;
 use kona_preimage::CommsClient;
 use kona_proof::BootInfo;
-use risc0_steel::ethereum::{
-    EthChainSpec, EthEvmInput, ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC, ETH_SEPOLIA_CHAIN_SPEC,
-};
 use risc0_steel::Contract;
+use risc0_steel::ethereum::{
+    ETH_HOODI_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC, ETH_SEPOLIA_CHAIN_SPEC, EthChainSpec, EthEvmInput,
+};
 use std::sync::Arc;
 
 /// [CanoeVerifier] that validates EigenDA certificate validity claims inline with a Steel EVM

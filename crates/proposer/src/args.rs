@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use kailua_sync::args::SyncArgs;
-use kailua_sync::transact::signer::ProposerSignerArgs;
 use kailua_sync::transact::TransactArgs;
+use kailua_sync::transact::signer::ProposerSignerArgs;
 
 /// Start the agent for publishing on-chain sequencing proposals
 #[derive(clap::Args, Debug, Clone)]

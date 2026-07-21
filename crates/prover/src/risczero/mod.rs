@@ -16,7 +16,7 @@ use crate::args::ProvingArgs;
 use crate::profiling::{Profile, ProfiledReceipt};
 use crate::proof::proof_file_name;
 use crate::risczero::boundless::BoundlessArgs;
-use crate::{current_time, proof, ProvingError};
+use crate::{ProvingError, current_time, proof};
 use anyhow::Context;
 use risc0_zkvm::{Journal, Receipt};
 use std::convert::identity;

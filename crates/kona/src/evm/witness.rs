@@ -17,8 +17,8 @@ use crate::evm::partial::{PartialExecution, PartialResultAndState, PartialStateE
 use crate::executor::Execution;
 use crate::rkyv::evm::{BlockEnvRkyv, CacheStateRkyv, OpBlockExecutionCtxRkyv};
 use alloy_evm::revm::context::BlockEnv;
-use alloy_evm::revm::database::states::CacheAccount;
 use alloy_evm::revm::database::CacheState;
+use alloy_evm::revm::database::states::CacheAccount;
 use alloy_evm::revm::state::AccountStatus;
 use alloy_op_evm::OpBlockExecutionCtx;
 
