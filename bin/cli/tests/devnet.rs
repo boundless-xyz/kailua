@@ -20,25 +20,13 @@ use alloy::network::BlockResponse;
 use alloy::providers::Provider;
 use anyhow::{anyhow, Context};
 use kailua_cli::fast_track::{fast_track, FastTrackArgs};
-#[cfg(not(feature = "eigen"))]
-use kailua_cli::fault::{fault, FaultArgs};
-#[cfg(not(feature = "eigen"))]
-use kailua_proposer::args::ProposeArgs;
-#[cfg(not(feature = "eigen"))]
-use kailua_proposer::propose::propose;
 use kailua_prover::args::{ProveArgs, ProvingArgs};
 use kailua_prover::prove::prove;
 use kailua_sync::agent::SyncAgent;
 use kailua_sync::args::SyncArgs;
 use kailua_sync::provider::ProviderArgs;
 use kailua_sync::transact::signer::{DeployerSignerArgs, GuardianSignerArgs, OwnerSignerArgs};
-#[cfg(not(feature = "eigen"))]
-use kailua_sync::transact::signer::{ProposerSignerArgs, ValidatorSignerArgs};
 use kailua_sync::transact::TransactArgs;
-#[cfg(not(feature = "eigen"))]
-use kailua_validator::args::{PermitPolicy, ValidateArgs};
-#[cfg(not(feature = "eigen"))]
-use kailua_validator::validate::validate;
 use lazy_static::lazy_static;
 use reqwest::Client;
 use serde::Deserialize;
@@ -46,8 +34,6 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::env::set_var;
 use std::fs;
-#[cfg(feature = "eigen")]
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::process::Stdio;
@@ -55,13 +41,21 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use tokio::io;
-#[cfg(feature = "eigen")]
-use tokio::process::Child;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 #[cfg(not(feature = "eigen"))]
-use tokio::try_join;
+use {
+    kailua_cli::fault::{fault, FaultArgs},
+    kailua_proposer::args::ProposeArgs,
+    kailua_proposer::propose::propose,
+    kailua_sync::transact::signer::{ProposerSignerArgs, ValidatorSignerArgs},
+    kailua_validator::args::{PermitPolicy, ValidateArgs},
+    kailua_validator::validate::validate,
+    tokio::try_join,
+};
+#[cfg(feature = "eigen")]
+use {std::net::TcpListener, tokio::process::Child};
 
 lazy_static! {
     static ref DEVNET: Arc<Mutex<()>> = Default::default();
@@ -611,8 +605,8 @@ fn base_proving_args(max_witness_size: usize) -> ProvingArgs {
         payout_recipient_address: None,
         segment_limit: 21,
         max_derivation_length: u64::MAX,
-        max_block_derivations: u64::MAX,
-        max_block_executions: usize::MAX,
+        max_block_derivations: 2,
+        max_block_executions: 1,
         max_proof_stitches: usize::MAX,
         max_witness_size,
         num_block_partials: usize::MAX,
@@ -951,8 +945,6 @@ async fn proposer_validator() {
 #[cfg(not(feature = "eigen"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn prover() {
-    const PROOF_SIZE: u64 = 200;
-
     // We can only run one of these dockerized devnets at a time
     let devnet_lock = DEVNET.lock().await;
 
@@ -963,7 +955,7 @@ async fn prover() {
     // update dgf to use kailua
     deploy_kailua_contracts(&devnet, 60).await.unwrap();
 
-    run_prover(&devnet, PROOF_SIZE, base_proving_args(5 * 1024 * 1024))
+    run_prover(&devnet, 200, base_proving_args(5 * 1024 * 1024))
         .await
         .unwrap();
 
@@ -975,8 +967,6 @@ async fn prover() {
 #[cfg(feature = "eigen")]
 #[tokio::test(flavor = "multi_thread")]
 async fn prover_hokulea() {
-    const PROOF_SIZE: u64 = 60;
-
     let devnet_lock = DEVNET.lock().await;
 
     let devnet = start_clean_devnet_with_flavor(DevnetFlavor::EigenDA)
@@ -989,7 +979,7 @@ async fn prover_hokulea() {
     let mut proving = base_proving_args(5 * 1024 * 1024);
     proving.hokulea.eigenda_proxy_address = Some(eigenda_proxy_shim.url().to_owned());
 
-    run_prover(&devnet, PROOF_SIZE, proving).await.unwrap();
+    run_prover(&devnet, 60, proving).await.unwrap();
 
     drop(eigenda_proxy_shim);
     stop_all_devnets().await;

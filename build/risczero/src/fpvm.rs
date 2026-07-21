@@ -8,7 +8,7 @@ pub const KAILUA_FPVM_HOKULEA_ELF: &[u8] = include_bytes!("bin/kailua-fpvm-hokul
 #[cfg(feature = "eigen")]
 pub const KAILUA_FPVM_HOKULEA_PATH: &str = "bin/kailua-fpvm-hokulea.bin";
 #[cfg(feature = "eigen")]
-pub const KAILUA_FPVM_HOKULEA_ID: [u32; 8] = [0xDF97C0D3, 0xB33B58EC, 0xB5FCEE05, 0x13C3DDDC, 0x72E372B0, 0x136EE6CE, 0xFB372C49, 0xBA9E650];
+pub const KAILUA_FPVM_HOKULEA_ID: [u32; 8] = [0xB581366F, 0x37F2C5E, 0xC0FCAE8B, 0x28E3EC73, 0x52B4079, 0x5B658FD, 0x7EA8F5C, 0xCAABD1CB];
 
 #[cfg(feature = "celestia")]
 pub const KAILUA_FPVM_HANA_ELF: &[u8] = include_bytes!("bin/kailua-fpvm-hana.bin");
