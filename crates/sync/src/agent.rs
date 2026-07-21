@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -47,6 +47,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
+/// Error message signaling clean termination once the configured final L2 block is resolved.
 pub const FINAL_L2_BLOCK_RESOLVED: &str = "Last resolved proposal l2 block reached final l2 block.";
 
 /// A stateful agent object for synchronizing with an on-chain Kailua deployment.
@@ -76,6 +77,10 @@ pub struct SyncAgent {
 }
 
 impl SyncAgent {
+    /// Connects to the configured RPC endpoints and loads the deployment targeted by the game
+    /// implementation address (latest from the factory if unspecified), refusing deployments
+    /// with unknown FPVM image IDs unless built for devnet. Persistent data lives under
+    /// `data_dir/{cfg_hash}/{treasury}`, and synchronization starts from the anchor proposal.
     pub async fn new(
         provider_args: &ProviderArgs,
         mut data_dir: PathBuf,
@@ -84,7 +89,7 @@ impl SyncAgent {
         bypass_chain_registry: bool,
     ) -> anyhow::Result<Self> {
         let tracer = tracer("kailua");
-        let context = opentelemetry::Context::current_with_span(tracer.start("SymcAgemt::new"));
+        let context = opentelemetry::Context::current_with_span(tracer.start("SyncAgent::new"));
         // Initialize telemetry first
         let telemetry = SyncTelemetry::new();
 
@@ -188,6 +193,8 @@ impl SyncAgent {
         options
     }
 
+    /// Frees proposals, output commitments, and L1 head pointers older than the last resolved
+    /// proposal from memory and storage, returning the freed proposal indices.
     pub fn prune_data(&mut self) -> anyhow::Result<BTreeSet<u64>> {
         // delete all loaded proposals prior to last resolved proposal
         let Some(earliest_proposal) = self.proposals.first_key_value().map(|(k, _)| *k) else {
@@ -250,6 +257,11 @@ impl SyncAgent {
         Ok(proposals)
     }
 
+    /// Performs one synchronization round: fetches new finalized output commitments from the
+    /// op-node, processes new (and previously delayed) factory entries via [Self::sync_proposal],
+    /// advances resolution and prunes stale data, and updates telemetry. Returns the indices of
+    /// proposals admitted this round, or fails with [FINAL_L2_BLOCK_RESOLVED] once the
+    /// termination block is resolved.
     pub async fn sync(&mut self, args: &SyncArgs) -> anyhow::Result<Vec<u64>> {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(tracer.start("SyncAgent::sync"));
@@ -478,6 +490,8 @@ impl SyncAgent {
         Ok(proposals)
     }
 
+    /// Records the block number of a proposal's L1 head in the (inverse) lookup caches used to
+    /// pick derivation starting points.
     pub async fn sync_l1_head(&mut self, args: &SyncArgs, proposal: Address, l1_head: B256) {
         let tracer = tracer("kailua");
         let context = opentelemetry::Context::current_with_span(
@@ -510,6 +524,12 @@ impl SyncAgent {
         }
     }
 
+    /// Processes the factory entry at the given index into the local tournament state.
+    ///
+    /// Entries of foreign game types or deployments and dangling or non-participating proposals
+    /// are ignored; proposals claiming blocks beyond current op-node data are delayed. Admitted
+    /// proposals are assessed for correctness, checked for canonicity, and linked to their
+    /// parent's tournament.
     pub async fn sync_proposal<P: Provider<N>, N: Network>(
         &mut self,
         dispute_game_factory: &IDisputeGameFactoryInstance<P, N>,
@@ -617,6 +637,8 @@ impl SyncAgent {
         Ok(result)
     }
 
+    /// Fills in the proposal's correctness verdicts by comparing its parent status, root claim,
+    /// and every published field element against locally synced op-node outputs.
     pub async fn assess_correctness(&mut self, proposal: &mut Proposal) -> anyhow::Result<bool> {
         // Accept correctness of treasury instance data
         if !proposal.has_parent() {
@@ -684,6 +706,8 @@ impl SyncAgent {
         Ok(is_correct_proposal)
     }
 
+    /// Marks the proposal canonical if it is correct, made by a non-eliminated proposer, and
+    /// extends the canonical chain past its current tip; `None` if correctness is undecided.
     pub fn determine_if_canonical(&mut self, proposal: &mut Proposal) -> Option<bool> {
         if proposal.is_correct()? && !self.was_proposer_eliminated_before(proposal) {
             // Consider updating canonical chain tip if proposal has greater height
@@ -702,6 +726,7 @@ impl SyncAgent {
         proposal.canonical
     }
 
+    /// True if the proposal's proposer had already been eliminated in an earlier round.
     pub fn was_proposer_eliminated_before(&self, proposal: &Proposal) -> bool {
         self.eliminations
             .get(&proposal.proposer)
@@ -709,16 +734,21 @@ impl SyncAgent {
             .unwrap_or_default()
     }
 
+    /// Returns the proposal at the tip of the canonical chain.
     pub fn canonical_tip(&self) -> Option<&Proposal> {
         self.proposals.get(&self.cursor.canonical_proposal_tip)
     }
 
+    /// Returns the claimed L2 block number of the canonical chain tip.
     pub fn canonical_tip_height(&self) -> Option<u64> {
         self.proposals
             .get(&self.cursor.canonical_proposal_tip)
             .map(|p| p.output_block_number)
     }
 
+    /// Decides whether the proposal competes in its parent's tournament, registering it as a
+    /// child if so. Post-elimination proposals, extensions of non-canonical tournaments, and
+    /// counter-proposals arriving after the successor's timeout period are excluded.
     pub fn determine_tournament_participation(
         &mut self,
         proposal: &mut Proposal,
@@ -772,10 +802,13 @@ impl SyncAgent {
         Ok(true)
     }
 
+    /// Returns the locally cached output root at the given L2 block height.
     pub fn cached_output_at_block(&self, block_number: u64) -> Option<B256> {
         self.outputs.get(&block_number).cloned()
     }
 
+    /// Fetches output roots for every `step`-th block in `start..=end` into the memory cache
+    /// and RocksDB, batching op-node queries and skipping already persisted heights.
     pub async fn sync_outputs(&mut self, mut start: u64, end: u64, step: u64, args: &ProviderArgs) {
         while start <= end {
             // perform at most 1024 tasks at a time
@@ -830,6 +863,8 @@ impl SyncAgent {
         }
     }
 
+    /// Reads the locally stored fault proof permit (expiry, on-chain index) acquired for the
+    /// proposal and recipient at the given trial number.
     pub fn get_fp_permit(
         &self,
         proposal_contract: Address,
@@ -849,6 +884,8 @@ impl SyncAgent {
         })
     }
 
+    /// Returns the on-chain index of a stored permit that stays valid for at least `duration`
+    /// seconds past `timestamp`, if one exists.
     pub fn get_fp_permit_unexpired(
         &self,
         proposal_contract: Address,
@@ -870,6 +907,7 @@ impl SyncAgent {
         unreachable!()
     }
 
+    /// Reads all locally stored fault proof permits for the proposal and recipient.
     pub fn get_fp_permits(
         &self,
         proposal_contract: Address,
@@ -885,6 +923,7 @@ impl SyncAgent {
         permits
     }
 
+    /// Persists an acquired fault proof permit under the next unused trial number.
     pub fn store_fp_permit(
         &mut self,
         proposal_contract: Address,
@@ -913,6 +952,10 @@ impl SyncAgent {
         }
     }
 
+    /// Attempts to acquire an on-chain fault proof permit for the proposal, posting the
+    /// required bond. Aborts without transacting if permits expire too early, the bonding
+    /// wallet balance is insufficient, or the supply of permits is exhausted. On success, the
+    /// permit is persisted locally and its on-chain index returned.
     #[allow(clippy::too_many_arguments)]
     pub async fn acquire_fp_permit<P: Provider>(
         &mut self,
@@ -1051,7 +1094,6 @@ impl SyncAgent {
                             }
                         }
                         Ok(permit) => {
-                            dbg!(&permit.timestamp);
                             // We found our new permit
                             if permit.recipient == payout_recipient {
                                 break permit.timestamp + permit_duration;
@@ -1080,6 +1122,8 @@ impl SyncAgent {
         }
     }
 
+    /// Releases the bonds of all locally stored permits for a proven proposal, skipping
+    /// permits that expired before the proof was recorded or were already released.
     pub async fn release_fp_permit<P: Provider>(
         &self,
         parent: &Proposal,

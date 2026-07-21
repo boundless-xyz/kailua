@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ use alloy::primitives::{Address, Uint, U256};
 use alloy::providers::Provider;
 use anyhow::Context;
 
+/// Executes a contract call through a Gnosis Safe using a single pre-approved-hash owner
+/// signature from `from`.
 pub async fn exec_safe_txn<P1: Provider<N>, P2: Provider<N>, C, N: Network>(
     txn: SolCallBuilder<P1, C, N>,
     safe: &kailua_contracts::Safe::SafeInstance<P2, N>,

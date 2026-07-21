@@ -1,4 +1,4 @@
-// Copyright 2026 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -186,14 +186,18 @@ impl BlobFallbackAdapter for hana_host::celestia::CelestiaChainHost {
     }
 }
 
+/// Kona's [SingleChainHintHandler] with the blob-sidecars fallback.
 pub type FallbackBlobHintHandler = BlobFallbackWrapper<SingleChainHintHandler, SingleChainHost>;
 
+/// Hokulea's EigenDA hint handler with the blob-sidecars fallback.
 #[cfg(feature = "eigen")]
 pub type FallbackBlobHintHandlerWithEigenDA = BlobFallbackWrapper<
     hokulea_host_bin::handler::SingleChainHintHandlerWithEigenDA,
     hokulea_host_bin::cfg::SingleChainHostWithEigenDA,
 >;
 
+/// The Celestia-enabled [HanaHintHandler](crate::hana::handler::HanaHintHandler) with the
+/// blob-sidecars fallback.
 #[cfg(feature = "celestia")]
 pub type FallbackHanaHintHandler = BlobFallbackWrapper<
     crate::hana::handler::HanaHintHandler,

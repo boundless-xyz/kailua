@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +18,10 @@ use alloy::primitives::{Address, B256};
 use std::path::PathBuf;
 use std::str::FromStr;
 
+/// CLI arguments controlling synchronization with a Kailua deployment.
 #[derive(clap::Args, Debug, Clone, Default)]
 pub struct SyncArgs {
+    /// RPC endpoint configuration.
     #[clap(flatten)]
     pub provider: ProviderArgs,
 
@@ -37,14 +39,17 @@ pub struct SyncArgs {
     #[clap(long, env)]
     pub data_dir: Option<PathBuf>,
 
+    /// Telemetry export configuration.
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
 }
 
+/// Clap value parser for [Address] values.
 pub fn parse_address(s: &str) -> Result<Address, String> {
     Address::from_str(s).map_err(|_| format!("Invalid Address value: {s}"))
 }
 
+/// Clap value parser for [B256] values.
 pub fn parse_b256(s: &str) -> Result<B256, String> {
     B256::from_str(s).map_err(|_| format!("Invalid B256 value: {s}"))
 }

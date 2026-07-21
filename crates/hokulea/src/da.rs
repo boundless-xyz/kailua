@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +18,11 @@ use kona_derive::{BlobProvider, ChainProvider};
 use kona_genesis::RollupConfig;
 use std::fmt::Debug;
 
+/// [DASourceProvider] that layers an EigenDA batch data source over the standard Ethereum one,
+/// enabling derivation from batches posted to EigenDA.
 #[derive(Clone, Debug)]
 pub struct EigenDADataSourceProvider<E: EigenDAPreimageProvider + Send + Sync + Clone + Debug>(
+    /// The provider used to fetch validated EigenDA preimages.
     pub E,
 );
 

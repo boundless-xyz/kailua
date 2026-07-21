@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -52,6 +52,8 @@ use std::iter::zip;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
+/// Locates the blob hash among the block's transactions and returns the block/blob reference
+/// pair needed to fetch it from the beacon chain.
 pub async fn get_blob_fetch_request(
     l1_provider: &RootProvider,
     l1_timeout: u64,
@@ -107,6 +109,11 @@ pub async fn get_blob_fetch_request(
     })
 }
 
+/// Builds the [ProposalPrecondition] from the precondition CLI arguments and seeds its preimage
+/// into the KV store for the client oracle to read.
+///
+/// Returns `None` when no precondition arguments are set, and errors when they are only
+/// partially set. Also exports the hash via the `PRECONDITION_VALIDATION_DATA_HASH` env var.
 pub async fn fetch_precondition_data(
     cfg: &ProveArgs,
     disk_kv_store: Option<&RWLKeyValueStore>,
@@ -180,14 +187,25 @@ pub async fn fetch_precondition_data(
     }
 }
 
+/// Outcome of the concurrent preflight stage.
 #[derive(Debug)]
 pub struct PreflightResult {
+    /// Whether the L1 head contains enough data to derive the claimed L2 block.
     pub l1_head_sufficient: bool,
+    /// Execution artifacts for every L2 block derived during preflight.
     pub block_executions: Vec<Execution>,
+    /// Per-block partial execution traces for chunked proving.
     #[cfg(feature = "experimental")]
     pub partial_executions: Vec<Vec<PartialExecution>>,
 }
 
+/// Populates the preimage store for the entire claim by running native derivation in parallel.
+///
+/// The L2 block range is split evenly across `num_concurrent_preflights` native client jobs
+/// (run without proving limits), while companion workers prefetch the L1 headers and batcher
+/// blobs from the derivation window directly into the disk store. Execution traces are
+/// recovered from each job's [ProvingError::NotSeekingProof] signal; a job stopping short of
+/// its target block marks the L1 head insufficient.
 #[allow(clippy::too_many_arguments)]
 pub async fn concurrent_preflight(
     args: &ProveArgs,

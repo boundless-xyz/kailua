@@ -1,3 +1,17 @@
+// Copyright 2025, 2026 Boundless Foundation, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::client::witgen;
 use crate::client::witgen::OracleWitnessProvider;
 use alloy_primitives::{Address, B256};
@@ -23,6 +37,11 @@ use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
+/// Runs the witgen client with EigenDA data availability, additionally collecting the EigenDA
+/// preimage and its auxiliary oracle reads through a [LocalOnceOracle]-cached provider.
+///
+/// The recorded witness is validated up front with the in-guest Canoe verifier, except for
+/// partial-execution proofs whose sentinel L1 heads have no DA to validate.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_hokulea_witgen_client<P, B, O>(
     preimage_oracle: Arc<P>,

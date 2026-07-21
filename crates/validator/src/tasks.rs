@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,13 +31,24 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
+/// A queued proving job: the prover invocation and the file its receipt must appear at.
 #[derive(Debug, Clone)]
 pub struct Task {
+    /// Local index of the proposal being proven.
     pub proposal_index: u64,
+    /// Prover invocation arguments.
     pub prove_args: ProveArgs,
+    /// File the completed proof is persisted to.
     pub proof_file_name: String,
 }
 
+/// Worker loop executing queued proving [Task]s until the task channel closes.
+///
+/// A task whose proof file already exists is reported immediately. Otherwise the proof is
+/// computed internally, or through the `kailua_cli` binary if one is configured (exit code
+/// 111 signals insufficient L1 data). The resulting receipt is sent back through
+/// `proof_sender` — as `None` when the requested L1 head cannot prove the claim — and tasks
+/// whose proof files fail to materialize are re-queued.
 #[allow(deprecated)]
 pub async fn handle_proving_tasks(
     kailua_cli: Option<PathBuf>,
@@ -169,6 +180,8 @@ pub async fn handle_proving_tasks(
     }
 }
 
+/// Renders `args` as command-line arguments for the prover binary, appending `--native`
+/// and the requested verbosity flag.
 #[allow(clippy::too_many_arguments)]
 pub fn create_proving_args(args: &ProveArgs, verbosity: u8) -> Vec<String> {
     // Prepare prover parameters

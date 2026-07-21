@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,17 +17,18 @@ use crate::rkyv::primitives::B256Def;
 use alloy_primitives::B256;
 use risc0_zkvm::Receipt;
 
-/// Used to denote that [BootInfo] pertains to a partial block execution
+/// L1 head value denoting that a [kona_proof::BootInfo] pertains to a partial block execution
 pub const L1_HEAD_TXN_ONLY_SENTINEL: B256 = B256::repeat_byte(0xFF);
 
-/// Used to denote that [BootInfo] pertains to execution only without derivation
+/// L1 head value denoting that a [kona_proof::BootInfo] pertains to execution only without derivation
 pub const L1_HEAD_EXEC_ONLY_SENTINEL: B256 = B256::ZERO;
 
-/// Used to denote absence of derivation from [BootInfo]
+/// L1 head values denoting the absence of derivation from a [kona_proof::BootInfo]
 pub const L1_HEAD_SENTINELS: [B256; 2] = [L1_HEAD_TXN_ONLY_SENTINEL, L1_HEAD_EXEC_ONLY_SENTINEL];
 
-/// Represents the stitched boot information, primarily containing data relevant to the safe L2 chain
-/// and associated output roots in a blockchain context.
+/// The boot claim of another proof to be stitched into the current one, carrying the subset of
+/// [ProofJournal] fields that vary between the proofs being aggregated: the derivation source
+/// (L1 head) and the claimed L2 output root transition.
 #[derive(
     Clone,
     Copy,

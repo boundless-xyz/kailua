@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,6 +27,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
+/// Follows the on-chain deployment through a [SyncAgent], continuously publishing each newly
+/// admitted canonical proposal's block height and address to the server cache (and stdout as
+/// `TRACKED` lines), until the optional final L2 block is resolved.
 pub async fn handle_sync(
     args: RpcArgs,
     data_dir: PathBuf,

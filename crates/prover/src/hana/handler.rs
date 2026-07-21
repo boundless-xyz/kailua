@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,11 +32,18 @@ use risc0_steel::ethereum::{
 use risc0_steel::{Contract, EvmInput};
 use tracing::info;
 
-/// The [HintHandler] for the [CelestiaChainHost].
+/// [HintHandler] for the [CelestiaChainHost] that enforces Blobstream coverage.
+///
+/// Celestia DA hints carrying a 20-byte verifier address are answered with a Steel proof of the
+/// Blobstream height, stored under the hashed address as a global-generic preimage. Hints
+/// carrying a blob height abort early when it exceeds what Blobstream attests at the proposal's
+/// L1 head. Everything else defers to the [CelestiaChainHintHandler].
 #[derive(Debug, Clone, Copy)]
 pub struct HanaHintHandler;
 
 impl HanaHintHandler {
+    /// Reads the latest Celestia height attested by the canonical SP1 Blobstream contract as of
+    /// the `l1_head` block.
     pub async fn blobstream_height(
         l1_provider: &RootProvider,
         l1_head: B256,
@@ -52,6 +59,8 @@ impl HanaHintHandler {
             .await)
     }
 
+    /// Preflights a Steel EVM call to `SP1Blobstream.latestBlock` anchored at `l1_head` and
+    /// returns the serialized [EvmInput] the guest replays to verify the height.
     pub async fn blobstream_height_proof(
         l1_provider: RootProvider,
         l1_head: B256,

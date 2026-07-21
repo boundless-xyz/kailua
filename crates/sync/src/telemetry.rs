@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ use opentelemetry_otlp::{MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider, Temporality};
 use opentelemetry_sdk::{runtime::Tokio, trace::TracerProvider, Resource};
 
+/// OTLP telemetry export arguments.
 #[derive(clap::Args, Debug, Clone, Default)]
 pub struct TelemetryArgs {
     /// OTLP Collector endpoint address
@@ -27,6 +28,7 @@ pub struct TelemetryArgs {
 }
 
 impl TelemetryArgs {
+    /// Serializes the set arguments back into CLI arguments.
     pub fn to_arg_vec(&self) -> Vec<String> {
         self.otlp_collector
             .as_ref()
@@ -35,6 +37,8 @@ impl TelemetryArgs {
     }
 }
 
+/// Installs global OTLP span and metric exporters targeting the configured collector under
+/// service name `kailua`; a no-op when no collector is configured.
 pub fn init_tracer_provider(args: &TelemetryArgs) -> anyhow::Result<()> {
     if let Some(otlp_collector) = &args.otlp_collector {
         println!("OTLP Collector endpoint: {otlp_collector}");
@@ -72,6 +76,8 @@ pub fn init_tracer_provider(args: &TelemetryArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Awaits a future under a telemetry context, optionally opening a named child span
+/// `($ctx, $tracer, $span_name, $future)`.
 #[macro_export]
 macro_rules! await_tel {
     ($c:ident, $e:expr) => {
@@ -83,6 +89,7 @@ macro_rules! await_tel {
     };
 }
 
+/// [await_tel!] for `Result` futures, attaching the span label as error context.
 #[macro_export]
 macro_rules! await_tel_res {
     ($c:ident, $e:expr, $l:literal) => {
@@ -93,7 +100,7 @@ macro_rules! await_tel_res {
     };
 }
 
-/// An collection of objects for reporting telemetry information
+/// A collection of objects for reporting telemetry information
 pub struct SyncTelemetry {
     /// Global meter object
     pub meter: Meter,
@@ -110,6 +117,7 @@ impl Default for SyncTelemetry {
 }
 
 impl SyncTelemetry {
+    /// Builds the synchronization gauges on the global `kailua` meter.
     pub fn new() -> Self {
         let meter = meter("kailua");
         let sync_canonical = meter.u64_gauge("sync.canonical").build();

@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2024 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,10 +26,7 @@ use kona_derive::BlobProviderError;
 use kona_protocol::BlockInfo;
 use serde::{Deserialize, Serialize};
 
-/// A struct representing a request to fetch a specific blob based on its hash and associated block reference.
-///
-/// The `BlobFetchRequest` is used to request a specific blob by providing both the unique identifier
-/// of the blob (`blob_hash`) and the block metadata (`block_ref`) it is associated with.
+/// Identifies a blob to fetch by its versioned hash, slot index, and publishing L1 block.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BlobFetchRequest {
     /// Contains the block height, hash, timestamp, and parent hash.
@@ -38,9 +35,8 @@ pub struct BlobFetchRequest {
     pub blob_hash: IndexedBlobHash,
 }
 
-/// The `BlobWitnessData` struct represents a data model for handling collections of blobs,
-/// commitments, and proofs with efficient serialization and deserialization using the `rkyv`
-/// framework.
+/// Host-supplied blobs with their KZG commitments and proofs, untrusted until verified through
+/// conversion into a [PreloadedBlobProvider].
 #[derive(
     Clone,
     Debug,
@@ -66,26 +62,7 @@ pub struct BlobWitnessData {
 }
 
 impl<T: Into<Blob>> From<Vec<T>> for BlobWitnessData {
-    /// Converts a vector of blobs into a `BlobWitnessData` instance by processing each blob and
-    /// generating corresponding KZG commitments and proofs.
-    ///
-    /// This function performs the following steps for each blob in the input vector:
-    /// 1. Converts the blob into the required c-kzg crate `Blob` structure.
-    /// 2. Uses the alloy-eips `EnvKzgSettings` to compute a KZG commitment for the blob.
-    /// 3. Computes the KZG proof corresponding to the blob and its commitment.
-    /// 4. Stores the processed blob, commitment, and proof in the resulting instance.
-    ///
-    /// # Parameters
-    /// - `blobs`: A vector of elements of type `T` which hold the blob data to be processed. These
-    ///   will be converted into `c_kzg::Blob` objects for KZG commitment and proof generation.
-    ///
-    /// # Assumptions
-    /// - The implementation assumes that `Blob::from` and `Blob.into` facilitate the conversion
-    ///   between the input data type and the required KZG-compatible `Blob` structure.
-    ///
-    /// # Panics
-    /// - This function panics if the conversion of a blob to a KZG commitment fails.
-    /// - Panics if proof computation fails.
+    /// Computes the KZG commitment and proof for each blob, panicking on failure.
     fn from(blobs: Vec<T>) -> Self {
         let mut result = Self::default();
         let settings_ref = ethereum_kzg_settings(0);
@@ -107,31 +84,16 @@ impl<T: Into<Blob>> From<Vec<T>> for BlobWitnessData {
     }
 }
 
-/// Provides preloaded blobs and their corresponding identifiers.
+/// [BlobProvider] serving KZG-verified blobs preloaded from a witness, in expected fetch order.
 #[derive(Clone, Debug, Default)]
 pub struct PreloadedBlobProvider {
-    /// Pairs of blob hashes and their respective blob data.
+    /// `(versioned hash, blob)` pairs, in reverse of the expected fetch order.
     entries: Vec<(B256, Blob)>,
 }
 
 impl From<BlobWitnessData> for PreloadedBlobProvider {
-    /// Converts a `BlobWitnessData` into a `PreloadedBlobProvider` by validating and processing its blobs, commitments,
-    /// and proofs. This method performs KZG proof batch verification and then constructs a list of entries with hashed
-    /// commitments and corresponding blobs.
-    ///
-    /// # Arguments
-    /// - `value`: A `BlobWitnessData` instance containing the blobs, commitments, and associated proofs to be processed.
-    ///
-    /// # Panics
-    /// - This function will panic if the KZG proof batch verification fails, with the message
-    ///   "Failed to batch validate kzg proofs".
-    ///
-    /// # Process
-    /// 1. Converts the blobs from the input into `c_kzg::Blob` type.
-    /// 2. Performs a batch verification of KZG proofs using `ethereum_kzg_settings(0).verify_blob_kzg_proof_batch`
-    ///    with the blobs, commitments, and proofs provided in the input.
-    /// 3. Maps commitments into versioned hashes using `kzg_to_versioned_hash`.
-    /// 4. Constructs entries by zipping the versioned hashes and blobs, then reverses the order of the resulting list.
+    /// Batch-verifies every blob's KZG proof, panicking on failure, then indexes each blob by
+    /// the versioned hash of its commitment, reversed for consumption by pops.
     fn from(value: BlobWitnessData) -> Self {
         let blobs = value
             .blobs
@@ -165,26 +127,9 @@ impl From<BlobWitnessData> for PreloadedBlobProvider {
 impl BlobProvider for PreloadedBlobProvider {
     type Error = BlobProviderError;
 
-    /// Asynchronously retrieves blobs associated with the provided indexed blob hashes.
-    ///
-    /// This function fetches blobs from an internal storage, ensuring that the blob's hash
-    /// matches the provided hash. The function logs the total number of blobs requested and
-    /// verifies each blob before adding it to the result. If the hash matches, the blob is
-    /// included in the response. The blobs are returned in the same order as the input hashes.
-    ///
-    /// # Parameters
-    /// - `&mut self`: The internal state required for fetching blobs.
-    /// - `_block_ref`: A reference to a `BlockInfo` structure, which can represent metadata or
-    ///   context for the operation, but is unused in this function as the validation of the
-    ///   inclusion of the requested blobs in the designated slots is assumed to have been performed.
-    /// - `blob_hashes`: A slice of `IndexedBlobHash` objects that represent the hashes identifying
-    ///   the blobs to be retrieved.
-    ///
-    /// # Returns
-    /// - `Ok(Vec<Box<Blob>>)`:
-    ///   A vector of boxed `Blob` instances if all blobs are successfully fetched and processed.
-    /// - `Err(Self::Error)`:
-    ///   An error result in case of any failure during blob retrieval.
+    /// Serves each requested hash by popping the next preloaded entry, erring on any mismatch.
+    /// The block reference goes unused: requested hashes originate from authenticated L1 data,
+    /// so the hash comparison alone authenticates the returned blobs.
     async fn get_and_validate_blobs(
         &mut self,
         _block_ref: &BlockInfo,
@@ -206,59 +151,20 @@ impl BlobProvider for PreloadedBlobProvider {
     }
 }
 
-/// Computes intermediate outputs from the provided blob data.
-///
-/// This function takes a reference to `BlobData` and a specified number of blocks
-/// and computes the intermediate outputs as a vector of `U256` field elements.
-///
-/// # Arguments
-///
-/// * `blob` - A reference to the `Blob` structure containing the data to process.
-/// * `blocks` - The number of blocks to use for computation.
+/// Extracts the first `blocks` field elements of the blob: the intermediate output roots that a
+/// proposal publishes.
 pub fn intermediate_outputs(blob: impl AsRef<Blob>, blocks: usize) -> anyhow::Result<Vec<U256>> {
     field_elements(blob, 0..blocks)
 }
 
-/// Extracts a vector of field elements from the provided blob data within a specific range.
-///
-/// This function retrieves `FIELD_ELEMENTS_PER_BLOB` - `blocks` field elements from the given blob
-/// data by extracting elements starting from the `blocks` index through the end of the blob data.
-///
-/// # Arguments
-///
-/// * `blob_data` - A reference to a `BlobData` structure containing the data to extract field elements from.
-/// * `blocks` - The starting index for the extraction from the blob data.
+/// Extracts the field elements after the first `blocks` ones: the trailing blob data expected
+/// to be all zeros in a well-formed proposal.
 pub fn trail_data(blob: impl AsRef<Blob>, blocks: usize) -> anyhow::Result<Vec<U256>> {
     field_elements(blob, blocks..FIELD_ELEMENTS_PER_BLOB as usize)
 }
 
-/// Extracts field elements from a given blob using specified indices.
-///
-/// This function processes a blob of data and extracts field elements
-/// (represented by `U256`) based on the indices provided by the `iterator`.
-/// For each index, it calculates the byte offset (index * 32), retrieves 32 bytes
-/// from the blob, and converts them into a `U256` using big-endian interpretation.
-///
-/// # Arguments
-///
-/// * `blob_data` - A reference to a `BlobData` structure containing the blob
-///   from which field elements will be extracted.
-/// * `iterator` - An iterator of `usize` values, denoting the indices of
-///   field elements to be extracted from the blob. Each index corresponds
-///   to a 32-byte chunk.
-///
-/// # Returns
-///
-/// * `Ok(Vec<U256>)` - A vector containing the extracted field elements,
-///   if the operation is successful.
-/// * `Err(anyhow::Error)` - An error if any of the following occur:
-///     - The index computation or slicing goes out of bounds.
-///     - The byte slice cannot be converted into a `[u8; 32]`.
-///
-/// # Errors
-///
-/// This function will return an error in the following cases:
-/// - The index calculated by `32 * i` exceeds the bounds of `blob_data.blob.0`.
+/// Extracts the 32-byte big-endian field elements at the given indices, erring on any value not
+/// below the BLS modulus.
 pub fn field_elements(
     blob: impl AsRef<Blob>,
     iterator: impl Iterator<Item = usize>,
@@ -275,17 +181,7 @@ pub fn field_elements(
     Ok(field_elements)
 }
 
-/// Converts a 256-bit hash (B256) into a field element (U256) within the bounds of a specific modulus (BLS_MODULUS).
-///
-/// # Arguments
-/// - `hash` (`B256`): A 256-bit hash value represented as a struct containing an array of 32 bytes.
-///
-/// # Returns
-/// - `U256`: A 256-bit unsigned integer representing the hash reduced modulo `BLS_MODULUS`.
-///
-/// # Behavior
-/// - The function interprets the input hash as a big-endian byte sequence and converts it to a `U256` integer.
-/// - It then reduces the resultant number modulo `BLS_MODULUS` to ensure it falls within the desired field range.
+/// Reduces a 32-byte hash modulo the BLS modulus, mirroring the on-chain `KailuaKZGLib.hashToFe`.
 pub fn hash_to_fe(hash: B256) -> U256 {
     U256::from_be_bytes(hash.0) % BLS_MODULUS
 }

@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 use clap::Parser;
 
+/// EigenDA (Hokulea) proxy connection arguments.
 #[derive(Parser, Clone, Debug, Default)]
 pub struct HokuleaArgs {
     /// URL of the EigenDA RPC endpoint.
@@ -22,6 +23,7 @@ pub struct HokuleaArgs {
 }
 
 impl HokuleaArgs {
+    /// Serializes the set arguments back into CLI arguments.
     pub fn to_arg_vec(&self) -> Vec<String> {
         self.eigenda_proxy_address
             .as_ref()
@@ -29,6 +31,7 @@ impl HokuleaArgs {
             .unwrap_or_default()
     }
 
+    /// True when the EigenDA proxy address is provided.
     pub fn is_set(&self) -> bool {
         self.eigenda_proxy_address.is_some()
     }

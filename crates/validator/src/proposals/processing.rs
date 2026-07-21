@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,6 +28,16 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use tracing::{error, info, warn};
 
+/// Classifies each newly synced proposal and queues the appropriate response: validity
+/// proof requests for canonical proposals (within the fast-forward range, or whenever a
+/// single-output tournament must discard invalid siblings), output fault proof requests
+/// for proposals diverging at a published output, and trail fault submissions for
+/// proposals with malformed blob data.
+///
+/// Treasury instances, resolved games, repeat signatures, proposals in tournaments already
+/// settled by a validity proof, already-proven signatures, and otherwise correct proposals
+/// are skipped. Queued responses are assigned a randomized dispatch delay of up to the
+/// configured fault/validity proving delay.
 #[allow(clippy::too_many_arguments)]
 pub async fn process_proposals(
     args: &ValidateArgs,
@@ -321,6 +331,8 @@ pub async fn process_proposals(
     }
 }
 
+/// Returns a dispatch time a uniformly random number of seconds (at most `max_seconds`)
+/// into the future, wrapped in [Reverse] for use in a min-heap.
 pub fn random_processing_time(max_seconds: u64) -> Reverse<u64> {
     let random_wait = rand::rng().random_range(0..=max_seconds);
     Reverse(current_time() + random_wait)

@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -43,19 +43,16 @@ use {
     kailua_kona::evm::witness::PartialExecutionWitness, std::collections::BTreeMap,
 };
 
+/// Partial execution traces keyed by the number of the parent block they build on.
 #[cfg(feature = "experimental")]
 pub type PartialsCache = BTreeMap<u64, Vec<PartialExecution>>;
 
-/// Starts the [PreimageServer] and the client program in separate threads. The client program is
-/// ran natively in this mode.
+/// Runs the [PreimageServer] and the native proving client as concurrent tasks.
 ///
-/// ## Takes
-/// - `cfg`: The host configuration.
-///
-/// ## Returns
-/// - `Ok(exit_code)` if the client program exits successfully.
-/// - `Err(_)` if the client program failed to execute, was killed by a signal, or the host program
-///   exited first.
+/// The server backend matches the configured DA layer (L1-only, EigenDA via Hokulea, or Celestia
+/// via Hana), layering kona's local boot inputs over the shared disk store and serving hints with
+/// retry backoff and the blob-sidecars fallback. The client generates the witness and seeks the
+/// proof; its result is returned once both tasks join.
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(not(feature = "experimental"), allow(unused_mut))]
 pub async fn run_native_client(
@@ -208,6 +205,8 @@ pub async fn run_native_client(
     client_result
 }
 
+/// Spawns a [PreimageServer] over the given channels, backed by the key-value store alone when
+/// offline, or by the hint-handling backend and its providers when online.
 #[allow(clippy::too_many_arguments)]
 pub async fn start_server<
     C: Channel + Send + Sync + 'static,

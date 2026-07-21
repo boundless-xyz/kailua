@@ -1,4 +1,4 @@
-// Copyright 2026 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -150,17 +150,20 @@ where
     }
 }
 
+/// [crate::hint_handler::FallbackBlobHintHandler] with retry backoff.
 pub type BackoffFallbackBlobHintHandler = BackoffWrapper<
     crate::hint_handler::FallbackBlobHintHandler,
     kona_host::single::SingleChainHost,
 >;
 
+/// [crate::hint_handler::FallbackBlobHintHandlerWithEigenDA] with retry backoff.
 #[cfg(feature = "eigen")]
 pub type BackoffFallbackBlobHintHandlerWithEigenDA = BackoffWrapper<
     crate::hint_handler::FallbackBlobHintHandlerWithEigenDA,
     hokulea_host_bin::cfg::SingleChainHostWithEigenDA,
 >;
 
+/// [crate::hint_handler::FallbackHanaHintHandler] with retry backoff.
 #[cfg(feature = "celestia")]
 pub type BackoffFallbackHanaHintHandler = BackoffWrapper<
     crate::hint_handler::FallbackHanaHintHandler,

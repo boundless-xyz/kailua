@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Archived, Place, Resolver, Serialize};
 use std::sync::{Arc, Mutex};
 
+/// `rkyv::with` wrapper (de)serializing a [PreimageVecStore] as its inner shard vector,
+/// reconstructing the `Arc<Mutex<_>>` on deserialization.
 pub struct PreimageVecStoreRkyv;
 
 impl ArchiveWith<PreimageVecStore> for PreimageVecStoreRkyv {

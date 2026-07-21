@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,6 +39,16 @@ use std::collections::{BinaryHeap, VecDeque};
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+/// Drains completed proofs from the prover channel and publishes each on-chain as a
+/// validity proof (`proveValidity`) or an output fault proof (`proveOutputFault`, with KZG
+/// openings of the disputed blob positions), as determined by the receipt journal's output
+/// roots.
+///
+/// A `None` receipt signals insufficient L1 data and re-queues the request so it retries
+/// with a later L1 head. Submissions blocked by a permit activation delay, the minimum
+/// validity proving timestamp, or a failed transaction are re-buffered; any held fault
+/// proving permits are released once the claim is settled. Extensive sanity checks compare
+/// journal fields against contract state before submission, but only log on mismatch.
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_receipt_proofs<P: Provider>(
     args: &ValidateArgs,

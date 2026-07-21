@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +23,10 @@ use std::path::PathBuf;
 use tokio::{spawn, try_join};
 use tracing::warn;
 
+/// Runs the validator service: a [proposals::handle_proposals] task following the on-chain
+/// tournament and a [requests::handle_proof_requests] task computing proofs, joined by a
+/// duplex channel, until either exits. Proof-skipping flags a validator cannot honor are
+/// overridden before starting.
 pub async fn validate(
     mut args: ValidateArgs,
     verbosity: u8,

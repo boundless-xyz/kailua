@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+#![cfg_attr(not(test), warn(missing_docs))]
 
 //! This crate contains the cryptographic primitives and procedures for securely generating
 //! Kona block derivation and execution traces usable in the Kailua hybrid dispute engine.

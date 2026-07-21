@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ use opentelemetry::global::tracer;
 use opentelemetry::trace::FutureExt;
 use opentelemetry::trace::{TraceContextExt, Tracer};
 
+/// Fetches the block whose parent has the given hash, retrying until available.
 pub async fn get_next_block<P: Provider<N>, N: Network>(
     provider: P,
     parent_hash: B256,
@@ -53,6 +54,7 @@ pub async fn get_next_block<P: Provider<N>, N: Network>(
     Ok(block)
 }
 
+/// Fetches the block at the given height, retrying until available.
 pub async fn get_block_by_number<P: Provider<N>, N: Network>(
     provider: P,
     block_number: BlockNumber,
@@ -78,6 +80,7 @@ pub async fn get_block_by_number<P: Provider<N>, N: Network>(
     Ok(block)
 }
 
+/// Fetches the block at the given number or tag, retrying indefinitely until available.
 pub async fn get_block<P: Provider<N>, N: Network>(
     provider: P,
     block_id: BlockNumberOrTag,

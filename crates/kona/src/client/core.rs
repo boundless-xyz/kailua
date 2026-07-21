@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -69,16 +69,23 @@ use {
     op_alloy_consensus::OpTxEnvelope,
 };
 
+/// Factory abstracting how the derivation pipeline's data availability source is built, letting
+/// alternative DA integrations (Celestia, EigenDA) layer themselves over the standard Ethereum
+/// source.
 pub trait DASourceProvider<
     C: ChainProvider + Send + Sync + Clone + Debug,
     B: BlobProvider + Send + Sync + Clone + Debug,
 >
 {
+    /// The data availability source this factory produces.
     type DAS: DataAvailabilityProvider + Send + Sync + Debug + Clone;
 
+    /// Builds the DA source from an L1 chain provider, a blob provider, and the rollup config.
     fn new_from_parts(self, l1_provider: C, blobs: B, cfg: &RollupConfig) -> Self::DAS;
 }
 
+/// [DASourceProvider] for the standard OP Stack [EthereumDataSource]: batch data from L1
+/// calldata and EIP-4844 blobs.
 #[derive(Clone, Copy, Debug)]
 pub struct EthereumDataSourceProvider;
 
@@ -94,23 +101,30 @@ impl<
     }
 }
 
-/// Runs the Kailua client to drive rollup state transition derivation using Kona.
+/// Runs the core Kailua client — kona derivation and execution over authenticated oracle data —
+/// returning the proven boot record and the accumulated [Precondition].
+///
+/// The boot record's L1 head selects one of three modes:
+/// - The txn-only sentinel (experimental) replays one block's transactions over a witness
+///   pre-state and returns a partial-execution (chunk) precondition.
+/// - The exec-only sentinel replays the cached executions, asserting that they chain the agreed
+///   output root to the claimed one, and returns an execution-trace precondition.
+/// - Any real L1 head derives batches from L1 (resuming from `derivation_cache` if given) and
+///   executes them — reusing matching `execution_cache` entries — until the claimed block is
+///   reached, or L1 data runs out and the boot claim is truncated to what was derived. The
+///   returned precondition binds the proposal blobs validated against the derived outputs plus
+///   the derivation cache/trace digests.
 ///
 /// # Arguments
-/// * `proposal_data_hash` - The hash of the proposal blob precondition data.
+/// * `proposal_data_hash` - The hash referencing the proposal blob precondition data, if any.
 /// * `oracle` - The client for preloaded communication with the host.
 /// * `stream` - The client for streamed communication with the host.
 /// * `beacon` - The blob provider.
-/// * `da_source_provider` - The provider for a data availability source.
-/// * `execution_cache` - A vector of cached executions to reuse.
-/// * `execution_trace` - An optional target to dump uncached executions.
-/// * `derivation_cache` - An initial snapshot of the derivation pipeline to resume from.
-/// * `derivation_trace` - An optional target for saving a final snapshot of the derivation pipeline.
-///
-/// # Returns
-/// A result containing a tuple (`BootInfo`, `Precondition`) upon success, or an error of type `anyhow::Error`.
-/// - `BootInfo` contains essential configuration information for bootstrapping the rollup client.
-/// - `Precondition` represents the full precondition for the validity of the boot record.
+/// * `da_source_provider` - The factory for the derivation pipeline's data availability source.
+/// * `execution_cache` - Already-proven executions to reuse instead of re-executing.
+/// * `execution_trace` - An optional sink for recording uncached executions.
+/// * `derivation_cache` - A derivation pipeline snapshot to resume from, if any.
+/// * `derivation_trace` - An optional sink for the final derivation pipeline snapshot.
 #[allow(clippy::too_many_arguments)]
 pub fn run_core_client<
     O: CommsClient + FlushableCache + Send + Sync + Debug,
@@ -565,7 +579,9 @@ where
         .map_err(OracleProviderError::SliceConversion)
 }
 
-/// Recovers a continuous execution trace from the collection target
+/// Drains the collection target into a continuous execution trace, back-filling each
+/// execution's claimed output from its successor's agreed output, and the final one from the
+/// given claim.
 pub fn recover_collected_executions(
     collection_target: Arc<Mutex<Vec<Execution>>>,
     claimed_l2_output_root: B256,
@@ -580,6 +596,8 @@ pub fn recover_collected_executions(
     take::<Vec<Execution>>(executions.as_mut())
 }
 
+/// Pairs each block's collected transaction traces with its execution to build one
+/// [PartialExecution] chunk per block, threading the parent header through in block order.
 #[cfg(feature = "experimental")]
 pub fn recover_collected_partials(
     boot_info: &BootInfo,
@@ -605,6 +623,7 @@ pub fn recover_collected_partials(
     partial_executions
 }
 
+/// Splits each block's single collected chunk into `partials_per_block` smaller chunks.
 #[cfg(feature = "experimental")]
 pub fn split_collected_partials(
     partials: Vec<Vec<PartialExecution>>,
@@ -621,6 +640,7 @@ pub fn split_collected_partials(
         .collect()
 }
 
+/// Asserts that the bytecode matches its expected hash, treating a zero hash as empty code.
 #[cfg(feature = "experimental")]
 pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
     if expected_hash.is_zero() {
@@ -636,7 +656,8 @@ pub fn validate_contract_hash(expected_hash: &B256, bytecode: &Bytecode) {
     }
 }
 
-/// Validates every [`Bytecode`] entry
+/// Authenticates every bytecode entry in the witness pre-state cache against its declared hash,
+/// covering both the top-level contracts map and code inlined into pre-state accounts.
 #[cfg(feature = "experimental")]
 pub fn validate_cache(cache: &CacheState) {
     // Top-level contracts map (bytecode served via `code_by_hash`).

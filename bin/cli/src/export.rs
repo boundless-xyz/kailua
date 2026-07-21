@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,10 +25,14 @@ pub struct ExportArgs {
     #[clap(long, env)]
     pub data_dir: Option<PathBuf>,
 
+    /// Telemetry arguments.
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
 }
 
+/// Writes each embedded FPVM guest ELF into `data_dir` and prints its recomputed image ID
+/// as a Rust array literal — the source of the constants pasted into kailua-build's
+/// `fpvm.rs`/`fpvm-experimental.rs` after a guest rebuild.
 pub async fn export(data_dir: PathBuf) -> anyhow::Result<()> {
     #[cfg(not(feature = "experimental"))]
     let programs = [

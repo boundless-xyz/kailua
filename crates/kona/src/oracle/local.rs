@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,14 +24,21 @@ use spin::Mutex;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-/// Ensures the prover cannot change unauthenticated local key values
+/// Oracle wrapper that ensures the host cannot change unauthenticated local key values.
+///
+/// `Local` keys carry no hash of their value, so a malicious host could answer repeated queries
+/// for the same key inconsistently. This wrapper caches the first response per local key and
+/// replays it for all subsequent queries; all other key types pass through unaltered.
 #[derive(Clone, Debug)]
 pub struct LocalOnceOracle<O: CommsClient + FlushableCache + Send + Sync + Debug + Clone> {
+    /// The wrapped oracle.
     pub oracle: Arc<O>,
+    /// First response served for each local key.
     pub cache: Arc<Mutex<HashMap<PreimageKey, Vec<u8>>>>,
 }
 
 impl<O: CommsClient + FlushableCache + Send + Sync + Debug + Clone> LocalOnceOracle<O> {
+    /// Wraps `oracle` with an empty local-key response cache.
     pub fn new(oracle: Arc<O>) -> Self {
         Self {
             oracle,

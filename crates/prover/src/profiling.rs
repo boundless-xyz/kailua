@@ -1,3 +1,17 @@
+// Copyright 2026 Boundless Foundation, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::current_time;
 use crate::proof::{proof_id, proof_id_file_name, read_bincoded_file, save_to_file};
 use alloy_primitives::{Address, B256, U256};
@@ -15,6 +29,7 @@ use tracing::{error, info};
 /// Describes a [Receipt] instance paired with its [Profile] data.
 pub type ProfiledReceipt = (Receipt, Profile);
 
+/// Aggregated statistics describing a proving workload and its sub-proofs.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Profile {
     /// Chain ID
@@ -58,6 +73,7 @@ pub struct Profile {
 }
 
 impl Profile {
+    /// Starts a profile for a boot claim, inferring derivation from the L1 head sentinels.
     pub fn new(boot_info: &BootInfo) -> Self {
         Self {
             chain_id: boot_info.chain_id,
@@ -68,6 +84,7 @@ impl Profile {
         }
     }
 
+    /// Accrues transaction, gas, and blob counts from the witness.
     pub fn with_witness<O: WitnessOracle>(mut self, witness: &Witness<O>) -> Self {
         // take the smallest executed block
         self.block_start = self.block_start.min(
@@ -96,6 +113,7 @@ impl Profile {
         self
     }
 
+    /// Accrues transaction and gas counts from execution traces (execution-only proofs).
     pub fn with_executions(mut self, traces: &[Vec<Execution>]) -> Self {
         self.block_start = self.block_start.min(
             traces
@@ -123,18 +141,21 @@ impl Profile {
         self
     }
 
+    /// Adds the byte size of the serialized witness frames to the input size.
     pub fn with_witness_frames(mut self, frames: &[Vec<u8>]) -> Self {
         *self.input_bytes.get_or_insert_default() +=
             frames.iter().map(|frame| frame.len() as u64).sum::<u64>();
         self
     }
 
+    /// Sets the system and user cycle counts.
     pub fn with_cycle_counts(mut self, cycles_system: u64, cycles_user: u64) -> Self {
         self.cycles_system = Some(cycles_system);
         self.cycles_user = Some(cycles_user);
         self
     }
 
+    /// Accrues the stats of stitched sub-proofs, recording each as a child by its proof id.
     pub fn with_proofs<A: NoUninit>(mut self, image_id: A, receipts: &[ProfiledReceipt]) -> Self {
         for (receipt, profile) in receipts {
             // count proof type
@@ -183,31 +204,37 @@ impl Profile {
         self
     }
 
+    /// Sets the total Boundless market cost.
     pub fn with_boundless_cost(mut self, boundless_cost: U256) -> Self {
         self.boundless_cost = Some(boundless_cost);
         self
     }
 
+    /// Sets the Boundless market request id.
     pub fn with_boundless_request(mut self, boundless_request: U256) -> Self {
         self.boundless_request = Some(boundless_request);
         self
     }
 
+    /// Sets the address of the Boundless market prover.
     pub fn with_boundless_prover(mut self, boundless_prover: Address) -> Self {
         self.boundless_prover = Some(boundless_prover);
         self
     }
 
+    /// Sets the address that locked the market request.
     pub fn with_lock_holder(mut self, lock_holder: Address) -> Self {
         self.lock_holder = Some(lock_holder);
         self
     }
 
+    /// Sets the proving start timestamp.
     pub fn with_start_time(mut self, time_started: u64) -> Self {
         self.time_started = Some(time_started);
         self
     }
 
+    /// Sets the proving finish timestamp.
     pub fn with_finish_time(mut self, time_finished: u64) -> Self {
         self.time_finished = Some(time_finished);
         self
@@ -223,11 +250,12 @@ impl Profile {
         self.block_end.saturating_sub(self.block_start)
     }
 
-    /// Total proofs captures by profile and its children
+    /// Total proofs captured by profile and its children
     pub fn proofs(&self) -> u64 {
         self.snarks.unwrap_or_default() + self.starks.unwrap_or_default() + 1
     }
 
+    /// Gas attributable to this proof alone, netting out child profiles found on disk.
     pub async fn gas(&self) -> Option<u64> {
         let mut gas = self.gas?;
         for proof_id in &self.children {
@@ -245,6 +273,7 @@ impl Profile {
         Some(gas)
     }
 
+    /// Input bytes attributable to this proof alone, netting out child profiles found on disk.
     pub async fn input_bytes(&self) -> Option<u64> {
         let mut input_bytes = self.input_bytes?;
         for proof_id in &self.children {
@@ -262,6 +291,7 @@ impl Profile {
         Some(input_bytes)
     }
 
+    /// SNARKs attributable to this proof alone, netting out child profiles found on disk.
     pub async fn snarks(&self) -> Option<u64> {
         let mut snarks = self.snarks?;
         for proof_id in &self.children {
@@ -279,6 +309,7 @@ impl Profile {
         Some(snarks)
     }
 
+    /// Logs a one-line summary of the profiled workload.
     pub fn report_summary(&self) {
         info!(
             "Proved: {} blocks having {} transactions totaling {} gas with {} cycles over {} proofs in {}.",
@@ -294,6 +325,7 @@ impl Profile {
         );
     }
 
+    /// Writes the CSV header row for profile records.
     pub fn write_csv_header<W: std::io::Write>(writer: &mut csv::Writer<W>) -> anyhow::Result<()> {
         Ok(writer.write_record([
             "chain_id",
@@ -327,6 +359,7 @@ impl Profile {
         ])?)
     }
 
+    /// Serializes this profile and its on-disk children into CSV rows, depth-first.
     pub async fn to_csv(self, with_header: bool) -> anyhow::Result<Vec<u8>> {
         // Write CSV header row
         let mut buffer = Vec::new();
@@ -428,6 +461,7 @@ impl Profile {
         Ok(buffer)
     }
 
+    /// Writes the profile to a timestamped CSV file in the working directory.
     pub async fn save_csv_file(self) {
         let file_name = format!(
             "{}.{}.{}-{}.{}.csv",

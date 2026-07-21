@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2024 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -47,12 +47,18 @@ pub struct ConfigArgs {
     #[clap(long, env, default_value_t = false)]
     pub bypass_chain_registry: bool,
 
+    /// Telemetry arguments.
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
+    /// Provider timeout arguments.
     #[clap(flatten)]
     pub timeouts: ProviderTimeoutArgs,
 }
 
+/// Prints the parameters needed to configure a Kailua deployment for the target rollup:
+/// FPVM image IDs (recomputed from the embedded ELFs), Groth16 verifier control parameters
+/// and the known verifier address for the L1 chain, the rollup config hash, genesis and
+/// block times, and the rollup's `DisputeGameFactory` and `OptimismPortal` addresses.
 pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("config"));
@@ -215,6 +221,8 @@ pub async fn config(args: ConfigArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Prints an embedded guest ELF's image ID and size, panicking if the stored ID does not
+/// match the one recomputed from the ELF.
 pub fn report_image_id(stored_image_id: [u32; 8], stored_elf: &[u8], label: &str) {
     let stored_image_id = Digest::new(stored_image_id);
     println!(

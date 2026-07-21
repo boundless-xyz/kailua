@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +18,13 @@ use kona_derive::{BlobProvider, ChainProvider};
 use kona_genesis::RollupConfig;
 use std::fmt::Debug;
 
+/// [DASourceProvider] that layers a Celestia batch data source over the standard Ethereum one,
+/// enabling derivation from batches posted to Celestia.
 #[derive(Clone, Debug)]
-pub struct CelestiaDataSourceProvider<A: CelestiaProvider + Send + Sync + Clone + Debug>(pub A);
+pub struct CelestiaDataSourceProvider<A: CelestiaProvider + Send + Sync + Clone + Debug>(
+    /// The provider used to fetch Celestia blobs.
+    pub A,
+);
 
 impl<
         C: ChainProvider + Send + Sync + Clone + Debug,

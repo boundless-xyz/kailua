@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,6 +36,9 @@ use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
+/// Runs the witgen client with Celestia data availability, additionally recording Celestia
+/// oracle reads through a [LocalOnceOracle]-cached provider. The returned extra oracle holds
+/// exactly the Celestia data the guest consumes beyond the main witness.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_hana_witgen_client<P, B, O>(
     preimage_oracle: Arc<P>,

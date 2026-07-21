@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,8 +32,12 @@ use kona_proof::{BootInfo, FlushableCache};
 use std::fmt::Debug;
 use std::sync::Arc;
 
+/// [StitchingClient] that runs the Kailua proving client with Celestia data availability.
 #[derive(Clone, Debug)]
-pub struct HanaStitchingClient<T: CommsClient + FlushableCache + Clone>(pub Arc<T>);
+pub struct HanaStitchingClient<T: CommsClient + FlushableCache + Clone>(
+    /// The oracle serving Celestia preimages and the Blobstream height proof.
+    pub Arc<T>,
+);
 
 impl<
         O: CommsClient + FlushableCache + Send + Sync + Debug,
@@ -41,6 +45,9 @@ impl<
         T: CommsClient + FlushableCache + Send + Sync + Debug + Clone,
     > StitchingClient<O, B> for HanaStitchingClient<T>
 {
+    /// Builds a Blobstream-bounded [HanaProvider] from a dedicated oracle, then delegates to
+    /// [KonaStitchingClient] with the Celestia data source. Panics if the two oracles disagree
+    /// on the boot record.
     fn run_stitching_client(
         self,
         precondition_validation_data_hash: B256,

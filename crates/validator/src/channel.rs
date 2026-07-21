@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2024 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -43,18 +43,28 @@ impl<T> DuplexChannel<T> {
     }
 }
 
+/// Work items exchanged between the proposal follower and the proof generator.
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum Message {
-    // The proposal and its parent
+    /// A request to prove one output transition claimed by a proposal.
     Proposal {
+        /// Local index of the proposal to prove.
         index: u64,
+        /// Precondition binding a validity proof to the proposal's published blob data.
         precondition_validation_data: Option<ProposalPrecondition>,
+        /// L1 block hash bounding the data available to derivation.
         l1_head: FixedBytes<32>,
+        /// Hash of the L2 block the proof starts from.
         agreed_l2_head_hash: FixedBytes<32>,
+        /// Output root of the agreed L2 block.
         agreed_l2_output_root: FixedBytes<32>,
+        /// L2 block number of the output claim to decide.
         claimed_l2_block_number: u64,
+        /// The output root claim to prove or disprove.
         claimed_l2_output_root: FixedBytes<32>,
     },
+    /// A completed proof for the proposal at the given local index, or `None` if the
+    /// requested L1 head had insufficient data to derive the claimed block.
     Proof(u64, Option<Receipt>),
 }

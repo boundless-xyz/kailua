@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,9 +18,12 @@ use crate::{await_tel, retry_res_ctx};
 use alloy::providers::RootProvider;
 use opentelemetry::trace::{FutureExt, TraceContextExt, Tracer};
 
+/// Beacon API blob provider.
 pub mod beacon;
+/// Op-node RPC provider and rollup config retrieval.
 pub mod optimism;
 
+/// RPC endpoint and polling configuration shared by all synchronizing services.
 #[derive(clap::Args, Debug, Clone, Default)]
 pub struct ProviderArgs {
     /// Address of the OP-NODE endpoint to use
@@ -45,10 +48,12 @@ pub struct ProviderArgs {
     #[clap(long, env, default_value_t = 6)]
     pub rpc_poll_interval: u64,
 
+    /// Per-request timeouts for each endpoint type.
     #[clap(flatten)]
     pub timeouts: ProviderTimeoutArgs,
 }
 
+/// Per-request timeouts (in seconds) for each RPC endpoint type.
 #[derive(clap::Args, Debug, Clone, Copy)]
 pub struct ProviderTimeoutArgs {
     /// Timeout (seconds) for an OP-NODE RPC request.
@@ -77,6 +82,7 @@ impl Default for ProviderTimeoutArgs {
 }
 
 impl ProviderTimeoutArgs {
+    /// Returns the largest of the configured timeouts.
     pub fn max(&self) -> u64 {
         self.op_node_timeout
             .max(self.op_geth_timeout)
@@ -98,6 +104,7 @@ pub struct SyncProvider {
 }
 
 impl SyncProvider {
+    /// Connects to the L1, beacon, op-node, and L2 endpoints named in the arguments.
     pub async fn new(args: &ProviderArgs) -> anyhow::Result<Self> {
         let tracer = opentelemetry::global::tracer("kailua");
         let context = opentelemetry::Context::current_with_span(tracer.start("SyncProvider::new"));

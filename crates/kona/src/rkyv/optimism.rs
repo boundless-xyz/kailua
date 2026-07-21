@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,22 +20,35 @@ use rkyv::rancor::Fallible;
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Archived, Place, Resolver, Serialize};
 
+/// rkyv mirror of [OpPayloadAttributes], flattened, with withdrawal and transaction lists
+/// stored RLP-encoded.
 #[derive(Clone, Debug, Hash, Eq, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct OpPayloadAttributesRkyv {
+    /// Block timestamp.
     pub timestamp: u64,
+    /// Block randomness beacon value.
     #[rkyv(with = B256Def)]
     pub prev_randao: B256,
+    /// Block fee recipient.
     #[rkyv(with = AddressDef)]
     pub suggested_fee_recipient: Address,
+    /// RLP-encoded withdrawal list, if any.
     pub withdrawals: Option<Vec<u8>>,
+    /// Parent beacon block root, if any.
     #[rkyv(with = rkyv::with::Map<B256Def>)]
     pub parent_beacon_block_root: Option<B256>,
+    /// Slot number, if any.
     pub slot_number: Option<u64>,
+    /// RLP-encoded transaction list, if any.
     pub transactions: Option<Vec<u8>>,
+    /// Whether the transaction pool is disabled for the block.
     pub no_tx_pool: Option<bool>,
+    /// Block gas limit override, if any.
     pub gas_limit: Option<u64>,
+    /// EIP-1559 parameter override, if any.
     #[rkyv(with = rkyv::with::Map<B64Def>)]
     pub eip_1559_params: Option<B64>,
+    /// Minimum base fee override, if any.
     pub min_base_fee: Option<u64>,
 }
 

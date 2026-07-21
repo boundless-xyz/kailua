@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -49,23 +49,32 @@ lazy_static! {
     static ref NUM_ACTIVE_PROVERS: Arc<Mutex<u64>> = Default::default();
 }
 
+/// Returns the number of proof requests currently in flight.
 pub async fn num_active_provers() -> u64 {
     let nap = NUM_ACTIVE_PROVERS.lock().await;
     *nap
 }
 
+/// Increments the in-flight proof request count.
 pub async fn increment_active_provers() {
     // Increment active provers count
     let mut nap = NUM_ACTIVE_PROVERS.lock().await;
     *nap += 1;
 }
 
+/// Decrements the in-flight proof request count.
 pub async fn decrement_active_provers() {
-    // Increment active provers count
+    // Decrement active provers count
     let mut nap = NUM_ACTIVE_PROVERS.lock().await;
     *nap -= 1;
 }
 
+/// Consumes [Message::Proposal] requests from the duplex channel, packaging each into a
+/// [Task] for a pool of `num_concurrent_provers` proving workers.
+///
+/// The expected proof journal — payout recipient, precondition hash, rollup config hash,
+/// and FPVM image ID — determines the file name each task's receipt must be written to.
+/// Runs until the request channel closes, then waits for the workers to drain the queue.
 pub async fn handle_proof_requests(
     mut channel: DuplexChannel<Message>,
     args: ValidateArgs,
@@ -231,6 +240,12 @@ pub async fn handle_proof_requests(
     Ok(())
 }
 
+/// Requests a fault proof of the first incorrect output transition in a diverging proposal,
+/// starting from the last output it shares with the canonical chain.
+///
+/// Unless the permit policy is `SKIPPED`, first attempts to acquire (or reuse) a fault
+/// proving permit, bailing if the policy is `MANDATORY` and none could be acquired, or if
+/// all provers are already busy.
 pub async fn request_fault_proof<P: Provider>(
     agent: &mut SyncAgent,
     channel: &mut DuplexChannel<Message>,
@@ -340,6 +355,9 @@ pub async fn request_fault_proof<P: Provider>(
     Ok(())
 }
 
+/// Requests a validity proof covering the entire transition from the parent proposal's
+/// output to the proposal's claimed output, with a precondition binding the proof to the
+/// intermediate outputs the proposal published as blobs.
 pub async fn request_validity_proof(
     agent: &SyncAgent,
     channel: &mut DuplexChannel<Message>,

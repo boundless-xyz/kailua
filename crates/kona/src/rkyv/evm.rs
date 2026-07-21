@@ -1,4 +1,4 @@
-// Copyright 2026 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -70,6 +70,8 @@ fn cache_account_status_from_byte(b: u8) -> CacheAccountStatus {
 pub struct CacheStateRkyv;
 
 impl CacheStateRkyv {
+    /// Converts the value into its tuple encoding, sorting accounts, storage, and contracts by
+    /// key for determinism.
     pub fn rkyv(cs: &CacheState) -> RkyvedCacheState {
         // Accounts (sorted by address)
         let mut accounts: Vec<_> = cs.accounts.iter().collect();
@@ -101,6 +103,7 @@ impl CacheStateRkyv {
         (accounts, contracts)
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(rkyved: RkyvedCacheState) -> CacheState {
         let (accounts, contracts) = rkyved;
 
@@ -180,7 +183,9 @@ where
 /// unchanged — existing serialized data stays readable.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct RkyvedBlobGasAndPrice {
+    /// The block's excess blob gas.
     pub excess_blob_gas: u64,
+    /// Big-endian encoding of the block's blob gas price.
     pub blob_gasprice: [u8; 16],
 }
 
@@ -201,6 +206,7 @@ type RkyvedBlockEnv = (
 pub struct BlockEnvRkyv;
 
 impl BlockEnvRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(env: &BlockEnv) -> RkyvedBlockEnv {
         (
             env.number,
@@ -220,6 +226,7 @@ impl BlockEnvRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(r: RkyvedBlockEnv) -> BlockEnv {
         BlockEnv {
             number: r.0,
@@ -310,11 +317,12 @@ fn post_exec_mode_from_byte(b: u8) -> PostExecMode {
 
 /// rkyv wrapper for [`OpBlockExecutionCtx`].
 ///
-/// Archives as a tuple of rkyv-native types via [`RkyvedOpBlockExecutionCtx`].
+/// Archives as a tuple of rkyv-native types via `RkyvedOpBlockExecutionCtx`.
 /// All fields have native rkyv support via the `alloy-primitives` `rkyv` feature.
 pub struct OpBlockExecutionCtxRkyv;
 
 impl OpBlockExecutionCtxRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(ctx: &OpBlockExecutionCtx) -> RkyvedOpBlockExecutionCtx {
         (
             ctx.parent_hash,
@@ -324,6 +332,7 @@ impl OpBlockExecutionCtxRkyv {
         )
     }
 
+    /// Reconstructs the value from its tuple encoding.
     pub fn raw(r: RkyvedOpBlockExecutionCtx) -> OpBlockExecutionCtx {
         OpBlockExecutionCtx {
             parent_hash: r.0,
@@ -731,6 +740,7 @@ type RkyvedExecutionResult = (
 pub struct ExecutionResultRkyv;
 
 impl ExecutionResultRkyv {
+    /// Converts the value into its tuple encoding.
     pub fn rkyv(r: &ExecutionResult<OpHaltReason>) -> RkyvedExecutionResult {
         match r {
             ExecutionResult::Success {
@@ -774,6 +784,7 @@ impl ExecutionResultRkyv {
         }
     }
 
+    /// Reconstructs the value from its tuple encoding, panicking on invalid discriminants.
     pub fn raw(r: RkyvedExecutionResult) -> ExecutionResult<OpHaltReason> {
         match r.0 {
             0 => {

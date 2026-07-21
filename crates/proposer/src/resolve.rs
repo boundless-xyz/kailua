@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,6 +32,14 @@ use std::future::IntoFuture;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
+/// Attempts to finalize the canonical successor of the last resolved proposal, returning
+/// whether a resolution transaction was confirmed.
+///
+/// Returns `false` without resolving if no successor exists yet, it is already finalized,
+/// its challenge period is still running without a validity proof, its parent tournament
+/// has undecided disputes blocking elimination of all opponents, or it is not the parent's
+/// surviving child. Opponents are eliminated in batches of [ELIMINATIONS_LIMIT] through
+/// `pruneChildren` transactions until resolution can succeed.
 #[allow(clippy::too_many_arguments)]
 pub async fn resolve_next_pending_proposal<P: Provider>(
     agent: &SyncAgent,
@@ -262,6 +270,9 @@ pub async fn resolve_next_pending_proposal<P: Provider>(
     }
 }
 
+/// Resolves the given proposal, first submitting as many batched `pruneChildren`
+/// transactions as its parent tournament needs to determine a survivor, and returns the
+/// `resolve` call's receipt.
 pub async fn resolve_proposal<P: Provider<N>, N: Network>(
     proposal: &Proposal,
     provider: P,

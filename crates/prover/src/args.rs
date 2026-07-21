@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ use std::cmp::Ordering;
 use std::panic::AssertUnwindSafe;
 use tracing::error;
 
+/// Configuration for how proving workloads are computed, decomposed, and parallelized.
 #[derive(Parser, Clone, Debug)]
 pub struct ProvingArgs {
     /// Address of the recipient account to use for bond payouts
@@ -81,15 +82,18 @@ pub struct ProvingArgs {
     #[clap(long, env, default_value_t = false)]
     pub export_profile_csv: bool,
 
+    /// EigenDA (Hokulea) connection arguments
     #[clap(flatten)]
     #[cfg(feature = "eigen")]
     pub hokulea: crate::hokulea::args::HokuleaArgs,
+    /// Celestia (Hana) connection arguments
     #[clap(flatten)]
     #[cfg(feature = "celestia")]
     pub hana: crate::hana::args::HanaArgs,
 }
 
 impl ProvingArgs {
+    /// Serializes the configuration back into CLI arguments for recursive `prove` invocations.
     pub fn to_arg_vec(&self) -> Vec<String> {
         // Core args
         let mut proving_args = vec![
@@ -132,10 +136,13 @@ impl ProvingArgs {
         proving_args
     }
 
+    /// True when sub-proofs are not to be stitched together (derivation is skipped, proofs are
+    /// unawaited, or the stitching limit is at most one proof).
     pub fn skip_stitching(&self) -> bool {
         self.skip_derivation_proof || self.skip_await_proof || self.max_proof_stitches <= 1
     }
 
+    /// True when EigenDA (Hokulea) data availability is configured.
     pub fn use_hokulea(&self) -> bool {
         #[cfg(feature = "eigen")]
         {
@@ -145,6 +152,7 @@ impl ProvingArgs {
         false
     }
 
+    /// True when Celestia (Hana) data availability is configured; Hokulea takes precedence.
     pub fn use_hana(&self) -> bool {
         #[cfg(feature = "celestia")]
         {
@@ -154,6 +162,7 @@ impl ProvingArgs {
         false
     }
 
+    /// Returns the FPVM guest image ID matching the configured data availability layer.
     pub fn image_id(&self) -> [u32; 8] {
         #[cfg(feature = "eigen")]
         if self.use_hokulea() {
@@ -168,6 +177,7 @@ impl ProvingArgs {
         kailua_build::KAILUA_FPVM_KONA_ID
     }
 
+    /// Returns the FPVM guest ELF matching the configured data availability layer.
     pub fn elf(&self) -> &'static [u8] {
         #[cfg(feature = "eigen")]
         if self.use_hokulea() {
@@ -182,6 +192,7 @@ impl ProvingArgs {
         kailua_build::KAILUA_FPVM_KONA_ELF
     }
 
+    /// Returns the matching (image ID, ELF) guest program pair.
     pub fn image(&self) -> ([u32; 8], &'static [u8]) {
         (self.image_id(), self.elf())
     }
@@ -190,6 +201,7 @@ impl ProvingArgs {
 /// Run the prover to generate an execution/fault/validity proof
 #[derive(Parser, Clone, Debug)]
 pub struct ProveArgs {
+    /// Kona single-chain host arguments describing the claim and its data sources
     #[clap(flatten)]
     pub kona: kona_host::single::SingleChainHost,
 
@@ -197,25 +209,33 @@ pub struct ProveArgs {
     #[clap(long, env)]
     pub op_node_address: Option<String>,
 
+    /// Proving workload configuration
     #[clap(flatten)]
     pub proving: ProvingArgs,
+    /// Boundless proving market configuration
     #[clap(flatten)]
     pub boundless: BoundlessArgs,
 
+    /// Proposal precondition parameters: l2 head number, output count, output block span
     #[clap(long, env, value_delimiter = ',')]
     pub precondition_params: Vec<u64>,
+    /// L1 block hashes containing the proposal's blob data
     #[clap(long, env, value_parser = parse_b256, value_delimiter = ',')]
     pub precondition_block_hashes: Vec<B256>,
+    /// Versioned hashes of the proposal's blobs
     #[clap(long, env, value_parser = parse_b256, value_delimiter = ',')]
     pub precondition_blob_hashes: Vec<B256>,
 
+    /// OpenTelemetry configuration
     #[clap(flatten)]
     pub telemetry: TelemetryArgs,
+    /// RPC provider timeout configuration
     #[clap(flatten)]
     pub timeouts: ProviderTimeoutArgs,
 }
 
 impl ProveArgs {
+    /// Instantiates kona's L1/L2 providers, converting panics in kona's constructor to errors.
     pub async fn create_providers(&self) -> Result<SingleChainProviders, SingleChainHostError> {
         AssertUnwindSafe(self.kona.clone().create_providers())
             .catch_unwind()
@@ -226,6 +246,7 @@ impl ProveArgs {
             })
     }
 
+    /// Serializes the arguments into a complete `prove` CLI invocation.
     pub fn to_arg_vec(&self) -> Vec<String> {
         // Prepare prover parameters
         let mut prove_args = vec![

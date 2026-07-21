@@ -1,3 +1,17 @@
+// Copyright 2025, 2026 Boundless Foundation, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.24;
 
@@ -19,6 +33,13 @@ import {KailuaGame} from "../src/KailuaGame.sol";
 // kailua-cli config --op-node-url $OP_NODE_URL --op-geth-url $OP_GETH_URL --eth-rpc-url $ETH_RPC_URL | grep -E '^[A-Z_]+:' | sed 's/: /=/; s/^/export /' > .env
 // source .env
 
+/// @title DeployScript
+/// @notice Deploys the full Kailua contract suite against an existing OP Stack deployment and switches the
+///         respected game type over to Kailua. All parameters are read from environment variables; the
+///         `kailua-cli config` command shown above emits the required values.
+/// @dev The four steps mirror the sub-chapters of the book's on-chain migration guide: RISC Zero Verifier,
+///      Dispute Resolution, State Anchoring, and Sequencing Proposal. The broadcasting key must own the
+///      `DisputeGameFactory` for the anchoring and game-type switching steps to succeed.
 contract DeployScript is Script {
     uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
     address deployer = vm.addr(deployerPrivateKey);
@@ -44,6 +65,7 @@ contract DeployScript is Script {
     Duration vanguardAdvantage = Duration.wrap(uint64(vm.envUint("VANGUARD_ADVANTAGE"))); // set
     IOptimismPortal2 optimismPortal = IOptimismPortal2(payable(vm.envAddress("OPTIMISM_PORTAL")));
 
+    /// @notice Runs all four deployment steps under a single broadcast
     function run() public {
         vm.startBroadcast(deployerPrivateKey);
 
@@ -55,6 +77,10 @@ contract DeployScript is Script {
         vm.stopBroadcast();
     }
     
+    /// @notice Sets up on-chain proof verification: deploys a `RiscZeroVerifierRouter` with a Groth16 verifier
+    ///         unless `RISC_ZERO_VERIFIER` is provided, then deploys the `KailuaVerifier` implementation behind an
+    ///         EIP-1967 proxy and hands the proxy admin over to `PROXY_ADMIN` (default: the factory owner)
+    /// @return The `KailuaVerifier` interface of the proxy
     function _6_1_proofVerification() public returns (KailuaVerifier) {
         // Deploy router and groth16 verifier only when RISC_ZERO_VERIFIER is not provided
         if (riscZeroVerifierAddr == address(0)) {
@@ -79,6 +105,10 @@ contract DeployScript is Script {
         return KailuaVerifier(address(proxy));
     }
 
+    /// @notice Deploys the dispute resolution contracts: the `KailuaTreasury` anchored at `OUTPUT_ROOT_CLAIM` and
+    ///         the `KailuaGame` implementation for subsequent proposals
+    /// @param kailuaVerifier The proof verifier the deployment should trust
+    /// @return The deployed treasury and game implementation contracts
     function _6_2_disputeResolution(KailuaVerifier kailuaVerifier) public returns (KailuaTreasury, KailuaGame) {
         KailuaTreasury treasury = new KailuaTreasury(kailuaVerifier,  proposalOutputCount, outputBlockSpan, gameType, optimismPortal, outputRootClaim, l2BlockNumber);
         KailuaGame game = new KailuaGame(treasury, genesisTimestamp, blocktime, maxClockDuration);
@@ -86,6 +116,9 @@ contract DeployScript is Script {
         return (treasury, game);
     }
 
+    /// @notice Anchors the proposal tree: zeroes the factory's init bond for the Kailua game type, temporarily
+    ///         installs the treasury as the game implementation, and creates and resolves the anchor proposal
+    /// @param treasury The treasury contract deployed in the previous step
     function _6_3_stateAnchoring(KailuaTreasury treasury) public {
         uint256 initialBond = dgf.initBonds(gameType);
         if (initialBond != 0) {
@@ -98,6 +131,10 @@ contract DeployScript is Script {
         gameAddress.resolve();
     }
 
+    /// @notice Enables sequencing proposals: sets the participation bond, installs `KailuaGame` as the game
+    ///         implementation, optionally assigns a vanguard, and makes Kailua the respected game type
+    /// @param treasury The treasury contract deployed in the previous steps
+    /// @param game The game implementation contract deployed in the previous steps
     function _6_4_sequencingProposal(KailuaTreasury treasury, KailuaGame game) public {
         treasury.setParticipationBond(participationBond);
         dgf.setImplementation(gameType, IDisputeGame(address(game)));

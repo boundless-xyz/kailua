@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,6 +28,12 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 use tracing::{error, info, warn};
 
+/// Pops every due entry from `buffer` — a min-heap of `(Reverse(dispatch time), proposal
+/// index)` — and requests a fault or validity proof for it, per `is_fault`.
+///
+/// Entries whose proposal (or parent) was freed by resolution, whose signature is no longer
+/// viable, or whose claim is already proven are dropped; failed requests are re-queued ten
+/// seconds later.
 #[allow(clippy::too_many_arguments)]
 pub async fn dispatch_proof_requests<P: Provider>(
     args: &crate::args::ValidateArgs,

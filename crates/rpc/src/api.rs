@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,16 +20,22 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::trace;
 
+/// The `kailua` JSON-RPC namespace.
 #[rpc(client, server, namespace = "kailua")]
 pub trait KailuaApi {
+    /// Returns the address of the earliest canonical proposal covering the given L2 block
+    /// number, or `None` if no known proposal reaches that height yet.
     #[method(name = "gameAddressForBlockByNumber")]
     async fn game_address_for_block_by_number(&self, number: u64) -> RpcResult<Option<Address>>;
 }
 
+/// Shared map from claimed L2 block number to canonical proposal contract address.
 pub type KailuaServerCache = Arc<RwLock<BTreeMap<u64, Address>>>;
 
+/// [KailuaApiServer] implementation answering from the synchronized proposal cache.
 #[derive(Clone, Default, Debug)]
 pub struct KailuaApiHandler {
+    /// Proposal cache fed by the synchronization task.
     pub cache: KailuaServerCache,
 }
 

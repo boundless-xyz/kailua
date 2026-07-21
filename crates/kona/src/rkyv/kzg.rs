@@ -1,4 +1,4 @@
-// Copyright 2024, 2025 RISC Zero, Inc.
+// Copyright 2024, 2025 Boundless Foundation, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 use alloy_eips::eip4844::{Blob, BYTES_PER_BLOB};
 use c_kzg::Bytes48;
 
+/// rkyv mirror of an EIP-4844 [Blob].
 #[derive(Clone, Debug, Copy, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[rkyv(remote = Blob)]
 #[rkyv(archived = ArchivedBlob)]
@@ -26,6 +27,7 @@ impl From<BlobDef> for Blob {
     }
 }
 
+/// rkyv mirror of [Bytes48], the KZG commitment and proof representation.
 #[derive(
     rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Copy, Clone, Hash, PartialEq, Eq,
 )]
