@@ -4,7 +4,15 @@
 Unlock faster finality and stronger security for your OP chain.
 
 > [!NOTE]
-> Documentation: https://boundless-xyz.github.io/kailua/
+> This repository is read-only and will receive no further updates, including security fixes.
+> 
+> A fork by the former maintainer of this project is available at https://github.com/hashcashier/kailua
+> 
+> We're glad to see the work carried forward there.
+>
+> It's an independent project, not maintained, reviewed, or supported directly by Boundless. 
+
+
 
 
 ## Intro
