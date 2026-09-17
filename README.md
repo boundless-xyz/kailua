@@ -8,9 +8,7 @@ Unlock faster finality and stronger security for your OP chain.
 > 
 > A fork by the former maintainer of this project is available at https://github.com/hashcashier/kailua
 > 
-> We're glad to see the work carried forward there.
->
-> It's an independent project, not maintained, reviewed, or supported directly by Boundless. 
+> Boundless is glad to see the work carried forward there; that said, please understand the fork linked to above is hard and is a project independent from and not controlled, maintained, reviewed or supported by Boundless, directly or indirectly.
 
 
 
